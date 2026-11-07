@@ -12,3 +12,29 @@ __pycache__/
 .mypy_cache/
 dist/
 *.egg-info/
+
+# Android build artifacts and machine-local SDK path
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.idea/
+*.iml
+*.apk
+*.aab
+*.idsig
+
+# Signing material must never be committed (docs/guides/android-signing.md).
+# The real key lives in ~/.config/weaver/android/; these guard accidental copies.
+*.jks
+*.keystore
+*.p12
+*.pk8
+*.jks.enc
+*.p12.enc
+*.keystore.enc
+keystore.properties
+signing.properties
+signing.env

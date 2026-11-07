@@ -21,3 +21,20 @@ Mypy configuration lives at the root so the command above loads it automatically
 Tests must not access real LLMs, speech models, or user vaults.
 Local setup rationale is in `docs/guides/server-development.md`; domain decisions
 are in `docs/domain/decisions/` (these shared local folders are not committed).
+
+## Android
+
+Requires JDK 21 and an Android SDK with `platforms;android-36` (set `ANDROID_HOME` or
+`android/local.properties`). Run from `android/`:
+
+```sh
+./gradlew assembleDebug lint testDebugUnitTest
+```
+
+Kotlin models in `android/app/src/main/kotlin/.../schema/` are hand-written
+kotlinx.serialization classes; unit tests validate them against the repository-root
+`schema/` files, so regenerate the schema first and update the models in the same change.
+Release signing reads the key from `~/.config/weaver/android/` and passwords from
+`WEAVER_ANDROID_*` environment variables; never commit keys, passwords or their copies.
+Version rationale and signing procedures are in `docs/guides/android-development.md` and
+`docs/guides/android-signing.md` (local only).

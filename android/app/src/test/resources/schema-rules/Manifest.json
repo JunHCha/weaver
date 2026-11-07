@@ -1,0 +1,74 @@
+{
+    "/$defs/CaptureId/maxLength": 30,
+    "/$defs/CaptureId/minLength": 30,
+    "/$defs/CaptureId/pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/CaptureId/type": "string",
+    "/$defs/Channel/enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+    ],
+    "/$defs/Channel/type": "string",
+    "/$defs/Digest/maxLength": 64,
+    "/$defs/Digest/minLength": 64,
+    "/$defs/Digest/pattern": "^[0-9a-f]{64}$",
+    "/$defs/Digest/type": "string",
+    "/$defs/Hints/additionalProperties": false,
+    "/$defs/Hints/properties/counterpart/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/Hints/required": [
+        "counterpart"
+    ],
+    "/$defs/Hints/type": "object",
+    "/$defs/Kind/enum": [
+        "fleece",
+        "text"
+    ],
+    "/$defs/Kind/type": "string",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Offset/minimum": 0,
+    "/$defs/Offset/type": "integer",
+    "/$defs/PayloadRef/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/PayloadRef/pattern": "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$",
+    "/$defs/PayloadRef/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/properties/occurred_at/anyOf": [
+        {
+            "$ref": "#/$defs/Timestamp"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/schema_version/const": 1,
+    "/properties/schema_version/type": "integer",
+    "/required": [
+        "schema_version",
+        "capture_id",
+        "kind",
+        "channel",
+        "payload",
+        "sha256",
+        "size",
+        "captured_at",
+        "occurred_at",
+        "hints"
+    ],
+    "/type": "object"
+}
