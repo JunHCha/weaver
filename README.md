@@ -24,6 +24,7 @@ Courier's four folders carry files in the directions shown; they are transport
 routes, not the raw archive or the knowledge vault.
 
 ```mermaid
+%%{init: {"htmlLabels": false}}%%
 flowchart TB
   subgraph phone["Phone · Android"]
     direction LR
