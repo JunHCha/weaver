@@ -11,6 +11,10 @@ def run_isolated(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
     env.pop("PYTHONPATH", None)
     env.pop("WEAVER_CONFIG", None)
     env.pop("XDG_CONFIG_HOME", None)
+    # Typer forces Rich terminal styling under these (e.g. on GitHub Actions),
+    # which splits help text with ANSI codes; the output here is a captured pipe.
+    for name in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+        env.pop(name, None)
     env["HOME"] = str(tmp_path)
     return subprocess.run(
         [sys.executable, "-I", "-B", "-c", code],
