@@ -1,7 +1,7 @@
 """Courier: the Syncthing-shared folder protocol between phone and PC."""
 
 from .atomic import write_bytes_atomic, write_json_atomic
-from .courier import SCAN_INTERVAL_SECONDS, Courier, ScanReport, StaleRevisionError
+from .courier import SCAN_INTERVAL_SECONDS, Courier, RevisionError, ScanReport
 from .files import CourierFileError, is_conflict, is_ignored
 from .ports import CaptureStore, DecisionStore, ProposalRevisions, VerifiedCapture
 
@@ -12,8 +12,8 @@ __all__ = [
     "CourierFileError",
     "DecisionStore",
     "ProposalRevisions",
+    "RevisionError",
     "ScanReport",
-    "StaleRevisionError",
     "VerifiedCapture",
     "is_conflict",
     "is_ignored",

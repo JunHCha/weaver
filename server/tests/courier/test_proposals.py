@@ -3,7 +3,7 @@ import logging
 
 import pytest
 
-from weaver.courier import Courier, StaleRevisionError
+from weaver.courier import Courier, RevisionError
 from weaver.schema import Alert, Proposal
 
 from .conftest import (
@@ -44,7 +44,7 @@ def test_publish_new_rev_replaces_old(courier, paths, revisions):
 
 def test_publish_refuses_older_rev(courier, paths, revisions):
     revisions.latest[PRP] = 2
-    with pytest.raises(StaleRevisionError):
+    with pytest.raises(RevisionError):
         courier.publish_proposal(proposal_for(rev=1))
     assert names(paths.proposals) == []
 
