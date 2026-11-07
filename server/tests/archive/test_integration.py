@@ -194,3 +194,30 @@ def test_from_config_keeps_archive_outside_vault_and_sync(tmp_path):
         assert not private.is_relative_to(config.sync_root)
     assert (config.courier.receipts / f"{CAP}.json").exists()
     assert list(config.vault_root.iterdir()) == []
+
+
+INIT_SCRIPT = (
+    "import sys\nfrom pathlib import Path\nfrom weaver.archive import ArchiveStore\n"
+    "ArchiveStore(Path(sys.argv[1]), Path(sys.argv[2]))\n"
+)
+
+
+def test_many_processes_initialize_a_new_index(tmp_path):
+    """PR #44 P1: journal_mode switching does not wait on busy locks."""
+    for run in range(8):
+        archive, receipts = tmp_path / f"a{run}", tmp_path / f"r{run}"
+        archive.mkdir()
+        receipts.mkdir()
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-c", INIT_SCRIPT, str(archive), str(receipts)],
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(6)
+        ]
+        for proc in procs:
+            _, err = proc.communicate(timeout=60)
+            assert proc.returncode == 0, err
+        store = ArchiveStore(archive, receipts)
+        assert store.sources() == []

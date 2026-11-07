@@ -9,20 +9,46 @@ under a final name. This is per-file atomicity, not a multi-file transaction.
 import contextlib
 import os
 import secrets
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel
 
+# macOS fsync() stops at the drive's volatile cache; F_FULLFSYNC flushes it.
+_F_FULLFSYNC: int | None = None
+if sys.platform == "darwin":
+    import fcntl
 
-def _fsync_directory(directory: Path) -> None:
+    _F_FULLFSYNC = getattr(fcntl, "F_FULLFSYNC", 51)
+
+
+def full_fsync(fd: int) -> None:
+    """Flush to stable storage: F_FULLFSYNC on macOS, else (or if refused) fsync."""
+    if sys.platform == "darwin" and _F_FULLFSYNC is not None:
+        import fcntl
+
+        try:
+            fcntl.fcntl(fd, _F_FULLFSYNC)
+            return
+        except OSError:
+            pass  # e.g. a filesystem without F_FULLFSYNC; fall back below.
+    os.fsync(fd)
+
+
+def fsync_directory(directory: Path, *, strict: bool = False) -> None:
+    """Make directory entries durable. ``strict`` propagates failures."""
     try:
         fd = os.open(directory, os.O_RDONLY)
     except OSError:
+        if strict:
+            raise
         return
     try:
-        os.fsync(fd)
+        full_fsync(fd)
     except OSError:
-        pass  # Some filesystems do not support directory fsync.
+        if strict:
+            raise
+        # Some filesystems do not support directory fsync.
     finally:
         os.close(fd)
 
@@ -40,13 +66,13 @@ def write_bytes_atomic(final: Path, data: bytes) -> None:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
-            os.fsync(stream.fileno())
+            full_fsync(stream.fileno())
         os.replace(temporary, final)
     except BaseException:
         with contextlib.suppress(OSError):
             temporary.unlink()
         raise
-    _fsync_directory(final.parent)
+    fsync_directory(final.parent)
 
 
 def write_json_atomic(final: Path, model: BaseModel) -> None:

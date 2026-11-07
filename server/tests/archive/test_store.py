@@ -425,3 +425,102 @@ def test_source_json_matches_shared_schema(store, dirs):
             json.loads(model.model_dump_json())
         )
     assert isinstance(source, Source)
+
+
+# ---- PR #44 review regressions ----------------------------------------------
+
+
+def record_fsyncs(monkeypatch):
+    calls = []
+    real = store_module._fsync_directory
+
+    def recording(directory):
+        calls.append(directory)
+        real(directory)
+
+    monkeypatch.setattr(store_module, "_fsync_directory", recording)
+    return calls
+
+
+def test_reused_payload_directory_is_fsynced_before_index(
+    open_store, dirs, monkeypatch
+):
+    """Crash after link but before the directory fsync: the retry must make
+    the entry durable before committing the index and publishing a receipt."""
+    m = manifest()
+    final = dirs["archive"] / "payloads" / m.sha256[:2] / f"{m.sha256}.txt"
+    final.parent.mkdir(parents=True)
+    final.write_bytes(TEXT)
+    store = open_store()
+    calls = record_fsyncs(monkeypatch)
+    original = store._index_capture
+
+    def index(*args):
+        assert final.parent in calls and final.parent.parent in calls
+        return original(*args)
+
+    monkeypatch.setattr(store, "_index_capture", index)
+    store.put(m, outbox_file(dirs["outbox"], m, TEXT))
+
+
+def test_existing_shard_directory_still_fsyncs_parent(store, dirs, monkeypatch):
+    m = manifest()
+    (dirs["archive"] / "payloads" / m.sha256[:2]).mkdir(parents=True)
+    calls = record_fsyncs(monkeypatch)
+    store.put(m, outbox_file(dirs["outbox"], m, TEXT))
+    shard = dirs["archive"] / "payloads" / m.sha256[:2]
+    assert shard in calls and shard.parent in calls
+
+
+def test_index_connection_requests_full_fsync(store):
+    with store._read() as conn:
+        assert conn.execute("PRAGMA fullfsync").fetchone()[0] == 1
+        assert conn.execute("PRAGMA checkpoint_fullfsync").fetchone()[0] == 1
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+
+
+def test_payload_body_uses_full_fsync(store, dirs, monkeypatch):
+    synced = []
+    real = store_module.full_fsync
+    monkeypatch.setattr(
+        store_module, "full_fsync", lambda fd: (synced.append(fd), real(fd))
+    )
+    m = manifest()
+    store.put(m, outbox_file(dirs["outbox"], m, TEXT))
+    assert synced
+
+
+def test_private_modes_are_corrected_on_every_start(open_store, dirs):
+    store = open_store()
+    m = manifest()
+    store.put(m, outbox_file(dirs["outbox"], m, TEXT))
+    index = dirs["archive"] / "index.sqlite3"
+    os.chmod(index, 0o644)
+    os.chmod(dirs["archive"], 0o755)
+    open_store()
+    assert stat.S_IMODE(index.stat().st_mode) == 0o600
+    assert stat.S_IMODE(dirs["archive"].stat().st_mode) == 0o700
+    for suffix in ("-wal", "-shm"):
+        sidecar = dirs["archive"] / f"index.sqlite3{suffix}"
+        if sidecar.exists():
+            assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
+
+def test_index_is_created_private_before_sqlite_opens_it(dirs, open_store):
+    old = os.umask(0)
+    try:
+        open_store()
+    finally:
+        os.umask(old)
+    index = dirs["archive"] / "index.sqlite3"
+    assert stat.S_IMODE(index.stat().st_mode) == 0o600
+
+
+def test_rollback_failure_does_not_mask_original_error(store):
+    class Original(Exception):
+        pass
+
+    with pytest.raises(Original):
+        with store._write() as conn:
+            conn.execute("ROLLBACK")  # SQLite already rolled back (e.g. SQLITE_FULL)
+            raise Original()

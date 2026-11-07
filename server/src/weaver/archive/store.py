@@ -23,6 +23,7 @@ metadata and index are durable here", never that Spinner or Loom are done.
 
 import contextlib
 import errno
+import fcntl
 import hashlib
 import os
 import re
@@ -37,7 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from weaver.config import ServerConfig
-from weaver.courier.atomic import write_bytes_atomic
+from weaver.courier.atomic import fsync_directory, full_fsync, write_bytes_atomic
 from weaver.courier.ports import (
     CaptureConflict,
     CaptureStatus,
@@ -50,6 +51,7 @@ from weaver.schema.internal import ArchivedSource
 from .ulid import new_source_id
 
 INDEX_NAME = "index.sqlite3"
+INDEX_LOCK = ".index.lock"
 PAYLOADS = "payloads"
 INDEX_VERSION = 1
 # Own copy temporaries older than this are crash leftovers.
@@ -120,11 +122,8 @@ def _write_chunk(fd: int, chunk: bytes) -> None:
 
 
 def _fsync_directory(directory: Path) -> None:
-    fd = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    # Strict: a receipt may let the phone delete audio, so failures propagate.
+    fsync_directory(directory, strict=True)
 
 
 def _payload_ref(manifest: Manifest) -> str:
@@ -162,6 +161,7 @@ class ArchiveStore:
         self._clock = clock
         self._new_id = new_id
         self._index = archive_root / INDEX_NAME
+        os.chmod(archive_root, 0o700)
         payloads = archive_root / PAYLOADS
         payloads.mkdir(mode=0o700, exist_ok=True)
         self._initialize_index()
@@ -320,11 +320,14 @@ class ArchiveStore:
     def _store_payload(self, manifest: Manifest, payload: Path, ref: str) -> None:
         final = self.root / ref
         directory = final.parent
-        if not directory.is_dir():
-            directory.mkdir(mode=0o700, exist_ok=True)
-            _fsync_directory(directory.parent)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        # Always: the shard may have been created by a run that crashed before
+        # making its entry durable.
+        _fsync_directory(directory.parent)
         if final.exists():
             self._check_existing(final, manifest)
+            # A crash after link() may have preceded the directory fsync.
+            _fsync_directory(directory)
             return
         temporary = directory / f".{manifest.sha256}.{secrets.token_hex(8)}.tmp"
         try:
@@ -349,7 +352,7 @@ class ArchiveStore:
                     _write_chunk(target_fd, chunk)
                 if size != manifest.size or digest.hexdigest() != manifest.sha256:
                     raise PayloadMismatch("payload differs from manifest")
-                os.fsync(target_fd)
+                full_fsync(target_fd)
             finally:
                 os.close(target_fd)
             try:
@@ -448,6 +451,9 @@ class ArchiveStore:
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA synchronous = FULL")
+            # macOS: flush the drive cache on commit and checkpoint as well.
+            conn.execute("PRAGMA fullfsync = ON")
+            conn.execute("PRAGMA checkpoint_fullfsync = ON")
         except BaseException:
             conn.close()
             raise
@@ -465,24 +471,46 @@ class ArchiveStore:
             try:
                 yield conn
             except BaseException:
-                conn.execute("ROLLBACK")
+                # SQLite may already have rolled back (SQLITE_FULL, IOERR); never
+                # let a failing ROLLBACK replace the original error.
+                if conn.in_transaction:
+                    with contextlib.suppress(sqlite3.Error):
+                        conn.execute("ROLLBACK")
                 raise
             conn.execute("COMMIT")
 
+    @contextlib.contextmanager
+    def _init_lock(self) -> Iterator[None]:
+        """Serialize first-time setup across processes: switching journal_mode
+        does not wait on SQLite's busy handler."""
+        fd = os.open(
+            self.root / INDEX_LOCK, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600
+        )
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # releases the flock
+
     def _initialize_index(self) -> None:
-        created = not self._index.exists()
-        with self._read() as conn:
-            if conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] != "wal":
-                raise ArchiveError("index requires WAL journal mode")
-        with self._write() as conn:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                for statement in _SCHEMA:
-                    conn.execute(statement)
-                conn.execute(f"PRAGMA user_version = {INDEX_VERSION}")
-            elif version != INDEX_VERSION:
-                raise ArchiveError("unknown archive index version")
-        if created:
+        with self._init_lock():
+            # Create the file private before SQLite opens it (umask-independent).
+            os.close(os.open(self._index, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600))
+            with self._read() as conn:
+                mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                if mode != "wal":
+                    mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                if mode != "wal":
+                    raise ArchiveError("index requires WAL journal mode")
+            with self._write() as conn:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                if version == 0:
+                    for statement in _SCHEMA:
+                        conn.execute(statement)
+                    conn.execute(f"PRAGMA user_version = {INDEX_VERSION}")
+                elif version != INDEX_VERSION:
+                    raise ArchiveError("unknown archive index version")
+            # Re-assert on every start, not only by the process that created it.
             for suffix in ("", "-wal", "-shm"):
                 with contextlib.suppress(FileNotFoundError):
                     os.chmod(f"{self._index}{suffix}", 0o600)
