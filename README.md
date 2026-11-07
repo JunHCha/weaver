@@ -3,9 +3,9 @@
 Turn everyday phone records into reviewed personal knowledge.
 
 Weaver is a personal tool being built to collect call recordings, voice memos,
-KakaoTalk exports, and shared text. A local Mac server transcribes audio and
-organizes the material, using an LLM for revision and extraction. Human review
-comes before proposed facts enter a central timeline log and are exported to a
+KakaoTalk exports, and shared text. A local Mac server will transcribe audio and
+organize the material. It will use an LLM for revision and extraction, with human
+review before proposed facts enter a central timeline log and are exported to a
 personal knowledge vault such as Obsidian.
 
 **MVP in progress:** the foundation modules are implemented; the complete capture,
@@ -27,16 +27,14 @@ routes, not the raw archive or the knowledge vault.
 %%{init: {"htmlLabels": false}}%%
 flowchart TB
   subgraph phone["Phone · Android"]
-    direction LR
     shepherd["Shepherd<br/>Capture audio, KakaoTalk, shared text"]
     review["Human review<br/>Approve · Edit · Revise · Reject"]
   end
 
   subgraph sync["Sync · Courier / Syncthing"]
-    direction LR
     outbox["outbox/<br/>Captures + payloads"]
     receipts["receipts/<br/>Archive acknowledgements"]
-    proposals["proposals/<br/>Review packages"]
+    proposals["proposals/<br/>Review packages + alerts"]
     decisions["decisions/<br/>Verdicts"]
   end
 
@@ -47,7 +45,7 @@ flowchart TB
     loom["Loom<br/>Refine · Extract · Propose"]
     apply["Apply review<br/>Validate approved facts"]
     rejected["Rejected proposal<br/>No facts appended"]
-    llm["LlmClient<br/>Single boundary to Anthropic Claude"]
+    llm["LlmClient<br/>Anthropic adapter today<br/>More backends planned (#46)"]
     fabric[("Fabric<br/>Append-only SQLite timeline")]
   end
 
@@ -82,7 +80,8 @@ flowchart TB
   class archive,fabric,export,vault stored
 ```
 
-STT runs locally; LLM revision and extraction use an external Anthropic API.
+STT runs locally; planned LLM revision and extraction will use external APIs
+through the shared `LlmClient` boundary.
 Approving a proposal records facts. It does not authorize execution of requests
 found in the source material.
 
@@ -129,7 +128,8 @@ client is a foundation for the planned capture and review experience.
 - **Speech:** MLX Whisper `large-v3-turbo` on Apple Silicon; local model
   preparation and `ffmpeg` are required for real transcription. The MVP adapter
   does not identify speakers.
-- **LLM:** Anthropic Claude through a shared `LlmClient` boundary.
+- **LLM:** A shared `LlmClient` boundary with an Anthropic Claude adapter today;
+  [more backends are planned (#46)](https://github.com/JunHCha/weaver/issues/46).
 - **Android:** Kotlin, Jetpack Compose, kotlinx.serialization; minSdk 26,
   compileSdk and targetSdk 36.
 - **Transport:** Syncthing between devices, with Syncthing-Fork selected for
