@@ -192,13 +192,50 @@ def test_restart_rescan_recovers_and_does_not_duplicate(
     assert len(captures.accepted) == 2
 
 
-def test_same_body_under_new_capture_id_is_duplicate(courier, paths, captures):
+def test_same_body_under_new_capture_id_is_accepted_for_linking(
+    courier, paths, captures
+):
+    """The store links a new capture_id to the existing Source and writes its
+    own receipt; otherwise the phone could never clean up the second copy."""
     publish_capture(paths.outbox)
     courier.scan_once()
     publish_capture(paths.outbox, CAP2)
     report = courier.scan_once()
-    assert report.duplicates == [CAP, CAP2] and report.accepted == []
+    assert report.duplicates == [CAP] and report.accepted == [CAP2]
+    assert len(captures.accepted) == 2
+
+
+def test_stored_capture_is_confirmed_without_rehash(courier, paths, captures):
+    publish_capture(paths.outbox)
+    courier.scan_once()
+    assert courier.scan_once().duplicates == [CAP]
+    # Every rescan asks the store to re-publish a missing receipt (idempotent).
+    assert captures.confirmed == [CAP]
+
+
+def test_same_capture_with_different_hash_is_conflict(courier, paths, captures, caplog):
+    publish_capture(paths.outbox)
+    courier.scan_once()
+    other = b"different synthetic body"
+    publish_capture(paths.outbox, body=other)
+    caplog.set_level(logging.WARNING, "weaver.courier")
+    report = courier.scan_once()
+    assert report.problems == {f"outbox/{CAP}.json": "capture_conflict"}
+    assert report.accepted == [] and captures.confirmed == []
     assert len(captures.accepted) == 1
+    assert (paths.outbox / f"{CAP}.json").exists()  # kept for a human
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+def test_conflict_raised_by_accept_is_reported(courier, paths, captures):
+    from weaver.courier import CaptureConflict
+
+    def conflicting(capture):
+        raise CaptureConflict()
+
+    captures.accept = conflicting
+    publish_capture(paths.outbox)
+    assert courier.scan_once().problems == {f"outbox/{CAP}.json": "capture_conflict"}
 
 
 def test_accept_failure_is_retried(courier, paths, captures):

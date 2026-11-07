@@ -1,4 +1,4 @@
-"""Neutral fixtures built from schema/examples, plus #26 test doubles.
+"""Neutral fixtures built from schema/examples, plus #18/#26 test doubles.
 
 Nothing here touches Syncthing, a vault, an LLM or a speech model: every test
 runs in pytest's temporary directory.
@@ -63,15 +63,26 @@ def write_json(path, payload):
 
 
 class FakeCaptures:
-    """Durable capture ledger double: completion by capture_id or sha256."""
+    """Durable capture ledger double keyed by capture_id (#18 semantics).
+
+    A new capture_id is always "new", even when its body hash is already stored;
+    the store then links it to the existing Source and writes its receipt.
+    """
 
     def __init__(self):
         self.stored = {}
         self.accepted = []
+        self.confirmed = []
         self.failures = 0
 
-    def is_captured(self, capture_id, sha256):
-        return capture_id in self.stored or sha256 in self.stored.values()
+    def status(self, capture_id, sha256):
+        if capture_id not in self.stored:
+            return "new"
+        return "stored" if self.stored[capture_id] == sha256 else "conflict"
+
+    def confirm(self, capture_id):
+        assert capture_id in self.stored
+        self.confirmed.append(capture_id)
 
     def accept(self, capture):
         if self.failures:

@@ -69,7 +69,8 @@ def boom(*args):
 @pytest.mark.parametrize(
     ("port", "method", "folder"),
     [
-        ("captures", "is_captured", "outbox"),
+        ("captures", "status", "outbox"),
+        ("captures", "confirm", "outbox"),
         ("revisions", "latest_rev", "decisions"),
         ("decisions", "is_applied", "decisions"),
     ],
@@ -81,6 +82,8 @@ def test_query_port_failure_is_reported_per_file(
     revisions.latest[PRP] = 1
     courier.publish_proposal(proposal_for(rev=1))
     write_json(paths.decisions / f"{PRP}.r1.json", verdict_for())
+    if method == "confirm":  # confirm is only asked for stored captures
+        captures.stored[CAP] = manifest_for()["sha256"]
     doubles = {"captures": captures, "revisions": revisions, "decisions": decisions}
     monkeypatch.setattr(doubles[port], method, boom)
     report = courier.scan_once()
@@ -89,6 +92,7 @@ def test_query_port_failure_is_reported_per_file(
     # Other folders in the same pass still ran and the file is preserved.
     if folder == "outbox":
         assert report.applied == [(PRP, 1)]
+        assert report.duplicates == []
         assert (paths.outbox / f"{CAP}.json").exists()
     else:
         assert report.accepted == [CAP]
@@ -172,7 +176,8 @@ def test_fifo_payload_does_not_block_scan(paths):
         "from weaver.config import CourierPaths\n"
         "from weaver.courier import Courier\n"
         "class S:\n"
-        "    def is_captured(self, *a): return False\n"
+        "    def status(self, *a): return 'new'\n"
+        "    def confirm(self, c): pass\n"
         "    def accept(self, c): pass\n"
         "    def latest_rev(self, p): return None\n"
         "    def is_applied(self, *a): return False\n"
