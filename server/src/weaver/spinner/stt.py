@@ -164,14 +164,27 @@ class MlxStt:
     """MLX large-v3-turbo FP16 adapter; no diarization or VAD in the MVP.
 
     ``ffmpeg`` must be installed locally. It writes temporary 16 kHz mono PCM;
-    original audio is read only. Exact digital silence bypasses inference, but
+    original audio is read only. Only regular files and listed media containers
+    are accepted (no playlists). ``decode_timeout`` limits decoding wall time in
+    seconds, defaults to 120, and must be finite and positive. On timeout the
+    child is killed/reaped and partial output is removed. Exact silence bypasses
+    inference, but
     near-silence/noise can still hallucinate and requires future VAD evaluation.
     """
 
-    def __init__(self, model_path: Path, *, engine: Engine = _mlx_engine) -> None:
+    def __init__(
+        self,
+        model_path: Path,
+        *,
+        engine: Engine = _mlx_engine,
+        decode_timeout: float = 120.0,
+    ) -> None:
+        if not _time(decode_timeout) or decode_timeout <= 0:
+            raise ValueError("decode_timeout must be finite and positive")
         self.model_path = model_path.resolve()
         self.metadata = ModelMetadata(self.model_path)
         self._engine = engine
+        self._decode_timeout = decode_timeout
 
     def transcribe(self, audio: Path, language: str = "ko") -> Transcript:
         if not audio.is_file():
@@ -192,7 +205,11 @@ class MlxStt:
                         "error",
                         "-xerror",
                         "-protocol_whitelist",
-                        "file,pipe",
+                        "file",
+                        # Exclude playlist/concat demuxers that can open other
+                        # files (including a writerless FIFO) from a plain file.
+                        "-format_whitelist",
+                        "aac,aiff,amr,ape,asf,au,avi,flac,matroska,webm,mov,mp3,ogg,wav",
                         "-i",
                         str(audio.resolve()),
                         "-map",
@@ -209,6 +226,9 @@ class MlxStt:
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
+                    # subprocess.run kills and waits for the child on timeout;
+                    # the enclosing context then removes partial PCM output.
+                    timeout=self._decode_timeout,
                 )
                 samples = array("f")
                 samples.frombytes(pcm.read_bytes())

@@ -261,3 +261,99 @@ def test_unrepresentable_timestamp_is_invalid_output(model, audio, decoder):
                 "segments": [{"start": 10**1000, "end": 10**1001, "text": "invalid"}]
             },
         ).transcribe(audio)
+
+
+def test_decoder_has_deadline_and_restricts_formats(model, audio, monkeypatch):
+    def fail(command, **kwargs):
+        assert kwargs["timeout"] == 120.0
+        assert command[command.index("-protocol_whitelist") + 1] == "file"
+        assert "concat" not in command[command.index("-format_whitelist") + 1].split(
+            ","
+        )
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("weaver.spinner.stt.subprocess.run", fail)
+    with pytest.raises(AudioDecodeError) as error:
+        MlxStt(model).transcribe(audio)
+    assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
+
+
+def test_fifo_input_is_rejected_before_decoder(model, tmp_path, monkeypatch):
+    import os
+
+    fifo = tmp_path / "fifo.wav"
+    os.mkfifo(fifo)
+    monkeypatch.setattr(
+        "weaver.spinner.stt.subprocess.run",
+        lambda *_a, **_k: pytest.fail("decoder called"),
+    )
+    with pytest.raises(MissingAudioError):
+        MlxStt(model).transcribe(fifo)
+
+
+def test_timeout_kills_decoder_and_cleans_partial_output(
+    model, audio, tmp_path, monkeypatch
+):
+    import os
+    import sys
+
+    fifo = tmp_path / "blocked.fifo"
+    os.mkfifo(fifo)
+    pid_file = tmp_path / "decoder.pid"
+    converted = []
+    real_run = subprocess.run
+
+    def blocked_decoder(command, **kwargs):
+        converted.append(Path(command[-1]))
+        # A real child blocks on a writerless FIFO after creating partial output.
+        script = (
+            "import os,sys; from pathlib import Path; "
+            "Path(sys.argv[1]).write_text(str(os.getpid())); "
+            "Path(sys.argv[2]).write_bytes(b'partial'); "
+            "os.open(sys.argv[3], os.O_RDONLY)"
+        )
+        return real_run(
+            [sys.executable, "-c", script, str(pid_file), command[-1], str(fifo)],
+            **kwargs,
+        )
+
+    monkeypatch.setattr("weaver.spinner.stt.subprocess.run", blocked_decoder)
+    with pytest.raises(AudioDecodeError) as error:
+        MlxStt(model, decode_timeout=0.5).transcribe(audio)
+    assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
+    assert not converted[0].parent.exists()
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+    assert audio.read_bytes() == b"original audio"
+
+
+def test_ffconcat_cannot_open_referenced_fifo(model, tmp_path, monkeypatch):
+    import os
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("optional real ffmpeg format restriction check")
+    os.mkfifo(tmp_path / "referenced.wav")
+    audio = tmp_path / "audio.ffconcat"
+    audio.write_text("ffconcat version 1.0\nfile 'referenced.wav'\n")
+    converted = []
+    real_run = subprocess.run
+
+    def bounded_run(command, **kwargs):
+        converted.append(Path(command[-1]))
+        # Bound this regression test even if the format restriction regresses.
+        kwargs["timeout"] = min(kwargs["timeout"], 1.0)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr("weaver.spinner.stt.subprocess.run", bounded_run)
+    with pytest.raises(AudioDecodeError) as error:
+        MlxStt(model).transcribe(audio)
+    assert isinstance(error.value.__cause__, subprocess.CalledProcessError)
+    assert b"whitelist" in error.value.__cause__.stderr
+    assert not converted[0].parent.exists()
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), True])
+def test_invalid_decode_deadline_is_rejected(model, timeout):
+    with pytest.raises(ValueError, match="decode_timeout"):
+        MlxStt(model, decode_timeout=timeout)

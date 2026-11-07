@@ -162,7 +162,7 @@ def _check_boundaries(roots: dict[str, Path]) -> None:
     # Public roots cannot contain each other, nor contain/be contained by private
     # storage. Private roots may share a parent or nest (e.g. logs inside state).
     for public in ("sync_root", "vault_root"):
-        for other in _ROOTS:
+        for other in roots:
             if other != public and _overlaps(roots[public], roots[other]):
                 raise ConfigError(f"{public} and {other}: paths overlap")
 
@@ -224,7 +224,8 @@ def load_config(
     if not isinstance(model_path, str):
         raise ConfigError("stt.model_path: expected path string")
     stt = SttConfig(_path(model_path, config_file.parent, env, "stt.model_path"))
-    _check_boundaries(roots)
+    boundaries = {**roots, "stt.model_path": stt.model_path}
+    _check_boundaries(boundaries)
     channels: dict[str, Path] = {}
     for name in _CHANNELS:
         expected = roots["sync_root"] / name
@@ -245,7 +246,7 @@ def load_config(
             _check_directory(directory, field, False)
             # Newly created roots can reveal case/firmlink aliases that were
             # unobservable when both paths were absent. Reject before use.
-            _check_boundaries(roots)
+            _check_boundaries(boundaries)
     return ServerConfig(
         config_file=config_file,
         sync_root=roots["sync_root"],
