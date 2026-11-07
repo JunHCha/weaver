@@ -1,0 +1,29 @@
+# Copy to ~/.config/weaver/config.toml, or choose a file with --config.
+# Data paths are relative to this file's resolved parent, independent of cwd.
+# This example contains no user paths or credential values.
+sync_root = "data/sync"
+archive_root = "data/archive"
+vault_root = "data/vault"
+state_root = "data/state"
+log_root = "data/logs"
+
+[llm]
+# Default follows ADR-021. Use "none" for an explicitly unselected backend.
+# Other identifiers: agent_sdk, claude_cli, openai_compatible.
+# Configuration validation never creates a client or calls a backend.
+backend = "anthropic"
+# Reference only: provide the value outside the configuration file.
+api_key_env = "ANTHROPIC_API_KEY"
+
+# All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
+# To create missing directories explicitly (existing data is preserved):
+# uv run --project server python -m weaver.app --config <file> --init-directories
+# To validate without changing files:
+# uv run --project server python -m weaver.app --config <file> --check-config
+# Selection: --config > WEAVER_CONFIG > $XDG_CONFIG_HOME/weaver/config.toml
+#            > ~/.config/weaver/config.toml (if XDG_CONFIG_HOME is unset/empty).
+# One file only; no merging, per-field env overrides, or $VAR expansion.
+# ~ and ~/ require HOME; ~other-user is unsupported. XDG_CONFIG_HOME is absolute.
+# Sync and vault must be disjoint from each other and from all private roots.
+# Private roots (archive/state/log) may nest. Symlinks are resolved first;
+# Courier child directories must stay at their fixed locations within sync.
