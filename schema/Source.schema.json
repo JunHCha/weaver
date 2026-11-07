@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "CaptureId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Channel": {
+      "enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+      ],
+      "type": "string"
+    },
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "Hints": {
+      "additionalProperties": false,
+      "properties": {
+        "counterpart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "counterpart"
+      ],
+      "title": "Hints",
+      "type": "object"
+    },
+    "Kind": {
+      "enum": [
+        "fleece",
+        "text"
+      ],
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "PayloadRef": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$",
+      "type": "string"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Source",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Archive metadata. payload_ref is a logical relative key, never a local path.",
+  "properties": {
+    "capture_id": {
+      "$ref": "#/$defs/CaptureId"
+    },
+    "captured_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "channel": {
+      "$ref": "#/$defs/Channel"
+    },
+    "hints": {
+      "$ref": "#/$defs/Hints"
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload_ref": {
+      "$ref": "#/$defs/PayloadRef"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_id",
+    "capture_id",
+    "kind",
+    "channel",
+    "captured_at",
+    "occurred_at",
+    "sha256",
+    "hints",
+    "payload_ref"
+  ],
+  "title": "Source",
+  "type": "object"
+}

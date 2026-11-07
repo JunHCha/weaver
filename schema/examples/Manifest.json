@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "text",
+  "channel": "share_text",
+  "captured_at": "2026-11-07T15:32:00+09:00",
+  "occurred_at": null,
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hints": {
+    "counterpart": null
+  },
+  "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "payload": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt",
+  "size": 45
+}

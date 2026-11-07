@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "CaptureId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Receipt",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capture_id": {
+      "$ref": "#/$defs/CaptureId"
+    },
+    "received_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    }
+  },
+  "required": [
+    "schema_version",
+    "capture_id",
+    "source_id",
+    "sha256",
+    "received_at"
+  ],
+  "title": "Receipt",
+  "type": "object"
+}

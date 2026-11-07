@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "Ask": {
+      "additionalProperties": false,
+      "description": "A human question; choices may be empty and free-text answers are allowed.",
+      "properties": {
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "question": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "question",
+        "choices"
+      ],
+      "title": "Ask",
+      "type": "object"
+    },
+    "Choice": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "$ref": "#/$defs/EntityId"
+        },
+        "label": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "entity_id",
+        "label"
+      ],
+      "title": "Choice",
+      "type": "object"
+    },
+    "Confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntityRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityId"
+        },
+        {
+          "$ref": "#/$defs/Ref"
+        }
+      ]
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^[a-z][1-9][0-9]*$",
+      "type": "string"
+    },
+    "RelationType": {
+      "enum": [
+        "원인",
+        "후속조치",
+        "같은논의",
+        "참석",
+        "소속"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Relation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Standalone versioned relation file; nested relations have no version key.",
+  "properties": {
+    "ask": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Ask"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "from": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityRef"
+        },
+        {
+          "const": "this",
+          "type": "string"
+        }
+      ],
+      "title": "From"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "thread_excerpt": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "to": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityRef"
+        },
+        {
+          "const": "this",
+          "type": "string"
+        }
+      ],
+      "title": "To"
+    },
+    "type": {
+      "$ref": "#/$defs/RelationType"
+    }
+  },
+  "required": [
+    "schema_version",
+    "confidence",
+    "ask",
+    "thread_excerpt",
+    "from",
+    "type",
+    "to",
+    "reason"
+  ],
+  "title": "Relation",
+  "type": "object"
+}

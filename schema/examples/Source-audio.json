@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "fleece",
+  "channel": "call",
+  "captured_at": "2026-11-07T15:32:00+09:00",
+  "occurred_at": "2026-11-07T15:32:00+09:00",
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hints": {
+    "counterpart": null
+  },
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "payload_ref": "archive/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.m4a"
+}

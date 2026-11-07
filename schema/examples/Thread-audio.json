@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "channel": "call",
+  "occurred_at": "2026-11-07T15:32:00+09:00",
+  "text": "내일 점검 회의를 요청합니다.",
+  "segments": [
+    {
+      "segment_id": "t1",
+      "start_char": 0,
+      "end_char": 16,
+      "start_ms": 0,
+      "end_ms": 2400,
+      "speaker": "speaker1",
+      "occurred_at": null
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "channel": "kakao",
+  "occurred_at": "2026-11-07T15:32:00+09:00",
+  "text": "김민수: 내일 회의할까요?\n나: 먼저 결정할게요.",
+  "segments": [
+    {
+      "segment_id": "t1",
+      "start_char": 0,
+      "end_char": 15,
+      "start_ms": null,
+      "end_ms": null,
+      "speaker": "김민수",
+      "occurred_at": "2026-11-07T15:32:00+09:00"
+    },
+    {
+      "segment_id": "t2",
+      "start_char": 15,
+      "end_char": 27,
+      "start_ms": null,
+      "end_ms": null,
+      "speaker": "나",
+      "occurred_at": "2026-11-07T15:33:00+09:00"
+    }
+  ]
+}

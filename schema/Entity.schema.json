@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "Ask": {
+      "additionalProperties": false,
+      "description": "A human question; choices may be empty and free-text answers are allowed.",
+      "properties": {
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "question": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "question",
+        "choices"
+      ],
+      "title": "Ask",
+      "type": "object"
+    },
+    "Choice": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "$ref": "#/$defs/EntityId"
+        },
+        "label": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "entity_id",
+        "label"
+      ],
+      "title": "Choice",
+      "type": "object"
+    },
+    "Confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntityType": {
+      "enum": [
+        "person",
+        "org",
+        "project",
+        "topic",
+        "meeting"
+      ],
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^[a-z][1-9][0-9]*$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Entity",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "ref": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "description": "Standalone versioned entity file; nested entities inherit the file version.",
+  "properties": {
+    "aliases": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Aliases",
+      "type": "array"
+    },
+    "ask": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Ask"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "entity_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "name": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Ref"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "thread_excerpt": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "type": {
+      "$ref": "#/$defs/EntityType"
+    }
+  },
+  "required": [
+    "schema_version",
+    "confidence",
+    "ask",
+    "thread_excerpt",
+    "ref",
+    "entity_id",
+    "type",
+    "name",
+    "aliases"
+  ],
+  "title": "Entity",
+  "type": "object"
+}

@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "AlertId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^alt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "ProposalId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^[a-z][1-9][0-9]*$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Alert",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "alert_id": {
+      "$ref": "#/$defs/AlertId"
+    },
+    "created_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "message": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "proposal_id": {
+      "$ref": "#/$defs/ProposalId"
+    },
+    "schedule_ref": {
+      "$ref": "#/$defs/Ref"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "alert_id",
+    "proposal_id",
+    "schedule_ref",
+    "message",
+    "created_at"
+  ],
+  "title": "Alert",
+  "type": "object"
+}
