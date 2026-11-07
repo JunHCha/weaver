@@ -407,3 +407,63 @@ def test_empty_config_environment_policies(tmp_path: Path) -> None:
     assert load_config(environ=env).config_file == path
     with pytest.raises(ConfigError, match="config_file"):
         load_config(environ={**env, "WEAVER_CONFIG": ""})
+
+
+def test_stt_paths_and_spinner_settings(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path), environ={})
+    assert config.stt.model_path == config.state_root / "models/whisper-large-v3-turbo"
+    assert config.spinner.stt is config.stt
+    assert config.loom.stt is None
+    config = load_config(
+        write_config(tmp_path, '[stt]\nmodel_path = "models/turbo"\n'), environ={}
+    )
+    assert config.stt.model_path == tmp_path / "models/turbo"
+    assert not config.stt.model_path.exists()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "stt = 3",
+        "[stt]\nmodel_path = false",
+        '[stt]\nmodel_path = ""',
+        '[stt]\nengine = "other"',
+    ],
+)
+def test_invalid_stt_settings(tmp_path: Path, settings: str) -> None:
+    with pytest.raises(ConfigError, match="stt"):
+        load_config(write_config(tmp_path, settings), environ={})
+
+
+@pytest.mark.parametrize("public", ["sync_root", "vault_root"])
+@pytest.mark.parametrize(
+    "relation", ["same", "child", "parent", "symlink", "case_alias"]
+)
+def test_stt_model_stays_outside_public_roots(tmp_path, public, relation):
+    target = tmp_path / public
+    if relation == "same":
+        model = target
+    elif relation == "child":
+        model = target / "models" / "whisper"
+    elif relation == "parent":
+        model = tmp_path
+    elif relation == "symlink":
+        model = tmp_path / "model-link"
+        # write_config creates the target before load_config resolves the link.
+        model.symlink_to(target, target_is_directory=True)
+    else:
+        model = tmp_path / public.upper() / "models" / "whisper"
+    config = write_config(tmp_path, f'[stt]\nmodel_path = "{model}"\n')
+    if relation == "case_alias" and not (tmp_path / public.upper()).exists():
+        pytest.skip("case-sensitive filesystem")
+    with pytest.raises(ConfigError, match="stt.model_path.*overlap"):
+        load_config(config, environ={})
+
+
+def test_stt_boundary_rejected_before_init_creates_directories(tmp_path):
+    config = write_config(
+        tmp_path, '[stt]\nmodel_path = "sync_root/models/turbo"\n', create=False
+    )
+    with pytest.raises(ConfigError, match="overlap"):
+        load_config(config, environ={}, init_directories=True)
+    assert not (tmp_path / "sync_root").exists()

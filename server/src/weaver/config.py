@@ -36,10 +36,18 @@ class LlmConfig:
 
 
 @dataclass(frozen=True)
+class SttConfig:
+    """Local prepared model; loading config never downloads or loads weights."""
+
+    model_path: Path
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Settings to inject into either pipeline component."""
 
     llm: LlmConfig
+    stt: SttConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -60,10 +68,11 @@ class ServerConfig:
     log_root: Path
     courier: CourierPaths
     llm: LlmConfig
+    stt: SttConfig
 
     @property
     def spinner(self) -> ComponentConfig:
-        return ComponentConfig(self.llm)
+        return ComponentConfig(self.llm, self.stt)
 
     @property
     def loom(self) -> ComponentConfig:
@@ -153,7 +162,7 @@ def _check_boundaries(roots: dict[str, Path]) -> None:
     # Public roots cannot contain each other, nor contain/be contained by private
     # storage. Private roots may share a parent or nest (e.g. logs inside state).
     for public in ("sync_root", "vault_root"):
-        for other in _ROOTS:
+        for other in roots:
             if other != public and _overlaps(roots[public], roots[other]):
                 raise ConfigError(f"{public} and {other}: paths overlap")
 
@@ -195,7 +204,7 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm"}:
+    if raw.keys() - {*_ROOTS, "llm", "stt"}:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -206,7 +215,17 @@ def load_config(
             raise ConfigError(f"{field}: expected path string")
         roots[field] = _path(value, config_file.parent, env, field)
     llm = _llm_settings(raw.get("llm", {}))
-    _check_boundaries(roots)
+    stt_raw = raw.get("stt", {})
+    if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
+        raise ConfigError("stt: expected a table containing only model_path")
+    model_path = stt_raw.get(
+        "model_path", str(roots["state_root"] / "models" / "whisper-large-v3-turbo")
+    )
+    if not isinstance(model_path, str):
+        raise ConfigError("stt.model_path: expected path string")
+    stt = SttConfig(_path(model_path, config_file.parent, env, "stt.model_path"))
+    boundaries = {**roots, "stt.model_path": stt.model_path}
+    _check_boundaries(boundaries)
     channels: dict[str, Path] = {}
     for name in _CHANNELS:
         expected = roots["sync_root"] / name
@@ -227,7 +246,7 @@ def load_config(
             _check_directory(directory, field, False)
             # Newly created roots can reveal case/firmlink aliases that were
             # unobservable when both paths were absent. Reject before use.
-            _check_boundaries(roots)
+            _check_boundaries(boundaries)
     return ServerConfig(
         config_file=config_file,
         sync_root=roots["sync_root"],
@@ -237,4 +256,5 @@ def load_config(
         log_root=roots["log_root"],
         courier=CourierPaths(**channels),
         llm=llm,
+        stt=stt,
     )
