@@ -5,3 +5,5 @@ scripts:
 worktree:
   sharedDirectories:
     - docs/domain
+    - docs/research
+    - docs/guides
