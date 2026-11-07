@@ -519,3 +519,29 @@ def test_timezone_oserror_is_redacted(
     ) as error:
         load_config(write_config(tmp_path), environ={})
     assert "private" not in str(error.value)
+
+
+def test_refiner_settings_are_injected(tmp_path: Path) -> None:
+    config = load_config(
+        write_config(tmp_path, "[refiner]\nbefore = 0\nafter = 5\n"), environ={}
+    )
+    assert config.refiner.before == 0
+    assert config.refiner.after == 5
+    assert config.loom.refiner is config.refiner
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "[refiner]\nbefore = -1",
+        "[refiner]\nafter = 6",
+        "[refiner]\nbefore = true",
+        "[refiner]\nbefore = 1.5",
+        '[refiner]\nbefore = "1"',
+        '[refiner]\nunit = "segment"',
+        "refiner = []",
+    ],
+)
+def test_invalid_refiner_settings(tmp_path: Path, extra: str) -> None:
+    with pytest.raises(ConfigError, match="refiner"):
+        load_config(write_config(tmp_path, extra), environ={})

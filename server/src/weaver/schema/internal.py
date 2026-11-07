@@ -29,12 +29,24 @@ from .models import (
     Source,
     SourceId,
     Thread,
+    Timestamp,
 )
 
 
 class ArchivedSource(Contract):
     source: Source
     payload_path: Path
+
+
+class CandidateTrigger(Contract):
+    """Rule hit in original Thread coordinates, with its unmodified time offset."""
+
+    kind: Literal["date", "time", "duration", "honorific"]
+    start_char: int = Field(ge=0, strict=True)
+    end_char: int = Field(ge=1, strict=True)
+    sentence_index: int = Field(ge=0, strict=True)
+    segment_ids: list[Ref]
+    reference_at: Timestamp | None
 
 
 class Candidate(Contract):
@@ -45,6 +57,9 @@ class Candidate(Contract):
     start_char: int = Field(ge=0, strict=True)
     end_char: int = Field(ge=1, strict=True)
     context: NonEmpty
+    start_sentence: int = Field(default=0, ge=0, strict=True)
+    end_sentence: int = Field(default=1, ge=1, strict=True)
+    triggers: list[CandidateTrigger] = Field(default_factory=list)
 
     def validate_thread(self, thread: Thread) -> None:
         if self.source_id != thread.source_id:
@@ -53,6 +68,22 @@ class Candidate(Contract):
             raise ValueError("candidate range exceeds Thread")
         if not set(self.segment_ids) <= {s.segment_id for s in thread.segments}:
             raise ValueError("unknown candidate segment")
+        if self.context != thread.text[self.start_char : self.end_char]:
+            raise ValueError("candidate context does not match Thread")
+        if self.end_sentence <= self.start_sentence:
+            raise ValueError("candidate sentence range must be ordered")
+        for trigger in self.triggers:
+            if (
+                not self.start_char
+                <= trigger.start_char
+                < trigger.end_char
+                <= self.end_char
+            ):
+                raise ValueError("trigger exceeds candidate range")
+            if not self.start_sentence <= trigger.sentence_index < self.end_sentence:
+                raise ValueError("trigger exceeds candidate sentence range")
+            if not set(trigger.segment_ids) <= set(self.segment_ids):
+                raise ValueError("unknown trigger segment")
 
 
 class IndexedEntity(Contract):
