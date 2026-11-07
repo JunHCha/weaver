@@ -326,3 +326,84 @@ def test_private_roots_may_nest(tmp_path: Path) -> None:
 def test_relative_xdg_root_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="absolute"):
         load_config(environ={"HOME": str(tmp_path), "XDG_CONFIG_HOME": "relative"})
+
+
+_BOUNDARY_PAIRS = [
+    (public, other)
+    for public in ("sync_root", "vault_root")
+    for other in ROOTS
+    if other != public
+]
+
+
+@pytest.mark.parametrize(("public", "other"), _BOUNDARY_PAIRS)
+@pytest.mark.parametrize("preexisting", [True, False])
+def test_case_insensitive_boundary_aliases(
+    tmp_path: Path, public: str, other: str, preexisting: bool
+) -> None:
+    probe = tmp_path / "case-probe"
+    probe.mkdir()
+    alias = tmp_path / "CASE-PROBE"
+    if not alias.exists() or not alias.samefile(probe):
+        pytest.skip("requires a case-insensitive filesystem")
+    path = write_config(tmp_path, create=False)
+    root = tmp_path / "protected"
+    if preexisting:
+        root.mkdir()
+    path.write_text(
+        path.read_text()
+        .replace(f'{public} = "{public}"', f'{public} = "protected"')
+        .replace(f'{other} = "{other}"', f'{other} = "Protected/nested"')
+    )
+    with pytest.raises(ConfigError, match="overlap"):
+        load_config(path, environ={}, init_directories=True)
+    if preexisting:
+        assert not (root / "nested").exists()
+
+
+@pytest.mark.parametrize(("public", "other"), _BOUNDARY_PAIRS)
+def test_firmlink_boundary_aliases(tmp_path: Path, public: str, other: str) -> None:
+    alias = Path("/System/Volumes/Data") / str(tmp_path.resolve()).lstrip("/")
+    if not alias.exists() or not alias.samefile(tmp_path):
+        pytest.skip("requires the macOS data-volume firmlink")
+    path = write_config(tmp_path)
+    target = alias / public / "nested"
+    path.write_text(
+        path.read_text().replace(f'{other} = "{other}"', f'{other} = "{target}"')
+    )
+    with pytest.raises(ConfigError, match="overlap"):
+        load_config(path, environ={}, init_directories=True)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    ("value", "env", "message"),
+    [
+        ("~/private", {}, "home expansion requires absolute HOME"),
+        ("~/private", {"HOME": "relative"}, "home expansion requires absolute HOME"),
+        ("~bob/private", {}, "named-user home expansion is unsupported"),
+        ("$HOME/private", {}, "expected a nonempty path without variables"),
+    ],
+)
+def test_specific_path_errors_are_preserved(
+    tmp_path: Path, value: str, env: dict[str, str], message: str
+) -> None:
+    path = write_config(tmp_path)
+    path.write_text(
+        path.read_text().replace(
+            'archive_root = "archive_root"', f'archive_root = "{value}"'
+        )
+    )
+    with pytest.raises(ConfigError, match=message) as error:
+        load_config(path, environ=env)
+    assert value not in str(error.value)
+
+
+def test_empty_config_environment_policies(tmp_path: Path) -> None:
+    folder = tmp_path / ".config" / "weaver"
+    folder.mkdir(parents=True)
+    path = write_config(folder)
+    env = {"HOME": str(tmp_path), "XDG_CONFIG_HOME": ""}
+    assert load_config(environ=env).config_file == path
+    with pytest.raises(ConfigError, match="config_file"):
+        load_config(environ={**env, "WEAVER_CONFIG": ""})

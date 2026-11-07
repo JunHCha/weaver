@@ -83,6 +83,8 @@ def _path(value: str, base: Path, env: Mapping[str, str], field: str) -> Path:
             raise ConfigError(f"{field}: expected a nonempty path without variables")
         path = Path(value)
         return (path if path.is_absolute() else base / path).resolve()
+    except ConfigError:
+        raise
     except (OSError, RuntimeError, ValueError):
         raise ConfigError(f"{field}: invalid path") from None
 
@@ -91,6 +93,7 @@ def _select_file(path: str | Path | None, env: Mapping[str, str]) -> Path:
     if path is not None:
         selected = str(path)
     elif "WEAVER_CONFIG" in env:
+        # An explicit but empty selector is an error, never a silent fallback.
         selected = env["WEAVER_CONFIG"]
     elif env.get("XDG_CONFIG_HOME"):
         xdg = env["XDG_CONFIG_HOME"]
@@ -119,8 +122,31 @@ def _llm_settings(value: object) -> LlmConfig:
     return LlmConfig(cast(Backend, backend), cast(str | None, reference))
 
 
+def _identity(path: Path) -> tuple[int, int] | None:
+    try:
+        info = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        raise ConfigError("paths: cannot inspect directory identity") from None
+    # This is the same identity comparison used by os.path.samefile().
+    return info.st_dev, info.st_ino
+
+
 def _overlaps(left: Path, right: Path) -> bool:
-    return left.is_relative_to(right) or right.is_relative_to(left)
+    if left.is_relative_to(right) or right.is_relative_to(left):
+        return True
+    # resolve() removes symlinks but retains case and macOS firmlink aliases.
+    # Compare each root with the other's ancestors, not ancestors with each
+    # other: disjoint siblings are allowed to share an existing parent.
+    left_id, right_id = _identity(left), _identity(right)
+    return (
+        left_id is not None
+        and any(left_id == _identity(parent) for parent in (right, *right.parents))
+    ) or (
+        right_id is not None
+        and any(right_id == _identity(parent) for parent in (left, *left.parents))
+    )
 
 
 def _check_boundaries(roots: dict[str, Path]) -> None:
@@ -199,6 +225,9 @@ def load_config(
             except OSError:
                 raise ConfigError(f"{field}: cannot create directory") from None
             _check_directory(directory, field, False)
+            # Newly created roots can reveal case/firmlink aliases that were
+            # unobservable when both paths were absent. Reject before use.
+            _check_boundaries(roots)
     return ServerConfig(
         config_file=config_file,
         sync_root=roots["sync_root"],

@@ -23,7 +23,10 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Selection: --config > WEAVER_CONFIG > $XDG_CONFIG_HOME/weaver/config.toml
 #            > ~/.config/weaver/config.toml (if XDG_CONFIG_HOME is unset/empty).
 # One file only; no merging, per-field env overrides, or $VAR expansion.
+# Empty WEAVER_CONFIG is an error; empty XDG_CONFIG_HOME uses the HOME fallback.
+# Relative XDG_CONFIG_HOME is rejected rather than ignored.
 # ~ and ~/ require HOME; ~other-user is unsupported. XDG_CONFIG_HOME is absolute.
 # Sync and vault must be disjoint from each other and from all private roots.
 # Private roots (archive/state/log) may nest. Symlinks are resolved first;
+# existing root/ancestor identities also detect case and macOS firmlink aliases.
 # Courier child directories must stay at their fixed locations within sync.
