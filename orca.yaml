@@ -1,0 +1,7 @@
+setupAgentStartupPolicy: wait-for-setup
+scripts:
+  setup: |
+    skul apply -y
+worktree:
+  sharedDirectories:
+    - docs/domain
