@@ -6,11 +6,10 @@
 #   debug APK. No release build, so no signing key is needed.
 # - server-macos: the same server checks on a macOS arm64 runner. This is an OS/arch
 #   compatibility check only; it is NOT evidence of M1 Pro STT performance.
-#   It runs on main pushes, workflow_dispatch and the weekly schedule to limit cost.
-# - ci-result: always runs and is the single check to mark as required. Path
-#   filtering happens inside the workflow (changes job) instead of `on.*.paths`,
-#   so a filtered-out job is reported as an explicit, intended skip and a skipped,
-#   failed or cancelled job that should have run fails this check.
+# - All jobs run on workflow_dispatch and release tag pushes (v*) when preparing
+#   release notes. PRs rely on the worker passing the local checks.
+# - ci-result: always runs and fails if any verification job is skipped, failed
+#   or cancelled.
 #
 # No secrets are used: no LLM/STT APIs, no Syncthing paths, no private docs and no
 # signing keys. Every action is pinned to a reviewed commit SHA (tag in the comment).
@@ -18,23 +17,17 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
-  schedule:
-    # Weekly (Monday 03:17 UTC) so the macOS job also runs without a main push.
-    - cron: "17 3 * * 1"
 
 permissions:
   contents: read
 
 concurrency:
-  # PR runs share a group per PR, so a new push cancels the superseded run.
-  # Other events get a unique group (run_id): a shared group would let a newer
-  # pending main run cancel an older pending one, skipping that commit.
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Keep every release/manual run: a newer run must not cancel an older one.
+  group: ci-run-${{ github.run_id }}
+  cancel-in-progress: false
 
 env:
   # uv CLI version verified with the server scaffold (issue #14).
@@ -43,54 +36,8 @@ env:
   UV_PYTHON: "3.12"
 
 jobs:
-  changes:
-    name: Detect changed areas
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      server: ${{ steps.filter.outputs.server }}
-      android: ${{ steps.filter.outputs.android }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The PR merge commit and its first parent (the base tip) are enough to
-          # list exactly the files the PR changes.
-          fetch-depth: 2
-          persist-credentials: false
-      - id: filter
-        name: Classify changed paths
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            # main push, manual and scheduled runs always check everything.
-            echo "server=true" >> "$GITHUB_OUTPUT"
-            echo "android=true" >> "$GITHUB_OUTPUT"
-            echo "Event $EVENT_NAME: running all jobs"
-            exit 0
-          fi
-          # --no-renames lists both the old and new path of a moved file, so moving
-          # a file out of server/, schema/ or android/ still selects that job.
-          changed="$(git diff --name-only --no-renames HEAD^1 HEAD)"
-          printf 'Changed files:\n%s\n' "$changed"
-          workflow='^\.github/workflows/ci\.yml$'
-          server=false
-          android=false
-          if grep -Eq "^server/|^schema/|^mypy\.ini$|^pytest\.ini$|$workflow" <<<"$changed"; then
-            server=true
-          fi
-          if grep -Eq "^android/|^schema/|$workflow" <<<"$changed"; then
-            android=true
-          fi
-          echo "server=$server" >> "$GITHUB_OUTPUT"
-          echo "android=$android" >> "$GITHUB_OUTPUT"
-          echo "server=$server android=$android"
-
   server:
     name: Server (ubuntu, Python 3.12)
-    needs: changes
-    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps: &server-steps
@@ -146,16 +93,12 @@ jobs:
   server-macos:
     # Compatibility only (macOS arm64 runner). Not an M1 Pro STT performance check.
     name: Server (macOS arm64, Python 3.12)
-    needs: changes
-    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 20
     steps: *server-steps
 
   android:
     name: Android (lint, unit tests, debug APK)
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -217,45 +160,29 @@ jobs:
           if-no-files-found: ignore
 
   ci-result:
-    # The single required check. It always runs and turns "skipped" into an explicit
-    # decision: a job may be skipped only when the changes job said it is not needed.
+    # Always evaluate every verification job, including skipped/failed/cancelled jobs.
     name: CI result
     if: always()
-    needs: [changes, server, server-macos, android]
+    needs: [server, server-macos, android]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Evaluate job results
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          CHANGES: ${{ needs.changes.result }}
-          NEED_SERVER: ${{ needs.changes.outputs.server }}
-          NEED_ANDROID: ${{ needs.changes.outputs.android }}
           SERVER: ${{ needs.server.result }}
           SERVER_MACOS: ${{ needs.server-macos.result }}
           ANDROID: ${{ needs.android.result }}
         run: |
           set -euo pipefail
           fail=0
-          check() { # name, result, required(true/false)
-            if [ "$3" = "true" ]; then
-              if [ "$2" = "success" ]; then
-                echo "ok    $1: success"
-              else
-                echo "FAIL  $1: $2 (required)"; fail=1
-              fi
-            elif [ "$2" = "skipped" ]; then
-              echo "skip  $1: not needed for this change/event"
-            elif [ "$2" = "success" ]; then
+          check() { # name, result
+            if [ "$2" = "success" ]; then
               echo "ok    $1: success"
             else
-              echo "FAIL  $1: $2"; fail=1
+              echo "FAIL  $1: $2 (required)"; fail=1
             fi
           }
-          check changes "$CHANGES" true
-          check server "$SERVER" "$NEED_SERVER"
-          check android "$ANDROID" "$NEED_ANDROID"
-          macos_required=false
-          [ "$EVENT_NAME" != "pull_request" ] && macos_required=true
-          check server-macos "$SERVER_MACOS" "$macos_required"
+          check server "$SERVER"
+          check android "$ANDROID"
+          check server-macos "$SERVER_MACOS"
           exit "$fail"

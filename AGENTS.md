@@ -41,11 +41,14 @@ Version rationale and signing procedures are in `docs/guides/android-development
 
 ## CI
 
-`.github/workflows/ci.yml` runs the commands above on pull requests and main pushes:
-server checks on Python 3.12 with the pinned uv and `server/uv.lock` (plus a check that
-`weaver.schema.export` output equals the committed `schema/*.schema.json`), and the
-Android `./gradlew --no-daemon lint testDebugUnitTest assembleDebug`. The macOS arm64
-server job runs only on main pushes, manual dispatch and weekly; it checks
-compatibility, not M1 STT performance. Mark only `CI result` as required: it fails
-when a job that the path filter selected was skipped, failed or cancelled.
+PR validation relies on the worker passing the local checks above before opening a PR.
+`.github/workflows/ci.yml` runs full verification when preparing release notes, via
+manual `workflow_dispatch` or a release tag push matching `v*`. PRs, branch pushes
+(including main) and schedules do not trigger CI. Every run includes server checks
+on Ubuntu and macOS arm64 with Python 3.12, the pinned uv and `server/uv.lock`
+(plus a check that `weaver.schema.export` matches committed `schema/*.schema.json`),
+and Android `./gradlew --no-daemon lint testDebugUnitTest assembleDebug`.
+The macOS job checks compatibility, not M1 STT performance. `CI result` always
+runs and fails if any verification job is skipped, failed or cancelled; do not
+require it on PRs, where no CI run is expected.
 Pin new actions to a full commit SHA with the tag in a comment; CI uses no secrets.
