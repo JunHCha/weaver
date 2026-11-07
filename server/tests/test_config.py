@@ -467,3 +467,55 @@ def test_stt_boundary_rejected_before_init_creates_directories(tmp_path):
     with pytest.raises(ConfigError, match="overlap"):
         load_config(config, environ={}, init_directories=True)
     assert not (tmp_path / "sync_root").exists()
+
+
+def test_shared_time_settings_default_and_override(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path), environ={})
+    assert config.time.timezone == "Asia/Seoul"
+    assert config.time.zone.key == "Asia/Seoul"
+    config = load_config(
+        write_config(tmp_path, '[time]\ntimezone = "America/New_York"'), environ={}
+    )
+    assert config.time.zone.key == "America/New_York"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        'time = "secret-value"',
+        "[time]\ntimezone = false",
+        '[time]\ntimezone = ""',
+        '[time]\ntimezone = "secret-value"',
+        '[time]\ntimezone = "/secret-value"',
+        '[time]\nunknown = "secret-value"',
+    ],
+)
+def test_invalid_time_settings_redact_values(tmp_path: Path, settings: str) -> None:
+    with pytest.raises(ConfigError, match="time") as error:
+        load_config(write_config(tmp_path, settings), environ={})
+    assert "secret-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("zone", ["Asia", "Factory", "posixrules", "localtime"])
+def test_timezone_rejects_directory_and_nonregional_keys(
+    tmp_path: Path, zone: str
+) -> None:
+    with pytest.raises(
+        ConfigError, match="^time.timezone: unknown IANA timezone$"
+    ) as error:
+        load_config(write_config(tmp_path, f'[time]\ntimezone = "{zone}"'), environ={})
+    assert error.value.__cause__ is None
+
+
+def test_timezone_oserror_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_key: str) -> None:
+        raise OSError("private path must not appear")
+
+    monkeypatch.setattr("weaver.config.ZoneInfo", fail)
+    with pytest.raises(
+        ConfigError, match="^time.timezone: unknown IANA timezone$"
+    ) as error:
+        load_config(write_config(tmp_path), environ={})
+    assert "private" not in str(error.value)

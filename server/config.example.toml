@@ -35,3 +35,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Preparation is explicit: python -m weaver.spinner.prepare_model --config <file>
 # [stt]
 # model_path = "models/whisper-large-v3-turbo"
+
+[time]
+# Shared IANA timezone for local source timestamps (Kakao, Refiner, etc.).
+# Change this for conversations exported in another timezone.
+timezone = "Asia/Seoul"

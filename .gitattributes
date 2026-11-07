@@ -1,0 +1,2 @@
+# Preserve the intentional UTF-8 BOM/CRLF parser fixture on every checkout.
+server/tests/loom/fixtures/mobile.txt -text whitespace=cr-at-eol

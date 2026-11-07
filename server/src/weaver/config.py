@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 Backend = Literal["none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"]
 _BACKENDS = {"none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"}
@@ -36,6 +37,17 @@ class LlmConfig:
 
 
 @dataclass(frozen=True)
+class TimeConfig:
+    """Shared timezone for interpreting local source timestamps."""
+
+    timezone: str = "Asia/Seoul"
+
+    @property
+    def zone(self) -> ZoneInfo:
+        return ZoneInfo(self.timezone)
+
+
+@dataclass(frozen=True)
 class SttConfig:
     """Local prepared model; loading config never downloads or loads weights."""
 
@@ -44,7 +56,7 @@ class SttConfig:
 
 @dataclass(frozen=True)
 class ComponentConfig:
-    """Settings to inject into either pipeline component."""
+    """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
     llm: LlmConfig
     stt: SttConfig | None = None
@@ -69,6 +81,7 @@ class ServerConfig:
     courier: CourierPaths
     llm: LlmConfig
     stt: SttConfig
+    time: TimeConfig = TimeConfig()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -204,7 +217,7 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm", "stt"}:
+    if raw.keys() - {*_ROOTS, "llm", "stt", "time"}:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -214,6 +227,25 @@ def load_config(
         if not isinstance(value, str):
             raise ConfigError(f"{field}: expected path string")
         roots[field] = _path(value, config_file.parent, env, field)
+    time_raw = raw.get("time", {})
+    if not isinstance(time_raw, dict) or time_raw.keys() - {"timezone"}:
+        raise ConfigError("time: expected a table containing only timezone")
+    timezone = time_raw.get("timezone", "Asia/Seoul")
+    if not isinstance(timezone, str) or not timezone:
+        raise ConfigError("time.timezone: expected IANA timezone name")
+    try:
+        # Factory is tzdb's unspecified-timezone sentinel, not a real region.
+        # localtime/posixrules depend on host configuration rather than a source.
+        if timezone not in available_timezones() or timezone in {
+            "Factory",
+            "localtime",
+            "posixrules",
+        }:
+            raise ValueError("unsupported timezone key")
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        raise ConfigError("time.timezone: unknown IANA timezone") from None
+    time_config = TimeConfig(timezone)
     llm = _llm_settings(raw.get("llm", {}))
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -257,4 +289,5 @@ def load_config(
         courier=CourierPaths(**channels),
         llm=llm,
         stt=stt,
+        time=time_config,
     )
