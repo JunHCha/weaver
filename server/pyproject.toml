@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Weaver server: Spinner and Loom"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.125,<1",
     "pydantic>=2,<3",
     "typer>=0.12,<1",
     "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",

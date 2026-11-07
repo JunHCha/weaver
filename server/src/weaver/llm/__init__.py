@@ -1,1 +1,53 @@
-"""Language model client boundaries and backends."""
+"""Shared synchronous LLM contract, redacted errors and configured factory."""
+
+from pathlib import Path
+
+from weaver.config import LlmConfig
+
+from .client import AnthropicClient
+from .errors import (
+    AuthenticationError,
+    BudgetExceeded,
+    InvalidJson,
+    LlmError,
+    LlmTimeout,
+    MissingOutput,
+    RateLimited,
+    Refusal,
+    SchemaMismatch,
+    TransientError,
+    UnsupportedBackend,
+    UnsupportedStructuredOutput,
+)
+from .ledger import Ledger
+from .types import LlmClient
+
+__all__ = [
+    "LlmClient",
+    "AnthropicClient",
+    "create_client",
+    "AuthenticationError",
+    "BudgetExceeded",
+    "InvalidJson",
+    "LlmError",
+    "LlmTimeout",
+    "MissingOutput",
+    "RateLimited",
+    "Refusal",
+    "SchemaMismatch",
+    "TransientError",
+    "UnsupportedBackend",
+    "UnsupportedStructuredOutput",
+]
+
+
+def create_client(config: LlmConfig, *, state_root: Path) -> LlmClient:
+    """Construct without credentials/network; resolve api_key_env per call.
+
+    Pass settings.llm and settings.state_root from weaver.config.load_config.
+    Alternative adapters are tracked by #46; never silently fall back to them.
+    The state_root directory must already exist (explicit config initialization).
+    """
+    if config.backend != "anthropic":
+        raise UnsupportedBackend()
+    return AnthropicClient(config, Ledger(state_root / "llm.sqlite3"))
