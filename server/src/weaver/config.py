@@ -55,11 +55,26 @@ class SttConfig:
 
 
 @dataclass(frozen=True)
+class RefinerConfig:
+    """Sentence window on either side of a rule hit; hard maximum is five."""
+
+    before: int = 1
+    after: int = 1
+
+    def __post_init__(self) -> None:
+        for name in ("before", "after"):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 <= value <= 5:
+                raise ConfigError(f"refiner.{name}: expected integer from 0 to 5")
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
     llm: LlmConfig
     stt: SttConfig | None = None
+    refiner: RefinerConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +97,7 @@ class ServerConfig:
     llm: LlmConfig
     stt: SttConfig
     time: TimeConfig = TimeConfig()
+    refiner: RefinerConfig = RefinerConfig()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -89,7 +105,7 @@ class ServerConfig:
 
     @property
     def loom(self) -> ComponentConfig:
-        return ComponentConfig(self.llm)
+        return ComponentConfig(self.llm, refiner=self.refiner)
 
 
 def _path(value: str, base: Path, env: Mapping[str, str], field: str) -> Path:
@@ -217,7 +233,7 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm", "stt", "time"}:
+    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner"}:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -246,6 +262,10 @@ def load_config(
     except (ZoneInfoNotFoundError, ValueError, OSError):
         raise ConfigError("time.timezone: unknown IANA timezone") from None
     time_config = TimeConfig(timezone)
+    refiner_raw = raw.get("refiner", {})
+    if not isinstance(refiner_raw, dict) or refiner_raw.keys() - {"before", "after"}:
+        raise ConfigError("refiner: expected a table containing only before/after")
+    refiner = RefinerConfig(**refiner_raw)
     llm = _llm_settings(raw.get("llm", {}))
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -290,4 +310,5 @@ def load_config(
         llm=llm,
         stt=stt,
         time=time_config,
+        refiner=refiner,
     )

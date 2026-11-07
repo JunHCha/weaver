@@ -37,6 +37,12 @@ api_key_env = "ANTHROPIC_API_KEY"
 # model_path = "models/whisper-large-v3-turbo"
 
 [time]
-# Shared IANA timezone for local source timestamps (Kakao, Refiner, etc.).
+# Shared IANA timezone for local source timestamps (Kakao, etc.).
 # Change this for conversations exported in another timezone.
 timezone = "Asia/Seoul"
+
+# Optional: sentence context before/after each Refiner signal (integers 0..5).
+# Defaults are one sentence on either side; zero selects the triggered sentence.
+# [refiner]
+# before = 1
+# after = 1
