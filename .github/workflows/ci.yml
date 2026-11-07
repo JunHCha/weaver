@@ -30,8 +30,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  # Cancel superseded PR runs; let every main push finish its own verification.
+  # PR runs share a group per PR, so a new push cancels the superseded run.
+  # Other events get a unique group (run_id): a shared group would let a newer
+  # pending main run cancel an older pending one, skipping that commit.
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -68,7 +70,9 @@ jobs:
             echo "Event $EVENT_NAME: running all jobs"
             exit 0
           fi
-          changed="$(git diff --name-only HEAD^1 HEAD)"
+          # --no-renames lists both the old and new path of a moved file, so moving
+          # a file out of server/, schema/ or android/ still selects that job.
+          changed="$(git diff --name-only --no-renames HEAD^1 HEAD)"
           printf 'Changed files:\n%s\n' "$changed"
           workflow='^\.github/workflows/ci\.yml$'
           server=false
@@ -176,7 +180,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository/org/robolectric
-          key: robolectric-${{ runner.os }}-${{ hashFiles('android/gradle/libs.versions.toml') }}
+          key: robolectric-${{ runner.os }}-${{ hashFiles('android/gradle/libs.versions.toml', 'android/app/build.gradle.kts') }}
       - name: Install Android SDK 36 packages
         run: |
           set -euo pipefail

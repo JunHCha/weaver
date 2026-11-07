@@ -82,10 +82,9 @@ android {
                 val schemaDir = rootProject.layout.projectDirectory.dir("../schema")
                 test.inputs.dir(schemaDir).withPropertyName("weaverSchema")
                 test.systemProperty("weaver.schemaDir", schemaDir.asFile.absolutePath)
-                test.systemProperty(
-                    "weaver.resDir",
-                    layout.projectDirectory.dir("src/main/res").asFile.absolutePath,
-                )
+                val resDir = layout.projectDirectory.dir("src/main/res")
+                test.inputs.dir(resDir).withPropertyName("weaverRes")
+                test.systemProperty("weaver.resDir", resDir.asFile.absolutePath)
                 // Rule snapshots live in the source tree so they can be refreshed in place:
                 // ./gradlew testDebugUnitTest -Dweaver.updateRuleSnapshots=true
                 test.systemProperty(
