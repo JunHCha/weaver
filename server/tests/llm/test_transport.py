@@ -188,3 +188,82 @@ def test_configured_key_wins_over_sdk_environment(fake_sdk, monkeypatch):
     assert requests[0].url.host == "api.anthropic.com"
     assert requests[0].headers["x-api-key"] == "fake-key"
     assert "authorization" not in requests[0].headers
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "timeout"])
+def test_debug_sdk_logs_never_include_credentials_or_content(
+    fake_sdk,
+    monkeypatch,
+    caplog,
+    outcome,
+):
+    import logging
+
+    from anthropic._utils._logs import setup_logging
+
+    # Reproduce ANTHROPIC_LOG and application-level DEBUG configuration. Include
+    # child loggers: disabling only a parent does not suppress propagated logs.
+    monkeypatch.setenv("ANTHROPIC_LOG", "debug")
+    setup_logging()
+    caplog.set_level(logging.DEBUG)
+    names = (
+        "anthropic",
+        "anthropic._base_client",
+        "httpx",
+        "httpx._client",
+        "httpcore",
+        "httpcore.connection",
+    )
+    for name in names:
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "disabled", False)
+        monkeypatch.setattr(logger, "level", logging.DEBUG)
+
+    def handle(request):
+        # Lower libraries can attach request/response content to errors at any
+        # severity. Also exercise the SDK's actual DEBUG Request options log.
+        # Reconfiguration during an in-flight request must not undo the
+        # privacy filter, including exception logs after this handler fails.
+        setup_logging()
+        for name in names:
+            logger = logging.getLogger(name)
+            logger.disabled = False
+            logger.setLevel(logging.DEBUG)
+            for level in (
+                logging.DEBUG,
+                logging.INFO,
+                logging.WARNING,
+                logging.ERROR,
+                logging.CRITICAL,
+            ):
+                logging.getLogger(name).log(
+                    level, "fake-key private-system private-user private-response"
+                )
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("private-response", request=request)
+        if outcome == "error":
+            return httpx.Response(500, json={"error": {"message": "private-response"}})
+        return httpx.Response(
+            200, json=message(content=[{"type": "text", "text": "private-response"}])
+        )
+
+    fake_sdk(handle)
+    if outcome == "success":
+        asyncio.run(
+            AnthropicTransport().send(
+                Request("claude-sonnet-5-5", "private-system", "private-user", 100),
+                "fake-key",
+            )
+        )
+    else:
+        with pytest.raises(LlmError):
+            asyncio.run(
+                AnthropicTransport().send(
+                    Request("claude-sonnet-5-5", "private-system", "private-user", 100),
+                    "fake-key",
+                )
+            )
+    logging.getLogger("weaver.llm.test").warning("safe-metrics-marker")
+    assert "safe-metrics-marker" in caplog.text
+    for secret in ("fake-key", "private-system", "private-user", "private-response"):
+        assert secret not in caplog.text

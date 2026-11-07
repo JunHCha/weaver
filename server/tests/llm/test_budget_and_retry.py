@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, Field
@@ -78,7 +79,11 @@ def test_timeout_keeps_one_attempt_reservation_after_restart(tmp_path: Path) -> 
         client.generate_text("spinner.revise", "s", "u")
 
 
-def test_deadline_includes_retry_backoff(tmp_path: Path) -> None:
+def test_deadline_includes_retry_backoff(tmp_path: Path, monkeypatch) -> None:
+    # Count the actual asyncio backoff, independent of fullfsync disk latency.
+    monkeypatch.setattr(
+        "weaver.llm.client.time", SimpleNamespace(monotonic=lambda: 0.0)
+    )
     client, transport, ledger = make_client(
         tmp_path, RateLimited(), BackendReply("never")
     )

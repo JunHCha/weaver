@@ -1,5 +1,7 @@
 """Anthropic Client SDK adapter. No tools, sessions, fallback or SDK retries."""
 
+import logging
+
 import anthropic
 
 from .errors import (
@@ -12,8 +14,39 @@ from .errors import (
 from .types import BackendReply, Request, TokenUsage
 
 
+class _SuppressTransportLogs(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # SDK Request options and exception traces can include the complete
+        # credential, prompt and response, even at error severity.
+        return False
+
+
+_PRIVATE_LOG_FILTER = _SuppressTransportLogs()
+_PRIVATE_LOG_NAMES = ("anthropic", "httpx", "httpcore")
+
+
+def _silence_transport_logs() -> None:
+    # Reassert before EVERY request, after SDK import / ANTHROPIC_LOG setup.
+    # Parent.disabled does not apply to descendants, so include existing child
+    # loggers too. New children inherit the parents' above-CRITICAL level.
+    # Keep this process-wide: restoring levels would expose concurrent calls.
+    names = {*_PRIVATE_LOG_NAMES, *tuple(logging.Logger.manager.loggerDict)}
+    for name in names:
+        if any(
+            name == root or name.startswith(root + ".") for root in _PRIVATE_LOG_NAMES
+        ):
+            logger = logging.getLogger(name)
+            logger.disabled = True
+            logger.setLevel(logging.CRITICAL + 1)
+            # Retain suppression if a later logging config re-enables an
+            # existing logger or ANTHROPIC_LOG resets its level.
+            if _PRIVATE_LOG_FILTER not in logger.filters:
+                logger.addFilter(_PRIVATE_LOG_FILTER)
+
+
 class AnthropicTransport:
     async def send(self, request: Request, api_key: str) -> BackendReply:
+        _silence_transport_logs()
         try:
             # Explicit endpoint and key prevent ambient SDK environment overrides.
             async with anthropic.AsyncAnthropic(

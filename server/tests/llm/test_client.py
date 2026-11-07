@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
@@ -124,7 +125,12 @@ def test_no_fallback(tmp_path: Path, backend) -> None:
         create_client(LlmConfig(backend=backend), state_root=tmp_path)
 
 
-def test_total_deadline_cancels_transport(tmp_path: Path) -> None:
+def test_total_deadline_cancels_transport(tmp_path: Path, monkeypatch) -> None:
+    # Isolate network cancellation from real fullfsync reservation latency.
+    # The separate preflight-deadline test covers elapsed preparation time.
+    monkeypatch.setattr(
+        "weaver.llm.client.time", SimpleNamespace(monotonic=lambda: 0.0)
+    )
     cancelled = []
 
     class Slow:

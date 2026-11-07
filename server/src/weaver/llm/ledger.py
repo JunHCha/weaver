@@ -6,9 +6,10 @@ A crash leaves its reservation intact. Unknown billed usage is never zeroed.
 
 import json
 import logging
+import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,11 +38,29 @@ class Ledger:
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS llm_month ON llm_calls(month)")
 
+    def _secure_files(self) -> None:
+        # Create private BEFORE SQLite opens it, regardless of process umask;
+        # fchmod also repairs an existing database before new sidecars inherit
+        # its mode. Never truncate an existing reservation ledger.
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        for suffix in ("-wal", "-shm", "-journal"):
+            with suppress(FileNotFoundError):
+                os.chmod(f"{self.path}{suffix}", 0o600)
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        self._secure_files()
         db = sqlite3.connect(self.path, timeout=5)
         try:
             db.execute("PRAGMA synchronous=FULL")
+            # Match archive/fabric durability: macOS flushes the drive cache
+            # on commit and WAL checkpoint, not just SQLite's userspace cache.
+            db.execute("PRAGMA fullfsync=ON")
+            db.execute("PRAGMA checkpoint_fullfsync=ON")
             yield db
             db.commit()
         except BaseException:
