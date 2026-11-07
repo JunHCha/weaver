@@ -1,0 +1,257 @@
+# Weaver CI (issue #13).
+#
+# - server: Ruff, mypy strict, pytest and the schema/ freshness check on Python 3.12
+#   (the minimum supported version) with a pinned uv and the committed server/uv.lock.
+# - android: lint, local unit tests (including the schema/ contract tests) and the
+#   debug APK. No release build, so no signing key is needed.
+# - server-macos: the same server checks on a macOS arm64 runner. This is an OS/arch
+#   compatibility check only; it is NOT evidence of M1 Pro STT performance.
+#   It runs on main pushes, workflow_dispatch and the weekly schedule to limit cost.
+# - ci-result: always runs and is the single check to mark as required. Path
+#   filtering happens inside the workflow (changes job) instead of `on.*.paths`,
+#   so a filtered-out job is reported as an explicit, intended skip and a skipped,
+#   failed or cancelled job that should have run fails this check.
+#
+# No secrets are used: no LLM/STT APIs, no Syncthing paths, no private docs and no
+# signing keys. Every action is pinned to a reviewed commit SHA (tag in the comment).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly (Monday 03:17 UTC) so the macOS job also runs without a main push.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Cancel superseded PR runs; let every main push finish its own verification.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # uv CLI version verified with the server scaffold (issue #14).
+  UV_VERSION: "0.9.2"
+  # Minimum supported Python (server/pyproject.toml requires-python >=3.12).
+  UV_PYTHON: "3.12"
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      android: ${{ steps.filter.outputs.android }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The PR merge commit and its first parent (the base tip) are enough to
+          # list exactly the files the PR changes.
+          fetch-depth: 2
+          persist-credentials: false
+      - id: filter
+        name: Classify changed paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            # main push, manual and scheduled runs always check everything.
+            echo "server=true" >> "$GITHUB_OUTPUT"
+            echo "android=true" >> "$GITHUB_OUTPUT"
+            echo "Event $EVENT_NAME: running all jobs"
+            exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          printf 'Changed files:\n%s\n' "$changed"
+          workflow='^\.github/workflows/ci\.yml$'
+          server=false
+          android=false
+          if grep -Eq "^server/|^schema/|^mypy\.ini$|^pytest\.ini$|$workflow" <<<"$changed"; then
+            server=true
+          fi
+          if grep -Eq "^android/|^schema/|$workflow" <<<"$changed"; then
+            android=true
+          fi
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "server=$server android=$android"
+
+  server:
+    name: Server (ubuntu, Python 3.12)
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps: &server-steps
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          # Only downloaded packages are cached, keyed on the lockfile.
+          cache-dependency-glob: server/uv.lock
+      - name: Install locked dependencies (dev group, includes test)
+        run: uv sync --project server --locked --group dev
+      - name: Confirm Python version
+        run: |
+          uv run --project server --locked python -c \
+            'import sys; print(sys.version); assert sys.version_info[:2] == (3, 12), sys.version'
+      - name: Ruff lint
+        run: uv run --project server --locked ruff check server
+      - name: Ruff format
+        run: uv run --project server --locked ruff format --check server
+      - name: Mypy (strict)
+        run: uv run --project server --locked mypy server/src
+      - name: Pytest
+        # pytest exits with code 5 (failure) when no tests are collected.
+        run: |
+          mkdir -p reports
+          uv run --project server --locked pytest -ra --junitxml=reports/pytest.xml
+      - name: Schema export matches committed schema/
+        run: |
+          set -euo pipefail
+          # Compare the full set of *.schema.json files (missing, extra or changed).
+          exported="$RUNNER_TEMP/schema-exported"
+          committed="$RUNNER_TEMP/schema-committed"
+          mkdir -p "$exported" "$committed"
+          uv run --project server --locked python -m weaver.schema.export --output "$exported"
+          cp schema/*.schema.json "$committed"/
+          if ! diff -ru "$committed" "$exported"; then
+            echo "::error::schema/ differs from the server export. Run: uv run --project server python -m weaver.schema.export --output schema"
+            exit 1
+          fi
+          echo "schema/ matches the server export ($(find "$exported" -name '*.schema.json' | wc -l) files)"
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-reports-${{ runner.os }}
+          path: reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  server-macos:
+    # Compatibility only (macOS arm64 runner). Not an M1 Pro STT performance check.
+    name: Server (macOS arm64, Python 3.12)
+    needs: changes
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps: *server-steps
+
+  android:
+    name: Android (lint, unit tests, debug APK)
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          # Caches ~/.gradle/caches and wrapper, keyed on Gradle build files,
+          # gradle-wrapper.properties and libs.versions.toml.
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/**/*.gradle*
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/gradle/libs.versions.toml
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('android/gradle/libs.versions.toml') }}
+      - name: Install Android SDK 36 packages
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install "platforms;android-36" "build-tools;36.1.0" "platform-tools" > /dev/null
+          "$sdkmanager" --list_installed | grep -E 'platforms;android-36|build-tools;36\.1\.0'
+      - name: Lint, unit tests and debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon lint testDebugUnitTest assembleDebug
+      - name: Show APK path
+        run: |
+          set -euo pipefail
+          apks="$(find android/app/build/outputs/apk/debug -name '*.apk' -print)"
+          if [ -z "$apks" ]; then
+            echo "::error::assembleDebug produced no APK"
+            exit 1
+          fi
+          echo "$apks"
+          {
+            echo "### Debug APK"; echo; echo '```'
+            find android/app/build/outputs/apk/debug -name '*.apk' -exec ls -l {} +
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload test and lint reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  ci-result:
+    # The single required check. It always runs and turns "skipped" into an explicit
+    # decision: a job may be skipped only when the changes job said it is not needed.
+    name: CI result
+    if: always()
+    needs: [changes, server, server-macos, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate job results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGES: ${{ needs.changes.result }}
+          NEED_SERVER: ${{ needs.changes.outputs.server }}
+          NEED_ANDROID: ${{ needs.changes.outputs.android }}
+          SERVER: ${{ needs.server.result }}
+          SERVER_MACOS: ${{ needs.server-macos.result }}
+          ANDROID: ${{ needs.android.result }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() { # name, result, required(true/false)
+            if [ "$3" = "true" ]; then
+              if [ "$2" = "success" ]; then
+                echo "ok    $1: success"
+              else
+                echo "FAIL  $1: $2 (required)"; fail=1
+              fi
+            elif [ "$2" = "skipped" ]; then
+              echo "skip  $1: not needed for this change/event"
+            elif [ "$2" = "success" ]; then
+              echo "ok    $1: success"
+            else
+              echo "FAIL  $1: $2"; fail=1
+            fi
+          }
+          check changes "$CHANGES" true
+          check server "$SERVER" "$NEED_SERVER"
+          check android "$ANDROID" "$NEED_ANDROID"
+          macos_required=false
+          [ "$EVENT_NAME" != "pull_request" ] && macos_required=true
+          check server-macos "$SERVER_MACOS" "$macos_required"
+          exit "$fail"

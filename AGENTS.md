@@ -38,3 +38,14 @@ Release signing reads the key from `~/.config/weaver/android/` and passwords fro
 `WEAVER_ANDROID_*` environment variables; never commit keys, passwords or their copies.
 Version rationale and signing procedures are in `docs/guides/android-development.md` and
 `docs/guides/android-signing.md` (local only).
+
+## CI
+
+`.github/workflows/ci.yml` runs the commands above on pull requests and main pushes:
+server checks on Python 3.12 with the pinned uv and `server/uv.lock` (plus a check that
+`weaver.schema.export` output equals the committed `schema/*.schema.json`), and the
+Android `./gradlew --no-daemon lint testDebugUnitTest assembleDebug`. The macOS arm64
+server job runs only on main pushes, manual dispatch and weekly; it checks
+compatibility, not M1 STT performance. Mark only `CI result` as required: it fails
+when a job that the path filter selected was skipped, failed or cancelled.
+Pin new actions to a full commit SHA with the tag in a comment; CI uses no secrets.
