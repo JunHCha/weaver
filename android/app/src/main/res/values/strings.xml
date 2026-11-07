@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Weaver</string>
+    <string name="home_subtitle">기능별 권한이 없어도 이 화면은 열립니다. 필요한 기능에서만 권한을 요청합니다.</string>
+    <string name="feature_notifications">알림</string>
+    <string name="feature_notifications_desc">새 제안과 변경 경고를 알립니다.</string>
+    <string name="feature_shepherd">Shepherd</string>
+    <string name="feature_shepherd_desc">통화 녹음과 음성 메모를 찾아 outbox로 보냅니다.</string>
+    <string name="feature_calendar">일정 등록</string>
+    <string name="feature_calendar_desc">승인된 일정을 기기 캘린더에 등록합니다.</string>
+    <string name="permission_granted">허용됨</string>
+    <string name="permission_denied">권한 없음</string>
+    <string name="permission_request">권한 요청</string>
+</resources>
