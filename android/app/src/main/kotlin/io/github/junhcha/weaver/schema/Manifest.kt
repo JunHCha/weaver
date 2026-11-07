@@ -38,7 +38,7 @@ data class Manifest(
         Rules.prefixedId("cap", captureId, "capture_id")
         Rules.payloadRef(payload, "payload")
         Rules.digest(sha256, "sha256")
-        require(size >= 0) { "size must be nonnegative" }
+        Rules.offset(size, "size")
         Rules.timestamp(capturedAt, "captured_at")
         occurredAt?.let { Rules.timestamp(it, "occurred_at") }
     }

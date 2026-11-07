@@ -16,7 +16,7 @@ import kotlinx.serialization.json.JsonElement
 data class Proposal(
     @SerialName("schema_version") val schemaVersion: Int,
     @SerialName("proposal_id") val proposalId: String,
-    val rev: Int,
+    val rev: Long,
     val source: SourceSummary,
     val summary: String,
     @SerialName("thread_excerpt") val threadExcerpt: String,
@@ -28,7 +28,7 @@ data class Proposal(
     init {
         Rules.schemaVersion(schemaVersion)
         Rules.prefixedId("prp", proposalId, "proposal_id")
-        require(rev >= 1) { "rev must be >= 1" }
+        Rules.revision(rev)
         Rules.nonEmpty(summary, "summary")
         Rules.nonEmpty(threadExcerpt, "thread_excerpt")
     }

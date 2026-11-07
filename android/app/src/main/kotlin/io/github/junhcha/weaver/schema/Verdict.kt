@@ -13,7 +13,7 @@ import kotlinx.serialization.json.JsonElement
 data class Verdict(
     @SerialName("schema_version") val schemaVersion: Int,
     @SerialName("proposal_id") val proposalId: String,
-    val rev: Int,
+    val rev: Long,
     val verdict: Kind,
     val edits: List<Edit>,
     @SerialName("reject_reason") val rejectReason: RejectReason?,
@@ -23,7 +23,7 @@ data class Verdict(
     init {
         Rules.schemaVersion(schemaVersion)
         Rules.prefixedId("prp", proposalId, "proposal_id")
-        require(rev >= 1) { "rev must be >= 1" }
+        Rules.revision(rev)
         Rules.timestamp(reviewedAt, "reviewed_at")
         instruction?.let { Rules.nonEmpty(it, "instruction") }
         when (verdict) {
@@ -66,11 +66,11 @@ data class Verdict(
     @Serializable
     data class Edit(val path: String, val value: JsonElement) {
         init {
-            require(POINTER.matches(path)) { "edit path must be an RFC 6901 pointer" }
+            require(POINTER.containsMatchIn(path)) { "edit path must be an RFC 6901 pointer" }
         }
 
         private companion object {
-            val POINTER = Regex("(?:/(?:[^~/]|~[01])*)*")
+            val POINTER = Regex(SchemaRules.POINTER)
         }
     }
 }

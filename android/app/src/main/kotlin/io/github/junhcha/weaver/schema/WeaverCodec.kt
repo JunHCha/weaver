@@ -1,8 +1,16 @@
 package io.github.junhcha.weaver.schema
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.SerialKind
+import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
@@ -60,8 +68,9 @@ object WeaverCodec {
         val found = version.content.toLongOrNull()
             ?: return DecodeResult.Invalid(model, "schema_version is out of range")
         if (found != SCHEMA_VERSION.toLong()) return DecodeResult.UnsupportedVersion(model, found)
-        // Decode from the original text, not the parsed tree, so integer fields keep the
-        // lexical integer-token rule (rev 1.0 is rejected by the streaming decoder).
+        // kotlinx accepts quoted numbers ("1") and exponent integers (1e0); the schema and
+        // its README do not. Check JSON token types against the model before decoding.
+        tokenViolation("", root, serializer.descriptor)?.let { return DecodeResult.Invalid(model, it) }
         return try {
             DecodeResult.Ok(json.decodeFromString(serializer, text))
         } catch (e: SerializationException) {
@@ -72,4 +81,39 @@ object WeaverCodec {
     }
 
     inline fun <reified T> encode(value: T): String = json.encodeToString(serializer<T>(), value)
+
+    private val numberToken = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+
+    /**
+     * Walks [element] along [descriptor] and returns the first JSON token whose type differs
+     * from the model: integer fields need integer tokens, number fields unquoted numbers and
+     * string/enum fields JSON strings. Structural mismatches are left to the decoder.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun tokenViolation(path: String, element: JsonElement, descriptor: SerialDescriptor): String? {
+        if (element is JsonNull || descriptor.serialName.startsWith("kotlinx.serialization.json.")) return null
+        return when (descriptor.kind) {
+            StructureKind.CLASS -> (element as? JsonObject)?.let { obj ->
+                (0 until descriptor.elementsCount).firstNotNullOfOrNull { i ->
+                    val name = descriptor.getElementName(i)
+                    obj[name]?.let { tokenViolation("$path/$name", it, descriptor.getElementDescriptor(i)) }
+                }
+            }
+            StructureKind.LIST -> (element as? JsonArray)?.let { array ->
+                array.withIndex().firstNotNullOfOrNull { (i, child) ->
+                    tokenViolation("$path/$i", child, descriptor.getElementDescriptor(0))
+                }
+            }
+            PrimitiveKind.BYTE, PrimitiveKind.SHORT, PrimitiveKind.INT, PrimitiveKind.LONG ->
+                if (element.isLiteral(integerToken)) null else "$path must be a JSON integer token"
+            PrimitiveKind.FLOAT, PrimitiveKind.DOUBLE ->
+                if (element.isLiteral(numberToken)) null else "$path must be a JSON number"
+            PrimitiveKind.STRING, SerialKind.ENUM ->
+                if (element is JsonPrimitive && element.isString) null else "$path must be a JSON string"
+            else -> null
+        }
+    }
+
+    private fun JsonElement.isLiteral(token: Regex): Boolean =
+        this is JsonPrimitive && !isString && token.matches(content)
 }

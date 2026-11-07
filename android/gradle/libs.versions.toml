@@ -1,5 +1,5 @@
 [versions]
-# compileSdk is fixed at 36 (ADR-024). Newer Compose BOM (>= 2026.08.00, Compose 1.12),
+# compileSdk is fixed at 36 (ADR-025). Newer Compose BOM (>= 2026.08.00, Compose 1.12),
 # core-ktx 1.19 and lifecycle 2.11 require compileSdk 37, so those stay one step behind.
 agp = "9.5.1"
 kotlin = "2.4.21"

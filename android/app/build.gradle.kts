@@ -86,6 +86,16 @@ android {
                     "weaver.resDir",
                     layout.projectDirectory.dir("src/main/res").asFile.absolutePath,
                 )
+                // Rule snapshots live in the source tree so they can be refreshed in place:
+                // ./gradlew testDebugUnitTest -Dweaver.updateRuleSnapshots=true
+                test.systemProperty(
+                    "weaver.ruleSnapshotDir",
+                    layout.projectDirectory.dir("src/test/resources/schema-rules").asFile.absolutePath,
+                )
+                providers.systemProperty("weaver.updateRuleSnapshots").orNull?.let {
+                    test.systemProperty("weaver.updateRuleSnapshots", it)
+                    test.outputs.upToDateWhen { false }
+                }
                 // Robolectric's SDK 36 sandbox touches FileDescriptor internals via SharedSecrets.
                 test.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             }

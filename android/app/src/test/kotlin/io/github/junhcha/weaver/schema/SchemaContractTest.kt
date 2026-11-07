@@ -72,18 +72,73 @@ class SchemaContractTest {
 
     @Test
     fun integerFieldsRequireIntegerTokens() {
-        // JSON Schema treats 1.0 as an integer; the README makes this lexical rule the
-        // consumer's job, so only the Kotlin side is asserted here.
-        val proposal = SharedSchema.examples("Proposal").first().readText()
+        // JSON Schema treats 1.0 and 1e0 as integers; the README makes this lexical rule the
+        // consumer's job, so only the Kotlin side is asserted for those tokens.
         listOf(
-            proposal.replaceFirst("\"schema_version\": 1", "\"schema_version\": 1.0"),
-            proposal.replaceFirst("\"schema_version\": 1", "\"schema_version\": 1e0"),
-            proposal.replaceFirst("\"schema_version\": 1", "\"schema_version\": \"1\""),
-            proposal.replaceFirst("\"rev\": 1", "\"rev\": 1.0"),
-        ).forEach { text ->
-            assertTrue("fixture was not mutated", text != proposal)
-            assertTrue(WeaverCodec.decode<Proposal>(text) is DecodeResult.Invalid)
+            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": 1.0"),
+            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": 1e0"),
+            Triple("Proposal", "\"rev\": 1", "\"rev\": 1.0"),
+            Triple("Proposal", "\"rev\": 1", "\"rev\": 1e0"),
+            Triple("Verdict", "\"rev\": 1", "\"rev\": 1e0"),
+            Triple("Verdict", "\"rev\": 1", "\"rev\": 1E+0"),
+            Triple("Manifest", "\"size\": 45", "\"size\": 45.0"),
+            Triple("Manifest", "\"size\": 45", "\"size\": 4.5e1"),
+        ).forEach { (model, from, to) -> assertKotlinInvalid(model, from, to) }
+    }
+
+    @Test
+    fun quotedNumbersFailSchemaAndKotlin() {
+        listOf(
+            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": \"1\""),
+            Triple("Proposal", "\"rev\": 1", "\"rev\": \"1\""),
+            Triple("Verdict", "\"rev\": 1", "\"rev\": \"1\""),
+            Triple("Manifest", "\"size\": 45", "\"size\": \"45\""),
+            Triple("Proposal", "\"confidence\": 0.92", "\"confidence\": \"0.92\""),
+        ).forEach { (model, from, to) ->
+            val text = assertKotlinInvalid(model, from, to)
+            assertFalse("$model $to must fail the schema", SharedSchema.errors(model, text).isEmpty())
         }
+    }
+
+    @Test
+    fun largeRevisionsAreAccepted() {
+        // rev is unbounded in the schema; Kotlin keeps it as Long.
+        val verdict = SharedSchema.examples("Verdict").first().readText()
+            .replaceFirst("\"rev\": 1", "\"rev\": 2147483648")
+        assertEquals(emptyList<String>(), SharedSchema.errors("Verdict", verdict))
+        val result = WeaverCodec.decode<Verdict>(verdict)
+        assertEquals(2_147_483_648L, (result as DecodeResult.Ok).value.rev)
+    }
+
+    @Test
+    fun appIsStricterThanSchemaForUnrealisticTimestamps() {
+        // Documented in Primitives.kt: java.time rejects offsets beyond ±18:00 and more than
+        // nine fraction digits, which no v1 producer writes. Pinned so the gap stays known.
+        val receipt = SharedSchema.examples("Receipt").first().readText()
+        listOf("+19:00", ".1234567890+09:00").forEach { suffix ->
+            val text = receipt.replace("15:32:00+09:00", "15:32:00$suffix")
+            assertTrue("fixture was not mutated", text != receipt)
+            assertEquals(emptyList<String>(), SharedSchema.errors("Receipt", text))
+            assertTrue(WeaverCodec.decode<Receipt>(text) is DecodeResult.Invalid)
+        }
+    }
+
+    @Test
+    fun lineBreaksAreRejectedLikeEcmaRegex() {
+        val alert = SharedSchema.examples("Alert").first().readText()
+        val text = alert.replace("\"schedule_ref\": \"s1\"", "\"schedule_ref\": \"s1\\n\"")
+        assertTrue("fixture was not mutated", text != alert)
+        assertFalse(SharedSchema.errors("Alert", text).isEmpty())
+        assertTrue(WeaverCodec.decode<Alert>(text) is DecodeResult.Invalid)
+    }
+
+    private fun assertKotlinInvalid(model: String, from: String, to: String): String {
+        val example = SharedSchema.examples(model).first().readText()
+        val text = example.replaceFirst(from, to)
+        assertTrue("$model fixture was not mutated by $to", text != example)
+        val result = WeaverCodec.decode(SharedSchema.models.getValue(model), text)
+        assertTrue("$model $to: $result", result is DecodeResult.Invalid)
+        return text
     }
 
     @Test
@@ -186,7 +241,7 @@ class SchemaContractTest {
     private fun decodeOk(serializer: KSerializer<*>, text: String, name: String): Any? =
         when (val result = WeaverCodec.decode(serializer, text)) {
             is DecodeResult.Ok -> result.value
-            else -> fail("$name: $result") as Nothing
+            else -> throw AssertionError("$name: $result")
         }
 
     private fun assertNotOk(where: String, result: DecodeResult<*>) {
