@@ -17,8 +17,19 @@ _DAY = re.compile(r"(?:-+\s*)?" + _DATE + r"(?:\s+[월화수목금토일]요일)
 _PC = re.compile(r"\[(?P<speaker>[^\]\r\n]+)\] \[" + _CLOCK + r"\] (?P<body>.*)")
 _MOBILE = re.compile(_DATE + r" " + _CLOCK + r", (?P<speaker>.+?) : (?P<body>.*)")
 _MOBILE_SYSTEM = re.compile(_DATE + r" " + _CLOCK + r", (?P<body>.*)")
-_SYSTEM = re.compile(r".+님이 (?:들어왔습니다\.|나갔습니다\.|.+님을 초대했습니다\.)")
 _DATE_LIKE = re.compile(r"(?:-+\s*)?[0-9]{4}(?:년|\.)")
+
+
+def _is_system(line: str) -> bool:
+    """Check fixed suffixes before splitting once; avoid nested backtracking."""
+    for suffix in ("님이 들어왔습니다.", "님이 나갔습니다."):
+        if line.endswith(suffix):
+            return len(line) > len(suffix)
+    suffix = "님을 초대했습니다."
+    if not line.endswith(suffix):
+        return False
+    inviter, separator, invited = line.removesuffix(suffix).partition("님이 ")
+    return bool(inviter and separator and invited)
 
 
 class KakaoParseError(ValueError):
@@ -82,6 +93,8 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
     active: tuple[int, str, datetime | None] | None = None
     recognized = False
     message_count = 0
+    continuation = False
+    previous_time: datetime | None = None
 
     def diagnostic(code: str, line: int, start: int, end: int) -> None:
         diagnostics.append(Diagnostic(code, line, start, end))
@@ -106,10 +119,11 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
             )
 
     def flush(end: int) -> None:
-        nonlocal active
+        nonlocal active, continuation
         if active is not None:
             append(active[0], end, active[1], active[2])
             active = None
+        continuation = False
 
     start = 0
     # Only LF/CRLF are line delimiters. Unicode separators in messages are data.
@@ -125,9 +139,8 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
         date_match = _DAY.fullmatch(line)
         message = _PC.fullmatch(line) or _MOBILE.fullmatch(line)
         mobile_system = _MOBILE_SYSTEM.fullmatch(line)
-        is_system = _SYSTEM.fullmatch(line) is not None or (
-            mobile_system is not None
-            and _SYSTEM.fullmatch(mobile_system["body"]) is not None
+        is_system = _is_system(line) or (
+            mobile_system is not None and _is_system(mobile_system["body"])
         )
         is_header = line.endswith("님과 카카오톡 대화") or line.startswith(
             "저장한 날짜 : "
@@ -143,6 +156,7 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
             append(start, end)
         elif message:
             recognized = True
+            ambiguous = active is not None and continuation
             flush(start)
             occurred_at = None
             invalid = False
@@ -169,15 +183,28 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
             if invalid:
                 append(start, end)
             else:
-                if message_count:
+                if ambiguous:
                     diagnostic("ambiguous_boundary", number, start, end)
+                header_mismatch = (
+                    "year" in message.groupdict()
+                    and day is not None
+                    and message_day != day
+                )
+                if header_mismatch or (
+                    occurred_at is not None
+                    and previous_time is not None
+                    and occurred_at < previous_time
+                ):
+                    diagnostic("time_regression", number, start, end)
+                if occurred_at is not None:
+                    previous_time = occurred_at
                 message_count += 1
                 active = start, message["speaker"], occurred_at
         elif is_system or is_header:
             recognized = True
             flush(start)
             append(start, end)
-        elif _DATE_LIKE.match(line):
+        elif active is None and _DATE_LIKE.match(line):
             flush(start)
             day = None  # Never inherit yesterday through a broken day boundary.
             diagnostic("unrecognized_line", number, start, end)
@@ -186,7 +213,9 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
             append(start, end)
             if line.strip():
                 diagnostic("unrecognized_line", number, start, end)
-        # Otherwise this is a continuation, including blank and partial-lookalike lines.
+        else:
+            # Blank/partial date or message lookalikes inside a message are body.
+            continuation = True
         start = end
     flush(len(text))
     if not recognized:

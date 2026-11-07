@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 Backend = Literal["none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"]
 _BACKENDS = {"none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"}
@@ -56,7 +56,7 @@ class SttConfig:
 
 @dataclass(frozen=True)
 class ComponentConfig:
-    """Settings to inject into either pipeline component."""
+    """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
     llm: LlmConfig
     stt: SttConfig | None = None
@@ -234,8 +234,16 @@ def load_config(
     if not isinstance(timezone, str) or not timezone:
         raise ConfigError("time.timezone: expected IANA timezone name")
     try:
+        # Factory is tzdb's unspecified-timezone sentinel, not a real region.
+        # localtime/posixrules depend on host configuration rather than a source.
+        if timezone not in available_timezones() or timezone in {
+            "Factory",
+            "localtime",
+            "posixrules",
+        }:
+            raise ValueError("unsupported timezone key")
         ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError):
+    except (ZoneInfoNotFoundError, ValueError, OSError):
         raise ConfigError("time.timezone: unknown IANA timezone") from None
     time_config = TimeConfig(timezone)
     llm = _llm_settings(raw.get("llm", {}))

@@ -1,6 +1,8 @@
 """Spinner text path over the archive's public locator boundary."""
 
+import hashlib
 import logging
+from collections import Counter
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -25,8 +27,8 @@ def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
     if source.channel == "kakao":
         result = parse_kakao(source, text, timezone=timezone)
         # Never log text, speaker, archive path or timestamps.
-        for diagnostic in result.diagnostics:
-            _LOG.warning("kakao:%s line=%d", diagnostic.code, diagnostic.line)
+        for code, count in Counter(d.code for d in result.diagnostics).items():
+            _LOG.warning("kakao:%s count=%d", code, count)
         return result.thread
     return Thread(
         schema_version=1,
@@ -65,8 +67,11 @@ class TextSpinner:
         archived = self._store.locate(source.source_id)
         if archived.source != source:
             raise ValueError("archive Source mismatch")
+        payload = archived.payload_path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != source.sha256:
+            raise KakaoParseError("payload_mismatch")
         try:
-            text = archived.payload_path.read_bytes().decode("utf-8")
+            text = payload.decode("utf-8")
         except UnicodeError:
             raise KakaoParseError("unsupported_encoding") from None
         if "\x00" in text:

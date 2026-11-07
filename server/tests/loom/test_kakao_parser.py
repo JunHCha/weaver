@@ -84,11 +84,11 @@ def test_mobile_bom_crlf_date_variants_and_timestamp_system():
 
 
 def test_exact_message_lookalike_is_split_with_diagnostic():
-    text = "2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 인용:\n[김가상] [오전 9:01] 실제와 구별 불가\n"
+    text = "2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 인용:\n이어지는 인용 본문\n[김가상] [오전 9:01] 실제와 구별 불가\n"
     result = parse_kakao(source(), text, timezone=ZONE)
     assert len([s for s in result.thread.segments if s.speaker]) == 2
     boundary = next(d for d in result.diagnostics if d.code == "ambiguous_boundary")
-    assert boundary.line == 3
+    assert boundary.line == 4
     assert text[boundary.start_char :].startswith("[김가상]")
 
 
@@ -149,14 +149,16 @@ def test_spinner_rejects_unsupported_encoding(tmp_path, encoding):
     from weaver.schema.internal import ArchivedSource
 
     path = tmp_path / "fake.txt"
-    path.write_bytes("합성 카카오톡 대화".encode(encoding))
+    body = "합성 카카오톡 대화".encode(encoding)
+    path.write_bytes(body)
+    original = source(body=body)
 
     class Store:
         def locate(self, source_id):
-            return ArchivedSource(source=source(), payload_path=path)
+            return ArchivedSource(source=original, payload_path=path)
 
     with pytest.raises(KakaoParseError, match="unsupported_encoding"):
-        TextSpinner(Store(), timezone=ZONE).spin(source())
+        TextSpinner(Store(), timezone=ZONE).spin(original)
 
 
 def test_archive_store_to_spinner(tmp_path):
@@ -226,11 +228,13 @@ def test_text_spinner_from_config_injects_common_timezone(tmp_path):
     )
     config = load_config(config_path, environ={}, init_directories=True)
 
+    original = source(body=payload.read_bytes())
+
     class Store:
         def locate(self, source_id):
-            return ArchivedSource(source=source(), payload_path=payload)
+            return ArchivedSource(source=original, payload_path=payload)
 
-    thread = TextSpinner.from_config(Store(), config).spin(source())
+    thread = TextSpinner.from_config(Store(), config).spin(original)
     assert thread.segments[0].occurred_at.isoformat() == "2026-11-07T01:00:00+00:00"
 
 
@@ -247,3 +251,113 @@ def test_unicode_line_separator_is_message_data():
     result = parse_kakao(source(), text, timezone=ZONE)
     assert len(result.thread.segments) == 2
     assert_coverage(result, text)
+
+
+@pytest.mark.parametrize(
+    "continuation", ["2027년 계획은 계속합니다", "2026. 11 회의록", "2026년 깨진 날짜"]
+)
+def test_date_like_body_keeps_message_and_pc_date(continuation):
+    text = f"2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 시작\n{continuation}\n[김가상] [오전 10:00] 다음\n"
+    result = parse_kakao(source(), text, timezone=ZONE)
+    assert_coverage(result, text)
+    messages = [s for s in result.thread.segments if s.speaker]
+    assert len(result.thread.segments) == 3
+    assert continuation in text[messages[0].start_char : messages[0].end_char]
+    assert messages[1].occurred_at.isoformat() == "2026-11-07T10:00:00+09:00"
+    assert "missing_date" not in [d.code for d in result.diagnostics]
+
+
+def test_plain_message_boundaries_do_not_emit_ambiguity():
+    text = "2026년 11월 7일 토요일\n" + "[홍길동] [오전 9:00] 합성\n" * 1000
+    result = parse_kakao(source(), text, timezone=ZONE)
+    assert len(result.thread.segments) == 1001
+    assert not result.diagnostics
+
+
+def test_repeated_diagnostics_log_one_summary_per_code(caplog):
+    text = (
+        "2026년 11월 7일 토요일\n" + "[홍길동] [오전 9:00] 합성\n이어지는 본문\n" * 100
+    )
+    text_to_thread(source(), text, timezone=ZONE)
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage() == "kakao:ambiguous_boundary count=99"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "가님이 " * 32000 + "초대했습니다X",
+        "가님이 " * 32000 + "김가상님을 초대했습니다.",
+        "가" * 128000 + "님을 초대했습니다.",
+    ],
+)
+def test_long_system_lookalike_line_is_processed_without_quadratic_backtracking(line):
+    from time import perf_counter
+
+    text = "2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 합성\n" + line + "\n"
+    start = perf_counter()
+    result = parse_kakao(source(), text, timezone=ZONE)
+    elapsed = perf_counter() - start
+    assert elapsed < 1.0, f"128k-character line took {elapsed:.3f}s"
+    assert_coverage(result, text)
+    assert len(result.thread.segments) in (2, 3)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "홍길동님이 들어왔습니다.",
+        "홍길동님이 나갔습니다.",
+        "홍길동님이 김가상님을 초대했습니다.",
+        "2026년 11월 7일 오후 1:00, 홍길동님이 김가상님을 초대했습니다.",
+    ],
+)
+def test_system_forms_still_get_null_metadata(line):
+    text = "2026년 11월 7일 토요일\n" + line + "\n"
+    result = parse_kakao(source(), text, timezone=ZONE)
+    assert_coverage(result, text)
+    assert all(s.speaker is s.occurred_at is None for s in result.thread.segments)
+
+
+@pytest.mark.parametrize(
+    "last",
+    [
+        "[김가상] [오전 9:00] 역전",
+        "2026년 11월 8일 오전 11:00, 김가상 : 헤더와 불일치",
+        "2026년 11월 6일 오전 11:00, 김가상 : 역전과 불일치",
+    ],
+)
+def test_time_regression_and_header_mismatch_warn_without_correction(last):
+    text = "2026년 11월 7일 토요일\n[홍길동] [오전 10:00] 이전\n" + last + "\n"
+    result = parse_kakao(source(), text, timezone=ZONE)
+    warnings = [d for d in result.diagnostics if d.code == "time_regression"]
+    assert len(warnings) == 1 and warnings[0].line == 3
+    last_segment = result.thread.segments[-1]
+    expected = (
+        "2026-11-07T09:00:00+09:00"
+        if last.startswith("[")
+        else (
+            "2026-11-08T11:00:00+09:00"
+            if "8일" in last
+            else "2026-11-06T11:00:00+09:00"
+        )
+    )
+    assert last_segment.occurred_at.isoformat() == expected
+
+
+@pytest.mark.parametrize("channel", ["kakao", "share_text"])
+def test_spinner_rejects_payload_hash_mismatch_without_modification(tmp_path, channel):
+    from weaver.schema.internal import ArchivedSource
+
+    body = b"changed synthetic text"
+    path = tmp_path / "fake.txt"
+    path.write_bytes(body)
+    original = source(channel, body=b"original synthetic text")
+
+    class Store:
+        def locate(self, source_id):
+            return ArchivedSource(source=original, payload_path=path)
+
+    with pytest.raises(KakaoParseError, match="^payload_mismatch$"):
+        TextSpinner(Store(), timezone=ZONE).spin(original)
+    assert path.read_bytes() == body

@@ -494,3 +494,28 @@ def test_invalid_time_settings_redact_values(tmp_path: Path, settings: str) -> N
     with pytest.raises(ConfigError, match="time") as error:
         load_config(write_config(tmp_path, settings), environ={})
     assert "secret-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("zone", ["Asia", "Factory", "posixrules", "localtime"])
+def test_timezone_rejects_directory_and_nonregional_keys(
+    tmp_path: Path, zone: str
+) -> None:
+    with pytest.raises(
+        ConfigError, match="^time.timezone: unknown IANA timezone$"
+    ) as error:
+        load_config(write_config(tmp_path, f'[time]\ntimezone = "{zone}"'), environ={})
+    assert error.value.__cause__ is None
+
+
+def test_timezone_oserror_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_key: str) -> None:
+        raise OSError("private path must not appear")
+
+    monkeypatch.setattr("weaver.config.ZoneInfo", fail)
+    with pytest.raises(
+        ConfigError, match="^time.timezone: unknown IANA timezone$"
+    ) as error:
+        load_config(write_config(tmp_path), environ={})
+    assert "private" not in str(error.value)

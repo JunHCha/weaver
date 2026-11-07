@@ -31,10 +31,15 @@ and malformed boundary segments have null speaker/time; audio ms are always null
 Line numbers in diagnostics are 1-based; ranges are half-open code point offsets.
 
 An exact message-shaped quoted line cannot be distinguished from a real message.
-The grammar splits it and emits `ambiguous_boundary` at each subsequent valid
-message (including ordinary messages). Partial lookalikes stay in the body;
+The grammar splits it and emits `ambiguous_boundary` when a message-shaped line
+follows continuation lines in the active message. Ordinary consecutive single-line
+messages do not warn; this heuristic cannot detect every quoted boundary.
+Partial lookalikes stay in the body;
 invalid clocks/dates are raw segments with diagnostics. A broken date boundary
-clears the previous date. Source occurred_at remains distinct from message times
+clears the previous date only outside an active message. Inside a message, partial
+date lookalikes remain body and preserve the day; an exact date-header grammar match
+is still a boundary. Time reversal or a mobile date differing from the latest header
+emits `time_regression` without adjusting the timestamp. Source occurred_at remains distinct from message times
 and captured_at is never used as a fallback. `[time].timezone` from ServerConfig
 (default Asia/Seoul) is explicitly injected; DST folds/gaps yield null and a
 safe diagnostic rather than an invented instant.
@@ -48,7 +53,8 @@ lossy decoding. The archive remains unchanged on every error.
 
 Integration: `parse_kakao(source, text, timezone=...) -> ParseResult` exposes full
 diagnostics; `weaver.spinner.text.text_to_thread` returns Thread and logs only
-code/line diagnostics. `TextSpinner.from_config(store, settings).spin(source)`
-reads through ArchiveStore.locate. The general Spinner (#4) can delegate its text
+one count summary per diagnostic code. `TextSpinner.from_config(store, settings).spin(source)`
+reads through ArchiveStore.locate and verifies the original byte SHA-256 against
+Source.sha256, raising `payload_mismatch` on corruption before decoding. The general Spinner (#4) can delegate its text
 branch to this adapter. `share_text` bypasses Kakao parsing, retaining the original
 as one segment. No schema v1 changes, LLM, STT or CLI were needed.
