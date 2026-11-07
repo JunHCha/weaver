@@ -28,6 +28,8 @@
       "type": "string"
     },
     "ProposalId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -47,6 +49,10 @@
     },
     "Timestamp": {
       "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
       "type": "string"
     }
   },

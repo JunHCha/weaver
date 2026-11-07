@@ -14,7 +14,12 @@ build-backend = "uv_build"
 
 [dependency-groups]
 test = ["pytest>=8,<10"]
-dev = [{include-group = "test"}, "ruff>=0.14,<1", "mypy>=1.18,<3"]
+dev = [
+    {include-group = "test"},
+    "ruff>=0.14,<1",
+    "mypy>=1.18,<3",
+    "jsonschema[format-nongpl]>=4,<5",
+]
 
 
 [tool.ruff]

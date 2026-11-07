@@ -53,96 +53,9 @@
       "minimum": 0,
       "type": "number"
     },
-    "Entity": {
-      "additionalProperties": false,
-      "anyOf": [
-        {
-          "properties": {
-            "ref": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "properties": {
-            "entity_id": {
-              "type": "string"
-            }
-          }
-        }
-      ],
-      "description": "ref identifies a proposal item; entity_id links an existing Fabric entity.\n\nAt least one is non-null. aliases never imply identity automatically.",
-      "properties": {
-        "aliases": {
-          "items": {
-            "$ref": "#/$defs/NonEmpty"
-          },
-          "title": "Aliases",
-          "type": "array"
-        },
-        "ask": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Ask"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "confidence": {
-          "$ref": "#/$defs/Confidence"
-        },
-        "entity_id": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EntityId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "$ref": "#/$defs/NonEmpty"
-        },
-        "ref": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Ref"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "schema_version": {
-          "const": 1,
-          "title": "Schema Version",
-          "type": "integer"
-        },
-        "thread_excerpt": {
-          "$ref": "#/$defs/NonEmpty"
-        },
-        "type": {
-          "$ref": "#/$defs/EntityType"
-        }
-      },
-      "required": [
-        "schema_version",
-        "confidence",
-        "ask",
-        "thread_excerpt",
-        "ref",
-        "entity_id",
-        "type",
-        "name",
-        "aliases"
-      ],
-      "title": "Entity",
-      "type": "object"
-    },
     "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -211,7 +124,7 @@
           }
         }
       ],
-      "description": "Approval records facts only. blocked_by_request forbids derived execution\nuntil a user-authored decision Entry resolves the referenced request Entry.",
+      "description": "Approval records facts only. blocked_by_request forbids derived execution\nuntil a user-authored decision Entry resolves the referenced request Entry.\nresolves is always null: AI-generated drafts cannot resolve requests.",
       "properties": {
         "ask": {
           "anyOf": [
@@ -273,18 +186,8 @@
           ]
         },
         "resolves": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EntryId"
-            },
-            {
-              "$ref": "#/$defs/Ref"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Resolves"
+          "title": "Resolves",
+          "type": "null"
         },
         "retracts": {
           "anyOf": [
@@ -333,6 +236,8 @@
       "type": "object"
     },
     "EntryId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -353,15 +258,96 @@
       "pattern": "\\S",
       "type": "string"
     },
+    "ProposalEntity": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "properties": {
+            "entity_id": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "description": "Proposal-local entity with a required non-null ref and no nested version.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "$ref": "#/$defs/NonEmpty"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "type": {
+          "$ref": "#/$defs/EntityType"
+        }
+      },
+      "required": [
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "ref",
+        "entity_id",
+        "type",
+        "name",
+        "aliases"
+      ],
+      "title": "ProposalEntity",
+      "type": "object"
+    },
     "ProposalId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
     "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
       "pattern": "^[a-z][1-9][0-9]*$",
       "type": "string"
     },
-    "Relation": {
+    "RelationData": {
       "additionalProperties": false,
       "description": "from/to are entity refs or ent_ IDs; 'this' denotes the proposal source.",
       "properties": {
@@ -400,11 +386,6 @@
             }
           ]
         },
-        "schema_version": {
-          "const": 1,
-          "title": "Schema Version",
-          "type": "integer"
-        },
         "thread_excerpt": {
           "$ref": "#/$defs/NonEmpty"
         },
@@ -425,7 +406,6 @@
         }
       },
       "required": [
-        "schema_version",
         "confidence",
         "ask",
         "thread_excerpt",
@@ -434,7 +414,7 @@
         "to",
         "reason"
       ],
-      "title": "Relation",
+      "title": "RelationData",
       "type": "object"
     },
     "RelationType": {
@@ -565,6 +545,8 @@
       "type": "object"
     },
     "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -602,6 +584,10 @@
     },
     "Timestamp": {
       "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
       "type": "string"
     }
   },
@@ -612,7 +598,7 @@
   "properties": {
     "entities": {
       "items": {
-        "$ref": "#/$defs/Entity"
+        "$ref": "#/$defs/ProposalEntity"
       },
       "title": "Entities",
       "type": "array"
@@ -629,7 +615,7 @@
     },
     "relations": {
       "items": {
-        "$ref": "#/$defs/Relation"
+        "$ref": "#/$defs/RelationData"
       },
       "title": "Relations",
       "type": "array"

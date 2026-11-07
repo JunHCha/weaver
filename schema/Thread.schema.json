@@ -18,12 +18,29 @@
       "type": "integer"
     },
     "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
       "pattern": "^[a-z][1-9][0-9]*$",
       "type": "string"
     },
     "Segment": {
       "additionalProperties": false,
       "description": "Text range [start_char,end_char) uses Unicode code points, not UTF-16.\n\nSegment IDs are unique within a Thread. Audio offsets are integer milliseconds\nfrom payload start; message occurred_at and speaker preserve Kakao provenance.",
+      "else": {
+        "properties": {
+          "end_ms": {
+            "type": "integer"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "start_ms": {
+            "type": "null"
+          }
+        }
+      },
       "properties": {
         "end_char": {
           "$ref": "#/$defs/Offset"
@@ -84,15 +101,28 @@
         "speaker",
         "occurred_at"
       ],
+      "then": {
+        "properties": {
+          "end_ms": {
+            "type": "null"
+          }
+        }
+      },
       "title": "Segment",
       "type": "object"
     },
     "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
     "Timestamp": {
       "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
       "type": "string"
     }
   },

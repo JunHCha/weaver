@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from weaver.schema import Proposal, Source, Thread
-from weaver.schema.internal import Candidate, Extraction, materialize_entries
+from weaver.schema.internal import (
+    Candidate,
+    Extraction,
+    create_request_decision,
+    materialize_entries,
+)
 
 from .test_contract import example
 
@@ -15,10 +20,6 @@ def extraction_payload():
     payload = example("Proposal")
     for key in ["schema_version", "proposal_id", "rev", "source"]:
         del payload[key]
-    for entity in payload["entities"]:
-        del entity["schema_version"]
-    for relation in payload["relations"]:
-        del relation["schema_version"]
     return payload
 
 
@@ -48,7 +49,6 @@ def mapping():
         entity_ids={"e1": f"ent_{suffix}0", "e2": f"ent_{suffix}1"},
         entry_ids={"d1": f"evt_{suffix}0", "d2": f"evt_{suffix}1"},
         recorded_at=datetime.fromisoformat("2026-11-07T16:00:00+09:00"),
-        actor="ai_approved",
     )
 
 
@@ -83,17 +83,64 @@ def test_mapping_rejects_invalid_allocations(invalid):
         materialize_entries(Proposal.model_validate(example("Proposal")), **args)
 
 
-def test_human_decision_maps_request_ref_and_ai_approval_cannot_resolve():
+@pytest.mark.parametrize("resolves", ["d1", "evt_01ARZ3NDEKTSV4RRFFQ69G5FA0"])
+def test_ai_drafts_cannot_resolve_requests(resolves):
     payload = example("Proposal")
     payload["schedules"] = []
     payload["entry_drafts"][1].update(
-        kind="결정", resolves="d1", blocked_by_request=None
+        kind="결정", resolves=resolves, blocked_by_request=None
     )
-    proposal = Proposal.model_validate(payload)
     with pytest.raises(ValidationError):
-        materialize_entries(proposal, **mapping())
-    entries = materialize_entries(proposal, **(mapping() | {"actor": "human"}))
-    assert entries[1].resolves == entries[0].entry_id
+        Proposal.model_validate(payload)
+    payload = extraction_payload()
+    payload["entry_drafts"][1].update(kind="결정", resolves=resolves)
+    with pytest.raises(ValidationError):
+        Extraction.model_validate(payload)
+
+
+def test_materialization_has_no_human_actor_override():
+    proposal = Proposal.model_validate(example("Proposal"))
+    with pytest.raises(TypeError):
+        materialize_entries(proposal, **mapping(), actor="human")
+
+
+def test_explicit_human_decision_is_separate_from_proposal():
+    entries = materialize_entries(
+        Proposal.model_validate(example("Proposal")), **mapping()
+    )
+    args = dict(
+        entry_id="evt_01ARZ3NDEKTSV4RRFFQ69G5FA2",
+        value="진행 승인",
+        occurred_at=mapping()["recorded_at"],
+        recorded_at=mapping()["recorded_at"],
+        source_id="output:review/request",
+    )
+    decision = create_request_decision(entries[0], **args)
+    assert decision.actor == "human"
+    assert decision.resolves == entries[0].entry_id
+    assert all(e.actor == "ai_approved" and e.resolves is None for e in entries)
+    with pytest.raises(ValueError):
+        create_request_decision(entries[1], **args)
+
+
+@pytest.mark.parametrize("collision", ["new_new", "new_existing"])
+def test_new_entity_allocations_cannot_silently_merge(collision):
+    payload = example("Proposal")
+    args = mapping()
+    if collision == "new_new":
+        payload["entities"][1]["entity_id"] = None
+    args["entity_ids"]["e1"] = args["entity_ids"]["e2"]
+    with pytest.raises(ValueError, match="distinct IDs"):
+        materialize_entries(Proposal.model_validate(payload), **args)
+
+
+def test_explicit_existing_matches_can_share_an_id():
+    payload = example("Proposal")
+    payload["entities"][0]["entity_id"] = payload["entities"][1]["entity_id"]
+    args = mapping()
+    args["entity_ids"]["e1"] = args["entity_ids"]["e2"]
+    entries = materialize_entries(Proposal.model_validate(payload), **args)
+    assert entries[0].entities[0] == entries[0].entities[1]
 
 
 def test_candidate_keeps_thread_and_segment_provenance():

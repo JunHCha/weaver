@@ -45,6 +45,8 @@
       "type": "number"
     },
     "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -63,6 +65,9 @@
       "type": "string"
     },
     "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
       "pattern": "^[a-z][1-9][0-9]*$",
       "type": "string"
     }
@@ -86,7 +91,7 @@
       }
     }
   ],
-  "description": "ref identifies a proposal item; entity_id links an existing Fabric entity.\n\nAt least one is non-null. aliases never imply identity automatically.",
+  "description": "Standalone versioned entity file; nested entities inherit the file version.",
   "properties": {
     "aliases": {
       "items": {

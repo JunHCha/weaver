@@ -12,7 +12,6 @@
   "thread_excerpt": "내일 점검 회의를 요청합니다.",
   "entities": [
     {
-      "schema_version": 1,
       "confidence": 0.92,
       "ask": {
         "question": "김 과장이 이 사람이 맞나요?",
@@ -33,7 +32,6 @@
       ]
     },
     {
-      "schema_version": 1,
       "confidence": 0.92,
       "ask": null,
       "thread_excerpt": "내일 점검 회의를 요청합니다.",
@@ -63,7 +61,6 @@
   ],
   "relations": [
     {
-      "schema_version": 1,
       "confidence": 0.92,
       "ask": null,
       "thread_excerpt": "내일 점검 회의를 요청합니다.",

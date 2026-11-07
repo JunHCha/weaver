@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from .models import (
     Contract,
@@ -84,6 +84,12 @@ class ExtractedRelation(Evidence):
 
 
 class Extraction(Contract):
+    """Validated extraction boundary, not a provider-portable structured schema.
+
+    A future Extractor adapter must simplify allOf/if/then and regex constraints
+    for the chosen LLM provider, then revalidate against this complete contract.
+    """
+
     summary: NonEmpty
     thread_excerpt: NonEmpty
     entities: list[ExtractedEntity]
@@ -102,13 +108,6 @@ class Extraction(Contract):
                 include={"source_id", "channel", "captured_at", "occurred_at"},
             ),
         )
-        payload["entities"] = [
-            e.model_dump(mode="json") | {"schema_version": 1} for e in self.entities
-        ]
-        payload["relations"] = [
-            r.model_dump(mode="json", by_alias=True) | {"schema_version": 1}
-            for r in self.relations
-        ]
         return Proposal.model_validate(payload)
 
 
@@ -118,12 +117,11 @@ def materialize_entries(
     entity_ids: dict[str, str],
     entry_ids: dict[str, str],
     recorded_at: datetime,
-    actor: Literal["human", "ai_approved"],
 ) -> list[Entry]:
     """Map approved draft refs to durable IDs; return facts without executing them.
 
     Caller allocates new ent_/evt_ ULIDs once, preserves existing entity matches,
-    and supplies an actual human actor only for an explicit user decision. Request
+    and supplies recorded_at. All generated entries are ai_approved facts. Request
     blocks persist as evt_ references. Fabric must verify resolves targets a request
     and decide execution eligibility; proposal approval alone is insufficient.
     """
@@ -133,13 +131,19 @@ def materialize_entries(
         raise ValueError("entry_ids must cover exactly the draft refs")
     if len(set(entry_ids.values())) != len(entry_ids):
         raise ValueError("drafts require distinct Entry IDs")
+    existing = {e.entity_id for e in proposal.entities if e.entity_id is not None}
+    allocated = [entity_ids[e.ref] for e in proposal.entities if e.entity_id is None]
+    if len(allocated) != len(set(allocated)) or existing.intersection(allocated):
+        raise ValueError(
+            "new entities require distinct IDs disjoint from existing matches"
+        )
     for entity in proposal.entities:
-        assert entity.ref is not None  # Guaranteed by Proposal validation.
         if entity.entity_id is not None and entity_ids[entity.ref] != entity.entity_id:
             raise ValueError("cannot replace an existing entity match")
         # Validate IDs even when there are no drafts that reference the entity.
         Entity.model_validate(
-            entity.model_dump(mode="json") | {"entity_id": entity_ids[entity.ref]}
+            entity.model_dump(mode="json")
+            | {"schema_version": 1, "entity_id": entity_ids[entity.ref]}
         )
 
     def resolve_entity(ref: str) -> str:
@@ -156,10 +160,8 @@ def materialize_entries(
             entities=[resolve_entity(ref) for ref in draft.entities],
             source_id=proposal.source.source_id,
             recorded_at=recorded_at,
-            actor=actor,
-            resolves=entry_ids.get(draft.resolves, draft.resolves)
-            if draft.resolves is not None
-            else None,
+            actor="ai_approved",
+            resolves=None,
             blocked_by_request=entry_ids[draft.blocked_by_request]
             if draft.blocked_by_request is not None
             else None,
@@ -171,3 +173,40 @@ def materialize_entries(
             }
         entries.append(Entry.model_validate(payload))
     return entries
+
+
+def create_request_decision(
+    request: Entry,
+    *,
+    entry_id: str,
+    value: JsonValue,
+    occurred_at: datetime,
+    recorded_at: datetime,
+    source_id: str,
+) -> Entry:
+    """Record an explicit user decision outside the AI Proposal approval path.
+
+    Call only in response to a user decision; this factory never executes actions.
+    Fabric still owns state folding, including retraction and decision semantics.
+    """
+    if request.kind != "요청" or request.request is None:
+        raise ValueError("decision target must be a request Entry")
+    return Entry.model_validate(
+        {
+            "schema_version": 1,
+            "entry_id": entry_id,
+            "entities": request.entities,
+            "kind": "결정",
+            "field": None,
+            "value": value,
+            "occurred_at": occurred_at,
+            "recorded_at": recorded_at,
+            "source_id": source_id,
+            "actor": "human",
+            "supersedes": None,
+            "retracts": None,
+            "request": None,
+            "resolves": request.entry_id,
+            "blocked_by_request": None,
+        }
+    )

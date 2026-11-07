@@ -17,28 +17,64 @@ from pydantic import (
     JsonValue,
     StrictInt,
     StringConstraints,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
 
 ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
 type CaptureId = Annotated[
-    str, StringConstraints(strict=True, pattern=rf"^cap_{ULID}$")
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^cap_{ULID}$", min_length=30, max_length=30
+    ),
 ]
-type SourceId = Annotated[str, StringConstraints(strict=True, pattern=rf"^src_{ULID}$")]
+type SourceId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^src_{ULID}$", min_length=30, max_length=30
+    ),
+]
 type ProposalId = Annotated[
-    str, StringConstraints(strict=True, pattern=rf"^prp_{ULID}$")
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^prp_{ULID}$", min_length=30, max_length=30
+    ),
 ]
-type AlertId = Annotated[str, StringConstraints(strict=True, pattern=rf"^alt_{ULID}$")]
-type EntityId = Annotated[str, StringConstraints(strict=True, pattern=rf"^ent_{ULID}$")]
-type EntryId = Annotated[str, StringConstraints(strict=True, pattern=rf"^evt_{ULID}$")]
-type Ref = Annotated[str, StringConstraints(strict=True, pattern=r"^[a-z][1-9][0-9]*$")]
+type AlertId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^alt_{ULID}$", min_length=30, max_length=30
+    ),
+]
+type EntityId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^ent_{ULID}$", min_length=30, max_length=30
+    ),
+]
+type EntryId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=rf"^evt_{ULID}$", min_length=30, max_length=30
+    ),
+]
+type Ref = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[a-z][1-9][0-9]*$"),
+    Field(json_schema_extra={"not": {"pattern": r"[\r\n]"}}),
+]
 type EntityRef = EntityId | Ref
 type NonEmpty = Annotated[str, StringConstraints(strict=True, pattern=r"\S")]
 type Confidence = Annotated[float, Field(ge=0, le=1, strict=True)]
 type Revision = Annotated[StrictInt, Field(ge=1)]
 type Offset = Annotated[StrictInt, Field(ge=0)]
-type Digest = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
+type Digest = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64
+    ),
+]
 type Channel = Literal["call", "voice_memo", "kakao", "share_text"]
 type Kind = Literal["fleece", "text"]
 type EntityType = Literal["person", "org", "project", "topic", "meeting"]
@@ -49,18 +85,34 @@ type RejectReason = Literal[
 ]
 
 
+TIMESTAMP_PATTERN = (
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
 def timestamp_input(value: object) -> object:
     if isinstance(value, datetime):
         return value
     if not isinstance(value, str) or not re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        TIMESTAMP_PATTERN,
         value,
     ):
         raise ValueError("expected RFC 3339 timestamp with an explicit timezone")
     return value
 
 
-type Timestamp = Annotated[AwareDatetime, BeforeValidator(timestamp_input)]
+type Timestamp = Annotated[
+    AwareDatetime,
+    BeforeValidator(timestamp_input),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "format": "date-time",
+            "pattern": TIMESTAMP_PATTERN,
+            "not": {"pattern": r"[\r\n]"},
+        }
+    ),
+]
 # Logical archive key only. SourceStore resolves it locally; never a machine Path.
 type PayloadRef = Annotated[
     str,
@@ -68,12 +120,18 @@ type PayloadRef = Annotated[
         strict=True,
         pattern=r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\.[A-Za-z0-9_-]+)?$",
     ),
+    Field(json_schema_extra={"not": {"pattern": r"[\r\n]"}}),
 ]
 type Pointer = Annotated[
     str, StringConstraints(strict=True, pattern=r"^(?:/(?:[^~/]|~[01])*)*$")
 ]
 type EntrySource = (
-    SourceId | Annotated[str, StringConstraints(strict=True, pattern=r"^output:\S+$")]
+    SourceId
+    | Annotated[
+        str,
+        StringConstraints(strict=True, pattern=r"^output:\S+$"),
+        Field(json_schema_extra={"not": {"pattern": r"[\r\n]"}}),
+    ]
 )
 
 
@@ -138,6 +196,13 @@ class Segment(Contract):
     from payload start; message occurred_at and speaker preserve Kakao provenance.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "if": {"properties": {"start_ms": {"type": "null"}}},
+            "then": {"properties": {"end_ms": {"type": "null"}}},
+            "else": {"properties": {"end_ms": {"type": "integer"}}},
+        }
+    )
     segment_id: Ref
     start_char: Offset
     end_char: Offset
@@ -196,7 +261,7 @@ class Evidence(Contract):
     thread_excerpt: NonEmpty
 
 
-class Entity(Evidence, Versioned):
+class EntityData(Evidence):
     """ref identifies a proposal item; entity_id links an existing Fabric entity.
 
     At least one is non-null. aliases never imply identity automatically.
@@ -223,13 +288,27 @@ class Entity(Evidence, Versioned):
         return self
 
 
-class Relation(Evidence, Versioned):
+class Entity(EntityData, Versioned):
+    """Standalone versioned entity file; nested entities inherit the file version."""
+
+
+class ProposalEntity(EntityData):
+    """Proposal-local entity with a required non-null ref and no nested version."""
+
+    ref: Ref
+
+
+class RelationData(Evidence):
     """from/to are entity refs or ent_ IDs; 'this' denotes the proposal source."""
 
     from_ref: EntityRef | Literal["this"] = Field(alias="from")
     type: RelationType
     to: EntityRef | Literal["this"]
     reason: NonEmpty | None
+
+
+class Relation(RelationData, Versioned):
+    """Standalone versioned relation file; nested relations have no version key."""
 
 
 class SourceSummary(Contract):
@@ -273,6 +352,7 @@ ENTRY_CONDITIONS: dict[str, JsonValue] = {"allOf": ENTRY_RULES}
 class EntryDraft(Evidence):
     """Approval records facts only. blocked_by_request forbids derived execution
     until a user-authored decision Entry resolves the referenced request Entry.
+    resolves is always null: AI-generated drafts cannot resolve requests.
     """
 
     model_config = ConfigDict(json_schema_extra=ENTRY_CONDITIONS)
@@ -285,7 +365,7 @@ class EntryDraft(Evidence):
     supersedes: EntryId | None
     retracts: EntryId | None
     request: Request | None
-    resolves: EntryId | Ref | None
+    resolves: None
     blocked_by_request: Ref | None
 
     @model_validator(mode="after")
@@ -371,9 +451,9 @@ class Proposal(Versioned):
     source: SourceSummary
     summary: NonEmpty
     thread_excerpt: NonEmpty
-    entities: list[Entity]
+    entities: list[ProposalEntity]
     schedules: list[Schedule]
-    relations: list[Relation]
+    relations: list[RelationData]
     entry_drafts: list[EntryDraft]
 
     @model_validator(mode="after")
@@ -409,9 +489,6 @@ class Proposal(Versioned):
                     raise ValueError(
                         "blocked_by_request must reference another request"
                     )
-            if draft.resolves is not None and not draft.resolves.startswith("evt_"):
-                if draft.resolves not in requests:
-                    raise ValueError("resolves must reference a request")
         for schedule in self.schedules:
             check_entities(schedule.entities)
             schedule_draft = drafts.get(schedule.entry_ref)

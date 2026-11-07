@@ -45,6 +45,8 @@
       "type": "number"
     },
     "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -63,6 +65,9 @@
       "type": "string"
     },
     "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
       "pattern": "^[a-z][1-9][0-9]*$",
       "type": "string"
     },
@@ -80,7 +85,7 @@
   "$id": "urn:weaver:schema:v1:Relation",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "from/to are entity refs or ent_ IDs; 'this' denotes the proposal source.",
+  "description": "Standalone versioned relation file; nested relations have no version key.",
   "properties": {
     "ask": {
       "anyOf": [

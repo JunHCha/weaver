@@ -1,6 +1,8 @@
 {
   "$defs": {
     "CaptureId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -14,6 +16,8 @@
       "type": "string"
     },
     "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
@@ -53,11 +57,18 @@
       "type": "integer"
     },
     "PayloadRef": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
       "pattern": "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$",
       "type": "string"
     },
     "Timestamp": {
       "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
       "type": "string"
     }
   },

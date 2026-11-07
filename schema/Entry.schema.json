@@ -1,10 +1,14 @@
 {
   "$defs": {
     "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
     "EntryId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -26,6 +30,9 @@
           "$ref": "#/$defs/SourceId"
         },
         {
+          "not": {
+            "pattern": "[\\r\\n]"
+          },
           "pattern": "^output:\\S+$",
           "type": "string"
         }
@@ -37,6 +44,8 @@
       "type": "string"
     },
     "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
       "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
@@ -79,6 +88,10 @@
     },
     "Timestamp": {
       "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
       "type": "string"
     }
   },
