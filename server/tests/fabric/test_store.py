@@ -1,7 +1,10 @@
 import sqlite3
+import stat
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -318,3 +321,51 @@ def test_retry_normalizes_json_keys_and_request_due_timezone(tmp_path: Path) -> 
     raw["value"] = {"b": False, "a": 1}
     store.append([Entry.model_validate(raw)])
     assert store.entries(EntryQuery()) == [item]
+
+
+def test_dst_fold_range_uses_utc_instants(tmp_path: Path) -> None:
+    zone = ZoneInfo("America/New_York")
+    since = datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0)
+    until = datetime(2026, 11, 1, 1, 15, tzinfo=zone, fold=1)
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    items = [
+        entry(i, occurred_at=f"2026-11-01T{instant}:00Z")
+        for i, instant in enumerate(("05:44", "05:45", "06:00", "06:14", "06:15"), 1)
+    ]
+    store.append(items)
+    assert store.entries(EntryQuery(since=since, until=until)) == items[1:4]
+    with pytest.raises(ValidationError, match="since must not be after until"):
+        EntryQuery(since=until, until=since)
+
+
+def test_reopening_repairs_database_and_live_sidecar_permissions(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o755)
+    store = FabricStore(state / "fabric.sqlite3")
+    store.append([entry()])
+    # Keep a connection open so WAL/SHM survive the store's reconnects.
+    with closing(sqlite3.connect(store.path)) as observer:
+        observer.execute("SELECT * FROM entries").fetchall()
+        files = [Path(f"{store.path}{suffix}") for suffix in ("", "-wal", "-shm")]
+        for file in files:
+            file.chmod(0o644)
+        reopened = FabricStore(store.path)
+        assert reopened.entries(EntryQuery()) == [entry()]
+        for file in files:
+            assert stat.S_IMODE(file.stat().st_mode) == 0o600
+    assert not files[1].exists()
+    assert not files[2].exists()
+    # Sidecars recreated on later connections must inherit private DB permissions.
+    with closing(sqlite3.connect(store.path)) as observer:
+        observer.execute("SELECT * FROM entries").fetchall()
+        for file in files:
+            assert stat.S_IMODE(file.stat().st_mode) == 0o600
+
+
+def test_mac_commit_and_checkpoint_fullfsync(tmp_path: Path) -> None:
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    with store._connect() as db:
+        assert db.execute("PRAGMA fullfsync").fetchone()[0] == 1
+        assert db.execute("PRAGMA checkpoint_fullfsync").fetchone()[0] == 1

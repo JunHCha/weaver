@@ -11,7 +11,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -112,7 +112,7 @@ class EntryQuery(BaseModel):
     @model_validator(mode="after")
     def time_range(self) -> "EntryQuery":
         if self.since is not None and self.until is not None:
-            if self.since > self.until:
+            if self.since.astimezone(UTC) > self.until.astimezone(UTC):
                 raise ValueError("since must not be after until")
         return self
 
@@ -167,8 +167,10 @@ class FabricStore:
             os.close(fd)
 
     def _initialize(self) -> None:
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
         os.close(fd)
+        # Repair existing files before SQLite can read them or create sidecars.
+        self._restrict_permissions()
         with self._connect() as db:
             if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
                 raise FabricError("SQLite WAL is unavailable")
@@ -181,6 +183,14 @@ class FabricStore:
             elif version != SCHEMA_VERSION:
                 raise SchemaVersionError("unsupported Fabric database version")
             db.commit()
+        self._restrict_permissions()
+
+    def _restrict_permissions(self) -> None:
+        # WAL and SHM may still exist while another connection is open. Newly
+        # created sidecars inherit the now-private DB mode, independent of umask.
+        for suffix in ("", "-wal", "-shm"):
+            with suppress(FileNotFoundError):
+                os.chmod(f"{self.path}{suffix}", 0o600)
 
     @classmethod
     def from_config(cls, config: ServerConfig) -> "FabricStore":
@@ -195,6 +205,7 @@ class FabricStore:
                 raise FabricError("SQLite foreign keys are unavailable")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
+            db.execute("PRAGMA checkpoint_fullfsync=ON")
             yield db
         except sqlite3.Error as exc:
             raise FabricError("Fabric SQLite operation failed") from exc
