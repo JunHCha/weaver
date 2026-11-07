@@ -89,6 +89,7 @@ def test_positive_patterns(signal: str) -> None:
         "일요일기",
         "오후반",
         "3시스템",
+        "오후 3시스템",
         "11월드",
         "팀장난",
         "홍길동 님비",
@@ -171,7 +172,7 @@ def test_segment_without_timestamp_falls_back_to_thread() -> None:
 def test_numeric_separators_do_not_split_sentences() -> None:
     source = thread("금액 3.14예요. 2026. 11. 8. 만나요. 끝.")
     result = RuleRefiner(RefinerConfig(before=0, after=0)).select(source)
-    assert result[0].context == "2026. 11. 8. 만나요."
+    assert result[0].context == "2026. 11. 8."
     assert result[0].start_sentence == 1
 
 
@@ -270,3 +271,142 @@ def test_trigger_kinds_and_exact_original_ranges(
     triggers = RuleRefiner().select(source)[0].triggers
     assert [t.kind for t in triggers] == [kind] * len(expected)
     assert [text[t.start_char : t.end_char] for t in triggers] == expected
+
+
+@pytest.mark.parametrize(
+    "text,signals",
+    [
+        ("3시로 옮기자", ["3시"]),
+        ("금요일로", ["금요일"]),
+        ("다음 주로", ["다음 주"]),
+        ("내일엔", ["내일"]),
+        ("내일이야", ["내일"]),
+        ("내일이요", ["내일"]),
+        ("내일부터는", ["내일"]),
+        ("오후 3시예요", ["오후 3시"]),
+        ("3시요", ["3시"]),
+        ("팀장님이랑", ["팀장님"]),
+        ("팀장님한테", ["팀장님"]),
+        ("김민수님한테", ["김민수님"]),
+        ("팀장님께서는", ["팀장님"]),
+        ("철수씨랑", ["철수씨"]),
+        ("홍길동 님이랑", ["홍길동 님"]),
+        ("내일이랑 모레", ["내일", "모레"]),
+        ("내일이나 모레", ["내일", "모레"]),
+    ],
+)
+def test_korean_signal_suffixes(text: str, signals: list[str]) -> None:
+    candidates = RuleRefiner().select(thread(text))
+    assert [
+        text[t.start_char : t.end_char] for c in candidates for t in c.triggers
+    ] == signals
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "고객님",
+        "회원님",
+        "하느님",
+        "마음씨",
+        "아저씨",
+        "아가씨",
+        "오늘 씨 뿌렸다",
+        "고객 님",
+        "회원 님",
+    ],
+)
+def test_common_nouns_and_spaced_ssi_are_not_honorifics(text: str) -> None:
+    candidates = RuleRefiner().select(thread(text))
+    assert all(t.kind != "honorific" for c in candidates for t in c.triggers)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "오늘날",
+        "내일모레",
+        "내일림",
+        "다음 주스",
+        "일요일기",
+        "3시스템",
+        "오후 3시스템",
+        "11월드",
+        "김하나씨앗",
+        "홍길동 님비",
+    ],
+)
+def test_common_word_prefixes_do_not_trigger(text: str) -> None:
+    assert RuleRefiner().select(thread(text)) == []
+
+
+def test_date_final_period_and_version_boundaries() -> None:
+    result = RuleRefiner(RefinerConfig(before=0, after=0)).select(
+        thread("2026.11.8. 내일 봐요.")
+    )
+    assert [c.context for c in result] == ["2026.11.8.", "내일 봐요."]
+    source = thread("버전 1.2.3 그대로. 내일 봐요.")
+    result = RuleRefiner().select(source)
+    assert (result[0].start_sentence, result[0].end_sentence) == (0, 2)
+    assert result[0].context == source.text
+
+
+@pytest.mark.parametrize("text", ["16:9 화면", "12:30:45", "3.5시간"])
+def test_numeric_fragments_are_not_signals(text: str) -> None:
+    assert RuleRefiner().select(thread(text)) == []
+
+
+@pytest.mark.parametrize(
+    "text,kind,signal",
+    [
+        ("15일에", "date", "15일"),
+        ("1일", "date", "1일"),
+        ("일주일", "duration", "일주일"),
+        ("이틀", "duration", "이틀"),
+        ("하루", "duration", "하루"),
+        ("저녁 3시", "time", "저녁 3시"),
+        ("새벽 3시", "time", "새벽 3시"),
+        ("아침 3시", "time", "아침 3시"),
+        ("밤 3시", "time", "밤 3시"),
+    ],
+)
+def test_temporal_kinds_and_modifiers(text: str, kind: str, signal: str) -> None:
+    triggers = RuleRefiner().select(thread(text))[0].triggers
+    assert [(t.kind, text[t.start_char : t.end_char]) for t in triggers] == [
+        (kind, signal)
+    ]
+
+
+def test_fullwidth_sentence_delimiters() -> None:
+    result = RuleRefiner(RefinerConfig(before=0, after=0)).select(
+        thread("내일。평범해요？팀장님！끝…")
+    )
+    assert [c.context for c in result] == ["내일。", "팀장님！"]
+    assert [c.start_sentence for c in result] == [0, 2]
+
+
+def test_uncovered_trigger_and_overlapping_null_segments_use_thread_reference() -> None:
+    source = thread("내일 봐요. 팀장님!", parts=["내일 봐요."])
+    source.segments[0].occurred_at = None
+    source.segments.append(source.segments[0].model_copy(update={"segment_id": "s2"}))
+    triggers = RuleRefiner().select(source)[0].triggers
+    assert [t.segment_ids for t in triggers] == [["s1", "s2"], []]
+    assert [t.reference_at for t in triggers] == [STAMP, STAMP]
+
+
+@pytest.mark.parametrize("text", ["버전 1.2.3입니다. " * 8000, "3분 " * 35000])
+def test_large_input_rule_selection_completes_promptly(text: str) -> None:
+    from time import perf_counter
+
+    assert len(text) >= 100_000
+    start = perf_counter()
+    selected = RuleRefiner().select(thread(text))
+    elapsed = perf_counter() - start
+    # Generous wall-clock cap catches the former quadratic scans (tens of
+    # seconds on these inputs) while allowing slow development/CI machines.
+    assert elapsed < 5.0
+    if text.startswith("3분"):
+        assert len(selected) == 1
+        assert len(selected[0].triggers) == 35000
+    else:
+        assert selected == []

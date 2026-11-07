@@ -50,7 +50,13 @@ class CandidateTrigger(Contract):
 
 
 class Candidate(Contract):
-    """A selected Thread range; offsets index original Unicode code points."""
+    """A selected Thread range; offsets index original Unicode code points.
+
+    The 0..1 sentence defaults preserve callers of the initial v1 internal
+    Candidate, which supplied only char ranges and context. They are legacy
+    placeholders, not inferred sentence coordinates. RuleRefiner always supplies
+    actual sentence bounds with its triggers; new producers should do the same.
+    """
 
     source_id: SourceId
     segment_ids: list[Ref]

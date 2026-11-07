@@ -15,9 +15,10 @@ from weaver.schema.internal import Candidate, CandidateTrigger
 from weaver.schema.models import Segment
 
 _WORD = r"가-힣A-Za-z0-9_"
-_LEFT = rf"(?<![{_WORD}])"
-# Permit Korean particles without matching prefixes of unrelated words.
-_RIGHT = rf"(?=(?:(?:부터|까지|동안|에는|께서|께|쯤|경|마다|이면|에|은|는|이|가|을|를|과|와|도|만|의))?(?![{_WORD}]))"
+_LEFT = rf"(?<![{_WORD}.:])"
+# Korean particles/endings are open-ended; keep the signal's exact range and
+# allow following Hangul. Known lexical false positives are excluded below.
+_RIGHT = r"(?![A-Za-z0-9_:])"
 _MONTH = r"(?:1[0-2]|0?[1-9])"
 _DAY = r"(?:3[01]|[12][0-9]|0?[1-9])"
 _HOUR = r"(?:2[0-3]|1[0-9]|0?[0-9])"
@@ -29,13 +30,14 @@ _DATE = (
     rf"|[0-9]{{4}}-{_MONTH}-{_DAY}"
     rf"|[0-9]{{4}}\.\s*{_MONTH}\.\s*{_DAY}\.?(?![0-9])"
     r"|[0-9]{4}\s*년(?!\s*[0-9]+\s*월)"
+    rf"|{_DAY}\s*일"
     r"|오늘|어제|내일|모레|그제|(?:이번|다음|지난)\s*(?:주|달|해|월|년)"
     r"|[월화수목금토일]요일"
 )
 _TIME = (
-    rf"(?:(?:오전|오후)\s*)?{_HOUR}\s*시"
+    rf"(?:(?:오전|오후|저녁|새벽|아침|밤)\s*)?{_HOUR}\s*시"
     rf"(?:\s*(?:반|{_MINUTE}\s*분))?(?!\s*[0-9]+\s*분)"
-    rf"|{_HOUR}:{_MINUTE}(?![0-9])"
+    rf"|{_HOUR}:[0-5][0-9](?![0-9:])"
 )
 type TriggerKind = Literal["date", "time", "duration", "honorific"]
 _RULES: tuple[tuple[TriggerKind, re.Pattern[str]], ...] = (
@@ -43,20 +45,65 @@ _RULES: tuple[tuple[TriggerKind, re.Pattern[str]], ...] = (
     ("time", re.compile(_LEFT + "(?:" + _TIME + ")" + _RIGHT)),
     (
         "duration",
-        re.compile(_LEFT + _NUMBER + r"\s*(?:개월|시간|달|일|주|년|분)" + _RIGHT),
+        re.compile(
+            _LEFT
+            + r"(?:"
+            + _NUMBER
+            + r"\s*(?:개월|시간|달|일|주|년|분)|일주일|이틀|하루)"
+            + _RIGHT
+        ),
     ),
     (
         "honorific",
         re.compile(
             _LEFT
-            + r"(?:[가-힣]{2,5}\s*(?:님|씨)|(?:팀장|과장|부장|대리|사장|대표|선생|교수|박사)\s*님)"
+            + r"(?:[가-힣]{2,5}(?:\s*님|씨)|(?:팀장|과장|부장|대리|사장|대표|선생|교수|박사)\s*님)"
             + _RIGHT
         ),
     ),
 )
-# Numeric punctuation belongs to the original expression, not a sentence break.
-_NUMERIC = re.compile(r"[0-9]{4}\.\s*[0-9]{1,2}\.\s*[0-9]{1,2}\.?|[0-9]+\.[0-9]+")
-_BREAK = re.compile(r"[.!?]+[\"'”’」]?|\r?\n")
+# Only INTERNAL numeric dots are protected. A date's final dot followed by
+# whitespace/end is a sentence terminator, just like a version's final dot.
+_NUMERIC = re.compile(
+    r"(?<![0-9])(?:[0-9]{4}\.\s*[0-9]{1,2}\.\s*[0-9]{1,2}|[0-9]+(?:\.[0-9]+)+)"
+)
+_BREAK = re.compile(r"[.!?。？！…]+[\"'”’」]?|\r?\n")
+_BAD_PREFIXES = re.compile(
+    r"오늘날|내일모레|내일림|(?:이번|다음|지난)\s*주스|[월화수목금토일]요일기"
+    r"|[0-9]+\s*(?:시스템|월드)|하루살이"
+)
+_COMMON_NOUNS = {"고객님", "회원님", "하느님", "마음씨", "아저씨", "아가씨"}
+_DAY_TOKEN = re.compile(r"([0-9]{1,2})\s*일")
+_DURATION_SUFFIX = re.compile(r"\s*(?:동안|후|전|간|뒤|정도)")
+_EXPLICIT_PREFIX = re.compile(r"[0-9]+\s*(?:월|시)\s*$")
+
+
+def _excluded(kind: TriggerKind, match: re.Match[str], text: str) -> bool:
+    if _BAD_PREFIXES.match(text, match.start()):
+        return True
+    if kind == "time" and text.startswith("스템", match.end()):
+        return True
+    if kind == "honorific":
+        if "".join(match.group().split()) in _COMMON_NOUNS:
+            return True
+        if (match.group().endswith("씨") and text.startswith("앗", match.end())) or (
+            match.group().endswith("님") and text.startswith("비", match.end())
+        ):
+            return True
+    if kind in {"date", "duration"}:
+        # A bounded lookbehind avoids copying/rescanning an entire long sentence
+        # for every match. Numeric date/time components are not standalone days
+        # or durations, including when their containing expression is invalid.
+        prefix = text[max(0, match.start() - 64) : match.start()]
+        if _EXPLICIT_PREFIX.search(prefix):
+            return True
+        day = _DAY_TOKEN.fullmatch(match.group())
+        if day and 1 <= int(day[1]) <= 31:
+            duration = _DURATION_SUFFIX.match(text, match.end()) is not None
+            return (kind == "date" and duration) or (
+                kind == "duration" and not duration
+            )
+    return False
 
 
 class Refiner(Protocol):
@@ -73,8 +120,17 @@ def _sentences(thread: Thread) -> list[_Sentence]:
     text = thread.text
     protected = [(m.start(), m.end()) for m in _NUMERIC.finditer(text)]
     cuts = {0, len(text)}
+    protected_index = 0
     for match in _BREAK.finditer(text):
-        if not any(start <= match.start() < end for start, end in protected):
+        while (
+            protected_index < len(protected)
+            and protected[protected_index][1] <= match.start()
+        ):
+            protected_index += 1
+        if (
+            protected_index == len(protected)
+            or match.start() < protected[protected_index][0]
+        ):
             cuts.add(match.end())
     for segment in thread.segments:
         cuts.update((segment.start_char, segment.end_char))
@@ -116,11 +172,7 @@ class RuleRefiner:
             triggers = []
             for kind, pattern in _RULES:
                 for match in pattern.finditer(text):
-                    # A minute/day inside an explicit time/date is not a second
-                    # duration signal (nor a fallback for an invalid time/date).
-                    if kind == "duration" and re.search(
-                        r"[0-9]+\s*(?:월|시)\s*$", text[: match.start()]
-                    ):
+                    if _excluded(kind, match, text):
                         continue
                     start, end = (
                         sentence.start + match.start(),
@@ -148,10 +200,11 @@ class RuleRefiner:
             right = min(len(sentences), index + self.config.after + 1)
             if windows and left < windows[-1][1]:
                 previous_left, previous_right, previous_triggers = windows[-1]
+                previous_triggers.extend(triggers)
                 windows[-1] = (
                     previous_left,
                     max(previous_right, right),
-                    previous_triggers + triggers,
+                    previous_triggers,
                 )
             else:
                 windows.append((left, right, triggers))

@@ -545,3 +545,20 @@ def test_refiner_settings_are_injected(tmp_path: Path) -> None:
 def test_invalid_refiner_settings(tmp_path: Path, extra: str) -> None:
     with pytest.raises(ConfigError, match="refiner"):
         load_config(write_config(tmp_path, extra), environ={})
+
+
+def test_all_shared_config_tables_coexist(tmp_path: Path) -> None:
+    config = load_config(
+        write_config(
+            tmp_path,
+            '[llm]\nbackend = "none"\n[stt]\nmodel_path = "model"\n'
+            '[time]\ntimezone = "America/New_York"\n'
+            "[refiner]\nbefore = 0\nafter = 2\n",
+        ),
+        environ={},
+    )
+    assert config.llm.backend == "none"
+    assert config.stt.model_path == tmp_path / "model"
+    assert config.time.timezone == "America/New_York"
+    assert config.loom.refiner is config.refiner
+    assert (config.refiner.before, config.refiner.after) == (0, 2)
