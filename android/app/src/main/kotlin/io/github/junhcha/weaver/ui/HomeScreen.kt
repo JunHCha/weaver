@@ -54,6 +54,7 @@ fun HomeScreen() {
             ) {
                 Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                CourierPanel()
                 Feature.entries.forEach { feature ->
                     FeatureCard(
                         feature = feature,
