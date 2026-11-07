@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "CaptureId": {
+      "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Channel": {
+      "enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+      ],
+      "type": "string"
+    },
+    "Digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "Hints": {
+      "additionalProperties": false,
+      "properties": {
+        "counterpart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "counterpart"
+      ],
+      "title": "Hints",
+      "type": "object"
+    },
+    "Kind": {
+      "enum": [
+        "fleece",
+        "text"
+      ],
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Offset": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "PayloadRef": {
+      "pattern": "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capture_id": {
+      "$ref": "#/$defs/CaptureId"
+    },
+    "captured_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "channel": {
+      "$ref": "#/$defs/Channel"
+    },
+    "hints": {
+      "$ref": "#/$defs/Hints"
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "$ref": "#/$defs/PayloadRef"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "size": {
+      "$ref": "#/$defs/Offset"
+    }
+  },
+  "required": [
+    "schema_version",
+    "capture_id",
+    "kind",
+    "channel",
+    "payload",
+    "sha256",
+    "size",
+    "captured_at",
+    "occurred_at",
+    "hints"
+  ],
+  "title": "Manifest",
+  "type": "object"
+}

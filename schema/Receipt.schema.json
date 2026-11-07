@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "CaptureId": {
+      "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SourceId": {
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Receipt",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capture_id": {
+      "$ref": "#/$defs/CaptureId"
+    },
+    "received_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    }
+  },
+  "required": [
+    "schema_version",
+    "capture_id",
+    "source_id",
+    "sha256",
+    "received_at"
+  ],
+  "title": "Receipt",
+  "type": "object"
+}

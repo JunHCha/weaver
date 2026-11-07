@@ -1,0 +1,267 @@
+{
+  "$defs": {
+    "EntityId": {
+      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntryId": {
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntryKind": {
+      "enum": [
+        "요청",
+        "논의",
+        "결정",
+        "폐기",
+        "약속",
+        "일정",
+        "변경"
+      ],
+      "type": "string"
+    },
+    "EntrySource": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceId"
+        },
+        {
+          "pattern": "^output:\\S+$",
+          "type": "string"
+        }
+      ]
+    },
+    "JsonValue": {},
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "SourceId": {
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "StoredRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requester": {
+          "$ref": "#/$defs/EntityId"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/EntityId"
+          },
+          "minItems": 1,
+          "title": "Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "requester",
+        "targets",
+        "due_at",
+        "content"
+      ],
+      "title": "StoredRequest",
+      "type": "object"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Entry",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "request": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "요청"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "request": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "properties": {
+          "resolves": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "결정"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resolves": {
+            "type": "string"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "const": "human"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Append-only fact, not action permission. A request is open until a human\ndecision Entry has resolves=request.entry_id. Fabric defines state folding,\nreplacement/retraction ordering and checks the target of resolves.",
+  "properties": {
+    "actor": {
+      "enum": [
+        "human",
+        "ai_approved"
+      ],
+      "title": "Actor",
+      "type": "string"
+    },
+    "blocked_by_request": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/EntityId"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "entry_id": {
+      "$ref": "#/$defs/EntryId"
+    },
+    "field": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "$ref": "#/$defs/EntryKind"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "recorded_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "request": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StoredRequest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resolves": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retracts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_id": {
+      "$ref": "#/$defs/EntrySource"
+    },
+    "supersedes": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "value": {
+      "$ref": "#/$defs/JsonValue"
+    }
+  },
+  "required": [
+    "schema_version",
+    "entry_id",
+    "entities",
+    "kind",
+    "field",
+    "value",
+    "occurred_at",
+    "recorded_at",
+    "source_id",
+    "actor",
+    "supersedes",
+    "retracts",
+    "request",
+    "resolves",
+    "blocked_by_request"
+  ],
+  "title": "Entry",
+  "type": "object"
+}

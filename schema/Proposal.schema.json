@@ -1,0 +1,676 @@
+{
+  "$defs": {
+    "Ask": {
+      "additionalProperties": false,
+      "description": "A human question; choices may be empty and free-text answers are allowed.",
+      "properties": {
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "question": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "question",
+        "choices"
+      ],
+      "title": "Ask",
+      "type": "object"
+    },
+    "Channel": {
+      "enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+      ],
+      "type": "string"
+    },
+    "Choice": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "$ref": "#/$defs/EntityId"
+        },
+        "label": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "entity_id",
+        "label"
+      ],
+      "title": "Choice",
+      "type": "object"
+    },
+    "Confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "properties": {
+            "entity_id": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "description": "ref identifies a proposal item; entity_id links an existing Fabric entity.\n\nAt least one is non-null. aliases never imply identity automatically.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "$ref": "#/$defs/NonEmpty"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "type": {
+          "$ref": "#/$defs/EntityType"
+        }
+      },
+      "required": [
+        "schema_version",
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "ref",
+        "entity_id",
+        "type",
+        "name",
+        "aliases"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "EntityId": {
+      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntityRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityId"
+        },
+        {
+          "$ref": "#/$defs/Ref"
+        }
+      ]
+    },
+    "EntityType": {
+      "enum": [
+        "person",
+        "org",
+        "project",
+        "topic",
+        "meeting"
+      ],
+      "type": "string"
+    },
+    "EntryDraft": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "request": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "요청"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "request": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "resolves": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "결정"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "Approval records facts only. blocked_by_request forbids derived execution\nuntil a user-authored decision Entry resolves the referenced request Entry.",
+      "properties": {
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_by_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          },
+          "title": "Entities",
+          "type": "array"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/EntryKind"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Request"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolves": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryId"
+            },
+            {
+              "$ref": "#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resolves"
+        },
+        "retracts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "ref",
+        "entities",
+        "kind",
+        "field",
+        "value",
+        "occurred_at",
+        "supersedes",
+        "retracts",
+        "request",
+        "resolves",
+        "blocked_by_request"
+      ],
+      "title": "EntryDraft",
+      "type": "object"
+    },
+    "EntryId": {
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "EntryKind": {
+      "enum": [
+        "요청",
+        "논의",
+        "결정",
+        "폐기",
+        "약속",
+        "일정",
+        "변경"
+      ],
+      "type": "string"
+    },
+    "JsonValue": {},
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "ProposalId": {
+      "pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Ref": {
+      "pattern": "^[a-z][1-9][0-9]*$",
+      "type": "string"
+    },
+    "Relation": {
+      "additionalProperties": false,
+      "description": "from/to are entity refs or ent_ IDs; 'this' denotes the proposal source.",
+      "properties": {
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityRef"
+            },
+            {
+              "const": "this",
+              "type": "string"
+            }
+          ],
+          "title": "From"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityRef"
+            },
+            {
+              "const": "this",
+              "type": "string"
+            }
+          ],
+          "title": "To"
+        },
+        "type": {
+          "$ref": "#/$defs/RelationType"
+        }
+      },
+      "required": [
+        "schema_version",
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "from",
+        "type",
+        "to",
+        "reason"
+      ],
+      "title": "Relation",
+      "type": "object"
+    },
+    "RelationType": {
+      "enum": [
+        "원인",
+        "후속조치",
+        "같은논의",
+        "참석",
+        "소속"
+      ],
+      "type": "string"
+    },
+    "Request": {
+      "additionalProperties": false,
+      "description": "A request is data awaiting a user decision, never execution permission.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requester": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          },
+          "minItems": 1,
+          "title": "Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "requester",
+        "targets",
+        "due_at",
+        "content"
+      ],
+      "title": "Request",
+      "type": "object"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "Schedule": {
+      "additionalProperties": false,
+      "description": "Calendar creation is forbidden while blocked_by_request is non-null,\nuntil a human decision Entry resolves it. Verdict approve only records facts.",
+      "properties": {
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_by_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          },
+          "title": "Entities",
+          "type": "array"
+        },
+        "entry_ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "start": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "title": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "ref",
+        "title",
+        "start",
+        "end",
+        "entities",
+        "entry_ref",
+        "blocked_by_request"
+      ],
+      "title": "Schedule",
+      "type": "object"
+    },
+    "SourceId": {
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "SourceSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "captured_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "channel": {
+          "$ref": "#/$defs/Channel"
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        }
+      },
+      "required": [
+        "source_id",
+        "channel",
+        "captured_at",
+        "occurred_at"
+      ],
+      "title": "SourceSummary",
+      "type": "object"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Proposal",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One source review unit. Producers must mark request-derived drafts and\nschedules blocked_by_request; approval records the request, never executes it.",
+  "properties": {
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/Entity"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "entry_drafts": {
+      "items": {
+        "$ref": "#/$defs/EntryDraft"
+      },
+      "title": "Entry Drafts",
+      "type": "array"
+    },
+    "proposal_id": {
+      "$ref": "#/$defs/ProposalId"
+    },
+    "relations": {
+      "items": {
+        "$ref": "#/$defs/Relation"
+      },
+      "title": "Relations",
+      "type": "array"
+    },
+    "rev": {
+      "$ref": "#/$defs/Revision"
+    },
+    "schedules": {
+      "items": {
+        "$ref": "#/$defs/Schedule"
+      },
+      "title": "Schedules",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceSummary"
+    },
+    "summary": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "thread_excerpt": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "rev",
+    "source",
+    "summary",
+    "thread_excerpt",
+    "entities",
+    "schedules",
+    "relations",
+    "entry_drafts"
+  ],
+  "title": "Proposal",
+  "type": "object"
+}
