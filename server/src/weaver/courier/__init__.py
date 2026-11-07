@@ -3,10 +3,19 @@
 from .atomic import write_bytes_atomic, write_json_atomic
 from .courier import SCAN_INTERVAL_SECONDS, Courier, RevisionError, ScanReport
 from .files import CourierFileError, is_conflict, is_ignored
-from .ports import CaptureStore, DecisionStore, ProposalRevisions, VerifiedCapture
+from .ports import (
+    CaptureConflict,
+    CaptureStatus,
+    CaptureStore,
+    DecisionStore,
+    ProposalRevisions,
+    VerifiedCapture,
+)
 
 __all__ = [
     "SCAN_INTERVAL_SECONDS",
+    "CaptureConflict",
+    "CaptureStatus",
     "CaptureStore",
     "Courier",
     "CourierFileError",

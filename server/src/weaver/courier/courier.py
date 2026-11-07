@@ -32,7 +32,13 @@ from .files import (
     parse_revision_name,
     revision_file_name,
 )
-from .ports import CaptureStore, DecisionStore, ProposalRevisions, VerifiedCapture
+from .ports import (
+    CaptureConflict,
+    CaptureStore,
+    DecisionStore,
+    ProposalRevisions,
+    VerifiedCapture,
+)
 
 logger = logging.getLogger("weaver.courier")
 
@@ -66,6 +72,7 @@ _WARNING = {
     "unknown_proposal",
     "sync_conflict",
     "unreadable",
+    "capture_conflict",
 }
 
 
@@ -187,14 +194,21 @@ class Courier:
                     raise CourierFileError("id_mismatch")
                 # Before touching the body: a completed capture is never
                 # re-hashed, and the phone may already have removed its body.
-                if _ask(
-                    self._captures.is_captured, manifest.capture_id, manifest.sha256
-                ):
+                status = _ask(
+                    self._captures.status, manifest.capture_id, manifest.sha256
+                )
+                if status == "conflict":
+                    raise CourierFileError("capture_conflict")
+                if status == "stored":
+                    # Recovers a receipt lost between persist and publish.
+                    _ask(self._captures.confirm, manifest.capture_id)
                     report.duplicates.append(manifest.capture_id)
                     continue
                 capture = self._verify_capture(path, manifest)
                 try:
                     self._captures.accept(capture)
+                except CaptureConflict:
+                    raise CourierFileError("capture_conflict") from None
                 except Exception:
                     raise CourierFileError("accept_failed") from None
                 report.accepted.append(manifest.capture_id)
