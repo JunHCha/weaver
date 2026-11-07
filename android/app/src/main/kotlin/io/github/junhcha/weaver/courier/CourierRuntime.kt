@@ -113,8 +113,11 @@ object CourierRuntime {
     }
     fun kick(context: Context) {
         if (tree(context) == null) return
-        WorkManager.getInstance(context).enqueueUniqueWork("courier-immediate", ExistingWorkPolicy.APPEND_OR_REPLACE,
+        // Each trigger gets an independent root: an earlier retry must not block fresh data
+        // or a restored folder grant. The runtime lock and durable capture state make overlap safe.
+        WorkManager.getInstance(context).enqueue(
             OneTimeWorkRequestBuilder<CourierWorker>()
+                .addTag("courier-immediate")
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
 
