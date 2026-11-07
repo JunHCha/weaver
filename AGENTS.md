@@ -12,6 +12,8 @@ uv run --project server ruff format --check server
 uv run --project server mypy server/src
 ```
 
+Use Typer for the server CLI.
+
 Commit `server/uv.lock`. Runtime dependencies belong in `project.dependencies`,
 pytest in the `test` group, and lint/type tools in `dev` (which includes `test`).
 Use Ruff E4/E7/E9/F/I/B/UP and its formatter, and mypy strict targeting Python 3.12.
