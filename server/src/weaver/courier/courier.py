@@ -73,6 +73,7 @@ _WARNING = {
     "sync_conflict",
     "unreadable",
     "capture_conflict",
+    "verdict_conflict",
 }
 
 
@@ -115,12 +116,14 @@ class Courier:
 
     # ---- publishing (PC -> phone) -------------------------------------------
 
-    def publish_proposal(self, proposal: Proposal) -> Path:
+    def publish_proposal(
+        self, proposal: Proposal, *, revisions: ProposalRevisions | None = None
+    ) -> Path:
         """Write ``<proposal_id>.r<rev>.json`` atomically, then drop older revs.
 
         Loom must record ``proposal.rev`` durably before calling this.
         """
-        latest = self._revisions.latest_rev(proposal.proposal_id)
+        latest = (revisions or self._revisions).latest_rev(proposal.proposal_id)
         if latest is None or proposal.rev != latest:
             raise RevisionError("proposal rev is not the recorded latest rev")
         final = self.paths.proposals / revision_file_name(
@@ -129,6 +132,15 @@ class Courier:
         write_json_atomic(final, proposal)
         self._remove_revisions(proposal.proposal_id, below=proposal.rev)
         return final
+
+    def clean_review(self, proposal_id: str, rev: int) -> None:
+        """Clean an APPLIED review; caller owns durable application confirmation."""
+        self._clean_decision(
+            self.paths.decisions / revision_file_name(proposal_id, rev),
+            proposal_id,
+            rev,
+            ScanReport(),
+        )
 
     def publish_alert(self, alert: Alert) -> Path:
         final = self.paths.proposals / f"alert_{alert.alert_id}.json"
@@ -319,6 +331,16 @@ class Courier:
                 if verdict.rev != name.rev:
                     raise CourierFileError("rev_mismatch")
                 pid, rev = name.proposal_id, name.rev
+                # Loom's optional guard checks conflicting resynced decisions
+                # before the legacy applied-file cleanup shortcut.
+                validate = getattr(self._decisions, "validate_verdict", None)
+                if validate is not None:
+                    try:
+                        validate(verdict)
+                    except CourierFileError:
+                        raise
+                    except Exception:
+                        raise CourierFileError("store_failed") from None
                 if _ask(self._decisions.is_applied, pid, rev):
                     self._clean_decision(path, pid, rev, report)
                     continue
