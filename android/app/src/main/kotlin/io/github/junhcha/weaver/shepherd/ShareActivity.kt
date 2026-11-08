@@ -37,7 +37,7 @@ class ShareActivity : ComponentActivity() {
                     Column(Modifier.systemBarsPadding().padding(24.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("공유 텍스트 확인", style = MaterialTheme.typography.headlineSmall)
-                        Text("UTF-8 텍스트 한 항목 · 최대 10 MiB · 종류를 선택하세요.")
+                        Text("UTF-8 또는 BOM 있는 UTF-16 텍스트 한 항목 · 최대 10 MiB · 종류를 선택하세요.")
                         file?.let { Text("텍스트 ${it.length()} bytes 준비됨") }
                         if (preview.isNotEmpty()) Text(preview)
                         listOf(Channel.SHARE_TEXT to "일반 텍스트", Channel.KAKAO to "카카오톡 내보내기",
@@ -50,7 +50,7 @@ class ShareActivity : ComponentActivity() {
                         }
                         if (calls.isEmpty()) Text("미처리 통화가 없어 통화 스크립트를 선택할 수 없습니다. 저장되지 않습니다.")
                         if (channel == Channel.CALL) {
-                            Text("연결할 통화 (가장 최근 미처리 통화가 기본)")
+                            Text("연결할 통화 (파일명과 일치하는 통화, 없으면 가장 최근 통화가 기본)")
                             calls.forEach { call ->
                                 TextButton(enabled = !busy, onClick = { callId = call.id }) {
                                     Text("${if (callId == call.id) "● " else "○ "}${call.occurredAt ?: "시각 미상"} · ${call.displayName} · ${call.counterpart ?: "알 수 없음"}")
@@ -78,6 +78,7 @@ class ShareActivity : ComponentActivity() {
                 // Include recordings not yet seen by the periodic worker, even while stabilizing.
                 ShepherdRuntime.scanNow(this)
                 val pending = PendingCalls.repository(this).pending()
+                val displayName = SharedText.displayName(this, intent)
                 runOnUiThread {
                     if (isDestroyed) {
                         if (restored == null) received.delete()
@@ -86,7 +87,8 @@ class ShareActivity : ComponentActivity() {
                     preview = sample
                     file = received
                     calls = pending
-                    if (callId !in pending.map { it.id }) callId = pending.firstOrNull()?.id
+                    if (savedInstanceState == null) channel = SharedCallSelection.channel(displayName, pending)
+                    if (callId !in pending.map { it.id }) callId = SharedCallSelection.call(displayName, pending)
                     busy = false
                 }
             } catch (error: Exception) { showError(error) }
@@ -115,7 +117,7 @@ class ShareActivity : ComponentActivity() {
         busy = false
         message = when (error) {
             is SecurityException -> "공유 파일 읽기 권한이 만료되었습니다. 원래 앱에서 다시 공유하세요."
-            is CharacterCodingException -> "UTF-8 텍스트가 아닙니다. CP949·UTF-16·손상된 인코딩은 지원하지 않습니다."
+            is CharacterCodingException -> "UTF-8 또는 BOM 있는 UTF-16 텍스트로 공유하세요. CP949·BOM 없는 UTF-16·손상된 인코딩은 지원하지 않습니다."
             is IllegalArgumentException, is IllegalStateException -> error.message ?: "공유 입력을 확인하세요."
             else -> "공유 텍스트를 읽거나 저장하지 못했습니다. 다시 공유하세요."
         }
