@@ -1,10 +1,15 @@
 """Minimal approved Entity/alias registry, the source of EntityIndex (#27).
 
-Rows come only from approved review snapshots. New aliases come from explicit
-human corrections (ask choice or alias edit) or from a newly approved entity.
-An alias colliding with another entity's name or active alias is stored with
-status=conflict and excluded from the index. Entities are never merged, and
-reject/revise never change the registry. Relations are out of scope.
+Rows come only from approved review snapshots. Each alias has an origin:
+`human` for an explicit correction (the mention name linked through an ask
+choice, or an alias edit) and `ai` for aliases proposed with a newly approved
+entity. An AI alias colliding with another entity's name or active alias is
+stored as conflict. A human alias wins over a colliding AI alias, which is
+demoted to conflict; it is a conflict itself only against another entity's name
+or human alias. A new entity name demotes colliding AI aliases of other entities;
+colliding human aliases stay active because the extractor keeps every collision
+and asks. Conflicts are excluded from the index. Entities are never merged,
+reject/revise never change the registry, and Relations are out of scope.
 """
 
 import sqlite3
@@ -22,24 +27,67 @@ SCHEMA = (
         entity_id TEXT NOT NULL REFERENCES entities(entity_id),
         normalized TEXT NOT NULL, alias TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('active','conflict')),
+        origin TEXT NOT NULL CHECK(origin IN ('ai','human')),
         proposal_id TEXT NOT NULL, rev INTEGER NOT NULL,
         PRIMARY KEY(entity_id, normalized))""",
     "CREATE INDEX IF NOT EXISTS aliases_normalized ON aliases(normalized, status)",
 )
 
 
-def _taken(db: sqlite3.Connection, entity_id: str, normalized: str) -> bool:
-    """True when another entity already answers to this normalized label."""
-    for (name,) in db.execute(
-        "SELECT name FROM entities WHERE entity_id<>?", (entity_id,)
-    ):
-        if normalize_name(name) == normalized:
-            return True
-    row = db.execute(
-        "SELECT 1 FROM aliases WHERE normalized=? AND entity_id<>? AND status='active'",
+def _name_taken(db: sqlite3.Connection, entity_id: str, normalized: str) -> bool:
+    return any(
+        normalize_name(name) == normalized
+        for (name,) in db.execute(
+            "SELECT name FROM entities WHERE entity_id<>?", (entity_id,)
+        )
+    )
+
+
+def _demote_ai(db: sqlite3.Connection, entity_id: str, normalized: str) -> None:
+    db.execute(
+        "UPDATE aliases SET status='conflict' WHERE normalized=? AND entity_id<>? "
+        "AND origin='ai' AND status='active'",
         (normalized, entity_id),
+    )
+
+
+def _add_alias(
+    db: sqlite3.Connection,
+    entity_id: str,
+    canonical: str,
+    label: str,
+    origin: str,
+    event_id: tuple[str, int],
+) -> None:
+    normalized = normalize_name(label)
+    if not normalized or normalized == normalize_name(canonical):
+        return
+    existing = db.execute(
+        "SELECT origin FROM aliases WHERE entity_id=? AND normalized=?",
+        (entity_id, normalized),
     ).fetchone()
-    return row is not None
+    if existing and (existing[0] == "human" or origin == "ai"):
+        return  # Idempotent; an AI proposal never downgrades a human alias.
+    others = {
+        row[0]
+        for row in db.execute(
+            "SELECT origin FROM aliases WHERE normalized=? AND entity_id<>? "
+            "AND status='active'",
+            (normalized, entity_id),
+        )
+    }
+    if origin == "human":
+        conflict = _name_taken(db, entity_id, normalized) or "human" in others
+        if not conflict:
+            _demote_ai(db, entity_id, normalized)
+    else:
+        conflict = _name_taken(db, entity_id, normalized) or bool(others)
+    status = "conflict" if conflict else "active"
+    pid, rev = event_id
+    db.execute(
+        "INSERT OR REPLACE INTO aliases VALUES (?,?,?,?,?,?,?)",
+        (entity_id, normalized, label, status, origin, pid, rev),
+    )
 
 
 def apply_approval(
@@ -69,30 +117,19 @@ def apply_approval(
                 (entity_id, entity.type, entity.name, pid, rev),
             )
             canonical = entity.name
+            _demote_ai(db, entity_id, normalize_name(canonical))
         else:
             canonical = row[0]
-        if created:
-            labels = list(entity.aliases)
-        elif index in explicit_links:
-            labels = [entity.name, *entity.aliases]
-        elif index in alias_edits:
-            labels = list(entity.aliases)
-        else:
-            labels = []
-        for label in labels:
-            normalized = normalize_name(label)
-            if not normalized or normalized == normalize_name(canonical):
-                continue
-            if db.execute(
-                "SELECT 1 FROM aliases WHERE entity_id=? AND normalized=?",
-                (entity_id, normalized),
-            ).fetchone():
-                continue
-            status = "conflict" if _taken(db, entity_id, normalized) else "active"
-            db.execute(
-                "INSERT INTO aliases VALUES (?,?,?,?,?,?)",
-                (entity_id, normalized, label, status, pid, rev),
-            )
+        labels: list[tuple[str, str]] = []
+        if index in explicit_links:
+            # Only the mention the person linked; AI-proposed aliases excluded.
+            labels.append((entity.name, "human"))
+        if index in alias_edits:
+            labels.extend((alias, "human") for alias in entity.aliases)
+        elif created:
+            labels.extend((alias, "ai") for alias in entity.aliases)
+        for label, origin in labels:
+            _add_alias(db, entity_id, canonical, label, origin, (pid, rev))
 
 
 def build_index(db: sqlite3.Connection) -> EntityIndex:

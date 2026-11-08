@@ -13,22 +13,43 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from weaver.config import FeedbackSettings, ServerConfig
 from weaver.schema import Proposal
 from weaver.schema.internal import EntityIndex
+from weaver.schema.models import EntityType, EntryKind, RejectReason, RelationType
 
 from . import entities
 from .propose import FeedbackEvent
 from .review_store import ReviewStore
 
 SCHEMA_VERSION = 1
+# Closed vocabularies and IDs are not raw text; they may appear in fake samples.
+_PUBLIC = {
+    value
+    for alias in (EntityType, EntryKind, RelationType, RejectReason)
+    for value in get_args(alias.__value__)
+}
+_ID = re.compile(r"(?:ent|evt|prp|src)_[0-9A-HJKMNP-TV-Z]{26}")
+
+
+def is_raw_text(value: str) -> bool:
+    """False for closed vocabularies, durable IDs and JSON literals (null, 1...)."""
+    if value in _PUBLIC or _ID.fullmatch(value):
+        return False
+    try:
+        return isinstance(json.loads(value), str | list | dict)
+    except (ValueError, RecursionError):
+        return True
+
+
 EXAMPLES_VERSION = "loom.examples.v1"
 # Only closed vocabularies may leave the device as prompt examples.
 _EXAMPLE_KINDS = {
@@ -428,7 +449,14 @@ class SqliteFeedbackStore:
 
         def walk(value: Any) -> None:
             if isinstance(value, str):
-                found.add(value)
+                if value.lstrip()[:1] in ("{", "[", '"'):
+                    # JSON-encoded text: compare the decoded strings too.
+                    with suppress(ValueError, RecursionError):
+                        decoded = json.loads(value)
+                        if decoded != value:
+                            walk(decoded)
+                if is_raw_text(value):
+                    found.add(value)
             elif isinstance(value, list):
                 for item in value:
                     walk(item)

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .extract import normalize_name
-from .feedback import _EXAMPLE_KINDS, SqliteFeedbackStore
+from .feedback import _EXAMPLE_KINDS, SqliteFeedbackStore, is_raw_text
 
 FORMAT_VERSION = 1
 _NEXT = {"authored": "candidate", "reviewed": "authored", "promoted": "reviewed"}
@@ -150,13 +150,63 @@ def _sample(path: Path) -> dict[str, Any]:
     return sample
 
 
+SHINGLE = 8  # Contiguous normalized characters (spaces removed).
+
+
+def _strings(value: Any) -> list[str]:
+    """Every string in a sample, keys included; JSON-encoded strings are decoded."""
+    found: list[str] = []
+    if isinstance(value, str):
+        found.append(value)
+        if value.lstrip()[:1] in ("{", "[", '"'):
+            try:
+                decoded = json.loads(value)
+            except (ValueError, RecursionError):
+                decoded = value
+            if decoded != value:
+                found.extend(_strings(decoded))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(_strings(item))
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            found.extend([*_strings(key), *_strings(item)])
+    return found
+
+
+def _compact(text: str) -> str:
+    return "".join(normalize_name(text).split())
+
+
 def check_residue(sample: dict[str, Any], sensitive: set[str]) -> None:
-    """Reject a sample containing any normalized raw string (length >= 2)."""
-    text = normalize_name(json.dumps(sample, ensure_ascii=False))
-    for value in sensitive:
-        normalized = normalize_name(value)
-        if len(normalized) >= 2 and normalized in text:
+    """Reject a sample that contains, or partially copies, a raw original string.
+
+    Strings are compared after NFKC/casefold normalization, both with collapsed
+    and removed whitespace (so escapes, quotes and spacing changes do not hide a
+    copy). Any shared run of SHINGLE characters with a longer original also fails.
+    """
+    texts = [normalize_name(t) for t in _strings(sample)]
+    compact = [_compact(t) for t in texts]
+    originals = {
+        text for value in sensitive for text in _strings(value) if is_raw_text(text)
+    }
+    for value in originals:
+        normalized, squeezed = normalize_name(value), _compact(value)
+        if len(squeezed) < 2:
+            continue
+        if any(normalized in t for t in texts) or any(squeezed in t for t in compact):
             raise CandidateError("sample contains original text")
+        for start in range(len(squeezed) - SHINGLE + 1):
+            piece = squeezed[start : start + SHINGLE]
+            if any(piece in t for t in compact):
+                raise CandidateError("sample contains original text")
+
+
+def _digest(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        raise CandidateError("sample must be a readable JSON file") from None
 
 
 def mark_authored(
@@ -165,10 +215,27 @@ def mark_authored(
     """Attach a human-written fake sample; residue is checked early too."""
     pid, rev = _event_id(candidate_id)
     check_residue(_sample(sample), store.sensitive_strings(pid, rev))
-    _transition(root, candidate_id, "authored", sample=str(sample.resolve()))
+    _transition(
+        root,
+        candidate_id,
+        "authored",
+        sample=str(sample.resolve()),
+        sample_sha256=_digest(sample),
+    )
+
+
+def _unchanged(data: dict[str, Any]) -> Path:
+    path = Path(data["sample"])
+    if _digest(path) != data.get("sample_sha256"):
+        raise CandidateError("sample changed after authoring")
+    return path
 
 
 def mark_reviewed(root: Path, candidate_id: str) -> None:
+    """Review approves the exact authored bytes; any later change is refused."""
+    data = load(root, candidate_id)
+    if data["status"] == "authored":
+        _unchanged(data)
     _transition(root, candidate_id, "reviewed")
 
 
@@ -190,7 +257,7 @@ def promote(
     sensitive = store.sensitive_strings(pid, rev)
     if not sensitive:
         raise CandidateError("cannot verify sample without the original record")
-    sample = _sample(Path(data["sample"]))
+    sample = _sample(_unchanged(data))
     check_residue(sample, sensitive)
     evals_dir.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(

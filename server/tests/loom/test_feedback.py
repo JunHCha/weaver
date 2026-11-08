@@ -203,13 +203,54 @@ def test_restart_recovers_feedback_without_duplicate_entries(env, failure):
     )
 
 
-def test_explicit_choice_adds_alias_and_feeds_extractor(env):
+def seed(env, pid, entity_id, name):
+    """Register an existing ID through a direct (uncorrected) approval."""
     env.handler.apply(
-        submit(env, proposal(name="김민수", aliases=["김 과장"]), "edit", edits=LINK)
+        submit(
+            env,
+            proposal(
+                pid, ask=None, entity_id=entity_id, name=name, aliases=["AI 별칭"]
+            ),
+        )
     )
+
+
+def linked(env, pid, entity_id, mention, aliases=()):
+    """Explicitly link a mention to entity_id through its ask choice."""
+    ask = {
+        "question": "누구인가요?",
+        "choices": [{"entity_id": entity_id, "label": "x"}],
+    }
+    edits = [
+        {"path": "/entities/0/ask", "value": None},
+        {"path": "/entities/0/entity_id", "value": entity_id},
+    ]
+    env.handler.apply(
+        submit(
+            env,
+            proposal(pid, ask=ask, entity_id=None, name=mention, aliases=list(aliases)),
+            "edit",
+            edits=edits,
+        )
+    )
+
+
+def alias_rows(env):
+    with env.feedback.connect() as db:
+        return {
+            (r[0], r[1]): (r[2], r[3])
+            for r in db.execute("SELECT entity_id, alias, status, origin FROM aliases")
+        }
+
+
+def test_explicit_choice_adds_alias_and_feeds_extractor(env):
+    seed(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FD0", KIM, "김민수")
+    linked(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FD1", KIM, "김 과장", ["민수 형"])
     index = env.feedback.index()
     kim = next(e for e in index.entities if e.entity_id == KIM)
+    # Only the linked mention; AI aliases of the direct link and the choice are excluded.
     assert (kim.name, kim.aliases) == ("김민수", ["김 과장"])
+    assert alias_rows(env) == {(KIM, "김 과장"): ("active", "human")}
     # Approved without correction: the AI-linked project gains no alias.
     assert next(e for e in index.entities if e.entity_id == PROJECT).aliases == []
     # The extractor still treats an alias-only mention as a question.
@@ -250,44 +291,111 @@ def test_explicit_choice_adds_alias_and_feeds_extractor(env):
     assert [c.entity_id for c in extraction.entities[0].ask.choices] == [KIM]
 
 
+def ids_named(env, name):
+    return sorted(e.entity_id for e in env.feedback.index().entities if e.name == name)
+
+
 def test_conflicting_alias_homonym_and_reject_never_merge(env):
-    # Existing entity OTHER already answers to "김 과장" via a new approval.
-    first = proposal(
-        "prp_01ARZ3NDEKTSV4RRFFQ69G5FB0",
-        ask=None,
-        entity_id=None,
-        name="김철수",
-        aliases=["김 과장"],
-    )
-    env.handler.apply(submit(env, first))
-    # Homonym: another new person also named 김철수 becomes a separate entity.
-    second = proposal(
-        "prp_01ARZ3NDEKTSV4RRFFQ69G5FB1",
-        ask=None,
-        entity_id=None,
-        name="김철수",
-        aliases=[],
-    )
-    env.handler.apply(submit(env, second))
-    people = [e for e in env.feedback.index().entities if e.type == "person"]
-    assert len(people) == 2 and {p.name for p in people} == {"김철수"}
-    # Explicit link of a "김 과장" mention to KIM: alias collides -> conflict only.
+    # A new person with an AI-proposed alias: active, origin=ai.
     env.handler.apply(
         submit(
             env,
             proposal(
-                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB2", name="김민수", aliases=["김 과장"]
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                ask=None,
+                entity_id=None,
+                name="김철수",
+                aliases=["김 과장"],
             ),
-            "edit",
-            edits=LINK,
         )
     )
+    [chulsoo] = ids_named(env, "김철수")
+    assert alias_rows(env)[(chulsoo, "김 과장")] == ("active", "ai")
+    # Homonym: another new 김철수 is a separate entity, never merged.
+    env.handler.apply(
+        submit(
+            env,
+            proposal(
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+                ask=None,
+                entity_id=None,
+                name="김철수",
+                aliases=[],
+            ),
+        )
+    )
+    assert len(ids_named(env, "김철수")) == 2
+    # A later human correction wins over the earlier AI alias.
+    seed(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FB2", KIM, "김민수")
+    linked(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FB3", KIM, "김 과장")
+    rows = alias_rows(env)
+    assert rows[(chulsoo, "김 과장")] == ("conflict", "ai")
+    assert rows[(KIM, "김 과장")] == ("active", "human")
+    # Human vs human: the later one is a conflict; the first stays active.
+    seed(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FB4", OTHER, "박영희")
+    linked(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FB5", OTHER, "김 과장")
+    rows = alias_rows(env)
+    assert rows[(OTHER, "김 과장")] == ("conflict", "human")
+    assert rows[(KIM, "김 과장")] == ("active", "human")
+    # A new entity named like an alias demotes AI aliases only; human stays.
+    env.handler.apply(
+        submit(
+            env,
+            proposal(
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB6",
+                ask=None,
+                entity_id=None,
+                name="민수",
+                aliases=[],
+            ),
+        )
+    )
+    linked(env, "prp_01ARZ3NDEKTSV4RRFFQ69G5FB7", KIM, "총무")
+    env.handler.apply(
+        submit(
+            env,
+            proposal(
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB8",
+                ask=None,
+                entity_id=None,
+                name="박 대리",
+                aliases=["총괄"],
+            ),
+        )
+    )
+    env.handler.apply(
+        submit(
+            env,
+            proposal(
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FB9",
+                ask=None,
+                entity_id=None,
+                name="총괄",
+                aliases=[],
+            ),
+        )
+    )
+    env.handler.apply(
+        submit(
+            env,
+            proposal(
+                "prp_01ARZ3NDEKTSV4RRFFQ69G5FBA",
+                ask=None,
+                entity_id=None,
+                name="총무",
+                aliases=[],
+            ),
+        )
+    )
+    rows = alias_rows(env)
+    [daeri] = ids_named(env, "박 대리")
+    assert rows[(daeri, "총괄")] == ("conflict", "ai")
+    assert rows[(KIM, "총무")] == ("active", "human")
     kim = next(e for e in env.feedback.index().entities if e.entity_id == KIM)
-    assert kim.aliases == []
-    assert env.feedback.alias_conflicts() == [(KIM, "김 과장")]
+    assert kim.aliases == ["김 과장", "총무"]
     # Reject (even wrong_person) changes nothing.
     before = env.feedback.index()
-    env.handler.apply(submit(env, proposal("prp_01ARZ3NDEKTSV4RRFFQ69G5FB3"), "reject"))
+    env.handler.apply(submit(env, proposal("prp_01ARZ3NDEKTSV4RRFFQ69G5FBB"), "reject"))
     assert env.feedback.index() == before
     assert len({e.entity_id for e in before.entities}) == len(before.entities)
 
@@ -432,12 +540,13 @@ def test_eval_candidate_lifecycle_requires_fake_sample(env, tmp_path):
     with pytest.raises(ec.CandidateError):
         ec.promote(env.feedback, root, cid, evals)
     ec.mark_reviewed(root, cid)
-    # Residue is checked again at promotion time.
-    fake.write_text(json.dumps({"text": "김민수"}, ensure_ascii=False))
-    with pytest.raises(ec.CandidateError):
+    # The reviewed bytes are fixed: a later edit (even a harmless one) is refused.
+    authored = fake.read_text()
+    fake.write_text(json.dumps({"text": "가상인물 을"}, ensure_ascii=False))
+    with pytest.raises(ec.CandidateError, match="changed"):
         ec.promote(env.feedback, root, cid, evals)
     assert not evals.exists() or not list(evals.iterdir())
-    fake.write_text(json.dumps({"text": "가상인물 갑"}, ensure_ascii=False))
+    fake.write_text(authored)
     target = ec.promote(env.feedback, root, cid, evals)
     published = json.loads(target.read_text())
     assert (
@@ -485,3 +594,51 @@ def test_journal_v2_migrates_to_versions_column(tmp_path):
         columns = {r[1] for r in db.execute("PRAGMA table_info(proposals)")}
     assert "versions" in columns
     ReviewStore(path)  # reopen is a no-op
+
+
+SENSITIVE = {
+    '첫 줄 "인용" 내용\n둘째 줄 회의록 원문입니다',
+    "김민수",
+    '{"memo": "비밀 메모 원문"}',
+    "person",
+    "논의",
+    "null",
+    "true",
+    KIM,
+}
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        {"text": '첫 줄 "인용" 내용\n둘째 줄 회의록 원문입니다'},  # escapes/quotes
+        {"text": "앞부분 생략 둘째줄회의록원문 이후"},  # partial copy, spacing changed
+        {"text": "김 민 수 님"},  # spacing variation of a name
+        {"nested": [{"deep": "김민수"}]},
+        {"김민수": 1},  # keys are text too
+        {"text": "비밀 메모 원문"},  # JSON-encoded original value
+        {"encoded": '{"x": "비밀 메모 원문"}'},  # JSON-encoded sample value
+    ],
+)
+def test_residue_detects_copies(sample):
+    with pytest.raises(ec.CandidateError, match="original text"):
+        ec.check_residue(sample, SENSITIVE)
+
+
+def test_residue_allows_closed_vocab_literals_and_ids(env):
+    decision = submit(env, proposal(), "edit", edits=LINK)
+    env.handler.apply(decision)
+    sensitive = env.feedback.sensitive_strings(decision.proposal_id, 1)
+    assert not sensitive & {"person", "project", "요청", "일정", "소속", KIM}
+    sample = {
+        "type": "person",
+        "kind": "논의",
+        "relation": "소속",
+        "value": None,
+        "flag": True,
+        "entity": "E1",
+        "text": "가상인물 갑이 다음 주 회의를 잡자고 했다.",
+    }
+    ec.check_residue(sample, sensitive)
+    # Literals, vocabularies and IDs in a raw set never block a fake sample.
+    ec.check_residue(sample | {"id": KIM, "n": "null", "b": "true"}, SENSITIVE)
