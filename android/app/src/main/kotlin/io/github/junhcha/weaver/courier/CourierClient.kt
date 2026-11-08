@@ -14,12 +14,20 @@ class CourierClient(
     private val cleanupEnabled: Boolean = false,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    data class Inbox(val receipts: List<Receipt>, val proposals: List<Proposal>, val alerts: List<Alert>)
+    /**
+     * [unreadable] lists final-looking names in proposals/ that were present but rejected. Consumers must treat
+     * them as "still there, state unknown" rather than deleted, so a partial or invalid file never clears state.
+     */
+    data class Inbox(
+        val receipts: List<Receipt>, val proposals: List<Proposal>, val alerts: List<Alert>,
+        val unreadable: Set<String> = emptySet(),
+    )
 
     fun scan(): Inbox {
         val receipts = mutableListOf<Receipt>()
         val proposals = mutableListOf<Proposal>()
         val alerts = mutableListOf<Alert>()
+        val unreadable = mutableSetOf<String>()
         CourierRules.folders.forEach { directory ->
             folder.list(directory).forEach { entry ->
                 val name = entry.name
@@ -36,7 +44,7 @@ class CourierClient(
                 }
                 // Only PC-owned JSON is consumed; outbox payloads are never interpreted as JSON.
                 if (directory !in listOf("receipts", "proposals")) return@forEach
-                attempt(directory, name) {
+                val read = attempt(directory, name) {
                     check(entry.regular && CourierRules.safeName(name)) { "not_regular_file" }
                     val text = folder.read(directory, name).use(::boundedJson)
                     when {
@@ -58,16 +66,16 @@ class CourierClient(
                         else -> error("invalid_filename")
                     }
                 }
+                if (!read && directory == "proposals") unreadable.add(name)
             }
         }
         return Inbox(receipts, proposals.groupBy { it.proposalId }.values.map { versions ->
             versions.maxBy { it.rev }
-        }, alerts)
+        }, alerts, unreadable)
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */
-    fun synchronize(): Boolean {
-        val inbox = scan()
+    fun synchronize(inbox: Inbox = scan()): Boolean {
         var successful = true
         db.captures().forEach { capture ->
             val manifest = capture.manifest
@@ -162,10 +170,10 @@ class CourierClient(
         } else folder.publish("decisions", name) { it.write(bytes) }
     }
 
-    private fun attempt(directory: String, name: String, block: () -> Unit) {
-        try { block()
+    private fun attempt(directory: String, name: String, block: () -> Unit): Boolean {
+        try { block(); return true
         } catch (error: SecurityException) { throw error
-        } catch (error: Exception) { db.diagnostic(directory, name, errorCode(error)) }
+        } catch (error: Exception) { db.diagnostic(directory, name, errorCode(error)); return false }
     }
 
     companion object {
