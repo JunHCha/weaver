@@ -75,6 +75,8 @@ class ShareActivity : ComponentActivity() {
                     val count = reader.read(chars)
                     if (count > 0) String(chars, 0, count) else ""
                 }
+                // Include recordings not yet seen by the periodic worker, even while stabilizing.
+                ShepherdRuntime.scanNow(this)
                 val pending = PendingCalls.repository(this).pending()
                 runOnUiThread {
                     if (isDestroyed) {
