@@ -1,5 +1,6 @@
-"""Local append-only timeline persistence (state folding is a separate concern)."""
+"""Local append-only timeline persistence and deterministic state projections."""
 
+from .state import InvalidSetOperation
 from .store import (
     EntryConflict,
     EntryQuery,
@@ -17,5 +18,6 @@ __all__ = [
     "FabricError",
     "FabricStore",
     "InvalidReference",
+    "InvalidSetOperation",
     "SchemaVersionError",
 ]

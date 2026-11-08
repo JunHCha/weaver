@@ -19,7 +19,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from weaver.config import ServerConfig
-from weaver.schema import Entry
+from weaver.schema import EntityState, Entry
 from weaver.schema.models import EntityId, EntryKind, EntrySource, Timestamp
 
 SCHEMA_VERSION = 1
@@ -118,10 +118,11 @@ class EntryQuery(BaseModel):
 
 
 class Fabric(Protocol):
-    """Persistence boundary; state(entity_id) belongs to the state-folding issue."""
+    """Append-only facts and deterministic current state; no execution permission."""
 
     def append(self, entries: list[Entry]) -> None: ...
     def entries(self, query: EntryQuery) -> list[Entry]: ...
+    def state(self, entity_id: str) -> EntityState: ...
 
 
 def _time(value: datetime) -> str:
@@ -357,3 +358,10 @@ class FabricStore:
                 params,
             ).fetchall()
         return [Entry.model_validate_json(row[0]) for row in rows]
+
+    def state(self, entity_id: str) -> EntityState:
+        """Replay one entity snapshot using UTC occurrence/recording/ID order."""
+        from .state import fold_state
+
+        query = EntryQuery(entity_id=entity_id)
+        return fold_state(entity_id, self.entries(query))
