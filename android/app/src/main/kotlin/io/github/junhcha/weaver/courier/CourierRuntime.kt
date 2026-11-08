@@ -204,6 +204,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             try {
                 val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
                 var successful = client.synchronize()
+                io.github.junhcha.weaver.shepherd.PendingCalls.reconcile(context)
                 val directory = File(context.filesDir, "courier-verdicts")
                 CourierRuntime.cleanQueueTemporaries(directory)
                 directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
