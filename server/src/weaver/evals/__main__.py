@@ -17,6 +17,7 @@ from .dataset import CASES_DIR, DatasetError, LoadedCase, load_dataset, summariz
 from .runner import (
     FIXTURES,
     ReplayClient,
+    RunBudgetLedger,
     RunLedger,
     baseline_snapshot,
     compare,
@@ -85,7 +86,7 @@ def run_command(
             shared = Ledger(settings.state_root / "llm.sqlite3")
             ledger = RunLedger(
                 shared,
-                Ledger(
+                RunBudgetLedger(
                     settings.state_root / f"eval-{uuid4().hex}.sqlite3",
                     warn_usd=max_cost_usd,
                     stop_usd=max_cost_usd,

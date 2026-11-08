@@ -3,6 +3,7 @@
 import hashlib
 import inspect
 import json
+import sqlite3
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -65,10 +66,21 @@ class ReplayClient:
         raise ValueError("unexpected text request")
 
 
+class RunBudgetLedger(Ledger):
+    """Limit this execution across all UTC months under the reservation lock."""
+
+    def _reservation_total(self, db: sqlite3.Connection, month: str) -> int:
+        return int(
+            db.execute(
+                "SELECT COALESCE(SUM(charged_nano), 0) FROM llm_calls"
+            ).fetchone()[0]
+        )
+
+
 class RunLedger(Ledger):
     """Reserve every attempt in BOTH the shared monthly and run budget ledgers."""
 
-    def __init__(self, shared: Ledger, run: Ledger) -> None:
+    def __init__(self, shared: Ledger, run: RunBudgetLedger) -> None:
         self.shared, self.run = shared, run
         self.calls: dict[str, str] = {}
 

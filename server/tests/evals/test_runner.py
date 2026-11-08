@@ -2,6 +2,9 @@
 
 import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from threading import Barrier
 
 import pytest
 from typer.testing import CliRunner
@@ -11,16 +14,25 @@ from weaver.evals.dataset import load_dataset
 from weaver.evals.runner import (
     FIXTURES,
     ReplayClient,
+    RunBudgetLedger,
     RunLedger,
     compare,
     evaluate_case,
     run,
     score_refiner,
 )
-from weaver.evals.scoring import aggregate, canonical, match, metric, score_extraction
+from weaver.evals.scoring import (
+    GROUPS,
+    aggregate,
+    canonical,
+    match,
+    metric,
+    score_extraction,
+)
 from weaver.llm import BudgetExceeded, LlmTimeout
 from weaver.llm.ledger import Ledger
 from weaver.schema.internal import Extraction
+from weaver.schema.models import validate_proposal_references
 
 
 @pytest.fixture(scope="module")
@@ -208,7 +220,7 @@ def test_full_offline_report_and_regression(cases, responses):
 def test_run_budget_is_separate_from_shared_monthly_cap(tmp_path):
     shared = Ledger(tmp_path / "shared.db")
     limited = RunLedger(
-        shared, Ledger(tmp_path / "run.db", warn_usd=0.01, stop_usd=0.01)
+        shared, RunBudgetLedger(tmp_path / "run.db", warn_usd=0.01, stop_usd=0.01)
     )
     record = {"status": "pending", "cost_usd": None}
     call_id = limited.reserve(record.copy(), 6_000_000)
@@ -218,7 +230,7 @@ def test_run_budget_is_separate_from_shared_monthly_cap(tmp_path):
     assert sum(r["budget_held_usd"] for r in shared.records()) == pytest.approx(0.006)
     # A second run cannot bypass the shared monthly cap.
     monthly = Ledger(tmp_path / "monthly.db", warn_usd=0.001, stop_usd=0.001)
-    limited = RunLedger(monthly, Ledger(tmp_path / "other.db"))
+    limited = RunLedger(monthly, RunBudgetLedger(tmp_path / "other.db"))
     with pytest.raises(BudgetExceeded):
         limited.reserve(record.copy(), 2_000_000)
 
@@ -321,3 +333,89 @@ def test_ref_normalization_preserves_non_reference_strings(cases):
     rows = canonical(Extraction.model_validate(raw), loaded.entity_ids)
     assert any(entity["name"] == "e1" for entity in rows["entities"])
     assert rows["entry_drafts"][0]["field"] == "e1"
+
+
+@pytest.mark.parametrize("change", ["wrong_entry", "rename_refs", "reverse_order"])
+def test_distinct_draft_reference_identity(cases, change):
+    loaded = next(c for c in cases if c.case.case_id == "share-001")
+    raw = loaded.extractions[0].model_dump(mode="json", by_alias=True)
+    second = copy.deepcopy(raw["entry_drafts"][0])
+    second.update(ref="d2", occurred_at="2031-03-14T14:00:00+09:00")
+    raw["entry_drafts"].append(second)
+    gold = Extraction.model_validate(raw)
+    if change == "wrong_entry":
+        raw["schedules"][0]["entry_ref"] = "d2"
+    elif change == "rename_refs":
+        mapping = {
+            item["ref"]: f"x{i + 1}"
+            for i, item in enumerate(item for group in GROUPS for item in raw[group])
+            if "ref" in item
+        }
+
+        def rename(value):
+            if isinstance(value, str):
+                return mapping.get(value, value)
+            if isinstance(value, list):
+                return [rename(item) for item in value]
+            if isinstance(value, dict):
+                return {key: rename(item) for key, item in value.items()}
+            return value
+
+        raw = rename(raw)
+    else:
+        for group in GROUPS:
+            raw[group].reverse()
+    prediction = Extraction.model_validate(raw)
+    for model in (gold, prediction):
+        validate_proposal_references(
+            model.entities, model.schedules, model.relations, model.entry_drafts
+        )
+    scores = score_extraction(prediction, [gold], loaded.entity_ids)["metrics"]
+    expected = metric(0 if change == "wrong_entry" else 1, 1)
+    assert scores["schedules.field.entry_ref"] == expected
+    assert scores["exact"] == expected
+
+
+@pytest.mark.parametrize("settled", [False, True])
+def test_run_budget_spans_months_and_refunds_shared_reservation(
+    tmp_path, monkeypatch, settled
+):
+    class Clock:
+        current = datetime(2031, 1, 31, 23, 59, 59, tzinfo=UTC)
+
+        @classmethod
+        def now(cls, tz):
+            return cls.current
+
+    monkeypatch.setattr("weaver.llm.ledger.datetime", Clock)
+    shared = Ledger(tmp_path / "shared.db", warn_usd=1, stop_usd=1)
+    run = RunBudgetLedger(tmp_path / "run.db", warn_usd=1, stop_usd=1)
+    limited = RunLedger(shared, run)
+    first = limited.reserve({"status": "pending"}, 750_000_000)
+    if settled:
+        limited.finish(first, {"status": "succeeded"}, 750_000_000)
+    Clock.current = datetime(2031, 2, 1, tzinfo=UTC)
+    with pytest.raises(BudgetExceeded):
+        limited.reserve({"status": "pending"}, 750_000_000)
+    assert [r["budget_held_usd"] for r in run.records()] == [0.75, 0]
+    assert [r["budget_held_usd"] for r in shared.records()] == [0.75, 0]
+    # The shared cap still resets monthly, and the rejected run hold was released.
+    shared.reserve({"status": "pending"}, 1_000_000_000)
+
+
+def test_run_budget_reservations_are_atomic_across_connections(tmp_path):
+    path = tmp_path / "run.db"
+    ledgers = [RunBudgetLedger(path, warn_usd=1, stop_usd=1) for _ in range(2)]
+    ready = Barrier(2)
+
+    def reserve(ledger):
+        ready.wait(timeout=5)
+        try:
+            ledger.reserve({"status": "pending"}, 750_000_000)
+        except BudgetExceeded:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(reserve, ledgers)) == [False, True]
+    assert sum(r["budget_held_usd"] for r in ledgers[0].records()) == 0.75

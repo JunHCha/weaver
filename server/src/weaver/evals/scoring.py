@@ -36,20 +36,6 @@ def canonical(
             entity["type"],
             normalize_name(entity["name"]),
         ]
-    # Draft/schedule IDs describe facts, never provider-chosen ref spelling.
-    for draft in data["entry_drafts"]:
-        refs[draft["ref"]] = [
-            "draft",
-            draft["kind"],
-            draft["field"],
-            sorted(_key(refs.get(r, r)) for r in draft["entities"]),
-        ]
-    for schedule in data["schedules"]:
-        refs[schedule["ref"]] = [
-            "schedule",
-            schedule["start"],
-            sorted(_key(refs.get(r, r)) for r in schedule["entities"]),
-        ]
 
     def resolve(value: Any) -> Any:
         if isinstance(value, str):
@@ -60,48 +46,55 @@ def canonical(
             return {k: resolve(v) for k, v in value.items()}
         return value
 
-    result: dict[str, list[dict[str, Any]]] = {}
-    for group in GROUPS:
-        rows = []
-        for item in data[group]:
-            row = {
-                k: v
-                for k, v in item.items()
-                if k
-                not in {
-                    "ref",
-                    "confidence",
-                    "reason",
-                    "thread_excerpt",
-                    "value",
-                    "title",
-                    "aliases",
-                    "ask",
-                }
+    def scored_row(item: dict[str, Any]) -> dict[str, Any]:
+        row = {
+            k: v
+            for k, v in item.items()
+            if k
+            not in {
+                "ref",
+                "confidence",
+                "reason",
+                "thread_excerpt",
+                "value",
+                "title",
+                "aliases",
+                "ask",
             }
-            if "name" in row:
-                row["name"] = normalize_name(row["name"])
-            if "entity_id" in row:
-                row["entity_id"] = known.get(row["entity_id"], row["entity_id"])
-            for field in ("entities", "from", "to", "entry_ref", "blocked_by_request"):
-                if field in row:
-                    row[field] = resolve(row[field])
-            if row.get("request") is not None:
-                row["request"] = {
-                    **row["request"],
-                    "requester": resolve(row["request"]["requester"]),
-                    "targets": resolve(row["request"]["targets"]),
-                }
-            ask = item["ask"]
-            row["ask"] = (
-                None
-                if ask is None
-                else sorted(
-                    known.get(c["entity_id"], c["entity_id"]) for c in ask["choices"]
-                )
+        }
+        if "name" in row:
+            row["name"] = normalize_name(row["name"])
+        if "entity_id" in row:
+            row["entity_id"] = known.get(row["entity_id"], row["entity_id"])
+        for field in ("entities", "from", "to", "entry_ref", "blocked_by_request"):
+            if field in row:
+                row[field] = resolve(row[field])
+        if row.get("request") is not None:
+            row["request"] = {
+                **row["request"],
+                "requester": resolve(row["request"]["requester"]),
+                "targets": resolve(row["request"]["targets"]),
+            }
+        ask = item["ask"]
+        row["ask"] = (
+            None
+            if ask is None
+            else sorted(
+                known.get(c["entity_id"], c["entity_id"]) for c in ask["choices"]
             )
-            rows.append(row)
-        result[group] = sorted(rows, key=_key)
+        )
+        return row
+
+    # Reference identities retain every scored field, not provider ref spelling.
+    # Requests cannot themselves be blocked; resolve them before dependent drafts.
+    for draft in sorted(data["entry_drafts"], key=lambda d: d["kind"] != "요청"):
+        refs[draft["ref"]] = ["draft", scored_row(draft)]
+    for schedule in data["schedules"]:
+        refs[schedule["ref"]] = ["schedule", scored_row(schedule)]
+    result = {
+        group: sorted((scored_row(item) for item in data[group]), key=_key)
+        for group in GROUPS
+    }
     return result
 
 
