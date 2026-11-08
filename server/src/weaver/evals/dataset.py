@@ -22,6 +22,7 @@ from pydantic import Field, StringConstraints, ValidationError, field_validator
 from weaver.loom.call import CallParseError, parse_call
 from weaver.loom.extract import normalize_name
 from weaver.loom.kakao import KakaoParseError
+from weaver.loom.refine import RuleRefiner
 from weaver.schema import Source, Thread
 from weaver.schema.internal import Candidate, EntityIndex, Extraction, IndexedEntity
 from weaver.schema.models import (
@@ -45,6 +46,7 @@ from weaver.spinner.reviser import (
 from weaver.spinner.text import text_to_thread
 
 SCHEMA_VERSION = 1
+MIN_EXCERPT = 4
 CASES_DIR = Path(__file__).resolve().parents[3] / "evals" / "cases"
 TAGS = frozenset(
     {
@@ -268,6 +270,23 @@ def _check_shape(case: EvalCase) -> None:
         raise DatasetError("multi_answer tag must match multiple alternatives")
 
 
+def _check_tags(tags: list[str], extraction: Extraction) -> None:
+    """Cheap tag/answer agreement, checked on every alternative."""
+    relations = {r.type for r in extraction.relations}
+    kinds = {d.kind for d in extraction.entry_drafts}
+    items: list[Any] = [*extraction.entities, *extraction.entry_drafts]
+    rules = {
+        "link_pending": any(i.ask is not None for i in items),
+        "affiliation": "소속" in relations,
+        "attendance": "참석" in relations,
+        "new_entity": any(e.entity_id is None for e in extraction.entities),
+        "request": "요청" in kinds,
+        "cancel": "폐기" in kinds,
+    }
+    if failed := sorted(t for t, ok in rules.items() if t in tags and not ok):
+        raise DatasetError(f"tags not reflected in the answer: {failed}")
+
+
 def _source(case: EvalCase) -> Source:
     capture = stable_id("cap", case.case_id)
     return Source(
@@ -306,7 +325,18 @@ def _revise(case: EvalCase, raw: Thread) -> Thread:
             raise DatasetError("revise edit must match exactly one speech line")
         if matches[0] in replaced:
             raise DatasetError("duplicate revise edit")
+        if any("\n" in text or "\r" in text for text in edit.to):
+            raise DatasetError("revised speech must stay on one line")
         replaced[matches[0]] = edit.to[0]
+    gold = _rebuild(raw, texts, replaced)
+    for edit in revise.edits:
+        [sid] = [sid for sid in speech if texts[sid] == edit.from_text]
+        for alternative in edit.to[1:]:
+            _rebuild(raw, texts, {**replaced, sid: alternative})
+    return gold
+
+
+def _rebuild(raw: Thread, texts: dict[str, str], replaced: dict[str, str]) -> Thread:
     revision = Revision(
         segments=[
             RevisionSegment(
@@ -355,6 +385,10 @@ def _candidates(
     for r_start, r_end in rejects:
         if any(r_start < end and start < r_end for start, end in spans):
             raise DatasetError("reject span overlaps a select span")
+    # Real RuleRefiner triggers inside each gold span carry reference_at (first
+    # overlapping Segment occurred_at, else Thread's), so gold inputs keep the
+    # per-message reference time. The span is one legacy sentence range 0..1.
+    triggers = [t for c in RuleRefiner().select(thread) for t in c.triggers]
     candidates = [
         Candidate(
             source_id=thread.source_id,
@@ -366,6 +400,11 @@ def _candidates(
             start_char=start,
             end_char=end,
             context=thread.text[start:end],
+            triggers=[
+                t.model_copy(update={"sentence_index": 0})
+                for t in triggers
+                if start <= t.start_char and t.end_char <= end
+            ],
         )
         for start, end in spans
     ]
@@ -414,7 +453,7 @@ def _timestamps(extraction: Extraction) -> list[datetime]:
 def _extraction(
     raw: dict[str, Any],
     ids: dict[str, str],
-    thread: Thread,
+    known: EntityIndex,
     candidates: list[Candidate],
     zone: ZoneInfo,
 ) -> Extraction:
@@ -438,12 +477,26 @@ def _extraction(
         raise DatasetError(f"invalid expected extraction: {error}") from None
     contexts = [c.context for c in candidates]
     for text in _excerpts(extraction):
+        if len(text.strip()) < MIN_EXCERPT:
+            raise DatasetError(f"thread_excerpt needs {MIN_EXCERPT}+ characters")
         if not any(text in context for context in contexts):
             raise DatasetError("thread_excerpt must come from a selected span")
-    haystack = normalize_name(thread.text)
+    by_id = {e.entity_id: e for e in known.entities}
     for entity in extraction.entities:
-        if entity.entity_id is None and normalize_name(entity.name) not in haystack:
-            raise DatasetError("new entity name must occur in the input")
+        excerpt = normalize_name(entity.thread_excerpt)
+        names: set[str] = set()
+        if entity.entity_id is not None:
+            match = by_id[entity.entity_id]
+            if entity.type != match.type:
+                raise DatasetError("linked entity type differs from known")
+            names = {normalize_name(n) for n in [match.name, *match.aliases]}
+            if normalize_name(entity.name) not in names:
+                raise DatasetError("linked entity name is not a known name/alias")
+        elif normalize_name(entity.name) not in excerpt:
+            raise DatasetError("new entity name must occur in its thread_excerpt")
+        for alias in map(normalize_name, entity.aliases):
+            if alias not in names and alias not in excerpt:
+                raise DatasetError("alias must be known or occur in thread_excerpt")
     for value in _timestamps(extraction):
         _check_offset(value, zone, "expected timestamp")
     return extraction
@@ -484,8 +537,10 @@ def validate_case(data: object) -> LoadedCase:
         counterpart=case.input.counterpart,
     )
     extractions = [
-        _extraction(alt, ids, thread, candidates, zone) for alt in alternatives
+        _extraction(alt, ids, known, candidates, zone) for alt in alternatives
     ]
+    for extraction in extractions:
+        _check_tags(case.tags, extraction)
     return LoadedCase(
         case, source, raw, thread, candidates, rejects, known, ids, hints, extractions
     )

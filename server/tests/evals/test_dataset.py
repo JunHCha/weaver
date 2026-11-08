@@ -17,6 +17,7 @@ from weaver.evals import (
     summarize,
     validate_case,
 )
+from weaver.schema.models import TIMESTAMP_PATTERN
 
 ENT = re.compile(r"^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 TEXT = "민서현 님이 다음 주 화요일 오후 3시에 예산 회의를 하자고 했다."
@@ -164,6 +165,30 @@ def test_minimal_case_resolves_keys_offsets_and_domain_models():
     assert loaded.thread.text == TEXT  # text originals are never revised
 
 
+def test_linked_entity_may_use_known_alias_and_tags_hold():
+    data = case()
+    data["tags"] = ["relative_date", "attendance", "new_entity"]
+    first_extraction(data)["entities"][0]["name"] = "서현"
+    first_extraction(data)["entities"][0]["aliases"] = ["서현"]
+    assert validate_case(data).extractions[0].entities[0].name == "서현"
+
+
+def test_gold_candidates_carry_rule_triggers_with_reference_time():
+    loaded = validate_case(case())
+    [candidate] = loaded.candidates
+    assert {t.kind for t in candidate.triggers} >= {"date", "time"}
+    assert all(t.reference_at == loaded.thread.occurred_at for t in candidate.triggers)
+    # Kakao: the message time (not the save time) is the reference.
+    [kakao] = [c for c in load_dataset(CASES_DIR) if c.case.case_id == "kakao-010"]
+    [gold] = kakao.candidates
+    [segment] = [s for s in kakao.thread.segments if s.segment_id in gold.segment_ids]
+    assert gold.triggers and {t.reference_at for t in gold.triggers} == {
+        segment.occurred_at
+    }
+    assert str(gold.triggers[0].reference_at).startswith("2031-03-04 23:50")
+    gold.validate_thread(kakao.thread)
+
+
 def test_call_edits_build_gold_revised_thread():
     loaded = validate_case(call_case())
     assert REVISED in loaded.thread.text
@@ -259,6 +284,41 @@ INVALID: dict[str, Callable[[dict[str, Any]], object]] = {
         dict(d["known"]["entities"][0])
     ),
     "not_object": lambda d: d.clear(),
+    "linked_type_differs": lambda d: first_extraction(d)["entities"][0].update(
+        type="org"
+    ),
+    "linked_name_differs": lambda d: first_extraction(d)["entities"][0].update(
+        name="민서윤"
+    ),
+    "new_name_outside_excerpt": lambda d: first_extraction(d)["entities"][1].update(
+        thread_excerpt="민서현 님이"
+    ),
+    "alias_outside_excerpt": lambda d: first_extraction(d)["entities"][1].update(
+        aliases=["결산"]
+    ),
+    "short_excerpt": lambda d: first_extraction(d)["relations"][0].update(
+        thread_excerpt="회의"
+    ),
+    "attendance_without_relation": lambda d: (
+        d.update(tags=["relative_date", "attendance", "affiliation"]),
+        first_extraction(d)["relations"][0].update(type="소속", to="e1"),
+    ),
+    "affiliation_without_relation": lambda d: d.update(
+        tags=["relative_date", "affiliation"]
+    ),
+    "link_pending_without_ask": lambda d: d.update(
+        tags=["relative_date", "link_pending"]
+    ),
+    "new_entity_tag_without_new": lambda d: (
+        d.update(tags=["new_entity"]),
+        first_extraction(d)["entities"][1].update(
+            entity_id="@seohyun", name="서현", type="person"
+        ),
+    ),
+    "request_tag_without_request": lambda d: d.update(
+        tags=["relative_date", "request"]
+    ),
+    "cancel_tag_without_discard": lambda d: d.update(tags=["relative_date", "cancel"]),
 }
 
 
@@ -286,6 +346,10 @@ def test_multi_answer_tag_allows_alternatives_and_empty_alternative_is_explicit(
         lambda d: d["expected"]["revise"]["edits"][0].update(**{"from": "예산 통화"}),
         lambda d: d["expected"]["revise"].update(edits=[]),
         lambda d: d["expected"].update(revise={"policy": "keep"}),
+        lambda d: (
+            d.update(tags=["stt_spacing", "empty", "multi_answer"]),
+            d["expected"]["revise"]["edits"][0]["to"].append("두 줄\n발화"),
+        ),
     ],
 )
 def test_invalid_call_revisions_are_rejected(change):
@@ -385,4 +449,22 @@ def test_public_samples_are_fake_only():
         raw = path.read_text()
         assert not re.search(r"01[016789]-?\d{3,4}-?\d{4}", raw), path.name
         assert not re.search(r"\d{6}-\d{7}", raw), path.name
-        assert "@" not in json.loads(raw)["input"]["text"], path.name
+        assert not re.search(r"(?<!\d)0[2-6]\d?-\d{3,4}-\d{4}(?!\d)", raw), path.name
+        accounts = re.findall(r"(?<![\d-])\d{2,6}-\d{2,6}-\d{2,6}(?![\d-])", raw)
+        assert all(re.fullmatch(r"203\d-\d{2}-\d{2}", a) for a in accounts), path
+        data = json.loads(raw)
+        assert "@" not in data["input"]["text"], path.name
+        for text in strings(data):
+            if re.fullmatch(TIMESTAMP_PATTERN, text):
+                assert text.startswith("203"), path.name
+        assert all(y.startswith("203") for y in re.findall(r"(\d{4})\s*년", raw))
+
+
+def strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [s for v in value for s in strings(v)]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in strings(v)]
+    return []

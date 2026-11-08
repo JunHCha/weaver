@@ -46,7 +46,7 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 ### `expected.revise`
 
 - `{"policy": "keep"}`: 텍스트 원본(`kakao`, `share_text`)은 퇴고하지 않는다. 퇴고 결과가 원문과 같아야 한다.
-- `{"policy": "revise", "edits": [{"from": "…", "to": ["…", …]}]}`: `call`만. `from`은 화자가 있는 발화 줄 하나와 정확히 같아야 하고, `to` 중 하나면 정답이다. `edits`에 없는 발화 줄과 헤더·안내문·제목은 바뀌지 않아야 한다. `edits: []`는 "고칠 것이 없다"는 정답이다.
+- `{"policy": "revise", "edits": [{"from": "…", "to": ["…", …]}]}`: `call`만. `from`은 화자가 있는 발화 줄 하나와 정확히 같아야 하고, `to` 중 하나면 정답이다. `to`의 모든 대안은 한 줄이어야 하며 로더가 각각 `revision_to_thread`로 Thread를 만들 수 있는지 확인한다. `edits`에 없는 발화 줄과 헤더·안내문·제목은 바뀌지 않아야 한다. `edits: []`는 "고칠 것이 없다"는 정답이다.
 - `to[0]`이 정답 대표값이다. 로더는 `GalaxyCallParser`가 만든 원본 Thread에 `to[0]`을 적용해 `LoadedCase.thread`(퇴고 후 정답 Thread)를 만든다.
 
 ### 좌표계와 근거 범위
@@ -57,7 +57,7 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 
 ### `expected.refine`
 
-- `select`: 정제가 반드시 덮어야 할 범위 목록. 서로 겹칠 수 없다. 로더는 각 범위로 정답 `Candidate`(문장 경계 기본값 0..1, 트리거 없음)를 만들어 추출 단계 입력으로 준다.
+- `select`: 정제가 반드시 덮어야 할 범위 목록. 서로 겹칠 수 없다. 로더는 각 범위로 정답 `Candidate`(문장 경계 기본값 0..1)를 만들어 추출 단계 입력으로 준다. 범위 안에 있는 RuleRefiner 트리거를 그대로 붙이므로 `reference_at`(겹치는 첫 Segment의 `occurred_at`, 없으면 Thread의 값)이 보존된다. 카톡처럼 메시지 시각과 저장 시각이 다른 사례도 정답 입력만으로 상대 날짜를 풀 수 있다. 신호가 없는 범위는 트리거가 없고 Thread·Segment 시각을 쓴다.
 - `reject`: 후보에 들어가면 안 되는 범위(잡담 등). `select`와 겹칠 수 없다. 생략하면 빈 목록이다.
 - `select: []`는 "후보가 하나도 없어야 한다"는 정답이다.
 - RuleRefiner는 날짜·시각·기간·호칭 신호만 고르므로, 신호 없이 사실이 있는 경계 사례는 `input.stage: "extract"`로 두어 정제 채점에서 뺀다(정답 후보는 여전히 `select`).
@@ -67,7 +67,7 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 - `alternatives`: `Extraction`(`server/src/weaver/schema/internal.py`) 목록. 그중 하나와 맞으면 정답이다. 정답이 여러 개 허용되는 사례는 대안을 나열하고 `multi_answer` 태그를 붙인다.
 - `alternatives: []`는 **빈 정답**이다. 추출할 것이 없으며 실행기는 `Extractor`가 `None`이거나 대상·기록·일정·관계가 모두 빈 결과를 정답으로 본다. 이 경우 `empty` 태그를 붙인다. 키가 없는 것(누락)은 형식 오류다.
 - 각 대안은 `Extraction`과 제안 참조 무결성(`validate_proposal_references`)을 통과해야 한다. 기록 유형은 `요청 | 논의 | 결정 | 폐기 | 약속 | 일정 | 변경`, 관계는 `원인 | 후속조치 | 같은논의 | 참석 | 소속`이다. AI 결과이므로 `supersedes`·`retracts`·`resolves`는 `null`이다.
-- 입력에 없는 사실은 정답이 될 수 없다. 로더가 검사하는 것: 모든 `thread_excerpt`(최상위와 각 항목)가 `select` 범위 하나 안의 문자열이다. 새 대상 이름이 원문에 나온다. 사실이 있는데 `select`가 비면 거부한다.
+- 입력에 없는 사실은 정답이 될 수 없다. 로더가 검사하는 것: 모든 `thread_excerpt`(최상위와 각 항목)는 공백 제외 4자 이상이고 `select` 범위 하나 안의 문자열이다. 새 대상의 이름과 별칭은 그 항목의 `thread_excerpt` 안에 나온다(NFKC·casefold 정규화 후). 기존 대상(`@키`)은 `type`이 known과 같고, 이름은 known의 이름이나 별칭 중 하나이며, 별칭은 known 별칭이거나 근거 안에 나온다. 사실이 있는데 `select`가 비면 거부한다.
 - 확인 질문: 동명이인·별칭만 일치·작성 시각 불명처럼 확정할 근거가 없으면 `ask`를 둔다. 동명이인은 `entity_id: null`과 후보 `choices`로, 별칭만 맞는 경우는 새 대상+`ask` 또는 기존 대상+`ask` 대안을 함께 허용한다.
 - 관계 방향: `소속`은 사람 → 조직, `참석`은 사람(또는 조직) → 회의, `원인`은 원인 → 결과(`this`는 이 원본), `후속조치`는 후속 항목 → 원래 일, `같은논의`는 세부 → 상위 주제·프로젝트.
 
@@ -92,13 +92,13 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 | 관계 | `relation_direction`, `affiliation`, `attendance`, `follow_up` |
 | 정답 형태 | `empty`, `multi_answer`, `boundary` |
 
-로더가 강제하는 일관성: `empty` ⇔ `alternatives: []`, `multi_answer` ⇔ 대안 2개 이상(또는 퇴고 `to` 2개 이상), `call`의 `stt_*` 태그 ⇔ `edits`가 비지 않음. `summarize()`와 `python -m weaver.evals`가 채널·태그·정답 유형(빈 정답, 복수 정답, 확인 질문, 기존 연결, 새 대상)·기록 유형·관계 유형별 개수를 보여 준다.
+로더가 강제하는 일관성: `empty` ⇔ `alternatives: []`, `multi_answer` ⇔ 대안 2개 이상(또는 퇴고 `to` 2개 이상), `call`의 `stt_*` 태그 ⇔ `edits`가 비지 않음. 모든 대안에서 `link_pending`이면 `ask`가 있고, `affiliation`이면 `소속`, `attendance`이면 `참석` 관계가 있으며, `new_entity`이면 새 대상, `request`이면 `요청`, `cancel`이면 `폐기` 기록이 있다. `summarize()`와 `python -m weaver.evals`가 채널·태그·정답 유형(빈 정답, 복수 정답, 확인 질문, 기존 연결, 새 대상)·기록 유형·관계 유형별 개수를 보여 준다.
 
 ## 공개 데이터 규칙
 
-- 모든 샘플은 실제 자료를 변형하지 않고 처음부터 쓴 가짜 내용이다. 실제 개인·회사·내부 대화, 실제 통화를 쓰지 않는다. 날짜는 2031년, 사람·회사 이름은 지어낸 것이다. 전화번호·계좌번호·주민번호 형태의 숫자를 넣지 않는다(테스트가 검사한다).
+- 모든 샘플은 실제 자료를 변형하지 않고 처음부터 쓴 가짜 내용이다. 실제 개인·회사·내부 대화, 실제 통화를 쓰지 않는다. 날짜는 2031년, 사람·회사 이름은 지어낸 것이다. 실제 기록 시각을 옮기지 않으며 모든 타임스탬프와 `…년` 표기는 203x년만 쓴다. 전화번호(휴대·유선)·계좌번호·주민번호 형태의 숫자를 넣지 않는다(테스트가 검사한다).
 - STT 오류는 텍스트로 흉내 낸 것이며 실제 음성 인식 정확도를 주장하지 않는다.
 
 ## 피드백 승격 경로 (#27)
 
-`weaver.loom.eval_candidates`가 승인 피드백을 원문 없는 비공개 후보(`state_root/eval_candidates/`, 후보 파일 `format_version: 1`)로 내보낸다. 사람이 후보의 구조(정정 종류·유형·슬롯)만 보고 이 형식의 사례를 처음부터 쓴다. `mark_authored`가 잔존 검사와 함께 사례 형식을 검증하고, `mark_reviewed` 뒤 `promote(store, root, candidate_id, Path("server/evals/cases"))`가 다시 검증해 `cases/feedback-<hash>.json`으로 쓴다. `<hash>`는 `case_id`·`origin`을 뺀 내용의 SHA-256 앞 12자이고, 승격본의 `case_id`는 `feedback-<hash>`, `origin`은 `{"kind": "feedback", "versions": …}`(프롬프트·모델 버전)다. 작성자가 쓴 `case_id`는 덮어쓴다.
+`weaver.loom.eval_candidates`가 승인 피드백을 원문 없는 비공개 후보(`state_root/eval_candidates/`, 후보 파일 `format_version: 1`)로 내보낸다. 사람이 후보의 구조(정정 종류·유형·슬롯)만 보고 이 형식의 사례를 처음부터 쓴다. `mark_authored`가 잔존 검사와 함께 사례 형식과 타임스탬프 연도(203x)를 검증하고, `mark_reviewed` 뒤 `promote(store, root, candidate_id, Path("server/evals/cases"))`가 다시 검증해 `cases/feedback-<hash>.json`으로 쓴다. `<hash>`는 `case_id`·`origin`을 뺀 내용의 SHA-256 앞 12자이고, 승격본의 `case_id`는 `feedback-<hash>`, `origin`은 `{"kind": "feedback", "versions": …}`(프롬프트·모델 버전)다. 작성자가 쓴 `case_id`는 덮어쓴다.

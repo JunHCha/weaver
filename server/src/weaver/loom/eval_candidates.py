@@ -164,6 +164,10 @@ def _valid_case(sample: dict[str, Any]) -> None:
     except DatasetError:
         # The reason may quote sample text; keep the failure content-free.
         raise CandidateError("sample is not a valid eval case") from None
+    stamps = [t for t in _strings(sample) if re.fullmatch(TIMESTAMP_PATTERN, t)]
+    if any(not t.startswith("203") for t in stamps):
+        # Fake samples use 203x dates so no real recorded instant is published.
+        raise CandidateError("sample timestamps must use fake 203x dates")
 
 
 SHINGLE = 8  # Contiguous normalized characters (spaces removed).

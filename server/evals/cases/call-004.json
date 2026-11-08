@@ -10,8 +10,7 @@
   "tags": [
     "stt_spacing",
     "relative_date",
-    "decision",
-    "attendance"
+    "decision"
   ],
   "input": {
     "stage": "spin",

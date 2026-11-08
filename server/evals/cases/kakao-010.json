@@ -9,8 +9,7 @@
   },
   "tags": [
     "relative_date",
-    "boundary",
-    "attendance"
+    "boundary"
   ],
   "input": {
     "stage": "spin",

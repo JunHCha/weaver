@@ -648,6 +648,24 @@ def test_residue_ignores_timestamps_only():
     ec.check_residue({"at": "2031-03-11T15:00:00+09:00"}, original)
     with pytest.raises(ec.CandidateError):
         ec.check_residue({"at": "2031-03-11T15:00:00+09:00 비밀 메모 원문"}, original)
+    # Numbers next to a timestamp stay original text (phone, amount).
+    numbers = {"2026-11-08T15:00:00+09:00 010-2345-6789", "3,450,000원"}
+    for leaked in ("010-2345-6789", "합계 3,450,000원"):
+        with pytest.raises(ec.CandidateError):
+            ec.check_residue({"at": "2031-03-11T15:00:00+09:00", "x": leaked}, numbers)
+
+
+def test_samples_must_use_fake_203x_timestamps(env, tmp_path):
+    decision = submit(env, proposal(), "edit", edits=LINK)
+    env.handler.apply(decision)
+    root = tmp_path / "eval_candidates"
+    [cid] = ec.export_candidates(env.feedback, root)
+    real = fake_case()
+    real["reference"]["at"] = "2026-03-05T10:00:00+09:00"
+    path = tmp_path / "real.json"
+    path.write_text(json.dumps(real, ensure_ascii=False))
+    with pytest.raises(ec.CandidateError, match="203x"):
+        ec.mark_authored(env.feedback, root, cid, path)
 
 
 def test_proposer_records_extractor_versions(env):
