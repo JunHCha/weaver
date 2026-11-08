@@ -219,8 +219,8 @@ class FabricStore:
         """Append all or none; identical retries preserve timestamps and rows.
 
         Replacement/retraction requires the same entity set and field. A
-        retraction cannot itself be retracted. Request references target kind
-        요청; resolves additionally requires matching entities and a human
+        retraction cannot itself be retracted or superseded. Request references
+        target kind 요청; resolves additionally requires matching entities and a human
         decision (enforced by Entry). All reference cycles are rejected.
         """
         batch: dict[str, Entry] = {}
@@ -298,8 +298,13 @@ class FabricStore:
                         raise InvalidReference(key, field, "entity_mismatch")
                     if item.field != target.field:
                         raise InvalidReference(key, field, "field_mismatch")
-                    if field == "retracts" and target.retracts is not None:
-                        raise InvalidReference(key, field, "retraction_of_retraction")
+                    if target.retracts is not None:
+                        reason = (
+                            "retraction_of_retraction"
+                            if field == "retracts"
+                            else "supersede_of_retraction"
+                        )
+                        raise InvalidReference(key, field, reason)
                 else:
                     if target.kind != "요청":
                         raise InvalidReference(key, field, "target_not_request")

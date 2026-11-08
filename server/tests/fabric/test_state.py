@@ -101,8 +101,8 @@ def test_reference_graph_beats_event_clock_and_restores_chain(tmp_path: Path) ->
     b = entry(2, value="b", supersedes=a.entry_id, occurred_at="2025-01-01T00:00:00Z")
     c = entry(3, value="c", supersedes=b.entry_id, occurred_at="2024-01-01T00:00:00Z")
     store.append([a, c, b])
-    assert store.state(ENTITY).fields["deadline"].value == "a"
-    # c disables b, so b no longer suppresses a; a is latest active by UTC clock.
+    assert store.state(ENTITY).fields["deadline"].value == "c"
+    # Superseded b still suppresses a; only retraction cancels its effect.
     r = entry(4, retracts=c.entry_id, value="ignored")
     store.append([r])
     assert store.state(ENTITY).fields["deadline"].value == "b"
@@ -249,7 +249,7 @@ def test_long_reference_dag_has_no_recursion_limit(tmp_path: Path) -> None:
     for n in range(2, 1501):
         items.append(entry(n, field=None, supersedes=items[-1].entry_id))
     store.append(list(reversed(items)))
-    assert store.state(ENTITY).accumulated == items[1::2]
+    assert store.state(ENTITY).accumulated == [items[-1]]
 
 
 def test_ai_approval_and_cross_entity_block_do_not_resolve_request(
@@ -294,3 +294,107 @@ def test_retraction_decision_never_resolves_or_accumulates(tmp_path: Path) -> No
     assert state.open_requests == [a]
     assert state.decisions == {}
     assert state.accumulated == [a]
+
+
+@pytest.mark.parametrize("field", [None, "assignees"])
+def test_replacement_chain_does_not_restore_original_contribution(
+    tmp_path: Path,
+    field: str | None,
+) -> None:
+    store = FabricStore(tmp_path / "facts.db")
+    values = (
+        ["draft", "fix1", "fix2"]
+        if field is None
+        else [{"add": [person], "remove": []} for person in ["kim", "lee", "park"]]
+    )
+    a = entry(1, field=field, value=values[0])
+    b = entry(2, field=field, value=values[1], supersedes=a.entry_id)
+    c = entry(3, field=field, value=values[2], supersedes=b.entry_id)
+    store.append([c, a, b])
+    state = store.state(ENTITY)
+    if field is None:
+        assert state.accumulated == [c]
+    else:
+        assert [member.value for member in state.sets[field].members] == ["park"]
+
+
+def test_request_replacement_chain_only_latest_is_open(tmp_path: Path) -> None:
+    store = FabricStore(tmp_path / "facts.db")
+    a = request(1)
+    b = request(2, supersedes=a.entry_id)
+    c = request(3, supersedes=b.entry_id)
+    store.append([c, a, b])
+    assert store.state(ENTITY).open_requests == [c]
+    assert store.state(ENTITY).accumulated == [c]
+
+
+def test_decision_replacement_chain_and_representative(tmp_path: Path) -> None:
+    store = FabricStore(tmp_path / "facts.db")
+    q = request(1)
+    # Reverse event time proves reference suppression precedes clock ordering.
+    a = decision(2, q.entry_id, value="draft")
+    b = decision(
+        3,
+        q.entry_id,
+        value="fix1",
+        supersedes=a.entry_id,
+        occurred_at="2025-01-01T00:00:00Z",
+    )
+    c = decision(
+        4,
+        q.entry_id,
+        value="fix2",
+        supersedes=b.entry_id,
+        occurred_at="2024-01-01T00:00:00Z",
+    )
+    store.append([q, a, c, b])
+    state = store.state(ENTITY)
+    assert state.decisions == {q.entry_id: c}
+    assert state.accumulated == [c, q]
+    assert state.open_requests == []
+    store.append([entry(5, field=None, retracts=c.entry_id)])
+    assert store.state(ENTITY).decisions == {q.entry_id: b}
+    store.append([entry(6, field=None, retracts=b.entry_id)])
+    assert store.state(ENTITY).decisions == {q.entry_id: a}
+    assert len(store.entries(EntryQuery())) == 6
+
+
+@pytest.mark.parametrize("add_first", [True, False])
+def test_set_add_remove_timestamp_tie_uses_entry_id(
+    tmp_path: Path,
+    add_first: bool,
+) -> None:
+    store = FabricStore(tmp_path / "facts.db")
+    add = entry(
+        1 if add_first else 2, field="assignees", value={"add": ["kim"], "remove": []}
+    )
+    remove = entry(
+        2 if add_first else 1, field="assignees", value={"add": [], "remove": ["kim"]}
+    )
+    store.append([add, remove])
+    members = store.state(ENTITY).sets["assignees"].members
+    assert [member.value for member in members] == ([] if add_first else ["kim"])
+    if members:
+        assert members[0].entry_id == add.entry_id
+
+
+@pytest.mark.parametrize("same_batch", [True, False])
+def test_superseding_retraction_is_rejected_atomically(
+    tmp_path: Path,
+    same_batch: bool,
+) -> None:
+    from weaver.fabric import InvalidReference
+
+    store = FabricStore(tmp_path / "facts.db")
+    a = entry(1)
+    r = entry(2, retracts=a.entry_id)
+    replacement = entry(3, supersedes=r.entry_id)
+    if not same_batch:
+        store.append([a, r])
+    with pytest.raises(InvalidReference) as error:
+        store.append([replacement, r, a] if same_batch else [replacement])
+    assert error.value.entry_id == replacement.entry_id
+    assert error.value.field == "supersedes"
+    assert error.value.reason == "supersede_of_retraction"
+    assert store.entries(EntryQuery()) == ([] if same_batch else [a, r])
+    assert store.state(ENTITY).fields == {}

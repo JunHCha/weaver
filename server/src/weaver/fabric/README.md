@@ -7,13 +7,15 @@ Android models are unchanged.
 
 ## Fold rules (issue #6, approved option A)
 
-First evaluate the supersedes/retracts DAG from referring entries to their
-targets, visiting referrers first. Only active entries suppress targets; an
-inactive replacement does not suppress its predecessor. Then fold active,
-non-retraction entries in UTC `(occurred_at, recorded_at, entry_id)` order.
+First collect all retracted entries, then collect targets of every replacement
+that is not retracted. Replacing a replacement does not cancel its suppression
+of its predecessor: A <- B <- C leaves only C active. Retracting C restores B;
+retracting B too restores A. Then fold entries that are neither retracted nor
+superseded in UTC `(occurred_at, recorded_at, entry_id)` order.
 Retraction entries contribute no value, even if they carry kind=결정 or resolves.
-Storage rejects retraction of a retraction and validates same-field/entity
-references. Timestamps must be known and timezone-aware, as in issue #5.
+Storage rejects both retraction and replacement of a retraction and validates
+same-field/entity references. Timestamps must be known and timezone-aware, as in
+issue #5.
 
 The following table uses entries A, B, C in increasing total order unless stated.
 All original entries remain accessible through `entries`, including inactive ones.
@@ -31,12 +33,17 @@ All original entries remain accessible through `entries`, including inactive one
 | A and B: kind=결정 or 논의, even with a non-null field | Both accumulated; kind takes precedence over field rules |
 | B supersedes A | A suppressed; B contributes |
 | B supersedes A; C retracts B | B suppressed; A restored; C has no value contribution |
-| B supersedes A; C supersedes B | Active A and C; B is inactive and cannot suppress A; latest active value wins |
+| B supersedes A; C supersedes B | Only C active; non-retracted B still suppresses A even though C supersedes B |
+| Previous row; D retracts C; E retracts B | D restores B; after E, A is restored |
 | B supersedes A; C supersedes A; D retracts C | B still suppresses A |
 | B retracts A; C retracts B | Append rejects `retraction_of_retraction` |
+| B retracts A; C supersedes B | Append rejects `supersede_of_retraction`; restore through a new fact instead |
 | A: request; B and C: human decisions directly resolving A | No open A; representative C, both decision entries retained in accumulated history |
 | Previous row; D retracts C | Representative B; retract B too and A reopens |
 | A: request; B: decision resolves A; C: request supersedes A | C remains open; B does not resolve C |
+| Q2 supersedes request Q1; Q3 supersedes Q2 | Only Q3 open; Q1 does not revive |
+| D2 supersedes decision D1; D3 supersedes D2, all resolve Q1 | D3 is sole active decision and representative, regardless of earlier event times |
+| Same-time assignees add a; remove a in a different Entry | Larger entry_id wins the timestamp tie |
 | A: request; B: AI-approved decision without resolves | A remains open |
 | No matching entity records | EntityState with empty fields, accumulated, sets, open_requests, decisions |
 
@@ -66,3 +73,7 @@ the same fact set yield the same projection. Tests:
 ```sh
 uv run --project server pytest server/tests/fabric/test_state.py
 ```
+
+Set operation indexing is a follow-up: the current structural equality scan can
+take quadratic time in set membership size. This review correction retains that
+behavior and focuses on reference semantics and retraction immutability.
