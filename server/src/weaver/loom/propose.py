@@ -7,7 +7,8 @@ Fabric receives facts only; human request decisions have a separate factory.
 
 import json
 import logging
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -33,6 +34,7 @@ class FeedbackEvent:
     proposal: Proposal
     verdict: Verdict
     result: list[Entry] | Proposal
+    entity_ids: dict[str, str] = field(default_factory=dict)
 
 
 class FeedbackSink(Protocol):
@@ -63,10 +65,23 @@ class Proposer:
 
     def build(self, source: Source, extraction: Extraction) -> Proposal:
         source = Source.model_validate_json(source.model_dump_json())
-        proposal = _validate_ai(extraction.to_proposal(source, f"prp_{_ids()}", 1))
         with self.store.lock():
-            self.store.save_proposal(proposal)
-            self.courier.publish_proposal(proposal)
+            proposal = self.store.source_proposal(source.source_id)
+            if proposal is None:
+                proposal = _validate_ai(
+                    extraction.to_proposal(source, f"prp_{_ids()}", 1)
+                )
+                self.store.save_proposal(proposal)
+            try:
+                # A completed or superseded r1 must never be resurrected.
+                if self.store.latest_rev(
+                    proposal.proposal_id
+                ) == 1 and not self.store.is_applied(proposal.proposal_id, 1):
+                    self.courier.publish_proposal(proposal)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"proposal publication failed: {proposal.proposal_id}"
+                ) from exc
         return proposal
 
 
@@ -92,6 +107,10 @@ class VerdictHandler:
 
     def _apply(self, verdict: Verdict) -> list[Entry] | Proposal:
         pid, rev = verdict.proposal_id, verdict.rev
+        if any(pending_rev < rev for _, pending_rev in self.store.pending(pid)):
+            raise ValueError(
+                "earlier revision is PREPARED; recover it before applying this revision"
+            )
         record = self.store.review(pid, rev)
         if record:
             previous = Verdict.model_validate_json(record[0])
@@ -110,6 +129,8 @@ class VerdictHandler:
                 )
                 raise ValueError("unknown or stale proposal revision")
             proposal = self.store.proposal(pid, rev)
+            approved = proposal
+            entity_ids: dict[str, str] = {}
             if verdict.verdict == "revise":
                 result = self._revise(proposal, verdict)
             elif verdict.verdict == "reject":
@@ -129,11 +150,14 @@ class VerdictHandler:
                     ]
                 ):
                     raise ValueError("unresolved ask prevents approval")
+                entity_ids = {
+                    e.ref: e.entity_id or f"ent_{_ids()}" for e in approved.entities
+                }
+                for entity in approved.entities:
+                    entity.entity_id = entity_ids[entity.ref]
                 result = materialize_entries(
                     approved,
-                    entity_ids={
-                        e.ref: e.entity_id or f"ent_{_ids()}" for e in approved.entities
-                    },
+                    entity_ids=entity_ids,
                     entry_ids={d.ref: f"evt_{_ids()}" for d in approved.entry_drafts},
                     recorded_at=datetime.now(UTC),
                 )
@@ -147,8 +171,16 @@ class VerdictHandler:
             # durable BEFORE any externally visible effect.
             with self.store.connect() as db:
                 db.execute(
-                    "INSERT INTO reviews VALUES (?,?,?,?, 'PREPARED')",
-                    (pid, rev, verdict.model_dump_json(), encoded),
+                    "INSERT INTO reviews (proposal_id,rev,verdict,result,stage,approved,entity_ids) "
+                    "VALUES (?,?,?,?, 'PREPARED',?,?)",
+                    (
+                        pid,
+                        rev,
+                        verdict.model_dump_json(),
+                        encoded,
+                        approved.model_dump_json(),
+                        json.dumps(entity_ids),
+                    ),
                 )
                 if isinstance(result, Proposal):
                     self.store.insert_proposal(db, result)
@@ -156,8 +188,9 @@ class VerdictHandler:
             self.courier.publish_proposal(result)
         elif verdict.verdict in ("approve", "edit"):
             self.fabric.append(result)
+        recorded_proposal, recorded_ids = self.store.approval(pid, rev)
         self.feedback.record(
-            FeedbackEvent((pid, rev), self.store.proposal(pid, rev), verdict, result)
+            FeedbackEvent((pid, rev), recorded_proposal, verdict, result, recorded_ids)
         )
         with self.store.connect() as db:
             db.execute(
@@ -228,7 +261,7 @@ class VerdictHandler:
                 ]
             ],
         ]:
-            if not any(excerpt in original for original in originals):
+            if excerpt not in originals:
                 raise ValueError("revision evidence outside supplied source")
         known = {e.entity_id for e in proposal.entities if e.entity_id}
         known.update(
@@ -246,23 +279,61 @@ class VerdictHandler:
         for item in items:
             if item.ask and any(c.entity_id not in known for c in item.ask.choices):
                 raise ValueError("revision introduced unknown ask choice")
-        # Reusing a local ref cannot silently remove its request ancestry.
-        old_drafts = {d.ref: d for d in proposal.entry_drafts}
-        old_schedules = {s.ref: s for s in proposal.schedules}
-        for draft in revised.entry_drafts:
-            old = old_drafts.get(draft.ref)
-            if old and (
-                old.blocked_by_request != draft.blocked_by_request
-                or (old.kind == "요청") != (draft.kind == "요청")
+
+        # Local refs are LLM-generated labels, not identities. Compare request
+        # payloads after resolving entity refs, and forbid any decrease in blocks.
+        def requests(p: Proposal) -> Counter[str]:
+            identities = {
+                e.ref: e.entity_id or f"{e.type}:{e.name}" for e in p.entities
+            }
+            result: Counter[str] = Counter()
+            for d in p.entry_drafts:
+                if d.request is not None:
+                    payload = d.request.model_dump(mode="json")
+                    payload["requester"] = identities.get(
+                        d.request.requester, d.request.requester
+                    )
+                    payload["targets"] = sorted(
+                        identities.get(t, t) for t in d.request.targets
+                    )
+                    result[json.dumps(payload, sort_keys=True)] += 1
+            return result
+
+        if requests(proposal) != requests(revised):
+            raise ValueError("revision changed request contents or count")
+        for old_items, new_items in (
+            (proposal.entry_drafts, revised.entry_drafts),
+            (proposal.schedules, revised.schedules),
+        ):
+            if sum(i.blocked_by_request is not None for i in new_items) < sum(
+                i.blocked_by_request is not None for i in old_items
             ):
-                raise ValueError("revision changed request ancestry")
-        for schedule in revised.schedules:
-            old_schedule = old_schedules.get(schedule.ref)
-            if (
-                old_schedule
-                and old_schedule.blocked_by_request != schedule.blocked_by_request
-            ):
-                raise ValueError("revision changed schedule request ancestry")
+                raise ValueError("revision reduced request blocks")
+            old_entities = {
+                e.ref: e.entity_id or f"{e.type}:{e.name}" for e in proposal.entities
+            }
+            new_entities = {
+                e.ref: e.entity_id or f"{e.type}:{e.name}" for e in revised.entities
+            }
+            for old in old_items:
+                if old.blocked_by_request is None:
+                    continue
+                identities = {old_entities.get(e, e) for e in old.entities}
+                for new in new_items:
+                    if (
+                        (
+                            new.thread_excerpt in old.thread_excerpt
+                            or old.thread_excerpt in new.thread_excerpt
+                            or identities.intersection(
+                                new_entities.get(e, e) for e in new.entities
+                            )
+                        )
+                        and new.blocked_by_request is None
+                        and getattr(new, "kind", None) != "요청"
+                    ):
+                        raise ValueError(
+                            "revision removed overlapping request ancestry"
+                        )
         return revised
 
 
@@ -277,7 +348,16 @@ class CourierReviewAdapter:
 
     def _recover(self, proposal_id: str) -> None:
         for payload, _rev in self.handler.store.pending(proposal_id):
-            self.handler.apply(Verdict.model_validate_json(payload))
+            try:
+                self.handler.apply(Verdict.model_validate_json(payload))
+            except Exception as exc:
+                logger.warning(
+                    "loom recovery failed: %s (%s, %s)",
+                    type(exc).__name__,
+                    proposal_id,
+                    _rev,
+                )
+                raise
 
     def validate_verdict(self, verdict: Verdict) -> None:
         """Optional Courier guard: conflicting resyncs must remain for review."""

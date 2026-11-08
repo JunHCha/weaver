@@ -102,6 +102,7 @@ def verdict(env, kind="approve", **changes):
 
 def test_build_publishes_r1_with_provenance(env):
     source = Source.model_validate(example("Source"))
+    source.source_id = "src_01ARZ3NDEKTSV4RRFFQ69G5FA9"
     data = example("Proposal")
     extraction = Extraction.model_validate(
         {
@@ -448,3 +449,231 @@ def test_concurrent_duplicate_reviews_serialize_across_handlers(env, kind):
     assert len(env.sink.events) == 1
     assert env.client.calls == (1 if kind == "revise" else 0)
     assert len(env.fabric.entries(EntryQuery())) == (2 if kind == "approve" else 0)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "rename_unblock",
+        "remove_request",
+        "request_content",
+        "one_character",
+        "swap_block",
+    ],
+)
+def test_revision_safety_regressions(env, mutation):
+    p = env.proposal.model_copy(deep=True)
+    p.entry_drafts[0].ref = "d3"
+    p.entry_drafts[1].ref = "d4"
+    p.entry_drafts[1].blocked_by_request = "d3"
+    p.schedules[0].ref = "s9"
+    p.schedules[0].entry_ref = "d4"
+    p.schedules[0].blocked_by_request = "d3"
+    if mutation == "rename_unblock":
+        p.entry_drafts[1].blocked_by_request = None
+        p.schedules[0].blocked_by_request = None
+    elif mutation == "remove_request":
+        p.entry_drafts[0].kind = "논의"
+        p.entry_drafts[0].request = None
+        p.entry_drafts[1].blocked_by_request = None
+        p.schedules[0].blocked_by_request = None
+    elif mutation == "request_content":
+        p.entry_drafts[0].request.content = "다른 요청"
+    elif mutation == "one_character":
+        p.thread_excerpt = p.thread_excerpt[0]
+    else:
+        extra = p.entry_drafts[1].model_copy(deep=True)
+        extra.ref = "d5"
+        extra.blocked_by_request = None
+        p.entry_drafts.append(extra)
+    env.client.proposal = p
+    with pytest.raises(ValueError):
+        env.handler.apply(verdict(env, "revise"))
+    assert env.store.review(p.proposal_id, 1) is None
+
+
+def test_revision_can_rename_refs_without_losing_blocks(env):
+    p = env.client.proposal.model_copy(deep=True)
+    p.entry_drafts[0].ref = "d3"
+    p.entry_drafts[1].blocked_by_request = "d3"
+    p.schedules[0].blocked_by_request = "d3"
+    env.client.proposal = p
+    assert env.handler.apply(verdict(env, "revise")).rev == 2
+
+
+def test_build_failure_retry_uses_source_identity(env, monkeypatch):
+    source = Source.model_validate(example("Source"))
+    source.source_id = "src_01ARZ3NDEKTSV4RRFFQ69G5FA9"
+    data = env.proposal.model_dump(
+        mode="json", exclude={"schema_version", "proposal_id", "rev", "source"}
+    )
+    extraction = Extraction.model_validate(data)
+    original = env.publisher.publish_proposal
+    monkeypatch.setattr(
+        env.publisher,
+        "publish_proposal",
+        lambda *a: (_ for _ in ()).throw(OSError("private detail")),
+    )
+    with pytest.raises(RuntimeError) as error:
+        Proposer(env.store, env.publisher).build(source, extraction)
+    saved = env.store.source_proposal(source.source_id)
+    assert saved.proposal_id in str(error.value)
+    monkeypatch.setattr(env.publisher, "publish_proposal", original)
+    assert (
+        Proposer(ReviewStore(env.store.path), env.publisher).build(source, extraction)
+        == saved
+    )
+    assert Proposer(env.store, env.publisher).build(source, extraction) == saved
+    env.handler.apply(
+        Verdict.model_validate(example("Verdict") | {"proposal_id": saved.proposal_id})
+    )
+    assert Proposer(env.store, env.publisher).build(source, extraction) == saved
+    assert not (env.paths.proposals / f"{saved.proposal_id}.r1.json").exists()
+
+
+def test_approved_snapshot_mapping_and_edits_survive_restart(env):
+    p = env.proposal.model_copy(deep=True)
+    p.rev = 2
+    extra = p.entities[0].model_copy(deep=True)
+    extra.ref, extra.name = "e9", "연결 없는 대상"
+    p.entities.append(extra)
+    env.store.save_proposal(p)
+    env.publisher.publish_proposal(p)
+    decision = verdict(
+        env,
+        "edit",
+        rev=2,
+        edits=[
+            {"path": "/summary", "value": "수정된 요약"},
+            {"path": "/entities/0/name", "value": "수정된 이름"},
+        ],
+    )
+    env.sink.fail = True
+    with pytest.raises(RuntimeError):
+        env.handler.apply(decision)
+    approved, ids = env.store.approval(p.proposal_id, 2)
+    assert approved.summary == "수정된 요약"
+    assert approved.entities[0].name == "수정된 이름"
+    assert set(ids) == {"e1", "e2", "e9"}
+    assert all(e.entity_id == ids[e.ref] for e in approved.entities)
+    env.handler.store = ReviewStore(env.store.path)
+    env.sink.fail = False
+    env.handler.apply(decision)
+    event = env.sink.events[(p.proposal_id, 2)]
+    assert event.proposal == approved
+    assert event.entity_ids == ids
+    assert env.store.proposal(p.proposal_id, 2).summary != approved.summary
+
+
+def test_direct_r2_apply_refuses_prepared_r1(env):
+    decision = verdict(env, "revise")
+    env.sink.fail = True
+    with pytest.raises(RuntimeError):
+        env.handler.apply(decision)
+    env.sink.fail = False
+    with pytest.raises(ValueError, match="PREPARED"):
+        env.handler.apply(verdict(env, rev=2))
+    assert not env.store.review(decision.proposal_id, 2)
+    env.handler.apply(decision)
+    env.handler.apply(verdict(env, rev=2))
+    assert not list(env.paths.proposals.iterdir())
+
+
+@pytest.mark.parametrize("path", ["/entities/0/re~0f", "/entities/0/re~1f"])
+def test_escaped_identity_paths_refused(env, path):
+    with pytest.raises(ValueError):
+        env.handler.apply(verdict(env, "edit", edits=[{"path": path, "value": "e9"}]))
+    assert not env.store.review(env.proposal.proposal_id, 1)
+
+
+def test_duplicate_edit_paths_validate_final_payload(env):
+    with pytest.raises(ValueError):
+        env.handler.apply(
+            verdict(
+                env,
+                "edit",
+                edits=[
+                    {"path": "/summary", "value": "valid"},
+                    {"path": "/summary", "value": 12},
+                ],
+            )
+        )
+    assert not env.store.review(env.proposal.proposal_id, 1)
+
+
+def test_escaped_tilde_value_key_and_schedule_ask_preserved(env):
+    p = env.proposal.model_copy(deep=True)
+    p.rev = 2
+    p.schedules[0].ask = Ask(question="일정을 확인하세요", choices=[])
+    env.store.save_proposal(p)
+    result = env.handler.apply(
+        verdict(
+            env,
+            "edit",
+            rev=2,
+            edits=[
+                {"path": "/entry_drafts/0/value", "value": {"a~b": 1}},
+                {"path": "/entry_drafts/0/value/a~0b", "value": 2},
+            ],
+        )
+    )
+    assert result[0].value == {"a~b": 2}
+    assert (
+        env.sink.events[(p.proposal_id, 2)].proposal.schedules[0].ask
+        == p.schedules[0].ask
+    )
+
+
+def test_recovery_warning_contains_type_identity_only(env, caplog):
+    decision = verdict(env, "revise")
+    env.sink.fail = True
+    with pytest.raises(RuntimeError):
+        env.handler.apply(decision)
+    env.courier.scan_once()
+    assert "RuntimeError" in caplog.text
+    assert decision.proposal_id in caplog.text
+    assert "sink interrupted" not in caplog.text
+    assert env.proposal.thread_excerpt not in caplog.text
+
+
+def test_build_same_source_never_duplicates_proposals(env):
+    source = Source.model_validate(example("Source"))
+    data = env.proposal.model_dump(
+        mode="json", exclude={"schema_version", "proposal_id", "rev", "source"}
+    )
+    extraction = Extraction.model_validate(data)
+    a = Proposer(env.store, env.publisher).build(source, extraction)
+    b = Proposer(env.store, env.publisher).build(source, extraction)
+    assert a.proposal_id == b.proposal_id == env.proposal.proposal_id
+
+
+def test_feedback_contains_actual_edited_proposal(env):
+    env.handler.apply(
+        verdict(
+            env, "edit", edits=[{"path": "/summary", "value": "검토자가 바꾼 요약"}]
+        )
+    )
+    event = env.sink.events[(env.proposal.proposal_id, 1)]
+    assert event.proposal.summary == "검토자가 바꾼 요약"
+    assert event.proposal.entities[0].entity_id is not None
+
+
+def test_v1_journal_migrates_source_lookup(env, tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE proposals (proposal_id TEXT, rev INTEGER, snapshot TEXT, PRIMARY KEY(proposal_id, rev)); CREATE TABLE reviews (proposal_id TEXT, rev INTEGER, verdict TEXT, result TEXT, stage TEXT, PRIMARY KEY(proposal_id, rev)); PRAGMA user_version=1;"
+        )
+        db.execute(
+            "INSERT INTO proposals VALUES (?,?,?)",
+            (env.proposal.proposal_id, 1, env.proposal.model_dump_json()),
+        )
+    store = ReviewStore(path)
+    assert store.source_proposal(env.proposal.source.source_id) == env.proposal
+    with store.connect() as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert (
+        ReviewStore(path).source_proposal(env.proposal.source.source_id) == env.proposal
+    )

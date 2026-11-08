@@ -85,7 +85,14 @@ def _ask[**P, T](query: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     """Run an injected store query; its failure is a per-file, retryable code."""
     try:
         return query(*args, **kwargs)
-    except Exception:
+    except Exception as exc:
+        # Only validated opaque IDs/revisions are supplied by these query ports.
+        safe_args = tuple(
+            a
+            for a in args
+            if isinstance(a, int) or (isinstance(a, str) and a.startswith("prp_"))
+        )
+        logger.warning("courier query failed: %s %s", type(exc).__name__, safe_args)
         raise CourierFileError("store_failed") from None
 
 
@@ -339,7 +346,13 @@ class Courier:
                         validate(verdict)
                     except CourierFileError:
                         raise
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning(
+                            "courier recovery failed: %s (%s, %s)",
+                            type(exc).__name__,
+                            pid,
+                            rev,
+                        )
                         raise CourierFileError("store_failed") from None
                 if _ask(self._decisions.is_applied, pid, rev):
                     self._clean_decision(path, pid, rev, report)
@@ -353,7 +366,13 @@ class Courier:
                     raise CourierFileError("unknown_rev")
                 try:
                     self._decisions.apply(verdict)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "courier apply failed: %s (%s, %s)",
+                        type(exc).__name__,
+                        pid,
+                        rev,
+                    )
                     raise CourierFileError("apply_failed") from None
                 if not _ask(self._decisions.is_applied, pid, rev):
                     raise CourierFileError("apply_unconfirmed")

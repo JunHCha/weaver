@@ -1,6 +1,7 @@
 """Private durable review journal, separate from Fabric and synced files."""
 
 import fcntl
+import json
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -27,7 +28,7 @@ class ReviewStore:
             os.chmod(self.path, 0o600)
             with self.connect() as db:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (0, 1):
+                if version not in (0, 1, 2):
                     raise ValueError("unsupported Loom journal version")
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS proposals (
@@ -38,8 +39,22 @@ class ReviewStore:
                         verdict TEXT NOT NULL, result TEXT NOT NULL,
                         stage TEXT NOT NULL CHECK(stage IN ('PREPARED','APPLIED')),
                         PRIMARY KEY(proposal_id, rev));
-                    PRAGMA user_version=1;
+
                 """)
+                if version < 2:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("ALTER TABLE proposals ADD COLUMN source_id TEXT")
+                    db.execute(
+                        "UPDATE proposals SET source_id=json_extract(snapshot, '$.source.source_id')"
+                    )
+                    db.execute("ALTER TABLE reviews ADD COLUMN approved TEXT")
+                    db.execute(
+                        "ALTER TABLE reviews ADD COLUMN entity_ids TEXT NOT NULL DEFAULT '{}'"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS proposals_source ON proposals(source_id, rev)"
+                    )
+                    db.execute("PRAGMA user_version=2")
 
     @classmethod
     def from_config(cls, config: ServerConfig) -> "ReviewStore":
@@ -88,8 +103,31 @@ class ReviewStore:
         if row and row[0] != payload:
             raise ValueError("conflicting proposal snapshot")
         db.execute(
-            "INSERT OR IGNORE INTO proposals VALUES (?,?,?)",
-            (proposal.proposal_id, proposal.rev, payload),
+            "INSERT OR IGNORE INTO proposals (proposal_id,rev,snapshot,source_id) VALUES (?,?,?,?)",
+            (proposal.proposal_id, proposal.rev, payload, proposal.source.source_id),
+        )
+
+    def source_proposal(self, source_id: str) -> Proposal | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT snapshot FROM proposals WHERE source_id=? AND rev=1 ORDER BY rowid LIMIT 1",
+                (source_id,),
+            ).fetchone()
+        return Proposal.model_validate_json(row[0]) if row else None
+
+    def approval(self, proposal_id: str, rev: int) -> tuple[Proposal, dict[str, str]]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT approved,entity_ids FROM reviews WHERE proposal_id=? AND rev=?",
+                (proposal_id, rev),
+            ).fetchone()
+        if row is None:
+            raise ValueError("unknown review")
+        return (
+            Proposal.model_validate_json(row[0])
+            if row[0]
+            else self.proposal(proposal_id, rev),
+            json.loads(row[1]),
         )
 
     def proposal(self, proposal_id: str, rev: int) -> Proposal:
