@@ -44,6 +44,24 @@ class ShareSubmissionTest {
     private fun text(value: String = "공유한 테스트 텍스트") = SharedText.receive(context,
         Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, value))
 
+    @Test fun utf16TranscriptsQueueBomlessUtf8WithNormalizedSizeAndDigest() {
+        val content = "AI로 생성된 콘텐츠입니다\n\n가짜 대화 😀 \n"
+        listOf(Charsets.UTF_16BE to byteArrayOf(0xfe.toByte(), 0xff.toByte()),
+            Charsets.UTF_16LE to byteArrayOf(0xff.toByte(), 0xfe.toByte())).forEachIndexed { index, (charset, bom) ->
+            val uri = Uri.parse("content://test/utf16-$index")
+            shadowOf(context.contentResolver).registerInputStream(uri, ByteArrayInputStream(bom + content.toByteArray(charset)))
+            val file = SharedText.receive(context, Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri))
+            val expectedDigest = SharedText.digest(file)
+            val result = ShareSubmission.submit(context, file, Channel.CALL, call.id)
+            assertEquals(index == 1, result.duplicate)
+            assertEquals(content.toByteArray().size.toLong(), result.manifest.size)
+            assertEquals(expectedDigest, result.manifest.sha256)
+            CourierDatabase(context).use { db ->
+                assertEquals(1, db.captures().size)
+                assertArrayEquals(content.toByteArray(), File(db.captures().single().stagedPath).readBytes())
+            }
+        }
+    }
     @Test fun ordinaryAndKakaoUseTextKindAndRemainDistinct() {
         listOf(Channel.SHARE_TEXT, Channel.KAKAO).forEach { channel ->
             val manifest = ShareSubmission.submit(context, text(channel.name), channel, null).manifest

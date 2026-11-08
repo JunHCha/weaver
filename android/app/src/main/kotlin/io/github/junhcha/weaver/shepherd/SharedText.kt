@@ -4,12 +4,16 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierClient
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.io.PushbackInputStream
 import java.nio.charset.CodingErrorAction
 import java.util.UUID
 
@@ -48,19 +52,7 @@ object SharedText {
                 val encoder = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                 FileOutputStream(file).use { output ->
-                    val bounded = object : java.io.OutputStream() {
-                        var size = 0L
-                        override fun write(value: Int) {
-                            require(++size <= MAX_BYTES) { "텍스트는 10 MiB 이하여야 합니다." }
-                            output.write(value)
-                        }
-                        override fun write(bytes: ByteArray, off: Int, len: Int) {
-                            size += len
-                            require(size <= MAX_BYTES) { "텍스트는 10 MiB 이하여야 합니다." }
-                            output.write(bytes, off, len)
-                        }
-                    }
-                    java.io.OutputStreamWriter(bounded, encoder).use { it.append(text) }
+                    OutputStreamWriter(bounded(output), encoder).use { it.append(text) }
                     output.fd.sync()
                 }
                 validate(file)
@@ -85,17 +77,66 @@ object SharedText {
             (document == null && tree == null)
     }
 
+    /** Untrusted display metadata is only a selection hint, never a local path. */
+    fun displayName(context: Context, intent: Intent): String? {
+        @Suppress("DEPRECATION")
+        val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return null
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+            }
+        }.getOrNull()
+    }
+
+    private fun bounded(output: OutputStream): OutputStream = object : OutputStream() {
+        var size = 0L
+        override fun write(value: Int) {
+            require(++size <= MAX_BYTES) { "텍스트는 10 MiB 이하여야 합니다." }
+            output.write(value)
+        }
+        override fun write(bytes: ByteArray, off: Int, len: Int) {
+            size += len
+            require(size <= MAX_BYTES) { "텍스트는 10 MiB 이하여야 합니다." }
+            output.write(bytes, off, len)
+        }
+    }
+
     fun copy(input: InputStream, file: File) {
         try {
-            FileOutputStream(file).use { output ->
-                val buffer = ByteArray(64 * 1024)
+            // Bound both sender bytes and UTF-8 bytes; never trust provider SIZE metadata.
+            val limited = object : java.io.FilterInputStream(input) {
                 var size = 0L
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    size += count
+                private fun count(n: Int): Int {
+                    if (n > 0) size += n
                     require(size <= MAX_BYTES) { "텍스트는 10 MiB 이하여야 합니다." }
-                    output.write(buffer, 0, count)
+                    return n
+                }
+                override fun read(): Int = super.read().also { if (it >= 0) count(1) }
+                override fun read(bytes: ByteArray, off: Int, len: Int): Int = count(`in`.read(bytes, off, len))
+            }
+            val source = PushbackInputStream(limited, 2)
+            val first = source.read()
+            val second = source.read()
+            val charset = when {
+                first == 0xfe && second == 0xff -> Charsets.UTF_16BE
+                first == 0xff && second == 0xfe -> Charsets.UTF_16LE
+                else -> null
+            }
+            FileOutputStream(file).use { output ->
+                val target = bounded(output)
+                if (charset == null) {
+                    if (second >= 0) source.unread(second)
+                    if (first >= 0) source.unread(first)
+                    source.copyTo(target, 64 * 1024)
+                } else {
+                    val decoder = charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    val encoder = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    // The source BOM is consumed above. UTF-8's encoder adds no BOM.
+                    val reader = InputStreamReader(source, decoder)
+                    OutputStreamWriter(target, encoder).use { writer -> reader.copyTo(writer) }
                 }
                 output.fd.sync()
             }
@@ -117,7 +158,7 @@ object SharedText {
                 val count = reader.read(chars)
                 if (count < 0) break
                 for (index in 0 until count) {
-                    require(chars[index] != '\u0000') { "UTF-16은 지원하지 않습니다. UTF-8로 공유하세요." }
+                    require(chars[index] != '\u0000') { "BOM 없는 UTF-16이나 NUL 문자는 지원하지 않습니다. UTF-8로 공유하세요." }
                     if (!chars[index].isWhitespace() && chars[index] != '\uFEFF') meaningful = true
                 }
             }
