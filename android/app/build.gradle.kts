@@ -117,6 +117,7 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 }
 
 dependencies {
+    implementation(libs.androidx.glance.appwidget)
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -131,6 +132,7 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.glance.appwidget.testing)
     testImplementation(libs.androidx.work.testing)
     testImplementation(libs.junit)
     testImplementation(libs.json.schema.validator)

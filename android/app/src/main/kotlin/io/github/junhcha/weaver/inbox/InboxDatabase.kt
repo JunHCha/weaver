@@ -172,9 +172,9 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         ContentValues().apply { put("state", DISMISSED); put("delete_pending", 1); put("changed_at", now) },
         "alert_id=? AND state='$ACTIVE'", arrayOf(alertId)) == 1
 
-    fun proposals(): List<ProposalItem> = readableDatabase.rawQuery(
+    fun proposals(newestRevisionFirst: Boolean = false): List<ProposalItem> = readableDatabase.rawQuery(
         """SELECT proposal_id, rev, summary, channel, captured_at, revised, notified_rev FROM proposals
-            WHERE state='$ACTIVE' ORDER BY first_seen DESC, proposal_id DESC""", null,
+            WHERE state='$ACTIVE' ORDER BY ${if (newestRevisionFirst) "changed_at" else "first_seen"} DESC, proposal_id DESC""", null,
     ).use { c -> buildList {
         while (c.moveToNext()) add(ProposalItem(c.getString(0), c.getLong(1), c.getString(2), c.getString(3),
             c.getString(4), c.getInt(5) == 1, c.getLong(6)))
