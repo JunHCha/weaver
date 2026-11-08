@@ -4,14 +4,17 @@ Isolated SQLite/files and fake LLM/sink only; no network or user vault.
 """
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from weaver.config import CourierPaths, FeedbackSettings
 from weaver.courier import Courier
+from weaver.evals import load_dataset
 from weaver.fabric import EntryQuery, FabricStore
 from weaver.loom import (
     CourierPublisher,
@@ -530,12 +533,16 @@ def test_eval_candidate_lifecycle_requires_fake_sample(env, tmp_path):
     )
     with pytest.raises(ec.CandidateError, match="original text"):
         ec.mark_authored(env.feedback, root, cid, leaked)
-    fake = tmp_path / "fake.json"
-    fake.write_text(
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(
         json.dumps(
-            {"text": "가상인물 갑이 다음 주 회의를 잡자고 했다."}, ensure_ascii=False
+            {"text": "가상인물 갑이 다음 주 모임을 잡자고 했다."}, ensure_ascii=False
         )
     )
+    with pytest.raises(ec.CandidateError, match="valid eval case"):
+        ec.mark_authored(env.feedback, root, cid, invalid)
+    fake = tmp_path / "fake.json"
+    fake.write_text(json.dumps(fake_case(), ensure_ascii=False))
     ec.mark_authored(env.feedback, root, cid, fake)
     with pytest.raises(ec.CandidateError):
         ec.promote(env.feedback, root, cid, evals)
@@ -549,13 +556,98 @@ def test_eval_candidate_lifecycle_requires_fake_sample(env, tmp_path):
     fake.write_text(authored)
     target = ec.promote(env.feedback, root, cid, evals)
     published = json.loads(target.read_text())
-    assert (
-        published["origin"] == "feedback"
-        and decision.proposal_id not in target.read_text()
-    )
+    assert published["origin"] == {
+        "kind": "feedback",
+        "versions": candidate["versions"],
+    }
+    assert re.fullmatch(r"feedback-[0-9a-f]{12}", published["case_id"])
+    assert target.name == f"{published['case_id']}.json"
+    assert decision.proposal_id not in target.read_text()
+    # The promoted file is a regular eval case the dataset loader accepts.
+    [loaded] = load_dataset(evals)
+    assert loaded.case.origin is not None and loaded.case.title == "가상 모임 일정"
     assert ec.load(root, cid)["status"] == "promoted"
     with pytest.raises(ec.CandidateError):
         ec.promote(env.feedback, root, cid, evals)
+
+
+FAKE_TEXT = "가상인물 갑이 다음 주 화요일 오후 2시에 동아리 모임을 열자고 했다."
+
+
+def fake_case() -> dict[str, Any]:
+    """A from-scratch eval case; its timestamps share digits with any original."""
+    at = "2031-03-05T10:00:00+09:00"
+    meet = "2031-03-11T14:00:00+09:00"
+    evidence = {"confidence": 0.8, "ask": None, "thread_excerpt": FAKE_TEXT}
+    return {
+        "schema_version": 1,
+        "case_id": "feedback-draft",
+        "channel": "share_text",
+        "title": "가상 모임 일정",
+        "reference": {"at": at, "timezone": "Asia/Seoul"},
+        "tags": ["relative_date"],
+        "input": {"stage": "spin", "text": FAKE_TEXT, "counterpart": None},
+        "known": {"entities": []},
+        "expected": {
+            "revise": {"policy": "keep"},
+            "refine": {"select": [FAKE_TEXT], "reject": []},
+            "extract": {
+                "alternatives": [
+                    {
+                        "summary": "가상 모임",
+                        "thread_excerpt": FAKE_TEXT,
+                        "entities": [
+                            {
+                                **evidence,
+                                "ref": "e1",
+                                "entity_id": None,
+                                "type": "meeting",
+                                "name": "동아리 모임",
+                                "aliases": [],
+                            }
+                        ],
+                        "schedules": [
+                            {
+                                **evidence,
+                                "ref": "s1",
+                                "title": "동아리 모임",
+                                "start": meet,
+                                "end": None,
+                                "entities": ["e1"],
+                                "entry_ref": "d1",
+                                "blocked_by_request": None,
+                            }
+                        ],
+                        "relations": [],
+                        "entry_drafts": [
+                            {
+                                **evidence,
+                                "ref": "d1",
+                                "entities": ["e1"],
+                                "kind": "일정",
+                                "field": None,
+                                "value": meet,
+                                "occurred_at": at,
+                                "supersedes": None,
+                                "retracts": None,
+                                "request": None,
+                                "resolves": None,
+                                "blocked_by_request": None,
+                            }
+                        ],
+                    }
+                ]
+            },
+        },
+    }
+
+
+def test_residue_ignores_timestamps_only():
+    # RFC 3339 instants share long digit runs with any original; not raw text.
+    original = {"2026-11-08T15:00:00+09:00", "비밀 메모 원문"}
+    ec.check_residue({"at": "2031-03-11T15:00:00+09:00"}, original)
+    with pytest.raises(ec.CandidateError):
+        ec.check_residue({"at": "2031-03-11T15:00:00+09:00 비밀 메모 원문"}, original)
 
 
 def test_proposer_records_extractor_versions(env):

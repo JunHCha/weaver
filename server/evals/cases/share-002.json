@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "case_id": "share-002",
+  "channel": "share_text",
+  "title": "결정과 원인",
+  "reference": {
+    "at": "2031-03-05T09:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "decision",
+    "boundary",
+    "relation_direction"
+  ],
+  "input": {
+    "stage": "extract",
+    "text": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.\n원인은 결제 모듈 지연.",
+    "counterpart": null
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "eunha",
+        "type": "project",
+        "name": "은하 프로젝트",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "refine": {
+      "select": [
+        "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+        "원인은 결제 모듈 지연."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "출시 연기 결정",
+          "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+              "ref": "e1",
+              "entity_id": "@eunha",
+              "type": "project",
+              "name": "은하 프로젝트",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "원인은 결제 모듈 지연.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "topic",
+              "name": "결제 모듈",
+              "aliases": []
+            }
+          ],
+          "schedules": [],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "원인은 결제 모듈 지연.",
+              "from": "e2",
+              "type": "원인",
+              "to": "this",
+              "reason": "결제 모듈 지연이 연기 원인"
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+              "ref": "d1",
+              "entities": [
+                "e1"
+              ],
+              "kind": "결정",
+              "field": "출시",
+              "value": "출시 4월로 연기",
+              "occurred_at": "2031-03-05T09:00:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "원인 관계는 원인(결제 모듈)에서 이 원본 방향이다."
+}

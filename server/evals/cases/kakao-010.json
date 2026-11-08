@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "case_id": "kakao-010",
+  "channel": "kakao",
+  "title": "자정 넘김 상대 날짜",
+  "reference": {
+    "at": "2031-03-05T21:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "relative_date",
+    "boundary",
+    "attendance"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "은하팀 님과 카카오톡 대화\n저장한 날짜 : 2031-03-05 21:00:00\n\n--------------- 2031년 3월 4일 화요일 ---------------\n[오세린] [오후 11:50] 내일 아침 9시 스탠드업 잊지 마세요\n--------------- 2031년 3월 5일 수요일 ---------------\n[표지안] [오전 12:10] 넵 내일이 아니라 오늘이네요 ㅎㅎ\n",
+    "counterpart": null
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "serin",
+        "type": "person",
+        "name": "오세린",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "keep"
+    },
+    "refine": {
+      "select": [
+        "내일 아침 9시 스탠드업 잊지 마세요"
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "스탠드업 일정",
+          "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+              "ref": "e1",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "스탠드업",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+              "ref": "s1",
+              "title": "스탠드업",
+              "start": "2031-03-05T09:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1"
+              ],
+              "entry_ref": "d1",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+              "ref": "d1",
+              "entities": [
+                "e1"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-05T09:00:00+09:00",
+              "occurred_at": "2031-03-04T23:50:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "PC 내보내기. '내일'은 3/4 23:50 메시지 기준이므로 3/5이다."
+}

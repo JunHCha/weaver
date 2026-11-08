@@ -6,15 +6,20 @@ entity slots, expected structure and versions. A person writes a fake sample
 from scratch (issue #10 forbids transforming real material). Status moves only
 candidate -> authored -> reviewed -> promoted; promotion rejects any sample that
 still contains a raw string of the original proposal or feedback record.
-The format is provisional (format_version 1) until #10 defines evals.
+The sample must be a valid eval case (`weaver.evals`, schema_version 1);
+promotion writes it as `feedback-<hash>.json` in the cases directory with a
+derived case_id and `origin`. format_version versions only this candidate file.
 """
 
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from weaver.schema.models import TIMESTAMP_PATTERN
 
 from .extract import normalize_name
 from .feedback import _EXAMPLE_KINDS, SqliteFeedbackStore, is_raw_text
@@ -150,6 +155,17 @@ def _sample(path: Path) -> dict[str, Any]:
     return sample
 
 
+def _valid_case(sample: dict[str, Any]) -> None:
+    # Lazy import: weaver.evals imports Loom parsers, which import this package.
+    from weaver.evals import DatasetError, validate_case
+
+    try:
+        validate_case(sample)
+    except DatasetError:
+        # The reason may quote sample text; keep the failure content-free.
+        raise CandidateError("sample is not a valid eval case") from None
+
+
 SHINGLE = 8  # Contiguous normalized characters (spaces removed).
 
 
@@ -184,11 +200,16 @@ def check_residue(sample: dict[str, Any], sensitive: set[str]) -> None:
     Strings are compared after NFKC/casefold normalization, both with collapsed
     and removed whitespace (so escapes, quotes and spacing changes do not hide a
     copy). Any shared run of SHINGLE characters with a longer original also fails.
+    Whole RFC 3339 timestamps are not original text: every eval case carries
+    them and they share long digit runs with any record.
     """
     texts = [normalize_name(t) for t in _strings(sample)]
     compact = [_compact(t) for t in texts]
     originals = {
-        text for value in sensitive for text in _strings(value) if is_raw_text(text)
+        text
+        for value in sensitive
+        for text in _strings(value)
+        if is_raw_text(text) and not re.fullmatch(TIMESTAMP_PATTERN, text)
     }
     for value in originals:
         normalized, squeezed = normalize_name(value), _compact(value)
@@ -214,7 +235,9 @@ def mark_authored(
 ) -> None:
     """Attach a human-written fake sample; residue is checked early too."""
     pid, rev = _event_id(candidate_id)
-    check_residue(_sample(sample), store.sensitive_strings(pid, rev))
+    data = _sample(sample)
+    check_residue(data, store.sensitive_strings(pid, rev))
+    _valid_case(data)
     _transition(
         root,
         candidate_id,
@@ -249,7 +272,11 @@ def _event_id(candidate_id: str) -> tuple[str, int]:
 def promote(
     store: SqliteFeedbackStore, root: Path, candidate_id: str, evals_dir: Path
 ) -> Path:
-    """Copy a reviewed fake sample to the public eval set without private IDs."""
+    """Publish a reviewed fake sample as an eval case without private IDs.
+
+    The case_id becomes `feedback-<hash>` of the authored content and `origin`
+    records the feedback versions; the file is `<evals_dir>/<case_id>.json`.
+    """
     data = load(root, candidate_id)
     if data["status"] != "reviewed":
         raise CandidateError("candidate must be reviewed")
@@ -259,21 +286,19 @@ def promote(
         raise CandidateError("cannot verify sample without the original record")
     sample = _sample(_unchanged(data))
     check_residue(sample, sensitive)
-    evals_dir.mkdir(parents=True, exist_ok=True)
+    content = {k: v for k, v in sample.items() if k not in ("case_id", "origin")}
     digest = hashlib.sha256(
-        json.dumps(sample, ensure_ascii=False, sort_keys=True).encode()
+        json.dumps(content, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()[:12]
-    target = evals_dir / f"feedback-{digest}.json"
-    _write(
-        target,
-        {
-            "format_version": FORMAT_VERSION,
-            "origin": "feedback",
-            "expected": data["expected"],
-            "versions": data["versions"],
-            "sample": sample,
-        },
-        0o644,
-    )
+    case = {
+        **content,
+        "case_id": f"feedback-{digest}",
+        "origin": {"kind": "feedback", "versions": data["versions"]},
+    }
+    _valid_case(case)
+    check_residue(case, sensitive)
+    evals_dir.mkdir(parents=True, exist_ok=True)
+    target = evals_dir / f"{case['case_id']}.json"
+    _write(target, case, 0o644)
     _transition(root, candidate_id, "promoted", promoted=target.name)
     return target

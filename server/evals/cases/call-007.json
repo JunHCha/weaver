@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "case_id": "call-007",
+  "channel": "call",
+  "title": "잡담만 있는 통화",
+  "reference": {
+    "at": "2031-03-05T18:20:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "chitchat",
+    "empty"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "AI로 생성된 콘텐츠입니다\n\n안부 통화\n\n차은솔  (00:01)\n어제 날씨 정말 좋더라. 주말엔 뭐 해?\n\n나  (00:04)\n그냥 집에서 쉬려고.\n",
+    "counterpart": "차은솔"
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "eunsol",
+        "type": "person",
+        "name": "차은솔",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "revise",
+      "edits": []
+    },
+    "refine": {
+      "select": [
+        "어제 날씨 정말 좋더라. 주말엔 뭐 해?"
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": []
+    }
+  },
+  "notes": "날짜 신호가 있어 후보로는 뽑히지만 기록할 사실은 없다."
+}

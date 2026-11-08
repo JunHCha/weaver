@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "case_id": "call-010",
+  "channel": "call",
+  "title": "논의와 후속조치",
+  "reference": {
+    "at": "2031-03-05T18:20:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "stt_word",
+    "discussion",
+    "follow_up",
+    "missing_info",
+    "relative_date"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "AI로 생성된 콘텐츠입니다\n\n예산 통화\n\n오세린  (00:01)\n은하 프로젝트 예산 논이는 다음 달에 다시 하자.\n\n나  (00:04)\n네 그럼 그때 자료 준비할게요.\n",
+    "counterpart": "오세린"
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "serin",
+        "type": "person",
+        "name": "오세린",
+        "aliases": []
+      },
+      {
+        "key": "eunha",
+        "type": "project",
+        "name": "은하 프로젝트",
+        "aliases": [
+          "은하"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "revise",
+      "edits": [
+        {
+          "from": "은하 프로젝트 예산 논이는 다음 달에 다시 하자.",
+          "to": [
+            "은하 프로젝트 예산 논의는 다음 달에 다시 하자."
+          ]
+        }
+      ]
+    },
+    "refine": {
+      "select": [
+        "은하 프로젝트 예산 논의는 다음 달에 다시 하자."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "은하 프로젝트 예산 논의 연기",
+          "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+              "ref": "e1",
+              "entity_id": "@eunha",
+              "type": "project",
+              "name": "은하 프로젝트",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "topic",
+              "name": "예산",
+              "aliases": []
+            }
+          ],
+          "schedules": [],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+              "from": "e2",
+              "type": "같은논의",
+              "to": "e1",
+              "reason": null
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "논의",
+              "field": null,
+              "value": "예산 논의를 다음 달로 미룸",
+              "occurred_at": "2031-03-05T18:20:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "날짜가 달 단위라 일정은 만들지 않는다. 오류가 없는 둘째 줄은 edit 목록에 없으므로 그대로 두는 것이 정답이다."
+}

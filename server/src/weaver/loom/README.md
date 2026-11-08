@@ -134,10 +134,12 @@ journal v3 stores versions per rev (`loom.extract.v1`, `loom.revise.v1`).
 
 `eval_candidates.export_candidates` writes raw-text-free candidates to
 `state_root/eval_candidates/` (0700/0600). A person writes a fake sample from scratch;
-`mark_authored` (stores the sample sha256) -> `mark_reviewed` -> `promote` copies
-the unchanged reviewed bytes to the eval directory only after a residue check:
+`mark_authored` (stores the sample sha256) -> `mark_reviewed` -> `promote` publishes
+the unchanged reviewed sample as an eval case only after a residue check:
 all sample strings (keys and JSON-encoded values included) are NFKC/casefold
 normalized and compared with and without whitespace, and any 8-character run
 shared with an original string fails. Closed vocabularies, durable IDs and JSON
-literals are not treated as original text. The
-format_version 1 layout is provisional until #10.
+literals and whole RFC 3339 timestamps are not treated as original text. The
+sample must be a valid eval case (`server/evals/README.md`); `promote` writes it to
+`server/evals/cases/feedback-<hash>.json` with a derived `case_id` and `origin`.
+`format_version` 1 versions only the private candidate file.

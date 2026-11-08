@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "case_id": "kakao-011",
+  "channel": "kakao",
+  "title": "누락 정보와 참석",
+  "reference": {
+    "at": "2031-03-05T21:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "missing_info",
+    "attendance",
+    "relative_date"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "워크숍방 님과 카카오톡 대화\n저장한 날짜 : 2031년 3월 5일 오후 9:00\n\n2031년 3월 5일 수요일\n2031년 3월 5일 오후 8:00, 금하윤 : 다음 주 목요일 오후 1시 워크숍\n2031년 3월 5일 오후 8:01, 금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정\n",
+    "counterpart": null
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "hayun",
+        "type": "person",
+        "name": "금하윤",
+        "aliases": []
+      },
+      {
+        "key": "garam",
+        "type": "person",
+        "name": "한가람",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "keep"
+    },
+    "refine": {
+      "select": [
+        "다음 주 목요일 오후 1시 워크숍",
+        "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정"
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "다음 주 목요일 워크숍",
+          "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+              "ref": "e1",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "워크숍",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+              "ref": "e2",
+              "entity_id": "@garam",
+              "type": "person",
+              "name": "한가람",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+              "ref": "e3",
+              "entity_id": "@hayun",
+              "type": "person",
+              "name": "금하윤",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+              "ref": "s1",
+              "title": "워크숍",
+              "start": "2031-03-13T13:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1",
+                "e2",
+                "e3"
+              ],
+              "entry_ref": "d1",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+              "from": "e2",
+              "type": "참석",
+              "to": "e1",
+              "reason": null
+            },
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+              "from": "e3",
+              "type": "참석",
+              "to": "e1",
+              "reason": null
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-13T13:00:00+09:00",
+              "occurred_at": "2031-03-05T20:00:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "장소가 미정이면 값을 만들지 않는다. '저'는 발신자 라벨(금하윤)로 해석한다."
+}

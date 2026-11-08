@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "case_id": "call-009",
+  "channel": "call",
+  "title": "별칭만으로 연결하지 않음",
+  "reference": {
+    "at": "2031-03-05T18:20:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "stt_spacing",
+    "alias",
+    "link_pending",
+    "missing_info",
+    "request",
+    "multi_answer"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "AI로 생성된 콘텐츠입니다\n\n점검 통화\n\n한가람  (00:02)\n도대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.\n\n나  (00:06)\n응 알겠어.\n",
+    "counterpart": "한가람"
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "doyunjae",
+        "type": "person",
+        "name": "도윤재",
+        "aliases": [
+          "도 대리"
+        ]
+      },
+      {
+        "key": "garam",
+        "type": "person",
+        "name": "한가람",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "revise",
+      "edits": [
+        {
+          "from": "도대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+          "to": [
+            "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어."
+          ]
+        }
+      ]
+    },
+    "refine": {
+      "select": [
+        "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "도 대리의 점검 요청",
+          "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+          "entities": [
+            {
+              "confidence": 0.6,
+              "ask": {
+                "question": "도 대리가 도윤재인가요?",
+                "choices": [
+                  {
+                    "entity_id": "@doyunjae",
+                    "label": "도윤재"
+                  }
+                ]
+              },
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "e1",
+              "entity_id": null,
+              "type": "person",
+              "name": "도 대리",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "topic",
+              "name": "점검",
+              "aliases": []
+            }
+          ],
+          "schedules": [],
+          "relations": [],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "요청",
+              "field": null,
+              "value": "금요일 오전 점검",
+              "occurred_at": "2031-03-05T18:20:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": {
+                "requester": "e1",
+                "targets": [
+                  "e2"
+                ],
+                "due_at": null,
+                "content": "금요일 오전에 같이 점검하자"
+              },
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        },
+        {
+          "summary": "도 대리의 점검 요청",
+          "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+          "entities": [
+            {
+              "confidence": 0.6,
+              "ask": {
+                "question": "도 대리가 도윤재인가요?",
+                "choices": [
+                  {
+                    "entity_id": "@doyunjae",
+                    "label": "도윤재"
+                  }
+                ]
+              },
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "e1",
+              "entity_id": "@doyunjae",
+              "type": "person",
+              "name": "도윤재",
+              "aliases": [
+                "도 대리"
+              ]
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "topic",
+              "name": "점검",
+              "aliases": []
+            }
+          ],
+          "schedules": [],
+          "relations": [],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "요청",
+              "field": null,
+              "value": "금요일 오전 점검",
+              "occurred_at": "2031-03-05T18:20:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": {
+                "requester": "e1",
+                "targets": [
+                  "e2"
+                ],
+                "due_at": null,
+                "content": "금요일 오전에 같이 점검하자"
+              },
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "별칭만으로 동일 대상을 확정하지 않는다. 새 대상+ask와 기존 대상+ask 모두 허용. '오전'은 시각이 없어 일정으로 만들지 않는다."
+}

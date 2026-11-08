@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "case_id": "share-005",
+  "channel": "share_text",
+  "title": "런던 시각",
+  "reference": {
+    "at": "2031-03-05T09:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "timezone",
+    "relative_date",
+    "follow_up"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+    "counterpart": null
+  },
+  "known": {
+    "entities": []
+  },
+  "expected": {
+    "revise": {
+      "policy": "keep"
+    },
+    "refine": {
+      "select": [
+        "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "런던 지사 재통화",
+          "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+              "ref": "e1",
+              "entity_id": null,
+              "type": "org",
+              "name": "런던 지사",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "재통화",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+              "ref": "s1",
+              "title": "런던 지사 재통화",
+              "start": "2031-03-07T01:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "entry_ref": "d1",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+              "from": "e2",
+              "type": "후속조치",
+              "to": "this",
+              "reason": null
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-06T16:00:00+00:00",
+              "occurred_at": "2031-03-05T09:00:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "런던 3/6 16:00(GMT)은 서울 3/7 01:00이다. 기록 시각 값은 원문 시간대를 보존해도 된다."
+}
