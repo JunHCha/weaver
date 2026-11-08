@@ -85,12 +85,24 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                 val (path, value, edits, instruction, answers, reason) = input
                 val enabled = !busy && !stale && record == null
                 ReviewDraft.questions(p).forEach { q ->
-                    Text("질문 ${q.path}: ${q.ask.question}")
+                    Text("질문 대상: ${q.summary} · ${q.confidenceLabel}")
+                    Text(q.ask.question)
+                    if (q.canConfirm) {
+                        val confirmed = q.path in input.confirmations
+                        OutlinedButton(enabled = enabled, onClick = {
+                            input = input.copy(confirmations = if (confirmed) input.confirmations - q.path else input.confirmations + q.path)
+                        }) { Text(if (confirmed) "확인 취소" else "이 내용이 맞음") }
+                    } else if (q.ask.choices.isEmpty()) {
+                        Text("일정 질문은 답을 입력하고 다시 짜기를 선택하세요")
+                    }
                     q.ask.choices.forEach { c ->
                         OutlinedButton(enabled = enabled, onClick = { input = input.copy(answers = answers + (q.path to c.entityId)) }) { Text(c.label) }
                     }
                     OutlinedTextField(value = answers[q.path].orEmpty(), onValueChange = { input = input.copy(answers = answers + (q.path to it)) },
                         enabled = enabled, label = { Text("답 (자유 답변은 다시 짜기로 전송)") }, modifier = Modifier.fillMaxWidth())
+                }
+                if (ReviewDraft.hasMixedAnswers(p, answers, input.confirmations)) {
+                    Text("자유 답변이 있어 다시 짜기로 전송되며, 확인한 항목이 다시 질문될 수 있습니다")
                 }
                 Text("직접 수정: 예 /schedules/0/start · 값은 JSON 문자열이면 따옴표 포함")
                 OutlinedTextField(value = path, onValueChange = { input = input.copy(path = it) }, enabled = enabled, label = { Text("JSON Pointer") })
@@ -117,7 +129,7 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                                 runCatching {
                                     val verdict = ReviewDraft.verdict(p, kind,
                                         if (kind == Verdict.Kind.EDIT || kind == Verdict.Kind.REVISE) edits else emptyList(),
-                                        reason, instruction, answers, Instant.now().toString())
+                                        reason, instruction, answers, Instant.now().toString(), input.confirmations)
                                     ReviewRuntime.submit(context, p, verdict)
                                     ReviewRuntime.records(context).first { it.verdict == verdict }
                                 }

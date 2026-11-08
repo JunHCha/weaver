@@ -14,6 +14,7 @@ internal data class ReviewInput(
     val instruction: String = "",
     val answers: Map<String, String> = emptyMap(),
     val reason: Verdict.RejectReason = Verdict.RejectReason.OTHER,
+    val confirmations: Set<String> = emptySet(),
 ) {
     companion object {
         val saver = Saver<ReviewInput, String>(
