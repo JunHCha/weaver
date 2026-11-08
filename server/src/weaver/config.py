@@ -38,6 +38,10 @@ class LlmConfig:
     # Private key file (0600, owned by the user); takes precedence over
     # api_key_env because launchd jobs do not inherit the shell environment.
     api_key_file: Path | None = None
+    # claude_cli only: absolute path to the official binary (else found on PATH)
+    # and the daily call cap that protects the subscription allowance.
+    claude_path: Path | None = None
+    max_cli_calls_per_day: int = 30
 
 
 @dataclass(frozen=True)
@@ -221,7 +225,13 @@ def _select_file(path: str | Path | None, env: Mapping[str, str]) -> Path:
 def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfig:
     if not isinstance(value, dict):
         raise ConfigError("llm: expected a table")
-    if value.keys() - {"backend", "api_key_env", "api_key_file"}:
+    if value.keys() - {
+        "backend",
+        "api_key_env",
+        "api_key_file",
+        "claude_path",
+        "max_cli_calls_per_day",
+    }:
         raise ConfigError("llm: unknown fields (inline credentials are unsupported)")
     backend = value.get("backend", "anthropic")
     if not isinstance(backend, str) or backend not in _BACKENDS:
@@ -240,7 +250,24 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         ):
             raise ConfigError("llm.api_key_file: expected absolute path")
         key_file = _path(raw_file, base, env, "llm.api_key_file")
-    return LlmConfig(cast(Backend, backend), cast(str | None, reference), key_file)
+    claude_path: Path | None = None
+    if "claude_path" in value:
+        raw_claude = value["claude_path"]
+        if not isinstance(raw_claude, str) or not (
+            raw_claude.startswith("/") or raw_claude.startswith("~/")
+        ):
+            raise ConfigError("llm.claude_path: expected absolute path")
+        claude_path = _path(raw_claude, base, env, "llm.claude_path")
+    cap = value.get("max_cli_calls_per_day", 30)
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
+        raise ConfigError("llm.max_cli_calls_per_day: expected integer >= 1")
+    return LlmConfig(
+        cast(Backend, backend),
+        cast(str | None, reference),
+        key_file,
+        claude_path,
+        cap,
+    )
 
 
 def _identity(path: Path) -> tuple[int, int] | None:

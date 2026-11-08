@@ -37,6 +37,10 @@ class Ledger:
                 charged_nano INTEGER NOT NULL, record TEXT NOT NULL
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS llm_month ON llm_calls(month)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS cli_daily "
+                "(day TEXT PRIMARY KEY, calls INTEGER NOT NULL)"
+            )
 
     def _secure_files(self) -> None:
         # Create private BEFORE SQLite opens it, regardless of process umask;
@@ -103,6 +107,23 @@ class Ledger:
             # Only fixed text: no prompt, credential, provider body or task value.
             logger.warning("LLM monthly budget warning threshold reached")
         return call_id
+
+    def take_daily_call(self, day: str, limit: int) -> bool:
+        """Atomically count one subscription CLI call; False once at the cap."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT calls FROM cli_daily WHERE day=?", (day,)
+            ).fetchone()
+            calls = int(row[0]) if row else 0
+            if calls >= limit:
+                return False
+            db.execute(
+                "INSERT INTO cli_daily VALUES (?, 1) "
+                "ON CONFLICT(day) DO UPDATE SET calls=calls+1",
+                (day,),
+            )
+        return True
 
     def finish(self, call_id: str, record: dict[str, Any], charge: int) -> None:
         record["budget_held_usd"] = charge / NANO_USD
