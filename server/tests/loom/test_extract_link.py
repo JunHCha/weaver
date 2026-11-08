@@ -98,7 +98,7 @@ def test_empty_candidates_never_call_llm():
     )
     extraction = LlmExtractor(fake).extract(thread, [], index())
     assert not fake.calls
-    assert not extraction.entities and not extraction.entry_drafts
+    assert extraction is None
 
 
 def test_candidate_only_payload_and_approved_snapshot_are_read_only():
@@ -402,3 +402,157 @@ def test_extractor_works_through_real_client_with_fake_transport(tmp_path):
     assert len(transport.requests) == 1
     assert json.loads(transport.requests[0].user)["timezone"] == "UTC"
     assert transport.requests[0].json_schema["type"] == "object"
+
+
+def rename_evidence(data, text):
+    data["thread_excerpt"] = text
+    for collection in ["entities", "schedules", "relations", "entry_drafts"]:
+        for item in data[collection]:
+            item["thread_excerpt"] = text
+
+
+def test_review_mismatched_name_does_not_link_to_other_person_in_excerpt():
+    data = response()
+    text = "김철수님이 김민수님에게 내일 회의를 요청합니다."
+    rename_evidence(data, text)
+    data["entities"][0]["name"] = "김철수"
+    result, _ = run(data, index(entity()), text)
+    assert result.entities[0].entity_id is None
+    assert result.entities[0].ask is not None
+
+
+def test_review_longer_name_never_confirms_shorter_name_id():
+    data = response()
+    text = "이준호님이 내일 회의를 요청합니다."
+    rename_evidence(data, text)
+    data["entities"][0]["name"] = "이준호"
+    # A short name not actually mentioned is omitted, making this ID invalid.
+    with pytest.raises(ValueError, match="unselected"):
+        run(data, index(entity(name="이준")), text)
+
+
+@pytest.mark.parametrize(
+    "collection", ["entities", "schedules", "relations", "entry_drafts"]
+)
+def test_review_choice_label_is_generated_from_index(collection):
+    data = response()
+    data[collection][0]["ask"] = dict(
+        question="누구인가요?", choices=[dict(entity_id=ID1, label="박영희")]
+    )
+    result, _ = run(data)
+    label = getattr(result, collection)[0].ask.choices[0].label
+    assert "김민수" in label and "박영희" not in label
+
+
+def test_review_same_name_choices_are_distinguishable_from_existing_data():
+    known = index(entity(aliases=["개발팀장"]), entity(ID2, aliases=["인사팀장"]))
+    result, _ = run(known=known)
+    choices = result.entities[0].ask.choices
+    assert len({c.label for c in choices}) == 2
+    assert any("개발팀장" in c.label for c in choices)
+    assert any("인사팀장" in c.label for c in choices)
+    assert known.entities[0].aliases == ["개발팀장"]
+
+
+@pytest.mark.parametrize("field", ["supersedes", "retracts"])
+def test_review_ai_cannot_invent_durable_entry_ids(field):
+    data = response()
+    data["entry_drafts"][0][field] = "evt_01ARZ3NDEKTSV4RRFFQ69G5FA0"
+    with pytest.raises(ValueError, match=field):
+        run(data)
+
+
+def test_review_unblocked_items_with_request_require_question():
+    data = response()
+    data["schedules"][0]["blocked_by_request"] = None
+    data["entry_drafts"][1]["blocked_by_request"] = None
+    result, _ = run(data)
+    for item in [result.schedules[0], result.entry_drafts[1]]:
+        assert item.ask.question == "요청에서 나온 항목인가요?"
+    assert result.entry_drafts[0].ask is None
+
+
+def test_review_request_question_preserves_existing_question():
+    data = response()
+    data["schedules"][0]["blocked_by_request"] = None
+    data["entry_drafts"][1]["blocked_by_request"] = None
+    data["entry_drafts"][1]["ask"] = dict(question="시각이 맞나요?", choices=[])
+    result, _ = run(data)
+    assert "시각이 맞나요?" in result.entry_drafts[1].ask.question
+    assert "요청에서 나온 항목인가요?" in result.entry_drafts[1].ask.question
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "이준호님",
+        "김이준",
+        "이준호님이",
+        "전이준",
+        "이준회의",
+        "AIModel",
+        "preAI",
+        "회의실",
+    ],
+)
+def test_review_short_name_or_alias_is_not_a_substring_match(text):
+    assert not matching_entities(
+        text, index(entity(name="이준", aliases=["AI", "회의"]))
+    )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",
+        "님",
+        "씨",
+        "님이",
+        "님께",
+        "씨에게",
+        "은",
+        "가",
+        "와",
+        "에게는",
+        "으로",
+        "에서",
+        "한테",
+        "도",
+    ],
+)
+def test_review_korean_name_boundaries_allow_honorifics_and_particles(suffix):
+    assert matching_entities(
+        f"오늘 이준{suffix} 내일 만나요.", index(entity(name="이준"))
+    )
+
+
+def test_review_long_name_mention_defers_selected_short_name_id():
+    data = response()
+    text = "이준님과 이준호님이 내일 회의를 요청합니다."
+    rename_evidence(data, text)
+    data["entities"][0].update(name="이준호", thread_excerpt="이준호님")
+    result, _ = run(data, index(entity(name="이준")), text)
+    assert result.entities[0].entity_id is None
+    assert result.entities[0].ask is not None
+
+
+def test_review_choice_id_suffix_expands_when_last_six_characters_collide():
+    other_id = "ent_11ARZ3NDEKTSV4RRFFQ69G5FA0"
+    result, _ = run(known=index(entity(), entity(other_id)))
+    labels = [c.label for c in result.entities[0].ask.choices]
+    assert len(set(labels)) == 2
+
+
+def test_review_request_heuristic_does_not_set_execution_block():
+    data = response()
+    data["entry_drafts"][1]["blocked_by_request"] = None
+    data["schedules"][0]["blocked_by_request"] = None
+    result, _ = run(data)
+    source = Source.model_validate_json(
+        (ROOT / "schema/examples/Source.json").read_text()
+    )
+    proposal = result.to_proposal(source, "prp_01ARZ3NDEKTSV4RRFFQ69G5FA0", 1)
+    assert proposal.schedules[0].blocked_by_request is None
+    assert proposal.schedules[0].ask.question == "요청에서 나온 항목인가요?"
+    assert proposal.entry_drafts[1].blocked_by_request is None
+    assert all(d.resolves is None for d in proposal.entry_drafts)
