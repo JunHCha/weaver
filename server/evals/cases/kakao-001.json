@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "case_id": "kakao-001",
+  "channel": "kakao",
+  "title": "단체방 일정 공지",
+  "reference": {
+    "at": "2031-03-05T21:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "relative_date",
+    "attendance"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "디자인방 님과 카카오톡 대화\n저장한 날짜 : 2031년 3월 5일 오후 9:00\n\n2031년 3월 5일 수요일\n2031년 3월 5일 오전 9:10, 한가람 : 내일 오후 2시에 별빛디자인 미팅 있어요\n2031년 3월 5일 오전 9:12, 권태호 : 저도 참석할게요\n",
+    "counterpart": null
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "garam",
+        "type": "person",
+        "name": "한가람",
+        "aliases": []
+      },
+      {
+        "key": "taeho",
+        "type": "person",
+        "name": "권태호",
+        "aliases": []
+      },
+      {
+        "key": "byeolbit",
+        "type": "org",
+        "name": "별빛디자인",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "keep"
+    },
+    "refine": {
+      "select": [
+        "내일 오후 2시에 별빛디자인 미팅 있어요",
+        "권태호 : 저도 참석할게요"
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "내일 별빛디자인 미팅",
+          "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+              "ref": "e1",
+              "entity_id": "@byeolbit",
+              "type": "org",
+              "name": "별빛디자인",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "별빛디자인 미팅",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "권태호 : 저도 참석할게요",
+              "ref": "e3",
+              "entity_id": "@taeho",
+              "type": "person",
+              "name": "권태호",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+              "ref": "s1",
+              "title": "별빛디자인 미팅",
+              "start": "2031-03-06T14:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "entry_ref": "d1",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "권태호 : 저도 참석할게요",
+              "from": "e3",
+              "type": "참석",
+              "to": "e2",
+              "reason": null
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+              "ref": "d1",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-06T14:00:00+09:00",
+              "occurred_at": "2031-03-05T09:10:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "권태호 : 저도 참석할게요",
+              "ref": "d2",
+              "entities": [
+                "e3",
+                "e2"
+              ],
+              "kind": "약속",
+              "field": null,
+              "value": "미팅 참석",
+              "occurred_at": "2031-03-05T09:12:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "상대 날짜는 메시지 시각 기준이다. 카톡 발신자 라벨은 원문의 일부이므로 근거 범위에 포함할 수 있다."
+}

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "case_id": "share-004",
+  "channel": "share_text",
+  "title": "모임 일정과 장소 누락",
+  "reference": {
+    "at": "2031-03-05T09:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "missing_info",
+    "relative_date"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+    "counterpart": null
+  },
+  "known": {
+    "entities": []
+  },
+  "expected": {
+    "revise": {
+      "policy": "keep"
+    },
+    "refine": {
+      "select": [
+        "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "동기 모임",
+          "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+              "ref": "e1",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "동기 모임",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+              "ref": "s1",
+              "title": "동기 모임",
+              "start": "2031-03-14T19:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1"
+              ],
+              "entry_ref": "d1",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+              "ref": "d1",
+              "entities": [
+                "e1"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-14T19:00:00+09:00",
+              "occurred_at": "2031-03-05T09:00:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

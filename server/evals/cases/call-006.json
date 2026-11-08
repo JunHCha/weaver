@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "case_id": "call-006",
+  "channel": "call",
+  "title": "재약속과 변경",
+  "reference": {
+    "at": "2031-03-05T18:20:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": [
+    "stt_spacing",
+    "reschedule",
+    "change",
+    "relative_date"
+  ],
+  "input": {
+    "stage": "spin",
+    "text": "AI로 생성된 콘텐츠입니다\n\n일정 변경 통화\n\n육선우  (00:01)\n목요일 미팅을 다음 주 월요일 오전 열 한 시로 옮기자고 하네요.\n\n나  (00:06)\n네 맞춰 볼게요.\n",
+    "counterpart": "육선우"
+  },
+  "known": {
+    "entities": [
+      {
+        "key": "sunwoo",
+        "type": "person",
+        "name": "육선우",
+        "aliases": []
+      }
+    ]
+  },
+  "expected": {
+    "revise": {
+      "policy": "revise",
+      "edits": [
+        {
+          "from": "목요일 미팅을 다음 주 월요일 오전 열 한 시로 옮기자고 하네요.",
+          "to": [
+            "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요."
+          ]
+        }
+      ]
+    },
+    "refine": {
+      "select": [
+        "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요."
+      ],
+      "reject": []
+    },
+    "extract": {
+      "alternatives": [
+        {
+          "summary": "미팅을 다음 주 월요일로 변경",
+          "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+          "entities": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "ref": "e1",
+              "entity_id": "@sunwoo",
+              "type": "person",
+              "name": "육선우",
+              "aliases": []
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "ref": "e2",
+              "entity_id": null,
+              "type": "meeting",
+              "name": "미팅",
+              "aliases": []
+            }
+          ],
+          "schedules": [
+            {
+              "confidence": 0.85,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "ref": "s1",
+              "title": "미팅",
+              "start": "2031-03-10T11:00:00+09:00",
+              "end": null,
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "entry_ref": "d2",
+              "blocked_by_request": null
+            }
+          ],
+          "relations": [
+            {
+              "confidence": 0.8,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "from": "e1",
+              "type": "참석",
+              "to": "e2",
+              "reason": null
+            }
+          ],
+          "entry_drafts": [
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "ref": "d1",
+              "entities": [
+                "e2"
+              ],
+              "kind": "변경",
+              "field": "start",
+              "value": "목요일 미팅을 3/10 11시로 이동",
+              "occurred_at": "2031-03-05T18:20:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            },
+            {
+              "confidence": 0.9,
+              "ask": null,
+              "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+              "ref": "d2",
+              "entities": [
+                "e1",
+                "e2"
+              ],
+              "kind": "일정",
+              "field": null,
+              "value": "2031-03-10T11:00:00+09:00",
+              "occurred_at": "2031-03-05T18:20:00+09:00",
+              "supersedes": null,
+              "retracts": null,
+              "request": null,
+              "resolves": null,
+              "blocked_by_request": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "notes": "AI는 supersedes를 채우지 않으므로 변경 기록과 새 일정으로 표현한다."
+}
