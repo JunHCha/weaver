@@ -99,12 +99,16 @@ def test_rejects_malformed_engine_output(model, audio, decoder, bad):
 
 def test_missing_audio(model, tmp_path):
     with pytest.raises(MissingAudioError):
-        MlxStt(model).transcribe(tmp_path / "absent.wav")
+        MlxStt(model, engine=lambda *_: pytest.fail("engine called")).transcribe(
+            tmp_path / "absent.wav"
+        )
 
 
 def test_missing_model(audio, tmp_path, decoder):
     with pytest.raises(ModelNotFoundError):
-        MlxStt(tmp_path / "absent").transcribe(audio)
+        MlxStt(
+            tmp_path / "absent", engine=lambda *_: pytest.fail("engine called")
+        ).transcribe(audio)
     assert decoder == []
 
 
@@ -274,7 +278,7 @@ def test_decoder_has_deadline_and_restricts_formats(model, audio, monkeypatch):
 
     monkeypatch.setattr("weaver.spinner.stt.subprocess.run", fail)
     with pytest.raises(AudioDecodeError) as error:
-        MlxStt(model).transcribe(audio)
+        MlxStt(model, engine=lambda *_: pytest.fail("engine called")).transcribe(audio)
     assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
 
 
@@ -288,7 +292,7 @@ def test_fifo_input_is_rejected_before_decoder(model, tmp_path, monkeypatch):
         lambda *_a, **_k: pytest.fail("decoder called"),
     )
     with pytest.raises(MissingAudioError):
-        MlxStt(model).transcribe(fifo)
+        MlxStt(model, engine=lambda *_: pytest.fail("engine called")).transcribe(fifo)
 
 
 def test_timeout_kills_decoder_and_cleans_partial_output(
@@ -319,7 +323,9 @@ def test_timeout_kills_decoder_and_cleans_partial_output(
 
     monkeypatch.setattr("weaver.spinner.stt.subprocess.run", blocked_decoder)
     with pytest.raises(AudioDecodeError) as error:
-        MlxStt(model, decode_timeout=0.5).transcribe(audio)
+        MlxStt(
+            model, engine=lambda *_: pytest.fail("engine called"), decode_timeout=0.5
+        ).transcribe(audio)
     assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
     assert not converted[0].parent.exists()
     with pytest.raises(ProcessLookupError):
@@ -347,7 +353,7 @@ def test_ffconcat_cannot_open_referenced_fifo(model, tmp_path, monkeypatch):
 
     monkeypatch.setattr("weaver.spinner.stt.subprocess.run", bounded_run)
     with pytest.raises(AudioDecodeError) as error:
-        MlxStt(model).transcribe(audio)
+        MlxStt(model, engine=lambda *_: pytest.fail("engine called")).transcribe(audio)
     assert isinstance(error.value.__cause__, subprocess.CalledProcessError)
     assert b"whitelist" in error.value.__cause__.stderr
     assert not converted[0].parent.exists()
@@ -357,3 +363,49 @@ def test_ffconcat_cannot_open_referenced_fifo(model, tmp_path, monkeypatch):
 def test_invalid_decode_deadline_is_rejected(model, timeout):
     with pytest.raises(ValueError, match="decode_timeout"):
         MlxStt(model, decode_timeout=timeout)
+
+
+@pytest.mark.parametrize("missing", ["mlx_whisper", "numpy"])
+def test_missing_optional_dependency_fails_at_engine_creation(
+    model, monkeypatch, missing
+):
+    from types import SimpleNamespace
+
+    def import_module(name):
+        if name == missing:
+            raise ModuleNotFoundError(name)
+        return SimpleNamespace()
+
+    monkeypatch.setattr("weaver.spinner.stt.importlib.import_module", import_module)
+    with pytest.raises(
+        SttEngineError, match="uv sync --project server --locked --extra stt"
+    ):
+        MlxStt(model)
+
+
+def test_importing_stt_and_preparation_never_loads_optional_dependencies():
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib.abc
+import sys
+
+class NoSttImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".")[0] in {"mlx", "mlx_whisper", "numpy", "huggingface_hub"}:
+            raise AssertionError(f"Unexpected optional import: {fullname}")
+
+sys.meta_path.insert(0, NoSttImports())
+import weaver.spinner.stt
+import weaver.spinner.prepare_model
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

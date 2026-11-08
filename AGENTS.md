@@ -12,6 +12,8 @@ uv run --project server ruff format --check server
 uv run --project server mypy server/src
 ```
 
+Optional local STT (macOS arm64): `uv sync --project server --locked --extra stt`.
+
 Use Typer for the server CLI.
 
 Commit `server/uv.lock`. Runtime dependencies belong in `project.dependencies`,

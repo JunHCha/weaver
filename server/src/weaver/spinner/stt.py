@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
 from typing import Protocol, TypeGuard, cast
 
 MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
@@ -141,10 +142,21 @@ def _normalize(output: object) -> Transcript:
     )
 
 
+def import_stt_dependency(name: str) -> ModuleType:
+    """Load an optional runtime without loading model weights."""
+    try:
+        return importlib.import_module(name)
+    except ImportError as error:
+        raise SttEngineError(
+            "Local STT dependencies are unavailable. On macOS arm64, install with "
+            "`uv sync --project server --locked --extra stt`."
+        ) from error
+
+
 def _mlx_engine(samples: Sequence[float], model_path: Path, language: str) -> object:
-    # Both MLX and numpy are imported lazily; Linux CI uses the fake seam.
-    mlx_whisper = importlib.import_module("mlx_whisper")
-    numpy = importlib.import_module("numpy")
+    # Both MLX and numpy are optional; Linux CI uses the fake seam.
+    mlx_whisper = import_stt_dependency("mlx_whisper")
+    numpy = import_stt_dependency("numpy")
     return cast(
         object,
         mlx_whisper.transcribe(
@@ -181,6 +193,9 @@ class MlxStt:
     ) -> None:
         if not _time(decode_timeout) or decode_timeout <= 0:
             raise ValueError("decode_timeout must be finite and positive")
+        if engine is _mlx_engine:
+            import_stt_dependency("mlx_whisper")
+            import_stt_dependency("numpy")
         self.model_path = model_path.resolve()
         self.metadata = ModelMetadata(self.model_path)
         self._engine = engine
