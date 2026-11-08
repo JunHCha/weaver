@@ -355,10 +355,21 @@ def test_review_fabric_feedback_and_vault_roundtrip(world, kind):
                 c["path"] == edits[0]["path"] and c["after"] == edits[0]["value"]
                 for c in event["corrections"]
             )
-        notes = "\n".join(
-            b.decode() for p, b in world.vault().items() if p != Path("Human.md")
-        )
+        notes = [
+            data.decode()
+            for path, data in world.vault().items()
+            if path.parts[0] == "Weaver" and path.suffix == ".md"
+        ]
+        assert request.entities
         for entity in request.entities:
+            matching_notes = [
+                note
+                for note in notes
+                if f'weaver_note_id: "{entity}"'
+                in note.split("\n---\n", 1)[0].splitlines()
+            ]
+            assert len(matching_notes) == 1
+            note = matching_notes[0]
             state = world.fabric.state(entity)
             assert [e.entry_id for e in state.open_requests] == [request.entry_id]
             assert not state.decisions
@@ -366,9 +377,11 @@ def test_review_fabric_feedback_and_vault_roundtrip(world, kind):
                 request.entry_id,
                 schedule.entry_id,
             }
-        assert request.request.content in notes
-        assert str(schedule.value) in notes
-        assert request.source_id in notes and request.entry_id in notes
+            assert request.request.content in note
+            assert str(schedule.value) in note
+            for entry in (request, schedule):
+                assert entry.source_id in note
+                assert entry.entry_id in note
         assert all(
             p.parts[0] == "Weaver" for p in world.vault() if p != Path("Human.md")
         )
