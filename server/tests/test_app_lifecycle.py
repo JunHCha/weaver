@@ -397,3 +397,66 @@ def test_ledger_and_status_files_are_private(tmp_path):
     ledger = RuntimeLedger(tmp_path / "runtime.sqlite3")
     assert ledger.pragma("journal_mode") == "wal"
     assert ledger.pragma("synchronous") == 2  # FULL
+
+
+def test_insufficient_credit_waits_hourly_and_reports_reason(tmp_path):
+    from weaver.llm.errors import InsufficientCredit
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS
+
+    probes = []
+
+    def probe():
+        probes.append(1)
+        return LlmStatus(True, "configured")
+
+    llm = LlmGate(probe)
+    processor = FakeProcessor({"src_a": [InsufficientCredit(), "done"]})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+    )
+    runtime._tick(stop)
+    assert counts(tmp_path) == {"waiting_llm": 1}
+    status = json.loads((tmp_path / "runtime-status.json").read_text())
+    assert status["llm"] == {"available": False, "reason": "insufficient_credit"}
+    # No retry storm: neither the usual minute nor 59 minutes re-calls the LLM.
+    for step in (5, LLM_RECHECK_SECONDS, CREDIT_RECHECK_SECONDS - 200):
+        clock.now += step
+        runtime._tick(stop)
+    assert processor.seen == ["src_a"] and len(probes) == 1
+    clock.now += CREDIT_RECHECK_SECONDS
+    runtime._tick(stop)  # resolved: exactly one more processing
+    assert processor.seen == ["src_a", "src_a"]
+    assert counts(tmp_path) == {"done": 1}
+
+
+def test_credit_error_after_recovery_still_waits_full_hour(tmp_path):
+    from weaver.llm.errors import InsufficientCredit
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS
+
+    state = {"available": False}
+    llm = LlmGate(lambda: LlmStatus(state["available"], "configured"))
+    sources = FakeSources()
+    processor = FakeProcessor({"src_a": [InsufficientCredit(), "done"]})
+    runtime, stop, _, clock = make(
+        tmp_path, sources=sources, processor=processor, gate=llm
+    )
+    runtime._tick(stop)  # startup probe: unavailable
+    state["available"] = True
+    clock.now += LLM_RECHECK_SECONDS
+    runtime._tick(stop)  # recovered; old check time stays far in the past
+    assert llm.available
+    clock.now += 2 * CREDIT_RECHECK_SECONDS
+    sources.items.append(FakeSource("src_a"))
+    runtime._tick(stop)
+    assert not llm.available and llm.status.reason == InsufficientCredit.code
+    assert processor.seen == ["src_a"]
+    clock.now += 5
+    runtime._tick(stop)  # must not retry five seconds after the credit error
+    assert processor.seen == ["src_a"]
+    clock.now += CREDIT_RECHECK_SECONDS
+    runtime._tick(stop)  # an hour later it retries
+    assert processor.seen == ["src_a", "src_a"]
+    assert counts(tmp_path) == {"done": 1}

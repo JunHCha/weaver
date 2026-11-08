@@ -8,6 +8,7 @@ from .client import AnthropicClient
 from .errors import (
     AuthenticationError,
     BudgetExceeded,
+    InsufficientCredit,
     InvalidJson,
     LlmError,
     LlmTimeout,
@@ -28,6 +29,7 @@ __all__ = [
     "create_client",
     "AuthenticationError",
     "BudgetExceeded",
+    "InsufficientCredit",
     "InvalidJson",
     "LlmError",
     "LlmTimeout",

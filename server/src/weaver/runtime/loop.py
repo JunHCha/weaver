@@ -13,6 +13,8 @@ Failure classes (per Source):
   Refusal, invalid extraction output): retried, ``failed`` after 3.
 - AuthenticationError, BudgetExceeded, LlmUnavailable: ``waiting_llm``; the
   LLM gate turns off and is re-probed every minute.
+- InsufficientCredit: the same, but re-probed hourly (a restart retries at
+  once) so an empty account is not hammered.
 - Anything else (RateLimited, TransientError, LlmTimeout, OSError, ...):
   ``retry`` with exponential backoff, ``failed`` after 20 attempts.
 
@@ -38,6 +40,7 @@ from weaver.courier.atomic import write_bytes_atomic
 from weaver.llm.errors import (
     AuthenticationError,
     BudgetExceeded,
+    InsufficientCredit,
     InvalidJson,
     MissingOutput,
     Refusal,
@@ -57,12 +60,13 @@ MAX_RETRY_BACKOFF_SECONDS = 3600.0
 MAX_RETRY_ATTEMPTS = 20
 MAX_CONTRACT_FAILURES = 3
 LLM_RECHECK_SECONDS = 60.0
+CREDIT_RECHECK_SECONDS = 3600.0
 RESUME_SLACK_SECONDS = 60.0
 LOCK_NAME = "weaver.lock"
 STATUS_NAME = "runtime-status.json"
 
 _CONTRACT = (InvalidJson, SchemaMismatch, MissingOutput, Refusal, ExtractionInvalid)
-_LLM_OFF = (AuthenticationError, BudgetExceeded, LlmUnavailable)
+_LLM_OFF = (AuthenticationError, BudgetExceeded, InsufficientCredit, LlmUnavailable)
 
 
 class AlreadyRunning(Exception):
@@ -267,10 +271,12 @@ class Runtime[S: HasSourceId]:
         if self.gate.available:
             return
         now = self.clock()
-        if (
-            self._last_llm_check is not None
-            and now - self._last_llm_check < LLM_RECHECK_SECONDS
-        ):
+        recheck = (
+            CREDIT_RECHECK_SECONDS
+            if self.gate.status.reason == InsufficientCredit.code
+            else LLM_RECHECK_SECONDS
+        )
+        if self._last_llm_check is not None and now - self._last_llm_check < recheck:
             return
         if self._last_llm_check is not None:  # the startup probe already ran
             if self.gate.refresh().available:
@@ -309,6 +315,9 @@ class Runtime[S: HasSourceId]:
             reason = getattr(error, "code", type(error).__name__)
             if self.gate.available:
                 self.gate.disable(reason)
+                # Restart the recheck interval from this failure, not from an
+                # older recovery, so the wait is honoured (credit: one hour).
+                self._last_llm_check = self.clock()
                 logger.warning("llm disabled: %s", reason)
             self.ledger.record(
                 sid,

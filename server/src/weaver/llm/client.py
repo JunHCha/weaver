@@ -24,6 +24,7 @@ from weaver.config import LlmConfig
 from .anthropic import AnthropicTransport
 from .errors import (
     AuthenticationError,
+    InsufficientCredit,
     InvalidJson,
     LlmError,
     LlmTimeout,
@@ -32,6 +33,7 @@ from .errors import (
     Refusal,
     SchemaMismatch,
     TransientError,
+    UnbilledRejection,
     UnsupportedStructuredOutput,
 )
 from .keys import KeyUnavailable, resolve_api_key
@@ -175,6 +177,11 @@ class AnthropicClient:
                             attempt_record["status"] = TransientError.code
                             if attempt == 1:
                                 raise
+                        except (InsufficientCredit, UnbilledRejection) as exc:
+                            # Refused before processing: return the reservation.
+                            charge -= per_attempt
+                            attempt_record["status"] = exc.code
+                            raise
                         except asyncio.CancelledError:
                             attempt_record["status"] = LlmTimeout.code
                             raise
@@ -237,7 +244,7 @@ class AnthropicClient:
             raise
         except LlmError as exc:
             record["status"] = exc.code
-            if exc.code == LlmError.code:
+            if exc.code == LlmError.code and not isinstance(exc, UnbilledRejection):
                 unknown_cost = True
             raise
         except Exception:
