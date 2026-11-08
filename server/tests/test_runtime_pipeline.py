@@ -117,8 +117,6 @@ def make(tmp_path, *, extractor=None, proposer=None, reviews=None, available=Tru
         proposer=proposer or FakeProposer(reviews),
         reviews=reviews,
         entities=SimpleNamespace(index=lambda: EntityIndex(entities=[])),
-        alerts=SimpleNamespace(detect=lambda s, t: []),
-        alert_sink=None,
         cache=RuntimeLedger(tmp_path / "runtime.sqlite3"),
         gate=LlmGate(lambda: LlmStatus(available, "configured")),
     )
