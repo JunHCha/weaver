@@ -11,9 +11,12 @@ import java.io.File
 
 /**
  * Local list of proposals and change alerts shared by notifications and the widget (#34).
- * Rows are never deleted: GONE/DISMISSED/RESOLVED rows are the per-ID notification history that
- * keeps resynced or restarted scans from notifying twice. Only summary/message are stored;
- * thread excerpts and full proposals stay in the Courier folder for the review screen (#35).
+ * Rows are never deleted: their states are the per-ID notification history that keeps resynced
+ * or restarted scans from notifying twice. Only summary/message are stored; thread excerpts and
+ * full proposals stay in the Courier folder for the review screen (#35).
+ *
+ * Deleting an alert file is irreversible (Syncthing propagates it to the PC), so it happens only for
+ * DISMISSED alerts and for alerts RESOLVED in this very run, and only on a trusted listing.
  */
 class InboxDatabase(context: Context) : SQLiteOpenHelper(
     context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 1,
@@ -24,11 +27,13 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, summary TEXT NOT NULL,
             channel TEXT NOT NULL, captured_at TEXT NOT NULL, revised INTEGER NOT NULL,
             state TEXT NOT NULL, first_seen INTEGER NOT NULL, changed_at INTEGER NOT NULL,
-            notified_rev INTEGER NOT NULL DEFAULT 0)""")
+            notified_rev INTEGER NOT NULL DEFAULT 0, absent_scans INTEGER NOT NULL DEFAULT 0)""")
+        // Verdicts this app queued; such a proposal rev is never revived by a resynced copy.
+        db.execSQL("CREATE TABLE submitted (proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL)")
         db.execSQL("""CREATE TABLE alerts (
             alert_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, schedule_ref TEXT NOT NULL,
             message TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL,
-            proposal_seen INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL,
+            delete_pending INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL,
             changed_at INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0)""")
     }
     // Before the next schema version, add a migration and a test that opens a v1 database.
@@ -53,38 +58,48 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * Apply one complete, successful folder listing. Returns alert file names to delete
-     * (dismissed or resolved alerts whose file is still present). A file that is present but
-     * [unreadable] keeps its previous state; a proposal rev never moves backwards and a GONE
-     * proposal is not revived by a resynced copy of the same or an older rev.
+     * Apply one complete folder listing from [source] (the selected tree). Returns alert file names to delete.
+     *
+     * The listing is *trusted* only when [source] equals the previous run's tree and proposals/ was not just
+     * created ([rebuilt]). An untrusted listing only adds or updates (a different or new folder proves nothing
+     * about absence). On a trusted listing:
+     * - an absent proposal leaves the list (GONE) and counts consecutive absent scans; alerts of a proposal
+     *   that reaches [RESOLVE_AFTER] absent scans in this run are RESOLVED (a revise can briefly show neither rev);
+     * - an absent alert becomes ABSENT (hidden, never deleted) and returns to ACTIVE when its file reappears.
+     * A file that is present but [unreadable] counts as present. A rev never moves backwards; a GONE proposal
+     * reappearing returns silently unless this app submitted a verdict for that rev.
      */
-    fun reconcile(proposals: List<Proposal>, alerts: List<Alert>, unreadable: Set<String>, now: Long): List<String> {
+    fun reconcile(proposals: List<Proposal>, alerts: List<Alert>, unreadable: Set<String>, now: Long,
+                  source: String, rebuilt: Boolean): List<String> {
         val db = writableDatabase
         db.beginTransaction()
         try {
+            val trusted = setting("tree") == source && !rebuilt
             val heldProposals = unreadable.mapNotNull { CourierRules.revision.matchEntire(it)?.groupValues?.get(1) }.toSet()
             val heldAlerts = unreadable.mapNotNull { CourierRules.alert.matchEntire(it)?.groupValues?.get(1) }.toSet()
             for (p in proposals) {
-                val old = db.rawQuery("SELECT rev FROM proposals WHERE proposal_id=?", arrayOf(p.proposalId))
-                    .use { if (it.moveToFirst()) it.getLong(0) else null }
+                val old = db.rawQuery("SELECT rev, state FROM proposals WHERE proposal_id=?", arrayOf(p.proposalId))
+                    .use { if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null }
+                val submitted = db.rawQuery("SELECT rev FROM submitted WHERE proposal_id=?", arrayOf(p.proposalId))
+                    .use { if (it.moveToFirst()) it.getLong(0) else 0L }
                 val values = ContentValues().apply {
                     put("rev", p.rev); put("summary", p.summary); put("channel", p.source.channel.name)
                     put("captured_at", p.source.capturedAt); put("state", ACTIVE); put("changed_at", now)
+                    put("absent_scans", 0)
                 }
                 when {
                     old == null -> db.insertOrThrow("proposals", null, values.apply {
                         put("proposal_id", p.proposalId); put("revised", 0); put("first_seen", now)
                     })
-                    p.rev > old -> db.update("proposals", values.apply { put("revised", 1) },
+                    p.rev > old.first -> db.update("proposals", values.apply { put("revised", 1) },
                         "proposal_id=?", arrayOf(p.proposalId))
+                    p.rev == old.first && (old.second == ACTIVE || submitted < p.rev) ->
+                        db.update("proposals", ContentValues().apply {
+                            put("state", ACTIVE); put("absent_scans", 0)
+                        }, "proposal_id=?", arrayOf(p.proposalId))
+                    // Older rev resynced, or a rev this app already decided: keep the row as is.
                 }
             }
-            val present = proposals.map { it.proposalId }.toSet() + heldProposals
-            ids(db, "SELECT proposal_id FROM proposals WHERE state='$ACTIVE'").filter { it !in present }.forEach {
-                db.update("proposals", ContentValues().apply { put("state", GONE); put("changed_at", now) },
-                    "proposal_id=?", arrayOf(it))
-            }
-
             for (a in alerts) {
                 db.insertWithOnConflict("alerts", null, ContentValues().apply {
                     put("alert_id", a.alertId); put("proposal_id", a.proposalId); put("schedule_ref", a.scheduleRef)
@@ -92,28 +107,69 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
                     put("first_seen", now); put("changed_at", now)
                 }, SQLiteDatabase.CONFLICT_IGNORE)
             }
-            // Any local row (active or gone) means the evidence proposal was seen on this phone.
-            db.execSQL("""UPDATE alerts SET proposal_seen=1 WHERE state='$ACTIVE'
-                AND proposal_id IN (SELECT proposal_id FROM proposals)""")
-            db.execSQL("""UPDATE alerts SET state='$RESOLVED', changed_at=$now WHERE state='$ACTIVE' AND proposal_seen=1
-                AND proposal_id IN (SELECT proposal_id FROM proposals WHERE state='$GONE')""")
             val alertFiles = alerts.map { it.alertId }.toSet() + heldAlerts
-            // Removed by someone else (e.g. a manual cleanup): nothing left to confirm.
-            ids(db, "SELECT alert_id FROM alerts WHERE state='$ACTIVE'").filter { it !in alertFiles }.forEach {
-                db.update("alerts", ContentValues().apply { put("state", RESOLVED); put("changed_at", now) },
+            ids(db, "SELECT alert_id FROM alerts WHERE state='$ABSENT'").filter { it in alertFiles }.forEach {
+                db.update("alerts", ContentValues().apply { put("state", ACTIVE); put("changed_at", now) },
                     "alert_id=?", arrayOf(it))
             }
-            val delete = ids(db, "SELECT alert_id FROM alerts WHERE state!='$ACTIVE'")
-                .filter { it in alertFiles }.map { "alert_$it.json" }
+            var delete = emptyList<String>()
+            if (trusted) {
+                val present = proposals.map { it.proposalId }.toSet() + heldProposals
+                db.execSQL("UPDATE proposals SET absent_scans=0 WHERE proposal_id IN (${marks(present)})", present.toTypedArray())
+                val missing = ids(db, "SELECT proposal_id FROM proposals").filter { it !in present }
+                missing.forEach {
+                    db.execSQL("UPDATE proposals SET absent_scans=absent_scans+1, changed_at=? WHERE proposal_id=?",
+                        arrayOf<Any>(now, it))
+                    db.execSQL("UPDATE proposals SET state='$GONE' WHERE proposal_id=? AND state='$ACTIVE'", arrayOf(it))
+                }
+                // Only proposals crossing the threshold in this run resolve alerts; long-gone ones never do.
+                val vanished = ids(db, "SELECT proposal_id FROM proposals WHERE absent_scans=$RESOLVE_AFTER")
+                    .filter { it in missing }
+                ids(db, "SELECT alert_id FROM alerts WHERE state='$ACTIVE' AND proposal_id IN (${marks(vanished)})",
+                    vanished.toTypedArray()).filter { it in alertFiles }.forEach {
+                    db.update("alerts", ContentValues().apply {
+                        put("state", RESOLVED); put("delete_pending", 1); put("changed_at", now)
+                    }, "alert_id=?", arrayOf(it))
+                }
+                ids(db, "SELECT alert_id FROM alerts WHERE state='$ACTIVE'").filter { it !in alertFiles }.forEach {
+                    db.update("alerts", ContentValues().apply { put("state", ABSENT); put("changed_at", now) },
+                        "alert_id=?", arrayOf(it))
+                }
+                // A RESOLVED alert is deleted only while its resolving listing still shows it. A DISMISSED
+                // alert stays pending: the user closed that ID, so its file is deleted wherever it is listed.
+                ids(db, "SELECT alert_id FROM alerts WHERE delete_pending=1 AND state='$RESOLVED'")
+                    .filter { it !in alertFiles }.forEach {
+                        db.execSQL("UPDATE alerts SET delete_pending=0 WHERE alert_id=?", arrayOf(it))
+                    }
+                delete = ids(db, "SELECT alert_id FROM alerts WHERE delete_pending=1")
+                    .filter { it in alertFiles }.map { "alert_$it.json" }
+            }
+            setting("tree", source)
             setting("last_scan_at", now.toString())
             db.setTransactionSuccessful()
             return delete
         } finally { db.endTransaction() }
     }
 
-    /** The user closes an alert. Returns false for unknown or already closed alerts. */
+    /** Record successful deletions so a resynced copy of a resolved alert is not deleted again. */
+    fun deleted(names: List<String>) {
+        names.forEach { name ->
+            CourierRules.alert.matchEntire(name)?.groupValues?.get(1)?.let {
+                writableDatabase.execSQL("UPDATE alerts SET delete_pending=0 WHERE alert_id=? AND state='$RESOLVED'",
+                    arrayOf(it))
+            }
+        }
+    }
+
+    /** This app queued a verdict for [rev]; that rev is never revived. */
+    fun submitted(proposalId: String, rev: Long) {
+        writableDatabase.execSQL("""INSERT INTO submitted(proposal_id, rev) VALUES(?, ?)
+            ON CONFLICT(proposal_id) DO UPDATE SET rev=MAX(rev, excluded.rev)""", arrayOf<Any>(proposalId, rev))
+    }
+
+    /** The user closes an alert; its file is deleted on the next trusted scan that lists it. */
     fun dismiss(alertId: String, now: Long): Boolean = writableDatabase.update("alerts",
-        ContentValues().apply { put("state", DISMISSED); put("changed_at", now) },
+        ContentValues().apply { put("state", DISMISSED); put("delete_pending", 1); put("changed_at", now) },
         "alert_id=? AND state='$ACTIVE'", arrayOf(alertId)) == 1
 
     fun proposals(): List<ProposalItem> = readableDatabase.rawQuery(
@@ -141,14 +197,17 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
 
     fun lastScanAt(): Long? = setting("last_scan_at")?.toLongOrNull()
 
-    private fun ids(db: SQLiteDatabase, sql: String): List<String> = db.rawQuery(sql, null).use { c ->
-        buildList { while (c.moveToNext()) add(c.getString(0)) }
-    }
+    private fun ids(db: SQLiteDatabase, sql: String, args: Array<String>? = null): List<String> =
+        db.rawQuery(sql, args).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+    private fun marks(values: Collection<String>) = values.joinToString(",") { "?" }
 
     companion object {
         const val ACTIVE = "ACTIVE"
         const val GONE = "GONE"
         const val DISMISSED = "DISMISSED"
         const val RESOLVED = "RESOLVED"
+        const val ABSENT = "ABSENT"
+        /** Consecutive trusted scans without the evidence proposal before its alerts resolve. */
+        const val RESOLVE_AFTER = 2
     }
 }

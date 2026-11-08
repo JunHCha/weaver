@@ -29,18 +29,20 @@ class InboxDeviceTest {
         File(isolated.filesDir, "inbox.sqlite3").delete()
         try {
             InboxDatabase(isolated).use { db ->
-                db.reconcile(listOf(proposal(2)), listOf(alert), setOf("prp_01ARZ3NDEKTSV4RRFFQ69G5FA0.r3.json"), 1)
+                db.reconcile(listOf(proposal(2)), listOf(alert), setOf("prp_01ARZ3NDEKTSV4RRFFQ69G5FA0.r3.json"), 1, "tree", false)
                 db.markProposalsNotified(); db.markAlertsNotified()
             }
             InboxDatabase(isolated).use { db ->
-                assertEquals(emptyList<String>(), db.reconcile(listOf(proposal(1)), listOf(alert), emptySet(), 2))
+                assertEquals(emptyList<String>(), db.reconcile(listOf(proposal(1)), listOf(alert), emptySet(), 2, "tree", false))
                 val item = db.proposals().single()
                 assertEquals(2L, item.rev)
                 assertEquals(2L, item.notifiedRev)
                 assertTrue(db.alerts().single().notified)
                 assertTrue(db.dismiss(alert.alertId, 3))
-                assertEquals(listOf("alert_${alert.alertId}.json"), db.reconcile(emptyList(), listOf(alert), emptySet(), 4))
+                assertEquals(listOf("alert_${alert.alertId}.json"), db.reconcile(emptyList(), listOf(alert), emptySet(), 4, "tree", false))
                 assertTrue(db.proposals().isEmpty())
+                // A different tree only adds: nothing is deleted there.
+                assertEquals(emptyList<String>(), db.reconcile(emptyList(), listOf(alert), emptySet(), 5, "other", false))
             }
         } finally { File(isolated.filesDir, "inbox.sqlite3").delete() }
     }

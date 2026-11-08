@@ -47,15 +47,22 @@ object InboxRuntime {
     fun apply(context: Context, folder: CourierFolder, inbox: CourierClient.Inbox, diagnostics: CourierDatabase,
               now: Long = System.currentTimeMillis()): Boolean {
         val delete = synchronized(lock) {
-            InboxDatabase(context).use { it.reconcile(inbox.proposals, inbox.alerts, inbox.unreadable, now) }
+            InboxDatabase(context).use {
+                it.reconcile(inbox.proposals, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"))
+            }
         }
         var successful = true
-        delete.forEach { name ->
-            try { folder.delete("proposals", name)
-            } catch (error: SecurityException) { throw error
-            } catch (error: Exception) {
-                diagnostics.diagnostic("proposals", name, CourierClient.errorCode(error)); successful = false
+        val done = mutableListOf<String>()
+        try {
+            delete.forEach { name ->
+                try { folder.delete("proposals", name); done.add(name)
+                } catch (error: SecurityException) { throw error
+                } catch (error: Exception) {
+                    diagnostics.diagnostic("proposals", name, CourierClient.errorCode(error)); successful = false
+                }
             }
+        } finally {
+            if (done.isNotEmpty()) synchronized(lock) { InboxDatabase(context).use { it.deleted(done) } }
         }
         refresh(context, now)
         return successful
@@ -68,6 +75,11 @@ object InboxRuntime {
         InboxDatabase(context).use { it.alerts() }
     }
     fun lastScanAt(context: Context): Long? = synchronized(lock) { InboxDatabase(context).use { it.lastScanAt() } }
+
+    /** Called when this app queues a verdict, so a resynced copy of that rev never reappears in the list. */
+    fun submitted(context: Context, proposalId: String, rev: Long) = synchronized(lock) {
+        InboxDatabase(context).use { it.submitted(proposalId, rev) }
+    }
 
     /** User closes an alert: it leaves the list now, and the next Courier run deletes its file. */
     fun dismissAlert(context: Context, alertId: String, now: Long = System.currentTimeMillis()): Boolean {

@@ -231,6 +231,10 @@ internal class MemoryFolder : CourierFolder {
     val deleted = mutableListOf<String>()
     var failName: String? = null
     var deny = false
+    var root = "memory://courier"
+    val createdFolders = mutableSetOf<String>()
+    override val identity: String get() = root
+    override fun created(folder: String): Boolean = folder in createdFolders
     fun put(folder: String, name: String, text: String) { files["$folder/$name"] = text.toByteArray() }
     override fun list(folder: String): List<CourierEntry> {
         if (deny) throw SecurityException("revoked")

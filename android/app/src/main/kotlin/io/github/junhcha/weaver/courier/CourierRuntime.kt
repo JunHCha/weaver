@@ -167,6 +167,7 @@ object CourierRuntime {
                 check(temp.renameTo(final))
             } finally { temp.delete() }
         }
+        io.github.junhcha.weaver.inbox.InboxRuntime.submitted(context, verdict.proposalId, verdict.rev)
         kick(context)
     }
 

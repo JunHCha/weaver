@@ -11,6 +11,9 @@ import java.util.UUID
 /** Only the primary external-storage provider is eligible for the device acceptance test. */
 class SafCourierFolder(private val resolver: ContentResolver, val tree: Uri) : CourierFolder {
     init { require(allowed(tree)) { "Select primary Documents/WeaverCourier" } }
+    private val createdDirectories = mutableSetOf<String>()
+    override val identity: String get() = tree.toString()
+    override fun created(folder: String): Boolean = folder in createdDirectories
 
     fun checkPermission() {
         check(resolver.persistedUriPermissions.any {
@@ -52,6 +55,7 @@ class SafCourierFolder(private val resolver: ContentResolver, val tree: Uri) : C
             ?: error("Cannot create Courier directory")
         try {
             check(displayName(created) == folder) { "directory_name_changed" }
+            createdDirectories.add(folder)
             return created
         } catch (error: Exception) {
             runCatching { DC.deleteDocument(resolver, created) }

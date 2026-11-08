@@ -123,7 +123,7 @@ class InboxTest {
         assertEquals(2L, InboxRuntime.proposals(app).single().rev)
     }
 
-    @Test fun deletedProposalLeavesListAndResyncDoesNotRevive() {
+    @Test fun deletedProposalLeavesListAndResyncedCopyReturnsSilentlyUnlessSubmitted() {
         grant()
         put(proposal)
         scan()
@@ -131,6 +131,15 @@ class InboxTest {
         scan()
         assertTrue(InboxRuntime.proposals(app).isEmpty())
         assertNull(posted(InboxRuntime.PROPOSAL_NOTIFICATION))
+        // Temporary loss: the same rev returns without sound.
+        put(proposal)
+        scan(morning + 1_000)
+        assertEquals(1, InboxRuntime.proposals(app).size)
+        posted(InboxRuntime.PROPOSAL_NOTIFICATION)?.let { assertTrue(silent(it)) }
+        // A rev this app decided is not revived by a resynced copy.
+        InboxRuntime.submitted(app, proposal.proposalId, 1)
+        remove("${proposal.proposalId}.r1.json")
+        scan()
         put(proposal)
         scan()
         assertTrue(InboxRuntime.proposals(app).isEmpty())
@@ -190,13 +199,19 @@ class InboxTest {
         scan()
         remove("${proposal.proposalId}.r1.json")
         scan()
-        assertTrue(InboxRuntime.alerts(app).isEmpty())
-        assertTrue("proposals/alert_${alert.alertId}.json" in folder.deleted)
-        // A resynced copy is deleted again and not re-listed.
-        putAlert()
+        // One absent scan is only a grace period (a revise may briefly show neither rev).
+        assertEquals(1, InboxRuntime.alerts(app).size)
+        assertTrue(folder.deleted.isEmpty())
         scan()
         assertTrue(InboxRuntime.alerts(app).isEmpty())
-        assertFalse(folder.files.containsKey("proposals/alert_${alert.alertId}.json"))
+        assertTrue("proposals/alert_${alert.alertId}.json" in folder.deleted)
+        // A resynced copy of a resolved alert is neither listed nor deleted again.
+        folder.deleted.clear()
+        putAlert()
+        scan()
+        scan()
+        assertTrue(InboxRuntime.alerts(app).isEmpty())
+        assertTrue(folder.deleted.isEmpty())
     }
 
     @Test fun alertWithUnseenProposalStaysUntilUserDismisses() {
@@ -241,5 +256,80 @@ class InboxTest {
         assertNull(InboxRuntime.lastScanAt(app))
         scan(morning)
         assertEquals(morning, InboxRuntime.lastScanAt(app))
+    }
+
+    private fun alertFile() = folder.files.containsKey("proposals/alert_${alert.alertId}.json")
+
+    @Test fun revisionWithBrieflyMissingRevKeepsAlert() {
+        put(proposal); putAlert(); scan(); scan()
+        remove("${proposal.proposalId}.r1.json")
+        scan()
+        put(proposal.copy(rev = 2))
+        scan(); scan()
+        assertEquals(1, InboxRuntime.alerts(app).size)
+        assertTrue(alertFile())
+        assertTrue(folder.deleted.isEmpty())
+    }
+
+    @Test fun alertFileTemporarilyMissingReturnsAndIsNeverDeleted() {
+        grant()
+        putAlert(); scan(); scan()
+        val bytes = folder.files.remove("proposals/alert_${alert.alertId}.json")!!
+        scan()
+        assertTrue(InboxRuntime.alerts(app).isEmpty())
+        folder.files["proposals/alert_${alert.alertId}.json"] = bytes
+        scan(); scan()
+        assertEquals(1, InboxRuntime.alerts(app).size)
+        assertTrue(folder.deleted.isEmpty())
+        // Returning is not a new alert: no new sound.
+        posted(InboxRuntime.ALERT_NOTIFICATION)?.let { assertTrue(silent(it)) }
+    }
+
+    @Test fun selectingAnotherFolderAndReturningDeletesNothing() {
+        put(proposal); putAlert(); scan(); scan()
+        val original = LinkedHashMap(folder.files)
+        folder.files.clear(); folder.root = "memory://empty"
+        scan(); scan(); scan()
+        folder.files.putAll(original); folder.root = "memory://courier"
+        scan(); scan(); scan()
+        assertTrue(folder.deleted.isEmpty())
+        assertEquals(1, InboxRuntime.proposals(app).size)
+        assertEquals(1, InboxRuntime.alerts(app).size)
+    }
+
+    @Test fun freshlyCreatedProposalsDirectoryIsNotAFullScan() {
+        put(proposal); putAlert(); scan(); scan()
+        val original = LinkedHashMap(folder.files)
+        folder.files.clear(); folder.createdFolders.add("proposals")
+        scan(); scan()
+        assertEquals(1, InboxRuntime.proposals(app).size)
+        assertEquals(1, InboxRuntime.alerts(app).size)
+        folder.createdFolders.clear(); folder.files.putAll(original)
+        scan(); scan()
+        assertTrue(folder.deleted.isEmpty())
+        assertEquals(1, InboxRuntime.alerts(app).size)
+    }
+
+    @Test fun newAlertForLongGoneProposalWithSameRevPresentIsKept() {
+        put(proposal); scan()
+        remove("${proposal.proposalId}.r1.json")
+        scan(); scan(); scan()
+        put(proposal)
+        putAlert()
+        scan(); scan()
+        assertEquals(1, InboxRuntime.alerts(app).size)
+        assertTrue(alertFile())
+        assertTrue(folder.deleted.isEmpty())
+    }
+
+    @Test fun dismissedAlertIsDeletedOnlyWhenListedInTrustedScan() {
+        putAlert(); scan(); scan()
+        val bytes = folder.files.remove("proposals/alert_${alert.alertId}.json")!!
+        assertTrue(InboxRuntime.dismissAlert(app, alert.alertId, morning))
+        scan()
+        folder.files["proposals/alert_${alert.alertId}.json"] = bytes
+        scan()
+        assertFalse(alertFile())
+        assertTrue(InboxRuntime.alerts(app).isEmpty())
     }
 }
