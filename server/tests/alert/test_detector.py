@@ -178,11 +178,48 @@ def test_far_schedule_moved_into_window_alerts(tmp_path, fabric):
     assert len(detector(tmp_path, fabric).detect(moved())) == 1
 
 
-def test_all_day_and_timed_values_differ(tmp_path, fabric):
+def test_time_on_approved_all_day_date_is_a_refinement(tmp_path, fabric):
     fabric.append([fact(1, "date", "2026-11-12")])
-    assert len(detector(tmp_path, fabric).detect(moved())) == 1
-    fabric.append([fact(2, "date", "2026-11-12T15:00:00+09:00")])
+    assert detector(tmp_path, fabric).detect(moved()) == []  # explicit date draft
+    implicit = proposal([draft("d1", None, "일정")])  # meeting Schedule start
+    assert detector(tmp_path, fabric).detect(implicit) == []
+    # Another local day is a change, in either form.
+    assert (
+        len(detector(tmp_path, fabric).detect(moved("2026-11-13T09:00:00+09:00"))) == 1
+    )
+    other_day = proposal(
+        [draft("d1", None, "일정")],
+        [schedule("s1", "d1", start="2026-11-13T09:00:00+09:00")],
+    )
+    assert len(detector(tmp_path, fabric).detect(other_day)) == 1
+    # 2026-11-12T15:30Z is 11-13 in Seoul: local date decides.
+    assert len(detector(tmp_path, fabric).detect(moved("2026-11-12T15:30:00Z"))) == 1
+
+
+def test_timed_to_all_day_still_differs(tmp_path, fabric):
+    fabric.append([fact(1, "date", "2026-11-12T15:00:00+09:00")])
+    assert len(detector(tmp_path, fabric).detect(moved("2026-11-12"))) == 1
+
+
+def test_new_entry_with_same_approved_value_does_not_rewarn(tmp_path, fabric):
+    fabric.append([fact(1, "date", "2026-11-10T15:00:00+09:00")])
+    run = detector(tmp_path, fabric)
+    [alert] = run.detect(moved())
+    run.published(alert)
+    # e.g. a human edit re-recording the same value under a new Entry ID
+    fabric.append([fact(2, "date", "2026-11-10T06:00:00Z")])
     assert detector(tmp_path, fabric).detect(moved()) == []
+    # A different approved value is a different change.
+    fabric.append([fact(3, "date", "2026-11-11T15:00:00+09:00")])
+    assert len(detector(tmp_path, fabric).detect(moved())) == 1
+
+
+def test_direct_ent_reference_must_be_listed_with_its_type():
+    # Why no registry lookup is needed: an unlisted ent_ ref is rejected.
+    payload = moved().model_dump(mode="json", by_alias=True)
+    payload["schedules"][0]["entities"] = [PERSON]
+    with pytest.raises(ValueError, match="dangling"):
+        Proposal.model_validate(payload)
 
 
 def test_unrelated_targets_are_ignored(tmp_path, fabric):
@@ -328,6 +365,17 @@ def test_alert_count_is_limited_per_proposal(tmp_path, fabric):
         run.published(alert)
     # The lifetime limit holds for later revisions and restarts.
     assert detector(tmp_path, fabric, max_alerts=3).detect(many(rev=2)) == []
+
+
+def test_history_is_private_wal(tmp_path):
+    import sqlite3
+    import stat
+
+    history = AlertHistory(tmp_path / "state" / "alerts.sqlite3")
+    with sqlite3.connect(history.path) as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    for path in history.path.parent.iterdir():
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_alert_id_is_deterministic_and_schema_shaped():

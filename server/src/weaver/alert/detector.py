@@ -14,13 +14,16 @@ Policy (see the PR for alternatives):
   for a ``meeting`` entity, the Schedule ``start`` against its ``date``/``start``.
   No existing value, or an equal value (same instant, same all-day date, JSON
   equality otherwise), is not a change; so once approved it is never re-warned.
+  A time on the approved all-day date only refines it and is not a change.
+  Entity types come from proposal.entities: Proposal validation rejects any
+  ent_ reference not listed there, so every related entity has a type.
 - Window: the approved schedule must not be past (all-day: until local
   midnight), and it or the proposed time must lie in ``[now, now+horizon)``.
 - At most ``max_alerts`` per proposal_id over its lifetime, earliest first.
 - The message names only the local date and changed aspects, never titles,
   names, values or excerpts, and always says it is pre-approval information.
-- alert_id is derived from (proposal_id, schedule ref, change signature), not
-  rev: a revision with the same change is not re-warned, a different change is.
+- alert_id is derived from (proposal_id, schedule ref, change signature of
+  approved and proposed canonical values, not Entry IDs), not rev: a revision with the same change is not re-warned, a different change is.
   AlertHistory remembers published IDs, so phone deletions are not recreated.
 """
 
@@ -115,11 +118,16 @@ def _moment(value: object, zone: ZoneInfo) -> Moment | None:
     return None
 
 
+def _json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
 @dataclass(frozen=True)
 class Change:
     entity_id: str
     field: str
-    basis: str  # entry_id of the approved value
+    basis: str  # entry_id of the approved value (history only, not the ID)
+    old: str  # canonical approved value
     new: str  # canonical proposed value
     proposed: Moment | None
 
@@ -171,7 +179,7 @@ class ScheduleAlertDetector:
                 continue
             anchor, changes = found
             signature = json.dumps(
-                sorted([c.entity_id, c.field, c.basis, c.new] for c in changes)
+                sorted([c.entity_id, c.field, c.old, c.new] for c in changes)
             )
             labels = {LABELS[c.field] for c in changes}
             ordered = [label for label in LABEL_ORDER if label in labels]
@@ -309,12 +317,15 @@ class ScheduleAlertDetector:
         if old is not None and new is not None:
             if old.key() == new.key():
                 return None
-            canonical = new.key()
+            if old.all_day and not new.all_day and old.local_date == new.local_date:
+                return None  # a time on the approved all-day date only refines it
+            canonical, previous = new.key(), old.key()
         else:
             if _equal(current.value, value):
                 return None
-            canonical = new.key() if new else json.dumps(value, sort_keys=True)
-        return Change(entity, field, current.entry_id, canonical, new)
+            canonical = new.key() if new else _json(value)
+            previous = old.key() if old else _json(current.value)
+        return Change(entity, field, current.entry_id, previous, canonical, new)
 
     @staticmethod
     def _compare_set(
@@ -341,10 +352,7 @@ class ScheduleAlertDetector:
             return None
         if not changed:
             return None
+        previous = _json(sorted(_json(m) for m in members))
         return Change(
-            entity,
-            "assignees",
-            current.entry_id,
-            json.dumps(value, sort_keys=True),
-            None,
+            entity, "assignees", current.entry_id, previous, _json(value), None
         )

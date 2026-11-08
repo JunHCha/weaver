@@ -5,11 +5,11 @@ presence cannot prevent repeats; this history does. Rows are never deleted.
 Only IDs and Fabric entry IDs are stored, never source text.
 """
 
+import contextlib
 import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from weaver.schema import Alert
@@ -18,21 +18,32 @@ from weaver.schema import Alert
 class AlertHistory:
     def __init__(self, path: Path) -> None:
         self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Create private before SQLite opens it (umask-independent).
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
         with self._connect() as db:
+            db.execute("PRAGMA journal_mode = WAL")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS alerts ("
                 "alert_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, "
                 "rev INTEGER NOT NULL, schedule_ref TEXT NOT NULL, "
                 "basis TEXT NOT NULL, created_at TEXT NOT NULL)"
             )
-        os.chmod(path, 0o600)
+        for suffix in ("-wal", "-shm"):
+            with contextlib.suppress(FileNotFoundError):
+                os.chmod(str(path) + suffix, 0o600)
 
-    @contextmanager
+    @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=30)
         try:
-            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA synchronous = FULL")
+            db.execute("PRAGMA fullfsync = ON")
+            db.execute("PRAGMA checkpoint_fullfsync = ON")
             with db:
                 yield db
         finally:
