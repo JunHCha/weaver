@@ -1,15 +1,18 @@
 package io.github.junhcha.weaver
 
-import android.os.Bundle
 import android.content.Intent
 import android.database.ContentObserver
-import androidx.compose.runtime.mutableStateOf
-import io.github.junhcha.weaver.shepherd.ShepherdRuntime
+import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import io.github.junhcha.weaver.ui.HomeScreen
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.lifecycleScope
 import io.github.junhcha.weaver.courier.CourierRuntime
+import io.github.junhcha.weaver.shepherd.ShepherdRuntime
+import io.github.junhcha.weaver.ui.HomeScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var observer: ContentObserver? = null
@@ -30,6 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         CourierRuntime.schedule(this)
+        lifecycleScope.launch(Dispatchers.IO) { ShepherdRuntime.schedule(applicationContext) }
         observer = ShepherdRuntime.observeForeground(this)
     }
 

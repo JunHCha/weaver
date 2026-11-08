@@ -30,6 +30,7 @@ class ShepherdRuntimeTest {
     private lateinit var manager: NotificationManager
     @Before fun reset() {
         app = ApplicationProvider.getApplicationContext()
+        ShepherdRuntime.activatedCache = null
         app.deleteDatabase("shepherd.sqlite3")
         manager = app.getSystemService(NotificationManager::class.java)
         manager.cancelAll()
@@ -38,7 +39,7 @@ class ShepherdRuntimeTest {
         db.activate(1_000)
         val row = RecordingMetadata("content://media/external/audio/media/$id", "Person_261108_123456.m4a", 10, 1, 2_000)
         // Keep the same metadata for already known rows, as a full scan would.
-        val rows = (1..id).map { row.copy(uri = "content://media/external/audio/media/$it") }
+        val rows = (1..id).map { row.copy(uri = "content://media/external/audio/media/$it", name = "Person${it}_261108_123456.m4a") }
         db.observe(rows, 3_000, ZoneId.of("Asia/Seoul"))
         db.observe(rows, 33_000, ZoneId.of("Asia/Seoul"))
     }
@@ -58,6 +59,51 @@ class ShepherdRuntimeTest {
             ShepherdRuntime.notifyPending(app, db, morning + 2_000)
             assertEquals(1, shadowOf(manager).allNotifications.size)
             db.pendingCalls().forEach { assertTrue(ShepherdRuntime.markProcessed(app, it.id)) }
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        }
+    }
+    @Test fun reducingDismissedSummaryDoesNotResurrectButVisibleSummaryUpdates() {
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        ShepherdDatabase(app).use { db ->
+            ready(db, 3)
+            val morning = Instant.parse("2026-11-08T00:00:00Z").toEpochMilli()
+            ShepherdRuntime.notifyPending(app, db, morning)
+            db.markProcessed(db.pendingCalls().first().id)
+            ShepherdRuntime.notifyPending(app, db, morning + 1_000)
+            assertEquals("스크립트 미공유 통화 2건", shadowOf(manager).allNotifications.single().extras.getString("android.title"))
+            manager.cancel(30)
+            db.markProcessed(db.pendingCalls().first().id)
+            ShepherdRuntime.notifyPending(app, db, morning + 2_000)
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            ShepherdRuntime.notifyPending(app, db, morning + 3_000)
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        }
+    }
+    @Test fun removedAndDismissedCallsAreExcludedFromSummary() {
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        ShepherdDatabase(app).use { db ->
+            ready(db, 2)
+            ShepherdRuntime.notifyPending(app, db, 0)
+            val calls = db.pendingCalls()
+            assertTrue(ShepherdRuntime.dismiss(app, calls.first().id))
+            assertFalse(ShepherdRuntime.dismiss(app, calls.first().id))
+            db.observe(emptyList(), 40_000, ZoneId.of("UTC"))
+            ShepherdRuntime.notifyPending(app, db, 0)
+            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        }
+    }
+    @Test fun reindexDoesNotResurrectDismissedNotificationForSameUnsharedCall() {
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        ShepherdDatabase(app).use { db ->
+            ready(db)
+            val morning = Instant.parse("2026-11-08T00:00:00Z").toEpochMilli()
+            ShepherdRuntime.notifyPending(app, db, morning)
+            manager.cancel(30)
+            val row = RecordingMetadata("reindexed", "Person1_261108_123456.m4a", 10, 1, 50_000)
+            db.observe(listOf(row), 50_000, ZoneId.of("UTC"))
+            ShepherdRuntime.notifyPending(app, db, morning + 1_000)
+            assertEquals("reindexed", db.pendingCalls().single().id)
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
         }
     }
@@ -94,6 +140,8 @@ class ShepherdRuntimeTest {
             override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor {
                 queries++
                 assertEquals("content://media/external/audio/media", uri.toString())
+                assertTrue(selection!!.contains("date_added >= ? AND date_modified >= ?"))
+                assertEquals(args!![0], args[1])
                 val path = if (android.os.Build.VERSION.SDK_INT >= 29) "Recordings/Call/" else "/storage/emulated/0/Recordings/Call/a.m4a"
                 return MatrixCursor(projection!!).apply {
                     addRow(arrayOf<Any>(1L, "Person_261108_123456.m4a", 100L, 5L, 2L, path))

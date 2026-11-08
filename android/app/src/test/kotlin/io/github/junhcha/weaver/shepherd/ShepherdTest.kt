@@ -25,11 +25,11 @@ class ShepherdTest {
         ShepherdDatabase(context).use { db ->
             db.activate(1_000)
             assertTrue(db.observe(listOf(row()), 3_000, ZoneId.of("Asia/Seoul")))
-            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(db.calls().none { it.status == CallStatus.UNSHARED })
         }
         ShepherdDatabase(context).use { db ->
             assertTrue(db.observe(listOf(row()), 32_999, ZoneId.of("UTC")))
-            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(db.calls().none { it.status == CallStatus.UNSHARED })
             assertFalse(db.observe(listOf(row()), 33_000, ZoneId.of("UTC")))
             val call = db.pendingCalls().single()
             assertEquals("친구", call.counterpart)
@@ -37,7 +37,7 @@ class ShepherdTest {
             assertTrue(db.markProcessed(call.id))
             assertFalse(db.markProcessed(call.id))
             db.observe(listOf(row()), 100_000, ZoneId.of("UTC"))
-            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(db.calls().none { it.status == CallStatus.UNSHARED })
             assertEquals(CallStatus.PROCESSED, db.calls().single().status)
         }
     }
@@ -52,7 +52,7 @@ class ShepherdTest {
             db.activate(1_000)
             db.observe(listOf(row()), 3_000, ZoneId.of("UTC"))
             db.observe(listOf(row(200, 20)), 33_000, ZoneId.of("UTC"))
-            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(db.calls().none { it.status == CallStatus.UNSHARED })
             db.observe(listOf(row(200, 20)), 63_000, ZoneId.of("UTC"))
             assertEquals(1, db.pendingCalls().size)
         }
@@ -66,9 +66,69 @@ class ShepherdTest {
             db.observe(listOf(row()), 60_000, ZoneId.of("UTC"))
             db.observe(listOf(row(0)), 90_000, ZoneId.of("UTC"))
             db.observe(listOf(row()), 120_000, ZoneId.of("UTC"))
-            assertTrue(db.pendingCalls().isEmpty())
+            assertTrue(db.calls().none { it.status == CallStatus.UNSHARED })
             db.observe(listOf(row()), 150_000, ZoneId.of("UTC"))
             assertEquals(1, db.pendingCalls().size)
+        }
+    }
+    @Test fun reindexPreservesUnsharedAndProcessedAndExcludesHistoricalFiles() {
+        ShepherdDatabase(context).use { db ->
+            db.activate(1_000)
+            db.observe(listOf(row()), 3_000, ZoneId.of("UTC"))
+            db.observe(listOf(row()), 33_000, ZoneId.of("UTC"))
+            val reindexed = row().copy(uri = "content://media/external/audio/media/2", addedAt = 50_000)
+            assertFalse(db.observe(listOf(reindexed), 50_000, ZoneId.of("Asia/Seoul")))
+            assertEquals(reindexed.uri, db.pendingCalls().single().id)
+            assertTrue(db.markProcessed(reindexed.uri))
+            val again = reindexed.copy(uri = "content://media/external/audio/media/3", addedAt = 60_000)
+            db.observe(listOf(again), 60_000, ZoneId.of("UTC"))
+            assertEquals(CallStatus.PROCESSED, db.calls().single().status)
+            assertEquals(again.uri, db.calls().single().id)
+            val historical = row().copy(uri = "historical", addedAt = 70_000, modified = 0)
+            db.observe(listOf(again, historical), 70_000, ZoneId.of("UTC"))
+            db.observe(listOf(again, historical), 100_000, ZoneId.of("UTC"))
+            assertEquals(1, db.calls().size)
+            assertTrue(db.pendingCalls().isEmpty())
+        }
+    }
+    @Test fun earlySharedTranscriptReservesProcessingAcrossGrowthAndRestart() {
+        ShepherdDatabase(context).use { db ->
+            db.activate(1_000)
+            db.observe(listOf(row()), 3_000, ZoneId.of("Asia/Seoul"))
+            val match = db.pendingCalls().single()
+            assertEquals("친구", match.counterpart)
+            assertTrue(db.markProcessed(match.id))
+            assertFalse(db.markProcessed(match.id))
+            assertTrue(db.calls().isEmpty())
+            assertTrue(db.pendingCalls().isEmpty())
+            db.observe(listOf(row(200, 20)), 33_000, ZoneId.of("UTC"))
+        }
+        ShepherdDatabase(context).use { db ->
+            db.observe(listOf(row(200, 20)), 63_000, ZoneId.of("UTC"))
+            assertEquals(CallStatus.PROCESSED, db.calls().single().status)
+            assertFalse(db.markProcessed(row().uri))
+        }
+    }
+    @Test fun deletedUnsharedIsRemovedAndReindexRestoresItButPreservesDismissal() {
+        ShepherdDatabase(context).use { db ->
+            db.activate(1_000)
+            db.observe(listOf(row()), 3_000, ZoneId.of("UTC"))
+            db.observe(listOf(row()), 33_000, ZoneId.of("UTC"))
+            db.observe(emptyList(), 40_000, ZoneId.of("UTC"))
+            assertEquals(CallStatus.REMOVED, db.calls().single().status)
+            assertTrue(db.pendingCalls().isEmpty())
+            val reindexed = row().copy(uri = "reindexed", addedAt = 50_000)
+            db.observe(listOf(reindexed), 50_000, ZoneId.of("UTC"))
+            assertEquals(CallStatus.UNSHARED, db.calls().single().status)
+            assertTrue(db.dismiss(reindexed.uri))
+            assertFalse(db.dismiss(reindexed.uri))
+            assertFalse(db.markProcessed(reindexed.uri))
+            assertTrue(db.pendingCalls().isEmpty())
+            db.observe(emptyList(), 60_000, ZoneId.of("UTC"))
+            db.observe(listOf(reindexed.copy(uri = "again")), 70_000, ZoneId.of("UTC"))
+            assertEquals("again", db.calls().single().id)
+            assertEquals(CallStatus.DISMISSED, db.calls().single().status)
+            assertTrue(db.pendingCalls().isEmpty())
         }
     }
     @Test fun strictNamesAndInvalidDatesHaveNoHints() {
@@ -87,5 +147,11 @@ class ShepherdTest {
         assertFalse(RecordingPaths.matches("Recordings/Voice/", null))
         assertTrue(RecordingPaths.matches(null, "/storage/emulated/0/Recordings/Call/a.m4a"))
         assertFalse(RecordingPaths.matches(null, "/storage/emulated/0/Recordings/Call/sub/a.m4a"))
+        assertTrue(RecordingPaths.matches(null, "/storage/1234-ABCD/Recordings/Call/a.m4a"))
+        listOf("/storage/1234-ABCD/sub/Recordings/Call/a.m4a",
+            "/storage/random/Recordings/Call/a.m4a", "/storage/emulated/no/Recordings/Call/a.m4a",
+            "/storage/emulated/0/sub/Recordings/Call/a.m4a").forEach {
+            assertFalse(it, RecordingPaths.matches(null, it))
+        }
     }
 }

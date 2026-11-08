@@ -5,7 +5,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 
-enum class CallStatus { UNSHARED, PROCESSED }
+enum class CallStatus { UNSHARED, PROCESSED, REMOVED, DISMISSED }
 
 /**
  * Local ID is an opaque MediaStore URI. Filename-derived values are hints, never entity links.
@@ -22,6 +22,7 @@ data class CallRecord(
 
 /** Small synchronous IO boundary for #31. Mark only after the transcript has been durably queued. */
 interface ShepherdCalls {
+    /** Includes observations still stabilizing so an early shared transcript can be matched. */
     fun pendingCalls(): List<CallRecord>
     /** True only for the first successful transition; an unknown/already processed ID returns false. */
     fun markProcessed(id: String): Boolean
@@ -56,6 +57,6 @@ internal object RecordingPaths {
     fun matches(relative: String?, legacy: String?): Boolean = if (relative != null) {
         relative == "Recordings/Call/"
     } else {
-        legacy?.matches(Regex("/storage/[^/]+(?:/[^/]+)?/Recordings/Call/[^/]+")) == true
+        legacy?.matches(Regex("/storage/(?:emulated/[0-9]+|[0-9A-F]{4}-[0-9A-F]{4})/Recordings/Call/[^/]+")) == true
     }
 }

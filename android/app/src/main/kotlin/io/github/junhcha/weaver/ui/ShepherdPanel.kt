@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -23,20 +24,23 @@ import io.github.junhcha.weaver.shepherd.CallStatus
 import io.github.junhcha.weaver.shepherd.ShepherdRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
 fun ShepherdPanel(showPendingCalls: Boolean = false) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var activated by remember { mutableStateOf(false) }
     var calls by remember { mutableStateOf(emptyList<CallRecord>()) }
     var onlyPending by remember(showPendingCalls) { mutableStateOf(showPendingCalls) }
     LaunchedEffect(Unit) {
         while (true) {
-            withContext(Dispatchers.IO) {
-                activated = ShepherdRuntime.isActivated(context)
-                calls = ShepherdRuntime.calls(context)
+            val snapshot = withContext(Dispatchers.IO) {
+                ShepherdRuntime.isActivated(context) to ShepherdRuntime.calls(context)
             }
+            activated = snapshot.first
+            calls = snapshot.second
             delay(2_000)
         }
     }
@@ -46,8 +50,10 @@ fun ShepherdPanel(showPendingCalls: Boolean = false) {
             if (!activated) {
                 Text("활성화 이후 통화만 감지합니다. 과거 통화 가져오기는 별도 기능입니다.")
                 OutlinedButton(onClick = {
-                    ShepherdRuntime.activate(context)
-                    activated = true
+                    scope.launch {
+                        withContext(Dispatchers.IO) { ShepherdRuntime.activate(context) }
+                        activated = true
+                    }
                 }) { Text("Shepherd 활성화") }
             }
             if (activated && !Feature.SHEPHERD.isGranted(context)) {
@@ -65,7 +71,22 @@ fun ShepherdPanel(showPendingCalls: Boolean = false) {
             if (visible.isEmpty()) Text("통화 없음")
             visible.forEach { call ->
                 Text("${call.counterpart ?: "상대 미상"} · ${call.occurredAt ?: "시각 미상"}")
-                Text(if (call.status == CallStatus.UNSHARED) "스크립트 미공유" else "처리됨")
+                Text(when (call.status) {
+                    CallStatus.UNSHARED -> "스크립트 미공유"
+                    CallStatus.PROCESSED -> "처리됨"
+                    CallStatus.REMOVED -> "녹음 삭제됨"
+                    CallStatus.DISMISSED -> "처리 안 함"
+                })
+                if (call.status == CallStatus.UNSHARED) {
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            calls = withContext(Dispatchers.IO) {
+                                ShepherdRuntime.dismiss(context, call.id)
+                                ShepherdRuntime.calls(context)
+                            }
+                        }
+                    }) { Text("처리 안 함") }
+                }
             }
             Text("미공유 통화는 매일 21:00 이후 요약 알림으로 알려드립니다. 백그라운드 실행 시각은 기기가 조정할 수 있습니다.")
         }

@@ -28,16 +28,21 @@ import java.util.concurrent.TimeUnit
 /** Synchronous methods run on an IO thread. Audio is never opened, copied, hashed or sent to Courier. */
 object ShepherdRuntime {
     internal val lock = Any()
+    @Volatile internal var activatedCache: Boolean? = null
     const val OPEN_PENDING = "io.github.junhcha.weaver.OPEN_PENDING_CALLS"
     const val REMINDER_HOUR = 21
     private const val CHANNEL = "shepherd-calls"
     private const val NOTIFICATION_ID = 30
 
     fun activate(context: Context) {
-        synchronized(lock) { ShepherdDatabase(context).use { it.activate(System.currentTimeMillis()) } }
+        synchronized(lock) { ShepherdDatabase(context).use { it.activate(System.currentTimeMillis()); activatedCache = true } }
         schedule(context)
     }
-    fun isActivated(context: Context): Boolean = ShepherdDatabase(context).use { it.activatedAt() != null }
+    fun isActivated(context: Context): Boolean = activatedCache ?: synchronized(lock) {
+        activatedCache ?: ShepherdDatabase(context).use {
+            (it.activatedAt() != null).also { activatedCache = it }
+        }
+    }
     fun pendingCalls(context: Context): List<CallRecord> = synchronized(lock) {
         ShepherdDatabase(context).use { it.pendingCalls() }
     }
@@ -52,6 +57,12 @@ object ShepherdRuntime {
             changed
         }
     }
+    /** Explicit user choice to stop reminding about a stable unshared call. Call from IO. */
+    fun dismiss(context: Context, id: String): Boolean = synchronized(lock) {
+        ShepherdDatabase(context).use { db ->
+            db.dismiss(id).also { if (it) notifyPending(context, db, System.currentTimeMillis()) }
+        }
+    }
     fun schedule(context: Context) {
         if (!isActivated(context)) return
         WorkManager.getInstance(context).enqueueUniquePeriodicWork("shepherd-periodic", ExistingPeriodicWorkPolicy.KEEP,
@@ -59,13 +70,11 @@ object ShepherdRuntime {
         kick(context)
     }
     internal fun kick(context: Context) {
-        if (!isActivated(context)) return
-        WorkManager.getInstance(context).enqueue(
+        WorkManager.getInstance(context).enqueueUniqueWork("shepherd-kick", ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<ShepherdWorker>().addTag("shepherd-scan").build())
     }
     /** Activity owns this observer, unregistering on pause; callbacks only enqueue metadata work. */
     fun observeForeground(context: Context): ContentObserver? {
-        schedule(context)
         if (!Feature.SHEPHERD.isGranted(context)) return null
         val app = context.applicationContext
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -75,6 +84,14 @@ object ShepherdRuntime {
             app.contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, observer)
             observer
         } catch (_: SecurityException) { null }
+    }
+    /** #31 scans synchronously before matching a shared transcript. Call from IO. */
+    fun scanNow(context: Context) {
+        if (scan(context)) scheduleStability(context)
+    }
+    internal fun scheduleStability(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork("shepherd-stability", ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<ShepherdWorker>().setInitialDelay(30, TimeUnit.SECONDS).build())
     }
     internal fun scan(context: Context, now: Long = System.currentTimeMillis()): Boolean = synchronized(lock) {
         ShepherdDatabase(context).use { db ->
@@ -95,7 +112,7 @@ object ShepherdRuntime {
     internal fun notifyPending(context: Context, db: ShepherdDatabase, now: Long) {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "미공유 통화", NotificationManager.IMPORTANCE_DEFAULT))
-        val ids = db.pendingCalls().map { it.id }.sorted()
+        val ids = db.calls().filter { it.status == CallStatus.UNSHARED }.map { it.id }.sorted()
         if (ids.isEmpty()) {
             manager.cancel(NOTIFICATION_ID)
             db.setting("notified_ids", "")
@@ -110,6 +127,10 @@ object ShepherdRuntime {
         val added = ids.any { it !in old }
         val reminder = local.hour >= REMINDER_HOUR && db.setting("reminded_day") != day
         if (signature == db.setting("notified_ids") && !reminder) return
+        if (!added && !reminder && manager.activeNotifications.none { it.id == NOTIFICATION_ID }) {
+            db.setting("notified_ids", signature)
+            return
+        }
         val intent = PendingIntent.getActivity(context, NOTIFICATION_ID,
             Intent(context, MainActivity::class.java).setAction(OPEN_PENDING)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -128,8 +149,7 @@ object ShepherdRuntime {
 class ShepherdWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result = try {
         if (ShepherdRuntime.scan(applicationContext)) {
-            WorkManager.getInstance(applicationContext).enqueueUniqueWork("shepherd-stability", ExistingWorkPolicy.APPEND_OR_REPLACE,
-                OneTimeWorkRequestBuilder<ShepherdWorker>().setInitialDelay(30, TimeUnit.SECONDS).build())
+            ShepherdRuntime.scheduleStability(applicationContext)
         }
         Result.success()
     } catch (_: Exception) { Result.retry() }

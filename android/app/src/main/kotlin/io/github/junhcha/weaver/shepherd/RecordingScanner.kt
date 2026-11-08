@@ -13,10 +13,11 @@ internal class RecordingScanner(private val context: Context) {
             MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DATE_MODIFIED, MediaStore.Audio.Media.DATE_ADDED, path)
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val selection = "${MediaStore.Audio.Media.DATE_ADDED} >= ? AND " +
+            "${MediaStore.Audio.Media.DATE_MODIFIED} >= ? AND " +
             if (Build.VERSION.SDK_INT >= 29) "$path = ?" else "$path LIKE ?"
         val pathArg = if (Build.VERSION.SDK_INT >= 29) "Recordings/Call/" else "%/Recordings/Call/%"
         return context.contentResolver.query(collection, columns, selection,
-            arrayOf((activatedAt / 1000).toString(), pathArg), null)?.use { cursor -> buildList {
+            arrayOf((activatedAt / 1000).toString(), (activatedAt / 1000).toString(), pathArg), null)?.use { cursor -> buildList {
             while (cursor.moveToNext()) {
                 val location = cursor.getString(5)
                 if (!RecordingPaths.matches(if (Build.VERSION.SDK_INT >= 29) location else null,

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,15 +29,18 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import io.github.junhcha.weaver.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
 @Composable
 fun HomeScreen(showPendingCalls: Boolean = false) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }
     val refresh = {
         granted = Feature.entries.associateWith { it.isGranted(context) }
-        io.github.junhcha.weaver.shepherd.ShepherdRuntime.schedule(context)
+        scope.launch(Dispatchers.IO) { io.github.junhcha.weaver.shepherd.ShepherdRuntime.schedule(context) }
     }
     LifecycleResumeEffect(Unit) {
         refresh()
@@ -65,7 +69,7 @@ fun HomeScreen(showPendingCalls: Boolean = false) {
                         granted = granted.getValue(feature),
                         onRequest = {
                             if (feature == Feature.SHEPHERD) {
-                                io.github.junhcha.weaver.shepherd.ShepherdRuntime.activate(context)
+                                scope.launch(Dispatchers.IO) { io.github.junhcha.weaver.shepherd.ShepherdRuntime.activate(context) }
                             }
                             launcher.launch(feature.permissions().toTypedArray())
                         },
