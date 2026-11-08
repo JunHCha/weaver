@@ -66,12 +66,10 @@ class ShareActivity : ComponentActivity() {
                 }
             }
         }
-        // Receive and inspect the same original SEND/SEND_MULTIPLE intent, preserving URI grants.
-        val shareIntent = intent
         io.execute {
             try {
                 val restored = savedInstanceState?.getString("file")?.let(::File)?.takeIf { it.isFile }
-                val received = restored ?: SharedText.receive(this, shareIntent)
+                val received = restored ?: SharedText.receive(this, intent)
                 val sample = received.reader(Charsets.UTF_8).use { reader ->
                     val chars = CharArray(2000)
                     val count = reader.read(chars)
@@ -80,7 +78,7 @@ class ShareActivity : ComponentActivity() {
                 // Include recordings not yet seen by the periodic worker, even while stabilizing.
                 ShepherdRuntime.scanNow(this)
                 val pending = PendingCalls.repository(this).pending()
-                val displayName = SharedText.displayName(this, shareIntent)
+                val displayName = SharedText.displayName(this, intent)
                 runOnUiThread {
                     if (isDestroyed) {
                         if (restored == null) received.delete()

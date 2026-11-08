@@ -1,5 +1,6 @@
 package io.github.junhcha.weaver.shepherd
 
+import android.content.ClipData
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
@@ -30,24 +31,35 @@ class ShareSendMultipleTest {
         override fun onCreate() = true
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor =
             MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME)).apply { addRow(arrayOf(names[uri.lastPathSegment])) }
-        override fun getType(uri: Uri): String? = null
+        override fun getType(uri: Uri): String? = types[uri.lastPathSegment]
         override fun insert(uri: Uri, values: ContentValues?): Uri? = null
         override fun delete(uri: Uri, selection: String?, args: Array<out String>?) = 0
         override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?) = 0
-        companion object { val names = mutableMapOf<String, String>() }
+        companion object {
+            val names = mutableMapOf<String, String?>()
+            val types = mutableMapOf<String, String>()
+        }
     }
 
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
         File(context.filesDir, "shepherd-shares").deleteRecursively()
         NameProvider.names.clear()
+        NameProvider.types.clear()
         Robolectric.buildContentProvider(NameProvider::class.java).create("test.share")
     }
 
-    private fun shared(name: String, content: String = "합성 통화 스크립트\n나  (00:01)\n안녕하세요\n"): Uri {
+    private fun shared(
+        name: String,
+        content: String = "합성 통화 스크립트\n나  (00:01)\n안녕하세요\n",
+        displayName: String? = name,
+        type: String? = null,
+    ) = shared(name, content.toByteArray(), displayName, type)
+    private fun shared(name: String, bytes: ByteArray, displayName: String? = name, type: String? = null): Uri {
         val uri = Uri.parse("content://test.share/$name")
-        NameProvider.names[name] = name
-        shadowOf(context.contentResolver).registerInputStream(uri, ByteArrayInputStream(content.toByteArray()))
+        NameProvider.names[name] = displayName
+        type?.let { NameProvider.types[name] = it }
+        shadowOf(context.contentResolver).registerInputStream(uri, ByteArrayInputStream(bytes))
         return uri
     }
     private fun multiple(type: String, vararg uris: Uri) = Intent(Intent.ACTION_SEND_MULTIPLE).setType(type)
@@ -75,17 +87,54 @@ class ShareSendMultipleTest {
         }
         assertEquals(0, saved())
     }
+    private fun rejection(intent: Intent): String =
+        assertThrows(IllegalArgumentException::class.java) { SharedText.receive(context, intent) }.message!!
+
     @Test fun rejectsNonTxtDisplayName() {
-        val intent = multiple("application/txt", shared("voice.m4a"))
-        assertThrows(IllegalArgumentException::class.java) { SharedText.receive(context, intent) }
+        val message = rejection(multiple("application/txt", shared("voice.m4a")))
+        assertTrue(message, message.contains("확장자가 .txt"))
+        assertEquals(0, saved())
+    }
+    @Test fun rejectsNullDisplayName() {
+        val message = rejection(multiple("application/txt", shared("noname", displayName = null)))
+        assertTrue(message, message.contains("확장자가 .txt"))
+        assertEquals(0, saved())
+    }
+    @Test fun rejectsNonTxtNameWhenOnlyResolvedTypeIsApplicationTxt() {
+        val uri = shared("voice.m4a", type = "application/txt")
+        val message = rejection(multiple("text/plain", uri))
+        assertTrue(message, message.contains("확장자가 .txt"))
         assertEquals(0, saved())
     }
     @Test fun rejectsAudioAndMixedTypes() {
         listOf("audio/mpeg", "audio/*", "application/txt, audio/*", "*/*", "application/octet-stream").forEach {
-            assertThrows(it, IllegalArgumentException::class.java) {
-                SharedText.receive(context, multiple(it, shared("a.txt")))
-            }
+            val message = rejection(multiple(it, shared("a.txt")))
+            assertTrue("$it: $message", message.contains("음성·오디오"))
         }
+        assertEquals(0, saved())
+    }
+    @Test fun rejectsAudioResolvedTypeFromProvider() {
+        val message = rejection(multiple("application/txt", shared("a.txt", type = "audio/mpeg")))
+        assertTrue(message, message.contains("text/plain 텍스트 파일만"))
+        assertEquals(0, saved())
+    }
+    @Test fun rejectsTwoClipDataItems() {
+        val clip = ClipData.newRawUri("s", shared("a.txt")).apply { addItem(ClipData.Item(shared("b.txt"))) }
+        val intent = Intent(Intent.ACTION_SEND).setType("application/txt")
+            .putExtra(Intent.EXTRA_STREAM, shared("c.txt")).apply { clipData = clip }
+        val message = rejection(intent)
+        assertTrue(message, message.contains("한 번에 한 항목"))
+        assertEquals(0, saved())
+    }
+    @Test fun removesPartialFileWhenSendMultipleExceedsLimit() {
+        val big = ByteArray((SharedText.MAX_BYTES + 1).toInt()) { 'a'.code.toByte() }
+        val message = rejection(multiple("application/txt", shared("big.txt", big)))
+        assertTrue(message, message.contains("10 MiB"))
+        assertEquals(0, saved())
+    }
+    @Test fun removesFileWhenSendMultipleContainsNul() {
+        val message = rejection(multiple("application/txt", shared("nul.txt", "a\u0000b")))
+        assertTrue(message, message.contains("NUL"))
         assertEquals(0, saved())
     }
     @Test fun manifestAcceptsOnlyTextTypesForSendAndSendMultiple() {
@@ -100,7 +149,10 @@ class ShareSendMultipleTest {
                 assertFalse("$action $it", accepts(action, it))
             }
         }
-        val xml = File("src/main/AndroidManifest.xml").readText()
+        // Gradle runs unit tests from the module dir; also accept the repo root so this does not depend on it.
+        val manifest = listOf("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml", "android/app/src/main/AndroidManifest.xml")
+            .map(::File).first { it.isFile }
+        val xml = manifest.readText()
             .substringAfter(".shepherd.ShareActivity").substringBefore("</activity>")
         assertFalse(xml.contains("audio"))
         assertFalse(xml.contains("mimeType=\"*/*\"") || xml.contains("application/*"))

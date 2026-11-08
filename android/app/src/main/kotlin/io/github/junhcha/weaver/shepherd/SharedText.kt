@@ -42,7 +42,7 @@ object SharedText {
             require(resolvedType == null || resolvedType == TEXT_PLAIN || resolvedType == APPLICATION_TXT) {
                 "text/plain 텍스트 파일만 지원합니다."
             }
-            if (type == APPLICATION_TXT) {
+            if (type == APPLICATION_TXT || resolvedType == APPLICATION_TXT) {
                 require(displayName(context, intent)?.lowercase()?.endsWith(".txt") == true) {
                     "확장자가 .txt인 텍스트 파일만 지원합니다."
                 }
