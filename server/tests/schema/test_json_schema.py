@@ -110,7 +110,7 @@ def test_full_proposal_requires_nonnull_entity_ref(ref):
         (None, None, True),
         (0, 100, True),
         (None, 100, False),
-        (0, None, False),
+        (0, None, True),
     ],
 )
 def test_segment_audio_offset_pairs(start, end, expected):
@@ -215,3 +215,24 @@ def test_proposal_nested_items_do_not_repeat_version_keys():
         modified = example("Proposal")
         modified[collection][0]["schema_version"] = 1
         agree(Proposal, modified, False)
+
+
+@pytest.mark.parametrize(
+    "start,end,expected",
+    [(None, None, True), (0, None, True), (0, 100, True), (None, 100, False)],
+)
+def test_exported_thread_allows_unknown_end_with_consumer_parity(start, end, expected):
+    import json
+
+    from weaver.schema import Thread
+
+    from .test_contract import ROOT
+
+    payload = example("Thread")
+    payload["segments"][0].update(start_ms=start, end_ms=end)
+    schema = json.loads((ROOT / "schema/Thread.schema.json").read_text())
+    assert (
+        Draft202012Validator(schema, format_checker=FormatChecker()).is_valid(payload)
+        == expected
+    )
+    agree(Thread, payload, expected)

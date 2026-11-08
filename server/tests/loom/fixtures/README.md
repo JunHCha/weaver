@@ -58,3 +58,37 @@ reads through ArchiveStore.locate and verifies the original byte SHA-256 against
 Source.sha256, raising `payload_mismatch` on corruption before decoding. The general Spinner (#4) can delegate its text
 branch to this adapter. `share_text` bypasses Kakao parsing, retaining the original
 as one segment. No schema v1 changes, LLM, STT or CLI were needed.
+
+## Galaxy call scripts (#56)
+
+`call.txt` is invented, including its title, names and utterances. It follows the
+structural example on issue #56; it contains no real call content. Server input
+is UTF-8 (Android #65 converts the UTF-16 BOM original without losing content).
+Optional Unicode BOM, LF/CRLF and trailing whitespace are retained exactly.
+
+`weaver.loom.call.parse_call(source, text)` returns `ParseResult`. The first
+`AI로 생성된 콘텐츠입니다` line, following nonblank title and all blank lines
+are un-timed, un-speakered preservation Segments. Thread has no separate title
+field; adding one would unnecessarily change v1. A speech Segment spans its
+header `<speaker>  (MM:SS)` and one nonblank body line, including line endings.
+`H:MM:SS` accepts 1–9 hour digits; minutes/seconds are exactly two ASCII digits
+in 00–59. Exact header lookalikes in speech split blocks: text cannot distinguish
+quotation from a real header. A missing blank separator is diagnosed.
+
+All Segments partition the original Unicode code points without gaps. Speakers
+are unchanged, including `나 & 상대` (`overlap_speakers`). start_ms is elapsed
+call time; end_ms is the next recognized block's start only when strictly later.
+Equal/reversed starts diagnose `non_increasing_time` and leave that end null;
+the last end is always null. occurred_at is Source.occurred_at + elapsed time,
+or null if call time is absent/unrepresentable. captured_at is never a fallback.
+
+Empty/header-only blocks retain their header with `empty_utterance`. Unknown and
+malformed lines remain un-timed preservation Segments with `unrecognized_line`
+or `invalid_header`; extra body lines are not silently accepted as normal speech.
+Missing preamble/title and no blocks are diagnosed. Entirely unrecognized,
+empty or NUL-containing inputs fail with safe codes. Diagnostic fields are code,
+1-based line and code-point range only. GalaxyCallParser implements Spinner's
+`TextParser.parse(Source, str) -> Thread`, logs code/count only and advertises
+`galaxy.call.v1`; Spinner installs it by default and still requires a Reviser.
+No regex is used; fixed string splits and bounded integer conversion avoid
+backtracking and huge-int parsing. Tests include megabyte adversarial lines.

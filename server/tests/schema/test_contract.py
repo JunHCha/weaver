@@ -129,7 +129,7 @@ def test_thread_invalid_range_and_audio_pair():
     with pytest.raises(ValidationError):
         Thread.model_validate(payload)
     payload = example("Thread-audio")
-    payload["segments"][0]["end_ms"] = None
+    payload["segments"][0]["start_ms"] = None
     with pytest.raises(ValidationError):
         Thread.model_validate(payload)
 

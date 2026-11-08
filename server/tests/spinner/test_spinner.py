@@ -140,7 +140,7 @@ def test_kakao_uses_existing_parser_without_revision(tmp_path):
 @pytest.mark.parametrize(
     "src,error",
     [
-        (source("call"), "call_parser_not_configured"),
+        (source("call"), "call_reviser_not_configured"),
         (source(kind="fleece"), "unsupported_kind"),
         (source("voice_memo"), "unsupported_text_channel"),
     ],
@@ -636,3 +636,20 @@ CrashSpinner(Store(root, src), root, configuration_version="v1",
     assert spin.spin(src).text == TEXT + "!"
     assert reviser.calls == (0 if phase == "after_commit" else 1)
     assert not any(r["status"] == "running" for r in records(spin))
+
+
+def test_builtin_galaxy_call_parser_in_pipeline(tmp_path):
+    text = "나  (00:01)\n가짜 대화\n\n가상상대  (00:03)\n가짜 응답\n"
+    src = source("call", text=text)
+    store = Store(tmp_path, src, text)
+    reviser = Reviser()
+    spin = Spinner(store, tmp_path, configuration_version="builtin", reviser=reviser)
+    result = spin.spin(src)
+    assert [s.speaker for s in result.segments if s.speaker] == ["나", "가상상대"]
+    assert reviser.calls == 1 and reviser.hints.counterpart == src.hints.counterpart
+    with sqlite3.connect(spin.path) as db:
+        parsed = json.loads(db.execute("SELECT parsed FROM results").fetchone()[0])
+    messages = [s for s in parsed["segments"] if s["speaker"]]
+    assert [s["start_ms"] for s in messages] == [1000, 3000]
+    assert [s["end_ms"] for s in messages] == [3000, None]
+    assert parsed["text"] == text

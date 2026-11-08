@@ -6,7 +6,7 @@ and SHA-256, and decodes UTF-8 without newline conversion.
 
 - `text/kakao`: existing `parse_kakao` adapter, no revision.
 - `text/share_text`: original complete text and one Segment, no revision.
-- `text/call`: requires an injected `TextParser` for Galaxy scripts (#56), then an
+- `text/call`: uses the built-in `GalaxyCallParser` for Galaxy scripts (#56), then an
   injected `Reviser` (production: `LlmReviser(client)`). The manifest's
   `hints.counterpart` becomes `ReviseHints.counterpart`.
 - `fleece` and unused channels fail explicitly. STT is deferred by ADR-028.
@@ -17,14 +17,14 @@ spinner = Spinner.from_config(
     archive,
     settings,
     configuration_version="galaxy-parser1:model-id:spinner.revise.v1",
-    parsers={"call": galaxy_parser},
     reviser=LlmReviser(client),
 )
 thread = spinner.spin(source)
 ```
 
 `TextParser.parse(source, text) -> Thread` is the replacement boundary for each
-channel. No Galaxy parser or live LLM client is constructed implicitly. Callers
+channel; `parsers={"call": custom_parser}` overrides the built-in Galaxy parser.
+No live LLM client is constructed implicitly. Callers
 supply `configuration_version` for engine settings not advertised by adapters.
 The stored key appends a SHA-256 fingerprint of that caller version, timezone key,
 built-in `PARSER_VERSION`, revision `PROMPT_VERSION`, and optional parser/reviser

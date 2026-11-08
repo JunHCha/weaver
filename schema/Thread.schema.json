@@ -26,14 +26,7 @@
     },
     "Segment": {
       "additionalProperties": false,
-      "description": "Text range [start_char,end_char) uses Unicode code points, not UTF-16.\n\nSegment IDs are unique within a Thread. Audio offsets are integer milliseconds\nfrom payload start; message occurred_at and speaker preserve Kakao provenance.",
-      "else": {
-        "properties": {
-          "end_ms": {
-            "type": "integer"
-          }
-        }
-      },
+      "description": "Text range [start_char,end_char) uses Unicode code points, not UTF-16.\n\nSegment IDs are unique within a Thread. Audio offsets are integer milliseconds\nfrom payload start. A known start permits an unknown (null) end; a known\nend requires a strictly earlier start. occurred_at and speaker preserve\nmessage/call provenance.",
       "if": {
         "properties": {
           "start_ms": {

@@ -193,14 +193,15 @@ class Segment(Contract):
     """Text range [start_char,end_char) uses Unicode code points, not UTF-16.
 
     Segment IDs are unique within a Thread. Audio offsets are integer milliseconds
-    from payload start; message occurred_at and speaker preserve Kakao provenance.
+    from payload start. A known start permits an unknown (null) end; a known
+    end requires a strictly earlier start. occurred_at and speaker preserve
+    message/call provenance.
     """
 
     model_config = ConfigDict(
         json_schema_extra={
             "if": {"properties": {"start_ms": {"type": "null"}}},
             "then": {"properties": {"end_ms": {"type": "null"}}},
-            "else": {"properties": {"end_ms": {"type": "integer"}}},
         }
     )
     segment_id: Ref
@@ -215,8 +216,8 @@ class Segment(Contract):
     def valid_ranges(self) -> Self:
         if self.end_char <= self.start_char:
             raise ValueError("text range must be nonempty and ordered")
-        if (self.start_ms is None) != (self.end_ms is None):
-            raise ValueError("audio offsets must both be null or both be present")
+        if self.start_ms is None and self.end_ms is not None:
+            raise ValueError("end_ms requires start_ms")
         if self.start_ms is not None and self.end_ms is not None:
             if self.end_ms <= self.start_ms:
                 raise ValueError("audio range must be nonempty and ordered")
