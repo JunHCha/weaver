@@ -34,6 +34,7 @@ from .errors import (
     TransientError,
     UnsupportedStructuredOutput,
 )
+from .keys import KeyUnavailable, resolve_api_key
 from .ledger import NANO_USD, Ledger
 from .types import BackendReply, Request, Transport
 
@@ -103,10 +104,10 @@ class AnthropicClient:
         try:
             if schema is not None and not self.structured_output:
                 raise UnsupportedStructuredOutput()
-            reference = self.config.api_key_env
-            api_key = self.environ.get(reference, "") if reference else ""
-            if not api_key:
-                raise AuthenticationError()
+            try:
+                api_key = resolve_api_key(self.config, self.environ)
+            except KeyUnavailable:
+                raise AuthenticationError() from None
             json_schema = (
                 anthropic.transform_schema(schema) if schema is not None else None
             )

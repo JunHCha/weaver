@@ -31,7 +31,7 @@ import secrets
 import sqlite3
 import stat
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -242,6 +242,21 @@ class ArchiveStore:
                 "SELECT source_json FROM sources ORDER BY rowid"
             ).fetchall()
         return [Source.model_validate_json(row[0]) for row in rows]
+
+    def source_rows(self, exclude: Collection[str] = ()) -> list[tuple[str, str]]:
+        """(source_id, source_json) in arrival order, without validation, minus
+        ``exclude`` (filtered in SQL). Callers validate each row on its own so
+        one damaged row cannot stop the rest; payload bodies are not read."""
+        with self._read() as conn:
+            conn.execute("CREATE TEMP TABLE skip (source_id TEXT PRIMARY KEY)")
+            conn.executemany(
+                "INSERT OR IGNORE INTO skip VALUES (?)", ((sid,) for sid in exclude)
+            )
+            rows = conn.execute(
+                "SELECT source_id, source_json FROM sources"
+                " WHERE source_id NOT IN (SELECT source_id FROM skip) ORDER BY rowid"
+            ).fetchall()
+        return [(str(sid), str(raw)) for sid, raw in rows]
 
     # ---- Courier CaptureStore ------------------------------------------------
 

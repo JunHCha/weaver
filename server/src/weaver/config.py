@@ -35,6 +35,9 @@ class LlmConfig:
 
     backend: Backend = "anthropic"
     api_key_env: str | None = None
+    # Private key file (0600, owned by the user); takes precedence over
+    # api_key_env because launchd jobs do not inherit the shell environment.
+    api_key_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -191,10 +194,10 @@ def _select_file(path: str | Path | None, env: Mapping[str, str]) -> Path:
     return _path(selected, Path.cwd(), env, "config_file")
 
 
-def _llm_settings(value: object) -> LlmConfig:
+def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfig:
     if not isinstance(value, dict):
         raise ConfigError("llm: expected a table")
-    if value.keys() - {"backend", "api_key_env"}:
+    if value.keys() - {"backend", "api_key_env", "api_key_file"}:
         raise ConfigError("llm: unknown fields (inline credentials are unsupported)")
     backend = value.get("backend", "anthropic")
     if not isinstance(backend, str) or backend not in _BACKENDS:
@@ -205,7 +208,15 @@ def _llm_settings(value: object) -> LlmConfig:
         or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", reference) is None
     ):
         raise ConfigError("llm.api_key_env: expected environment variable name")
-    return LlmConfig(cast(Backend, backend), cast(str | None, reference))
+    key_file: Path | None = None
+    if "api_key_file" in value:
+        raw_file = value["api_key_file"]
+        if not isinstance(raw_file, str) or not (
+            raw_file.startswith("/") or raw_file.startswith("~/")
+        ):
+            raise ConfigError("llm.api_key_file: expected absolute path")
+        key_file = _path(raw_file, base, env, "llm.api_key_file")
+    return LlmConfig(cast(Backend, backend), cast(str | None, reference), key_file)
 
 
 def _identity(path: Path) -> tuple[int, int] | None:
@@ -334,7 +345,7 @@ def load_config(
     feedback = FeedbackSettings(
         **{key.removeprefix("feedback_"): value for key, value in loom_raw.items()}
     )
-    llm = _llm_settings(raw.get("llm", {}))
+    llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
         raise ConfigError("stt: expected a table containing only model_path")
@@ -346,6 +357,11 @@ def load_config(
     stt = SttConfig(_path(model_path, config_file.parent, env, "stt.model_path"))
     boundaries = {**roots, "stt.model_path": stt.model_path}
     _check_boundaries(boundaries)
+    if llm.api_key_file is not None and any(
+        _overlaps(llm.api_key_file, roots[public])
+        for public in ("sync_root", "vault_root")
+    ):
+        raise ConfigError("llm.api_key_file: must not be inside sync_root/vault_root")
     channels: dict[str, Path] = {}
     for name in _CHANNELS:
         expected = roots["sync_root"] / name
