@@ -88,7 +88,7 @@ found in the source material.
 
 | Term | Meaning |
 | --- | --- |
-| Fleece | Raw audio, such as a call recording or voice memo. |
+| Fleece | Raw audio. Not collected in the current flow (ADR-028); the term is kept for the optional, unwired STT adapter. |
 | Thread | A source's text, with segments and provenance retained. |
 | Proposal | A reviewable bundle of proposed entities, relations, schedules, and fact drafts from one source. |
 | Verdict | The review result: approve, edit, revise with instructions, or reject. |
