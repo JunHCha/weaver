@@ -69,7 +69,20 @@ object ReviewDraft {
         p.schedules.forEachIndexed { i, item -> item.ask?.let {
             add(ReviewQuestion("/schedules/$i", it, "${item.title} · ${item.start}", item.confidence))
         } }
+    }.map { q ->
+        val summary = q.summary
+        q.copy(summary = if (summary.codePointCount(0, summary.length) <= 60) summary
+            else summary.substring(0, summary.offsetByCodePoints(0, 59)) + "…")
     }
+
+    private fun confirmedQuestions(p: Proposal, answers: Map<String, String>, confirmations: Set<String>): List<ReviewQuestion> =
+        questions(p).filter { it.canConfirm && it.path in confirmations && answers[it.path].isNullOrBlank() }
+
+    fun hasMixedAnswers(p: Proposal, answers: Map<String, String>, confirmations: Set<String>): Boolean =
+        confirmedQuestions(p, answers, confirmations).isNotEmpty() && questions(p).any { q ->
+            val answer = answers[q.path]?.trim().orEmpty()
+            answer.isNotEmpty() && !(q.path.startsWith("/entities/") && q.ask.choices.any { it.entityId == answer })
+        }
 
     fun validateEdits(p: Proposal, edits: List<Verdict.Edit>): Proposal {
         val original = WeaverCodec.json.encodeToJsonElement(p).jsonObject
@@ -130,13 +143,19 @@ object ReviewDraft {
             val corrected = validateEdits(p, applied)
             val unresolved = questions(corrected).filter { !it.path.startsWith("/schedules/") }
             require(unresolved.isEmpty()) {
-                "미해결 질문 ${unresolved.size}개: ${unresolved.joinToString("; ") { it.summary }}. 질문에 답하거나 다시 짜기를 선택하세요"
+                "미해결 질문 ${unresolved.size}개: ${unresolved.take(3).joinToString("; ") { it.summary }}. 질문에 답하거나 다시 짜기를 선택하세요"
             }
         }
         val instructions = buildList {
             if (instruction.isNotBlank()) add(instruction.trim())
             addAll(regeneration)
-            if (finalKind == Verdict.Kind.REVISE && applied.isNotEmpty()) add("원하는 수정값: ${WeaverCodec.json.encodeToString(applied)}")
+            if (finalKind == Verdict.Kind.REVISE) {
+                val confirmed = confirmedQuestions(p, answers, confirmations)
+                if (confirmed.isNotEmpty()) add("다음 항목은 사용자가 맞다고 확인했으니 내용을 유지하고 다시 묻지 말 것:\n" +
+                    confirmed.joinToString("\n") { "- ${it.summary}" })
+                val otherEdits = applied.filterNot { edit -> confirmed.any { edit.path == "${it.path}/ask" } }
+                if (otherEdits.isNotEmpty()) add("원하는 수정값: ${WeaverCodec.json.encodeToString(otherEdits)}")
+            }
         }.joinToString("\n\n")
         return Verdict(1, p.proposalId, p.rev, finalKind,
             if (finalKind == Verdict.Kind.EDIT) applied else emptyList(),

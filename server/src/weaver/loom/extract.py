@@ -408,7 +408,12 @@ class LlmExtractor:
                 if item.ask is None:
                     item.ask = Ask(question=question, choices=[])
                 elif question not in item.ask.question:
-                    item.ask.question += " " + question
+                    prefix = item.ask.question
+                    if item.ask in generated_questions:
+                        available = 120 - len(question) - 1
+                        if len(prefix) > available:
+                            prefix = prefix[: available - 1] + "…"
+                    item.ask.question = prefix + " " + question
         for ask in generated_questions:
             if len(ask.question) > 120:
                 ask.question = ask.question[:119] + "…"

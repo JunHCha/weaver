@@ -271,4 +271,27 @@ class ReviewPanelTest {
             p.entities.size + p.relations.size + p.entryDrafts.size)
     }
 
+    @Test fun mixedConfirmationAndFreeAnswerDisplaysWarningAndSubmitsRevise() {
+        val (context, p) = prepare { original ->
+            original.copy(entities = original.entities.map { it.copy(ask = null) },
+                entryDrafts = original.entryDrafts.mapIndexed { i, item ->
+                    item.copy(ask = Proposal.Ask("Synthetic question $i", emptyList()))
+                })
+        }
+        open(p)
+        val warning = "자유 답변이 있어 다시 짜기로 전송되며, 확인한 항목이 다시 질문될 수 있습니다"
+        compose.onNodeWithText(warning).assertDoesNotExist()
+        compose.onAllNodesWithText("이 내용이 맞음")[0].performScrollTo().performClick()
+        compose.onAllNodesWithText("답 (자유 답변은 다시 짜기로 전송)")[1]
+            .performScrollTo().performTextReplacement("Synthetic correction")
+        compose.onNodeWithText(warning).performScrollTo().assertExists()
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(Verdict.Kind.REVISE, verdict.verdict)
+        assertTrue(verdict.edits.isEmpty())
+        assertTrue(verdict.instruction!!.contains(ReviewDraft.questions(p).first().summary))
+        assertFalse(verdict.instruction.contains("/entry_drafts/0"))
+    }
+
 }

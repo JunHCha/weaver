@@ -598,4 +598,7 @@ def test_generated_question_stays_bounded_after_request_followup():
         confidence=0.5, title="합성 일정" * 100, blocked_by_request=None
     )
     result, _ = run(data)
-    assert len(result.schedules[0].ask.question) <= 120
+    question = result.schedules[0].ask.question
+    assert len(question) == 120
+    assert question.endswith("… 요청에서 나온 항목인가요?")
+    assert question.startswith("이 일정")

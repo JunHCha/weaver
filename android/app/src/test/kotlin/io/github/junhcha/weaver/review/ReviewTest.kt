@@ -232,4 +232,51 @@ class ReviewTest {
         }
     }
 
+    @Test fun mixedSubmissionPreservesConfirmedTargetsInReviseInstruction() {
+        val base = proposal()
+        val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+        val p = base.copy(entities = base.entities.map { it.copy(ask = ask) })
+        val confirmed = "/entities/0"
+        val answered = "/entities/1"
+        val answers = mapOf(answered to "Synthetic correction")
+        val result = ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "", answers, time, setOf(confirmed))
+        assertEquals(Verdict.Kind.REVISE, result.verdict)
+        assertTrue(result.edits.isEmpty())
+        val instruction = result.instruction!!
+        assertTrue(instruction.contains("다음 항목은 사용자가 맞다고 확인했으니 내용을 유지하고 다시 묻지 말 것"))
+        assertTrue(instruction.contains(ReviewDraft.questions(p).first().summary))
+        assertTrue(instruction.contains("Synthetic correction"))
+        assertFalse(instruction.contains(confirmed))
+        assertFalse(instruction.contains("null"))
+        assertTrue(ReviewDraft.hasMixedAnswers(p, answers, setOf(confirmed)))
+        assertFalse(ReviewDraft.hasMixedAnswers(p, answers, setOf(answered)))
+        assertFalse(ReviewDraft.hasMixedAnswers(p, emptyMap(), setOf(confirmed)))
+        assertEquals(emptyList<String>(), SharedSchema.errors("Verdict", WeaverCodec.encode(result)))
+    }
+
+    @Test fun summariesBoundEveryGroupAtCodePointBoundaryAndErrorsShowOnlyThree() {
+        val base = proposal()
+        val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+        val longValue = "😀".repeat(100)
+        val p = base.copy(entities = base.entities.map { it.copy(name = longValue, ask = ask) },
+            relations = base.relations.map { it.copy(ask = ask) },
+            entryDrafts = base.entryDrafts.map { it.copy(value = JsonPrimitive(longValue), ask = ask) },
+            schedules = base.schedules.map { it.copy(title = longValue, ask = ask) })
+        ReviewDraft.questions(p).forEach { q ->
+            assertEquals(60, q.summary.codePointCount(0, q.summary.length))
+            assertTrue(q.summary.endsWith("…"))
+            assertFalse(q.summary.dropLast(1).last().isHighSurrogate())
+            assertFalse(q.summary.contains(longValue))
+        }
+        val many = base.copy(entities = (0..4).map { i -> base.entities[0].copy(ref = "e${i + 1}", name = "Synthetic $i", ask = ask) },
+            relations = emptyList(), entryDrafts = emptyList(), schedules = emptyList())
+        val questions = ReviewDraft.questions(many)
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ReviewDraft.verdict(many, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time)
+        }
+        assertTrue(error.message!!.contains("미해결 질문 5개"))
+        questions.take(3).forEach { assertTrue(error.message!!.contains(it.summary)) }
+        questions.drop(3).forEach { assertFalse(error.message!!.contains(it.summary)) }
+    }
+
 }

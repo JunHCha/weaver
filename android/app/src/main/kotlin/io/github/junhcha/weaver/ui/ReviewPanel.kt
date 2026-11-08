@@ -101,6 +101,9 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                     OutlinedTextField(value = answers[q.path].orEmpty(), onValueChange = { input = input.copy(answers = answers + (q.path to it)) },
                         enabled = enabled, label = { Text("답 (자유 답변은 다시 짜기로 전송)") }, modifier = Modifier.fillMaxWidth())
                 }
+                if (ReviewDraft.hasMixedAnswers(p, answers, input.confirmations)) {
+                    Text("자유 답변이 있어 다시 짜기로 전송되며, 확인한 항목이 다시 질문될 수 있습니다")
+                }
                 Text("직접 수정: 예 /schedules/0/start · 값은 JSON 문자열이면 따옴표 포함")
                 OutlinedTextField(value = path, onValueChange = { input = input.copy(path = it) }, enabled = enabled, label = { Text("JSON Pointer") })
                 OutlinedTextField(value = value, onValueChange = { input = input.copy(value = it) }, enabled = enabled, label = { Text("최종 값 (JSON)") })
