@@ -91,7 +91,7 @@ def test_complete_request_and_minimal_hints() -> None:
     assert task == "spinner.revise"
     assert system == SYSTEM_PROMPT
     assert PROMPT_VERSION in system
-    assert payload["text"] == original.text
+    assert set(payload) == {"segments", "hints"}
     assert [s["text"] for s in payload["segments"]] == original.text.splitlines()
     assert payload["hints"] == hints.model_dump(mode="json")
     assert set(payload["hints"]["entities"][0]) == {"entity_id", "name", "aliases"}
@@ -191,10 +191,8 @@ def test_invalid_response(reply: object) -> None:
 
 def test_empty_no_call() -> None:
     fake = FakeLlm([])
-    assert (
+    with pytest.raises(RevisionError, match="^no_segments$"):
         LlmReviser(fake, max_request_bytes=1).revise(make_thread([]), ReviseHints())
-        == ""
-    )
     assert fake.calls == []
 
 
@@ -271,7 +269,7 @@ def test_seconds_to_milliseconds_rounds_outward() -> None:
 )
 def test_wire_rejects_unknown_versions_and_fields(patch: dict[str, object]) -> None:
     payload = Revision(segments=[]).model_dump(mode="json") | patch
-    with pytest.raises(ValidationError):
+    with pytest.raises(RevisionError, match="^invalid_revision$"):
         parse_revision(json.dumps(payload))
 
 
@@ -305,7 +303,15 @@ def test_llm_cannot_supply_metadata() -> None:
 
 def test_empty_text_survives_wire_but_not_thread_conversion() -> None:
     original = make_thread(["원문"])
-    wire = LlmReviser(FakeLlm([""])).revise(original, ReviseHints())
+    wire = serialize_revision(
+        Revision(
+            segments=[
+                RevisionSegment(
+                    segment_id="s1", start=None, end=None, speaker=None, text=""
+                )
+            ]
+        )
+    )
     with pytest.raises(RevisionError, match="empty_segment_text"):
         revision_to_thread(parse_revision(wire), original)
 
@@ -353,3 +359,102 @@ def test_same_alias_candidates_remain_hints() -> None:
     wire = LlmReviser(fake).revise(original, hints)
     assert revision_to_thread(parse_revision(wire), original).text == text
     assert json.loads(fake.calls[0][2])["hints"] == hints.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("invalid", ["duplicate", "field"])
+def test_parse_errors_do_not_expose_conversation(invalid: str) -> None:
+    secret = "PRIVATE_CONVERSATION_취소된약속"
+    segment = dict(segment_id="s1", start=None, end=None, speaker=None, text=secret)
+    payload = dict(format_version=1, prompt_version=PROMPT_VERSION, segments=[segment])
+    if invalid == "duplicate":
+        payload["segments"].append(segment.copy())
+    else:
+        segment["unexpected"] = secret
+    with pytest.raises(RevisionError, match="^invalid_revision$") as caught:
+        parse_revision(json.dumps(payload))
+    assert secret not in str(caught.value)
+    assert caught.value.__suppress_context__
+
+
+@pytest.mark.parametrize("text", ["", " ", "\n", "\t\r\n", "\u2003"])
+def test_blank_llm_text_is_rejected(text: str) -> None:
+    with pytest.raises(SchemaMismatch):
+        LlmReviser(FakeLlm([text])).revise(make_thread(["발화"]), ReviseHints())
+
+
+@pytest.mark.parametrize("text", ["", " ", "\n", "\t\r\n", "\u2003"])
+def test_blank_wire_text_cannot_become_thread(text: str) -> None:
+    revision = Revision(
+        segments=[
+            RevisionSegment(
+                segment_id="s1", start=None, end=None, speaker=None, text=text
+            )
+        ]
+    )
+    with pytest.raises(RevisionError, match="^empty_segment_text$"):
+        revision_to_thread(revision, make_thread(["발화"]))
+
+
+@pytest.mark.parametrize("position", ["prefix", "gap", "suffix"])
+def test_uncovered_content_fails_before_llm(position: str) -> None:
+    # Schema v1 allows gaps, but Reviser must not silently discard their content.
+    thread = make_thread(["앞", "뒤"])
+    if position == "prefix":
+        thread.text = "비밀 머리말" + thread.text
+        for segment in thread.segments:
+            segment.start_char += len("비밀 머리말")
+            segment.end_char += len("비밀 머리말")
+    elif position == "gap":
+        thread.text = "앞\n비밀 누락\n뒤"
+        thread.segments[1].start_char = len(thread.text) - 1
+        thread.segments[1].end_char = len(thread.text)
+    else:
+        thread.text += "비밀 꼬리말"
+    thread = Thread.model_validate(thread.model_dump())
+    fake = FakeLlm(["앞", "뒤"])
+    with pytest.raises(RevisionError, match="^uncovered_text$") as caught:
+        LlmReviser(fake).revise(thread, ReviseHints())
+    assert "비밀" not in str(caught.value)
+    assert not fake.calls
+
+
+@pytest.mark.parametrize("ordering", ["overlap", "reversed"])
+def test_invalid_character_order_fails_before_llm(ordering: str) -> None:
+    thread = make_thread(["앞 문장", "뒤 문장"])
+    if ordering == "overlap":
+        thread.segments[1].start_char = 2
+    else:
+        thread.segments.reverse()
+    thread = Thread.model_validate(thread.model_dump())
+    fake = FakeLlm(["앞 문장", "뒤 문장"])
+    with pytest.raises(RevisionError, match="^segment_char_order$"):
+        LlmReviser(fake).revise(thread, ReviseHints())
+    assert not fake.calls
+
+
+@pytest.mark.parametrize("counterpart", ["", " ", "\n"])
+def test_counterpart_must_contain_non_whitespace(counterpart: str) -> None:
+    with pytest.raises(ValidationError):
+        ReviseHints(counterpart=counterpart)
+
+
+def test_whitespace_separators_need_no_duplicate_full_text() -> None:
+    thread = make_thread(["앞", "뒤"])
+    thread.text = " \n앞\t\n뒤\n "
+    thread.segments[0].start_char, thread.segments[0].end_char = 2, 3
+    thread.segments[1].start_char, thread.segments[1].end_char = 5, 6
+    thread = Thread.model_validate(thread.model_dump())
+    fake = FakeLlm(["앞", "뒤"])
+    wire = LlmReviser(fake).revise(thread, ReviseHints())
+    assert revision_to_thread(parse_revision(wire), thread).text == "앞\n뒤"
+    payload = json.loads(fake.calls[0][2])
+    assert set(payload) == {"segments", "hints"}
+    assert [s["text"] for s in payload["segments"]] == ["앞", "뒤"]
+
+
+def test_thread_conversion_cannot_discard_uncovered_content() -> None:
+    original = make_thread(["발화"])
+    wire = LlmReviser(FakeLlm(["발화"])).revise(original, ReviseHints())
+    original.text += "비밀 꼬리말"
+    with pytest.raises(RevisionError, match="^uncovered_text$"):
+        revision_to_thread(parse_revision(wire), original)
