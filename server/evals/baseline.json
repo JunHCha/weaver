@@ -1,0 +1,4835 @@
+{
+  "report_version": 1,
+  "scoring_version": "v1",
+  "dataset_hash": "0ecfe9badc9d3b02040f2c5c5ee1cbeceb7b630cc85593c2cb3db43900b255a4",
+  "dataset_versions": [
+    1
+  ],
+  "run_id": "ab303769871041ec999c88cbe3069510",
+  "started_at": "2026-11-08T13:26:34.469412+00:00",
+  "backend": "fixture",
+  "models": [
+    "fixture.v1"
+  ],
+  "fixture_hash": "f5ccde2f2c8750c9b95d26ffb5ba4b5523fbaa73cacbbccb0900f53185003cdc",
+  "prompts": {
+    "extract": "loom.extract.v1",
+    "revise": "spinner.revise.v2"
+  },
+  "prompt_hashes": {
+    "extract": "cd0c1ae070dc11490004bc1642e9c41787626c7f96d68f3084e10b03cb71495d",
+    "revise": "4366fa3469443730f32d923356fb966abf5eeb6c8cf11c9817822145082d3427"
+  },
+  "implementation_hash": "b841bce0400e106e932129c5c82371594ef6066a7bf4148a993e703326fc8570",
+  "sample_count": 32,
+  "metrics": {
+    "extract.entities.extra": {
+      "numerator": 8,
+      "denominator": 57,
+      "score": 0.14035087719298245
+    },
+    "extract.entities.field.ask": {
+      "numerator": 54,
+      "denominator": 57,
+      "score": 0.9473684210526315
+    },
+    "extract.entities.field.entity_id": {
+      "numerator": 49,
+      "denominator": 57,
+      "score": 0.8596491228070176
+    },
+    "extract.entities.field.name": {
+      "numerator": 57,
+      "denominator": 57,
+      "score": 1.0
+    },
+    "extract.entities.field.type": {
+      "numerator": 57,
+      "denominator": 57,
+      "score": 1.0
+    },
+    "extract.entities.missing": {
+      "numerator": 8,
+      "denominator": 57,
+      "score": 0.14035087719298245
+    },
+    "extract.entities.precision": {
+      "numerator": 49,
+      "denominator": 57,
+      "score": 0.8596491228070176
+    },
+    "extract.entities.recall": {
+      "numerator": 49,
+      "denominator": 57,
+      "score": 0.8596491228070176
+    },
+    "extract.entry_drafts.extra": {
+      "numerator": 7,
+      "denominator": 37,
+      "score": 0.1891891891891892
+    },
+    "extract.entry_drafts.field.ask": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.blocked_by_request": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.entities": {
+      "numerator": 30,
+      "denominator": 37,
+      "score": 0.8108108108108109
+    },
+    "extract.entry_drafts.field.field": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.kind": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.occurred_at": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.request": {
+      "numerator": 36,
+      "denominator": 37,
+      "score": 0.972972972972973
+    },
+    "extract.entry_drafts.field.resolves": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.retracts": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.field.supersedes": {
+      "numerator": 37,
+      "denominator": 37,
+      "score": 1.0
+    },
+    "extract.entry_drafts.missing": {
+      "numerator": 7,
+      "denominator": 37,
+      "score": 0.1891891891891892
+    },
+    "extract.entry_drafts.precision": {
+      "numerator": 30,
+      "denominator": 37,
+      "score": 0.8108108108108109
+    },
+    "extract.entry_drafts.recall": {
+      "numerator": 30,
+      "denominator": 37,
+      "score": 0.8108108108108109
+    },
+    "extract.exact": {
+      "numerator": 25,
+      "denominator": 32,
+      "score": 0.78125
+    },
+    "extract.relation.같은논의.precision": {
+      "numerator": 2,
+      "denominator": 2,
+      "score": 1.0
+    },
+    "extract.relation.같은논의.recall": {
+      "numerator": 2,
+      "denominator": 2,
+      "score": 1.0
+    },
+    "extract.relation.소속.precision": {
+      "numerator": 2,
+      "denominator": 4,
+      "score": 0.5
+    },
+    "extract.relation.소속.recall": {
+      "numerator": 2,
+      "denominator": 4,
+      "score": 0.5
+    },
+    "extract.relation.원인.precision": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "extract.relation.원인.recall": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "extract.relation.참석.precision": {
+      "numerator": 6,
+      "denominator": 10,
+      "score": 0.6
+    },
+    "extract.relation.참석.recall": {
+      "numerator": 6,
+      "denominator": 10,
+      "score": 0.6
+    },
+    "extract.relation.후속조치.precision": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "extract.relation.후속조치.recall": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "extract.relations.extra": {
+      "numerator": 6,
+      "denominator": 18,
+      "score": 0.3333333333333333
+    },
+    "extract.relations.field.ask": {
+      "numerator": 18,
+      "denominator": 18,
+      "score": 1.0
+    },
+    "extract.relations.field.from": {
+      "numerator": 12,
+      "denominator": 18,
+      "score": 0.6666666666666666
+    },
+    "extract.relations.field.to": {
+      "numerator": 18,
+      "denominator": 18,
+      "score": 1.0
+    },
+    "extract.relations.field.type": {
+      "numerator": 18,
+      "denominator": 18,
+      "score": 1.0
+    },
+    "extract.relations.missing": {
+      "numerator": 6,
+      "denominator": 18,
+      "score": 0.3333333333333333
+    },
+    "extract.relations.precision": {
+      "numerator": 12,
+      "denominator": 18,
+      "score": 0.6666666666666666
+    },
+    "extract.relations.recall": {
+      "numerator": 12,
+      "denominator": 18,
+      "score": 0.6666666666666666
+    },
+    "extract.schedules.extra": {
+      "numerator": 3,
+      "denominator": 13,
+      "score": 0.23076923076923078
+    },
+    "extract.schedules.field.ask": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "extract.schedules.field.blocked_by_request": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "extract.schedules.field.end": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "extract.schedules.field.entities": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "extract.schedules.field.entry_ref": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "extract.schedules.field.start": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "extract.schedules.missing": {
+      "numerator": 3,
+      "denominator": 13,
+      "score": 0.23076923076923078
+    },
+    "extract.schedules.precision": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "extract.schedules.recall": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "extract.success": {
+      "numerator": 32,
+      "denominator": 32,
+      "score": 1.0
+    },
+    "pipeline.entities.extra": {
+      "numerator": 8,
+      "denominator": 52,
+      "score": 0.15384615384615385
+    },
+    "pipeline.entities.field.ask": {
+      "numerator": 44,
+      "denominator": 52,
+      "score": 0.8461538461538461
+    },
+    "pipeline.entities.field.entity_id": {
+      "numerator": 44,
+      "denominator": 52,
+      "score": 0.8461538461538461
+    },
+    "pipeline.entities.field.name": {
+      "numerator": 52,
+      "denominator": 52,
+      "score": 1.0
+    },
+    "pipeline.entities.field.type": {
+      "numerator": 52,
+      "denominator": 52,
+      "score": 1.0
+    },
+    "pipeline.entities.missing": {
+      "numerator": 8,
+      "denominator": 52,
+      "score": 0.15384615384615385
+    },
+    "pipeline.entities.precision": {
+      "numerator": 44,
+      "denominator": 52,
+      "score": 0.8461538461538461
+    },
+    "pipeline.entities.recall": {
+      "numerator": 44,
+      "denominator": 52,
+      "score": 0.8461538461538461
+    },
+    "pipeline.entry_drafts.extra": {
+      "numerator": 7,
+      "denominator": 33,
+      "score": 0.21212121212121213
+    },
+    "pipeline.entry_drafts.field.ask": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.blocked_by_request": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.entities": {
+      "numerator": 26,
+      "denominator": 34,
+      "score": 0.7647058823529411
+    },
+    "pipeline.entry_drafts.field.field": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.kind": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.occurred_at": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.request": {
+      "numerator": 32,
+      "denominator": 34,
+      "score": 0.9411764705882353
+    },
+    "pipeline.entry_drafts.field.resolves": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.retracts": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.field.supersedes": {
+      "numerator": 33,
+      "denominator": 34,
+      "score": 0.9705882352941176
+    },
+    "pipeline.entry_drafts.missing": {
+      "numerator": 8,
+      "denominator": 34,
+      "score": 0.23529411764705882
+    },
+    "pipeline.entry_drafts.precision": {
+      "numerator": 26,
+      "denominator": 33,
+      "score": 0.7878787878787878
+    },
+    "pipeline.entry_drafts.recall": {
+      "numerator": 26,
+      "denominator": 34,
+      "score": 0.7647058823529411
+    },
+    "pipeline.exact": {
+      "numerator": 21,
+      "denominator": 29,
+      "score": 0.7241379310344828
+    },
+    "pipeline.relation.같은논의.precision": {
+      "numerator": 2,
+      "denominator": 2,
+      "score": 1.0
+    },
+    "pipeline.relation.같은논의.recall": {
+      "numerator": 2,
+      "denominator": 2,
+      "score": 1.0
+    },
+    "pipeline.relation.소속.precision": {
+      "numerator": 1,
+      "denominator": 3,
+      "score": 0.3333333333333333
+    },
+    "pipeline.relation.소속.recall": {
+      "numerator": 1,
+      "denominator": 3,
+      "score": 0.3333333333333333
+    },
+    "pipeline.relation.원인.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "pipeline.relation.원인.recall": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "pipeline.relation.참석.precision": {
+      "numerator": 6,
+      "denominator": 10,
+      "score": 0.6
+    },
+    "pipeline.relation.참석.recall": {
+      "numerator": 6,
+      "denominator": 10,
+      "score": 0.6
+    },
+    "pipeline.relation.후속조치.precision": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "pipeline.relation.후속조치.recall": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "pipeline.relations.extra": {
+      "numerator": 6,
+      "denominator": 16,
+      "score": 0.375
+    },
+    "pipeline.relations.field.ask": {
+      "numerator": 16,
+      "denominator": 16,
+      "score": 1.0
+    },
+    "pipeline.relations.field.from": {
+      "numerator": 10,
+      "denominator": 16,
+      "score": 0.625
+    },
+    "pipeline.relations.field.to": {
+      "numerator": 16,
+      "denominator": 16,
+      "score": 1.0
+    },
+    "pipeline.relations.field.type": {
+      "numerator": 16,
+      "denominator": 16,
+      "score": 1.0
+    },
+    "pipeline.relations.missing": {
+      "numerator": 6,
+      "denominator": 16,
+      "score": 0.375
+    },
+    "pipeline.relations.precision": {
+      "numerator": 10,
+      "denominator": 16,
+      "score": 0.625
+    },
+    "pipeline.relations.recall": {
+      "numerator": 10,
+      "denominator": 16,
+      "score": 0.625
+    },
+    "pipeline.schedules.extra": {
+      "numerator": 3,
+      "denominator": 13,
+      "score": 0.23076923076923078
+    },
+    "pipeline.schedules.field.ask": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "pipeline.schedules.field.blocked_by_request": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "pipeline.schedules.field.end": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "pipeline.schedules.field.entities": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "pipeline.schedules.field.entry_ref": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "pipeline.schedules.field.start": {
+      "numerator": 13,
+      "denominator": 13,
+      "score": 1.0
+    },
+    "pipeline.schedules.missing": {
+      "numerator": 3,
+      "denominator": 13,
+      "score": 0.23076923076923078
+    },
+    "pipeline.schedules.precision": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "pipeline.schedules.recall": {
+      "numerator": 10,
+      "denominator": 13,
+      "score": 0.7692307692307693
+    },
+    "pipeline.success": {
+      "numerator": 29,
+      "denominator": 29,
+      "score": 1.0
+    },
+    "raw_pipeline.entities.extra": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "raw_pipeline.entities.field.ask": {
+      "numerator": 0,
+      "denominator": 22,
+      "score": 0.0
+    },
+    "raw_pipeline.entities.field.entity_id": {
+      "numerator": 0,
+      "denominator": 22,
+      "score": 0.0
+    },
+    "raw_pipeline.entities.field.name": {
+      "numerator": 1,
+      "denominator": 22,
+      "score": 0.045454545454545456
+    },
+    "raw_pipeline.entities.field.type": {
+      "numerator": 1,
+      "denominator": 22,
+      "score": 0.045454545454545456
+    },
+    "raw_pipeline.entities.missing": {
+      "numerator": 22,
+      "denominator": 22,
+      "score": 1.0
+    },
+    "raw_pipeline.entities.precision": {
+      "numerator": 0,
+      "denominator": 1,
+      "score": 0.0
+    },
+    "raw_pipeline.entities.recall": {
+      "numerator": 0,
+      "denominator": 22,
+      "score": 0.0
+    },
+    "raw_pipeline.entry_drafts.extra": {
+      "numerator": 1,
+      "denominator": 1,
+      "score": 1.0
+    },
+    "raw_pipeline.entry_drafts.field.ask": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.blocked_by_request": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.entities": {
+      "numerator": 0,
+      "denominator": 15,
+      "score": 0.0
+    },
+    "raw_pipeline.entry_drafts.field.field": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.kind": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.occurred_at": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.request": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.resolves": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.retracts": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.field.supersedes": {
+      "numerator": 1,
+      "denominator": 15,
+      "score": 0.06666666666666667
+    },
+    "raw_pipeline.entry_drafts.missing": {
+      "numerator": 15,
+      "denominator": 15,
+      "score": 1.0
+    },
+    "raw_pipeline.entry_drafts.precision": {
+      "numerator": 0,
+      "denominator": 1,
+      "score": 0.0
+    },
+    "raw_pipeline.entry_drafts.recall": {
+      "numerator": 0,
+      "denominator": 15,
+      "score": 0.0
+    },
+    "raw_pipeline.exact": {
+      "numerator": 1,
+      "denominator": 12,
+      "score": 0.08333333333333333
+    },
+    "raw_pipeline.relation.같은논의.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.같은논의.recall": {
+      "numerator": 0,
+      "denominator": 2,
+      "score": 0.0
+    },
+    "raw_pipeline.relation.소속.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.소속.recall": {
+      "numerator": 0,
+      "denominator": 1,
+      "score": 0.0
+    },
+    "raw_pipeline.relation.원인.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.원인.recall": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.참석.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.참석.recall": {
+      "numerator": 0,
+      "denominator": 4,
+      "score": 0.0
+    },
+    "raw_pipeline.relation.후속조치.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relation.후속조치.recall": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relations.extra": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relations.field.ask": {
+      "numerator": 0,
+      "denominator": 7,
+      "score": 0.0
+    },
+    "raw_pipeline.relations.field.from": {
+      "numerator": 0,
+      "denominator": 7,
+      "score": 0.0
+    },
+    "raw_pipeline.relations.field.to": {
+      "numerator": 0,
+      "denominator": 7,
+      "score": 0.0
+    },
+    "raw_pipeline.relations.field.type": {
+      "numerator": 0,
+      "denominator": 7,
+      "score": 0.0
+    },
+    "raw_pipeline.relations.missing": {
+      "numerator": 7,
+      "denominator": 7,
+      "score": 1.0
+    },
+    "raw_pipeline.relations.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.relations.recall": {
+      "numerator": 0,
+      "denominator": 7,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.extra": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.schedules.field.ask": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.field.blocked_by_request": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.field.end": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.field.entities": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.field.entry_ref": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.field.start": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.schedules.missing": {
+      "numerator": 5,
+      "denominator": 5,
+      "score": 1.0
+    },
+    "raw_pipeline.schedules.precision": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "raw_pipeline.schedules.recall": {
+      "numerator": 0,
+      "denominator": 5,
+      "score": 0.0
+    },
+    "raw_pipeline.success": {
+      "numerator": 12,
+      "denominator": 12,
+      "score": 1.0
+    },
+    "refine.context_recall": {
+      "numerator": 32,
+      "denominator": 33,
+      "score": 0.9696969696969697
+    },
+    "refine.empty_correct": {
+      "numerator": 0,
+      "denominator": 0,
+      "score": null
+    },
+    "refine.reject_clear": {
+      "numerator": 0,
+      "denominator": 1,
+      "score": 0.0
+    },
+    "refine.selected_characters": {
+      "numerator": 2417,
+      "denominator": 2646,
+      "score": 0.9134542705971277
+    },
+    "refine.trigger_recall": {
+      "numerator": 30,
+      "denominator": 33,
+      "score": 0.9090909090909091
+    },
+    "revise.exact": {
+      "numerator": 29,
+      "denominator": 29,
+      "score": 1.0
+    },
+    "revise.lines": {
+      "numerator": 165,
+      "denominator": 165,
+      "score": 1.0
+    },
+    "revise.success": {
+      "numerator": 29,
+      "denominator": 29,
+      "score": 1.0
+    }
+  },
+  "categories": {
+    "channel:call": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 7,
+          "denominator": 12,
+          "score": 0.5833333333333334
+        },
+        "extract.success": {
+          "numerator": 12,
+          "denominator": 12,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 6,
+          "denominator": 12,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 12,
+          "denominator": 12,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 1,
+          "denominator": 12,
+          "score": 0.08333333333333333
+        },
+        "raw_pipeline.success": {
+          "numerator": 12,
+          "denominator": 12,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 13,
+          "denominator": 14,
+          "score": 0.9285714285714286
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 12,
+          "denominator": 14,
+          "score": 0.8571428571428571
+        },
+        "revise.exact": {
+          "numerator": 12,
+          "denominator": 12,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 105,
+          "denominator": 105,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 12,
+          "denominator": 12,
+          "score": 1.0
+        }
+      }
+    },
+    "channel:kakao": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 10,
+          "denominator": 11,
+          "score": 0.9090909090909091
+        },
+        "extract.success": {
+          "numerator": 11,
+          "denominator": 11,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 8,
+          "denominator": 9,
+          "score": 0.8888888888888888
+        },
+        "pipeline.success": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 11,
+          "denominator": 11,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 10,
+          "denominator": 11,
+          "score": 0.9090909090909091
+        },
+        "revise.exact": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 52,
+          "denominator": 52,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        }
+      }
+    },
+    "channel:share_text": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 8,
+          "denominator": 9,
+          "score": 0.8888888888888888
+        },
+        "extract.success": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 7,
+          "denominator": 8,
+          "score": 0.875
+        },
+        "pipeline.success": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:absolute_date": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:affiliation": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 10,
+          "denominator": 10,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:alias": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 15,
+          "denominator": 15,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:attendance": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 5,
+          "denominator": 6,
+          "score": 0.8333333333333334
+        },
+        "extract.success": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 4,
+          "denominator": 6,
+          "score": 0.6666666666666666
+        },
+        "pipeline.success": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 8,
+          "denominator": 9,
+          "score": 0.8888888888888888
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 7,
+          "denominator": 9,
+          "score": 0.7777777777777778
+        },
+        "revise.exact": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 29,
+          "denominator": 29,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:boundary": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:cancel": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 16,
+          "denominator": 16,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:change": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 3,
+          "denominator": 4,
+          "score": 0.75
+        },
+        "extract.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:chitchat": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 16,
+          "denominator": 16,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:decision": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:discussion": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 10,
+          "denominator": 10,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:empty": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 16,
+          "denominator": 16,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:follow_up": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 10,
+          "denominator": 10,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:homonym": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 15,
+          "denominator": 15,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:link_pending": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 3,
+          "denominator": 4,
+          "score": 0.75
+        },
+        "extract.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 3,
+          "denominator": 4,
+          "score": 0.75
+        },
+        "pipeline.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 29,
+          "denominator": 29,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:missing_info": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 6,
+          "denominator": 7,
+          "score": 0.8571428571428571
+        },
+        "extract.success": {
+          "numerator": 7,
+          "denominator": 7,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 6,
+          "denominator": 7,
+          "score": 0.8571428571428571
+        },
+        "pipeline.success": {
+          "numerator": 7,
+          "denominator": 7,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 4,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 8,
+          "denominator": 9,
+          "score": 0.8888888888888888
+        },
+        "revise.exact": {
+          "numerator": 7,
+          "denominator": 7,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 41,
+          "denominator": 41,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 7,
+          "denominator": 7,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:missing_reference": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:multi_answer": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 10,
+          "denominator": 10,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:promise": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 3,
+          "score": 0.3333333333333333
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 4,
+          "denominator": 5,
+          "score": 0.8
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 5,
+          "score": 0.6
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:pseudonym": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:relation_direction": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 15,
+          "denominator": 15,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:relative_date": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 16,
+          "denominator": 23,
+          "score": 0.6956521739130435
+        },
+        "extract.success": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 15,
+          "denominator": 23,
+          "score": 0.6521739130434783
+        },
+        "pipeline.success": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 8,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 8,
+          "denominator": 8,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 26,
+          "denominator": 27,
+          "score": 0.9629629629629629
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 24,
+          "denominator": 27,
+          "score": 0.8888888888888888
+        },
+        "revise.exact": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 122,
+          "denominator": 122,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 23,
+          "denominator": 23,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:request": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 4,
+          "denominator": 5,
+          "score": 0.8
+        },
+        "extract.success": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 4,
+          "denominator": 5,
+          "score": 0.8
+        },
+        "pipeline.success": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 2,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 30,
+          "denominator": 30,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:reschedule": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 14,
+          "denominator": 14,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:stt_name": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 3,
+          "score": 0.6666666666666666
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 3,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 4,
+          "score": 0.75
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 4,
+          "score": 0.75
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 24,
+          "denominator": 24,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:stt_number": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:stt_spacing": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 2,
+          "denominator": 4,
+          "score": 0.5
+        },
+        "extract.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 2,
+          "denominator": 4,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 4,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 36,
+          "denominator": 36,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 4,
+          "denominator": 4,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:stt_word": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 3,
+          "score": 0.3333333333333333
+        },
+        "extract.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 3,
+          "score": 0.3333333333333333
+        },
+        "pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 3,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 27,
+          "denominator": 27,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 3,
+          "denominator": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "tag:timezone": {
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "extract.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "pipeline.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "revise.lines": {
+          "numerator": 10,
+          "denominator": 10,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "call-001",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-002",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-003",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-004",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-005",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-006",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-007",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-008",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-009",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-010",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-011",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 9,
+          "denominator": 9,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "call-012",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "raw_pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "raw_pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-001",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 2,
+          "score": 0.5
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-002",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-003",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-004",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-005",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-006",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-007",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-008",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-009",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 5,
+          "denominator": 5,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-010",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 7,
+          "denominator": 7,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "kakao-011",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 2,
+          "denominator": 2,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 6,
+          "denominator": 6,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-001",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-002",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-003",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-004",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-005",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-006",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-007",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-008",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "share-009",
+      "metrics": {
+        "extract.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "extract.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.context_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.trigger_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "refine.reject_clear": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "refine.empty_correct": {
+          "numerator": 0,
+          "denominator": 0,
+          "score": null
+        },
+        "revise.lines": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.exact": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "revise.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        },
+        "pipeline.exact": {
+          "numerator": 0,
+          "denominator": 1,
+          "score": 0.0
+        },
+        "pipeline.success": {
+          "numerator": 1,
+          "denominator": 1,
+          "score": 1.0
+        }
+      }
+    }
+  ]
+}
