@@ -21,8 +21,10 @@ from pydantic import ValidationError
 
 from weaver.config import ServerConfig, SpinnerSettings
 from weaver.llm import LlmError
+from weaver.loom.call import GalaxyCallParser
 from weaver.schema.models import Source, Thread
 from weaver.spinner.reviser import (
+    FORMAT_VERSION,
     PROMPT_VERSION,
     ReviseHints,
     Reviser,
@@ -73,7 +75,8 @@ class Spinner:
         self.path = (state_root / "spinner.sqlite3").resolve()
         self._store = store
         self._timezone = timezone or ZoneInfo("Asia/Seoul")
-        self._parsers = dict(parsers or {})
+        self._parsers: dict[str, TextParser] = {"call": GalaxyCallParser()}
+        self._parsers.update(parsers or {})
         self._reviser = reviser
         fingerprint = json.dumps(
             [
@@ -81,6 +84,7 @@ class Spinner:
                 self._timezone.key,
                 PARSER_VERSION,
                 PROMPT_VERSION,
+                FORMAT_VERSION,
                 sorted(
                     (channel, getattr(parser, "version", None))
                     for channel, parser in self._parsers.items()

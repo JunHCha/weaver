@@ -59,7 +59,9 @@ class Parser:
         # Fake call parser supplies the same segment provenance as a real parser.
         plain = src.model_copy(update={"channel": "share_text"})
         result = text_to_thread(plain, text, timezone=ZoneInfo("Asia/Seoul"))
-        return result.model_copy(update={"channel": src.channel})
+        # One speech Segment, so the Reviser contract treats it as revisable.
+        segments = [s.model_copy(update={"speaker": "합성"}) for s in result.segments]
+        return result.model_copy(update={"channel": src.channel, "segments": segments})
 
 
 class Reviser:
@@ -81,7 +83,9 @@ class Reviser:
                         start=None,
                         end=None,
                         speaker=s.speaker,
-                        text=thread.text[s.start_char : s.end_char] + "!",
+                        # Structural (speakerless) Segments must pass through.
+                        text=thread.text[s.start_char : s.end_char]
+                        + ("!" if s.speaker else ""),
                     )
                     for s in thread.segments
                 ]
@@ -140,7 +144,7 @@ def test_kakao_uses_existing_parser_without_revision(tmp_path):
 @pytest.mark.parametrize(
     "src,error",
     [
-        (source("call"), "call_parser_not_configured"),
+        (source("call"), "call_reviser_not_configured"),
         (source(kind="fleece"), "unsupported_kind"),
         (source("voice_memo"), "unsupported_text_channel"),
     ],
@@ -636,3 +640,73 @@ CrashSpinner(Store(root, src), root, configuration_version="v1",
     assert spin.spin(src).text == TEXT + "!"
     assert reviser.calls == (0 if phase == "after_commit" else 1)
     assert not any(r["status"] == "running" for r in records(spin))
+
+
+def test_builtin_galaxy_call_parser_in_pipeline(tmp_path):
+    text = "나  (00:01)\n가짜 대화\n\n가상상대  (00:03)\n가짜 응답\n"
+    src = source("call", text=text)
+    store = Store(tmp_path, src, text)
+    reviser = Reviser()
+    spin = Spinner(store, tmp_path, configuration_version="builtin", reviser=reviser)
+    result = spin.spin(src)
+    assert [s.speaker for s in result.segments if s.speaker] == ["나", "가상상대"]
+    assert reviser.calls == 1 and reviser.hints.counterpart == src.hints.counterpart
+    with sqlite3.connect(spin.path) as db:
+        parsed = json.loads(db.execute("SELECT parsed FROM results").fetchone()[0])
+    messages = [s for s in parsed["segments"] if s["speaker"]]
+    assert [s["start_ms"] for s in messages] == [1000, 3000]
+    assert [s["end_ms"] for s in messages] == [3000, None]
+    assert parsed["text"] == text
+
+
+def test_builtin_galaxy_call_parser_with_llm_reviser(tmp_path):
+    from pydantic import BaseModel
+
+    from weaver.spinner.reviser import LlmReviser
+
+    class Client:
+        version = "fake-client"
+
+        def __init__(self):
+            self.users = []
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            self.users.append(json.loads(user))
+            return schema.model_validate(
+                {
+                    "segments": [
+                        {"segment_id": s["segment_id"], "text": s["text"] + "!"}
+                        for s in self.users[-1]["segments"]
+                    ]
+                }
+            )
+
+        def generate_text(self, task: str, system: str, user: str) -> str:
+            raise AssertionError()
+
+    text = (
+        "AI로 생성된 콘텐츠입니다\r\n\r\n가짜 제목\r\n\r\n"
+        "나  (00:01)\r\n가짜 대화\r\n\r\n가상상대  (00:03)\r\n가짜 응답\r\n"
+    )
+    src = source("call", text=text, hints={"counterpart": "가상상대"})
+    store = Store(tmp_path, src, text)
+    client = Client()
+    spin = Spinner(
+        store, tmp_path, configuration_version="builtin", reviser=LlmReviser(client)
+    )
+    result = spin.spin(src)
+    sent = client.users[0]["segments"]
+    assert [s["text"] for s in sent] == ["가짜 대화", "가짜 응답"]
+    assert [(s["start"], s["end"]) for s in sent] == [(1.0, 3.0), (3.0, None)]
+    assert client.users[0]["hints"]["counterpart"] == "가상상대"
+    assert result.text == text.replace("가짜 대화", "가짜 대화!").replace(
+        "가짜 응답", "가짜 응답!"
+    )
+    speech = [s for s in result.segments if s.speaker]
+    assert [result.text[s.start_char : s.end_char] for s in speech] == [
+        "가짜 대화!",
+        "가짜 응답!",
+    ]
+    assert [(s.start_ms, s.end_ms) for s in speech] == [(1000, 3000), (3000, None)]
