@@ -458,45 +458,53 @@ class Proposal(Versioned):
 
     @model_validator(mode="after")
     def reference_integrity(self) -> Self:
-        entity_refs: set[str] = set()
-        for entity in self.entities:
-            if entity.ref is None or entity.ref in entity_refs:
-                raise ValueError("proposal entities require unique non-null refs")
-            entity_refs.add(entity.ref)
-        known = entity_refs | {
-            e.entity_id for e in self.entities if e.entity_id is not None
-        }
-        draft_refs = [d.ref for d in self.entry_drafts]
-        schedule_refs = [s.ref for s in self.schedules]
-        all_refs = list(entity_refs) + draft_refs + schedule_refs
-        if len(all_refs) != len(set(all_refs)):
-            raise ValueError("local refs must be unique across proposal items")
-        drafts = {d.ref: d for d in self.entry_drafts}
-        requests = {d.ref for d in self.entry_drafts if d.kind == "요청"}
-
-        def check_entities(refs: list[str]) -> None:
-            if any(ref not in known for ref in refs):
-                raise ValueError("dangling entity reference")
-
-        for relation in self.relations:
-            check_entities([r for r in (relation.from_ref, relation.to) if r != "this"])
-        for draft in self.entry_drafts:
-            check_entities(draft.entities)
-            if draft.request is not None:
-                check_entities([draft.request.requester, *draft.request.targets])
-            if draft.blocked_by_request is not None:
-                if draft.blocked_by_request not in requests or draft.ref in requests:
-                    raise ValueError(
-                        "blocked_by_request must reference another request"
-                    )
-        for schedule in self.schedules:
-            check_entities(schedule.entities)
-            schedule_draft = drafts.get(schedule.entry_ref)
-            if schedule_draft is None or schedule_draft.kind != "일정":
-                raise ValueError("schedule entry_ref must reference an 일정 draft")
-            if schedule.blocked_by_request != schedule_draft.blocked_by_request:
-                raise ValueError("schedule must preserve its draft execution block")
+        validate_proposal_references(
+            self.entities, self.schedules, self.relations, self.entry_drafts
+        )
         return self
+
+
+def validate_proposal_references(
+    entities: list[ProposalEntity],
+    schedules: list[Schedule],
+    relations: list[RelationData],
+    entry_drafts: list[EntryDraft],
+) -> None:
+    """Shared integrity check for extraction and wire Proposal boundaries."""
+    entity_refs: set[str] = set()
+    for entity in entities:
+        if entity.ref is None or entity.ref in entity_refs:
+            raise ValueError("proposal entities require unique non-null refs")
+        entity_refs.add(entity.ref)
+    known = entity_refs | {e.entity_id for e in entities if e.entity_id is not None}
+    draft_refs = [d.ref for d in entry_drafts]
+    schedule_refs = [s.ref for s in schedules]
+    all_refs = list(entity_refs) + draft_refs + schedule_refs
+    if len(all_refs) != len(set(all_refs)):
+        raise ValueError("local refs must be unique across proposal items")
+    drafts = {d.ref: d for d in entry_drafts}
+    requests = {d.ref for d in entry_drafts if d.kind == "요청"}
+
+    def check_entities(refs: list[str]) -> None:
+        if any(ref not in known for ref in refs):
+            raise ValueError("dangling entity reference")
+
+    for relation in relations:
+        check_entities([r for r in (relation.from_ref, relation.to) if r != "this"])
+    for draft in entry_drafts:
+        check_entities(draft.entities)
+        if draft.request is not None:
+            check_entities([draft.request.requester, *draft.request.targets])
+        if draft.blocked_by_request is not None:
+            if draft.blocked_by_request not in requests or draft.ref in requests:
+                raise ValueError("blocked_by_request must reference another request")
+    for schedule in schedules:
+        check_entities(schedule.entities)
+        schedule_draft = drafts.get(schedule.entry_ref)
+        if schedule_draft is None or schedule_draft.kind != "일정":
+            raise ValueError("schedule entry_ref must reference an 일정 draft")
+        if schedule.blocked_by_request != schedule_draft.blocked_by_request:
+            raise ValueError("schedule must preserve its draft execution block")
 
 
 class Edit(Contract):
