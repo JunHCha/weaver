@@ -37,6 +37,15 @@ class InsufficientCredit(LlmError):
     code = "insufficient_credit"
 
 
+class UsageLimited(LlmError):
+    """Subscription allowance or the local daily call cap is exhausted.
+
+    Retrying cannot help until the window resets; the runtime waits hourly.
+    """
+
+    code = "usage_limited"
+
+
 class UnbilledRejection(LlmError):
     """4xx the provider returned before processing, so nothing was billed.
 

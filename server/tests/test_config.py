@@ -617,3 +617,47 @@ def test_loom_feedback_settings_default_and_override(tmp_path: Path) -> None:
 def test_invalid_loom_feedback_settings(tmp_path: Path, extra: str) -> None:
     with pytest.raises(ConfigError, match="loom"):
         load_config(write_config(tmp_path, extra), environ={})
+
+
+def test_claude_cli_settings(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        '[llm]\nbackend = "claude_cli"\nclaude_path = "/opt/claude"\n'
+        "max_cli_calls_per_day = 7\n",
+    )
+    llm = load_config(path, environ={}).llm
+    assert llm.claude_path == Path("/opt/claude") and llm.max_cli_calls_per_day == 7
+    default = load_config(write_config(tmp_path), environ={}).llm
+    assert default.max_cli_calls_per_day == 30 and default.claude_path is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "max_cli_calls_per_day = 0",
+        "max_cli_calls_per_day = true",
+        'claude_path = "claude"',
+    ],
+)
+def test_claude_cli_settings_rejected(tmp_path: Path, extra: str) -> None:
+    path = write_config(tmp_path, f'[llm]\nbackend = "claude_cli"\n{extra}\n')
+    with pytest.raises(ConfigError):
+        load_config(path, environ={})
+
+
+def test_build_runtime_wires_claude_cli(tmp_path: Path) -> None:
+    from weaver.llm import ClaudeCliClient, create_client
+    from weaver.runtime.assemble import build_runtime
+
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    path = write_config(
+        tmp_path, f'[llm]\nbackend = "claude_cli"\nclaude_path = "{fake}"\n'
+    )
+    config = load_config(path, environ={})
+    runtime = build_runtime(config, environ={})
+    assert not runtime.gate.available  # the fake binary reports no login
+    assert runtime.gate.status.reason == "claude_not_logged_in"
+    client = create_client(config.llm, state_root=config.state_root)
+    assert isinstance(client, ClaudeCliClient)

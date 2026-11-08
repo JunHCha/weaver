@@ -231,7 +231,7 @@ def test_llm_status_from_environment():
     assert llm_status(config, {}).reason == "api_key_missing"
     assert llm_status(LlmConfig("anthropic"), {}).reason == "api_key_env_unset"
     assert llm_status(LlmConfig("none"), {}).reason == "backend_none"
-    assert llm_status(LlmConfig("claude_cli"), {}).reason == "backend_unsupported"
+    assert llm_status(LlmConfig("agent_sdk"), {}).reason == "backend_unsupported"
 
 
 def test_key_file_wins_over_env_and_strips_whitespace(tmp_path):

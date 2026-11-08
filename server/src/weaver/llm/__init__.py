@@ -4,6 +4,7 @@ from pathlib import Path
 
 from weaver.config import LlmConfig
 
+from .cli import ClaudeCliClient
 from .client import AnthropicClient
 from .errors import (
     AuthenticationError,
@@ -19,6 +20,7 @@ from .errors import (
     TransientError,
     UnsupportedBackend,
     UnsupportedStructuredOutput,
+    UsageLimited,
 )
 from .ledger import Ledger
 from .types import LlmClient
@@ -26,6 +28,7 @@ from .types import LlmClient
 __all__ = [
     "LlmClient",
     "AnthropicClient",
+    "ClaudeCliClient",
     "create_client",
     "AuthenticationError",
     "BudgetExceeded",
@@ -40,6 +43,7 @@ __all__ = [
     "TransientError",
     "UnsupportedBackend",
     "UnsupportedStructuredOutput",
+    "UsageLimited",
 ]
 
 
@@ -50,6 +54,10 @@ def create_client(config: LlmConfig, *, state_root: Path) -> LlmClient:
     Alternative adapters are tracked by #46; never silently fall back to them.
     The state_root directory must already exist (explicit config initialization).
     """
+    if config.backend == "claude_cli":
+        return ClaudeCliClient(
+            config, Ledger(state_root / "llm.sqlite3"), state_root=state_root
+        )
     if config.backend != "anthropic":
         raise UnsupportedBackend()
     return AnthropicClient(config, Ledger(state_root / "llm.sqlite3"))

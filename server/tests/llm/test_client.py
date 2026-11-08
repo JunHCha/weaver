@@ -117,9 +117,7 @@ def test_missing_key_recorded_without_dispatch(tmp_path: Path) -> None:
     assert ledger.records()[0]["attempts"] == 0
 
 
-@pytest.mark.parametrize(
-    "backend", ["none", "agent_sdk", "claude_cli", "openai_compatible"]
-)
+@pytest.mark.parametrize("backend", ["none", "agent_sdk", "openai_compatible"])
 def test_no_fallback(tmp_path: Path, backend) -> None:
     with pytest.raises(UnsupportedBackend):
         create_client(LlmConfig(backend=backend), state_root=tmp_path)

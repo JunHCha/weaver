@@ -17,6 +17,14 @@ api_key_env = "ANTHROPIC_API_KEY"
 # For the launchd agent (no shell environment): an absolute path to a private
 # key file (regular file, owned by you, chmod 600). It wins over api_key_env.
 # api_key_file = "~/.config/weaver/anthropic.key"
+# backend = "claude_cli" calls the official `claude` binary logged in with your
+# subscription (run `claude auth login` yourself); api_key_env/api_key_file are
+# ignored and no API key is ever passed to the child. launchd has a minimal
+# PATH (a `#!/usr/bin/env node` install may not start there), so set the
+# absolute path to the native binary (see `command -v claude`):
+# claude_path = "/Users/you/.local/bin/claude"
+# Daily call cap protecting the subscription allowance (integer >= 1):
+# max_cli_calls_per_day = 30
 
 # All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
 # To create missing directories explicitly (existing data is preserved):
