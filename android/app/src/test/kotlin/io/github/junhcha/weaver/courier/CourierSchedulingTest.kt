@@ -85,4 +85,12 @@ class CourierSchedulingTest {
         assertEquals(WorkInfo.State.ENQUEUED, stillWaiting.state)
         assertEquals(waiting.nextScheduleTimeMillis, stillWaiting.nextScheduleTimeMillis)
     }
+
+    @Test fun repeatedScheduleKeepsOneUniquePeriodicWork() {
+        CourierRuntime.schedule(context)
+        CourierRuntime.schedule(context)
+        val periodic = workManager.getWorkInfosForUniqueWork("courier-periodic").get()
+        assertEquals(1, periodic.size)
+        assertEquals(15 * 60 * 1000L, periodic.single().periodicityInfo!!.repeatIntervalMillis)
+    }
 }

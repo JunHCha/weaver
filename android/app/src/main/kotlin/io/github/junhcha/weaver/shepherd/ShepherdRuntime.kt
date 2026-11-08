@@ -104,6 +104,8 @@ object ShepherdRuntime {
                 } catch (_: SecurityException) { db.setting("permission_missing", "true") }
             } else { db.setting("permission_missing", "true") }
             notifyPending(context, db, now)
+            // Same run as the call reminder: the 21:00 proposal reminder (once per local day) fires here too.
+            runCatching { io.github.junhcha.weaver.inbox.InboxRuntime.refresh(context, now) }
             pendingObservation
         }
     }

@@ -10,6 +10,10 @@ interface CourierFolder {
     /** Must fail if final name exists; sync before publishing, validate returned name. */
     fun publish(folder: String, name: String, write: (OutputStream) -> Unit)
     fun delete(folder: String, name: String)
+    /** Stable identity of the selected root; a change means a different folder was selected. */
+    val identity: String get() = ""
+    /** True if this instance created [folder] because it was missing (its listing proves nothing). */
+    fun created(folder: String): Boolean = false
 }
 
 data class CourierEntry(val name: String, val modifiedAt: Long, val regular: Boolean = true)

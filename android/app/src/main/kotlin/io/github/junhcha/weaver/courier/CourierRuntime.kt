@@ -167,6 +167,7 @@ object CourierRuntime {
                 check(temp.renameTo(final))
             } finally { temp.delete() }
         }
+        io.github.junhcha.weaver.inbox.InboxRuntime.submitted(context, verdict.proposalId, verdict.rev)
         kick(context)
     }
 
@@ -213,7 +214,16 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
     companion object {
         internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase): Boolean {
             val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
-            var successful = client.synchronize()
+            // One listing feeds both capture publication and the proposal/alert inbox. A listing
+            // failure throws before either runs, so it is never read as "every file was deleted".
+            val inbox = client.scan()
+            var successful = client.synchronize(inbox)
+            try {
+                if (!io.github.junhcha.weaver.inbox.InboxRuntime.apply(context, folder, inbox, db)) successful = false
+            } catch (error: SecurityException) { throw error
+            } catch (error: Exception) {
+                db.diagnostic("proposals", "inbox", CourierClient.errorCode(error)); successful = false
+            }
             val directory = File(context.filesDir, "courier-verdicts")
             CourierRuntime.cleanQueueTemporaries(directory)
             directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->

@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 
 /** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
 @Composable
-fun HomeScreen(showPendingCalls: Boolean = false) {
+fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }
@@ -61,7 +61,9 @@ fun HomeScreen(showPendingCalls: Boolean = false) {
             ) {
                 Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                if (showInbox) InboxPanel(openedFromNotification = true)
                 ShepherdPanel(showPendingCalls)
+                if (!showInbox) InboxPanel()
                 CourierPanel()
                 Feature.entries.forEach { feature ->
                     FeatureCard(
