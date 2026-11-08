@@ -6,7 +6,6 @@ and the committed uv.lock for the reproducible model/runtime versions.
 """
 
 import hashlib
-import importlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated
@@ -14,7 +13,12 @@ from typing import Annotated
 import typer
 
 from weaver.config import ConfigError, load_config
-from weaver.spinner.stt import MODEL_REPO, MODEL_REVISION
+from weaver.spinner.stt import (
+    MODEL_REPO,
+    MODEL_REVISION,
+    SttEngineError,
+    import_stt_dependency,
+)
 
 WEIGHTS_SHA256 = "951ed3fc1203e6a62467abb2144a96ce7eafca8fa77e3704fdb8635ff3e7f8a6"
 
@@ -30,10 +34,10 @@ def prepare_model(destination: Path) -> None:
     destination = destination.resolve()
     if destination.exists():
         raise FileExistsError("Model destination already exists")
+    hub = import_stt_dependency("huggingface_hub")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=".weaver-model-", dir=destination.parent) as temp:
         staged = Path(temp) / "model"
-        hub = importlib.import_module("huggingface_hub")
         hub.snapshot_download(
             MODEL_REPO,
             revision=MODEL_REVISION,
@@ -59,6 +63,9 @@ def prepare(
     try:
         settings = load_config(config)
         prepare_model(settings.stt.model_path)
+    except SttEngineError as error:
+        typer.echo(f"Model preparation failed: {error}", err=True)
+        raise typer.Exit(1) from None
     except (ConfigError, OSError, ValueError, ImportError) as error:
         typer.echo(f"Model preparation failed: {type(error).__name__}", err=True)
         raise typer.Exit(1) from None
