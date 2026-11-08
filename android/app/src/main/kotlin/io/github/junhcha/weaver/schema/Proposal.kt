@@ -7,7 +7,8 @@ import kotlinx.serialization.json.JsonElement
 /**
  * One source review unit from proposals/<proposal_id>.r<rev>.json. Mirrors
  * schema/Proposal.schema.json. Cross-reference integrity (unique/dangling refs, block
- * propagation) is enforced by the server; the app keeps the fields as given.
+ * propagation) is enforced by the server and rechecked by ReviewDraft before approval/edit.
+ * Inbox decoding keeps the fields as given.
  *
  * A non-null `blockedByRequest` forbids calendar registration until a human decision Entry
  * resolves the request. Approving the proposal does not lift it.

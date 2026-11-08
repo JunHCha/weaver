@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -39,7 +40,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
     var proposals by remember { mutableStateOf(emptyList<InboxDatabase.ProposalItem>()) }
-    var selected by remember { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     var alerts by remember { mutableStateOf(emptyList<InboxDatabase.AlertItem>()) }
     var lastScan by remember { mutableStateOf<Long?>(null) }

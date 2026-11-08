@@ -75,7 +75,7 @@ object ReviewDraft {
             data = JsonPointer.replace(data, edit.path, edit.value)
         }
         return when (val decoded = WeaverCodec.decode<Proposal>(data.toString())) {
-            is DecodeResult.Ok -> decoded.value
+            is DecodeResult.Ok -> decoded.value.also { ProposalValidation.validate(it) }
             else -> throw IllegalArgumentException("수정 후 제안이 스키마에 맞지 않습니다")
         }
     }

@@ -3,6 +3,7 @@ package io.github.junhcha.weaver.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -22,7 +23,10 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
-    var proposal by remember(proposalId) { mutableStateOf<Proposal?>(null) }
+    // Save the reviewed snapshot (including rev), never bind restored inputs to a newer rev.
+    var proposalJson by rememberSaveable(proposalId) { mutableStateOf<String?>(null) }
+    val proposal = remember(proposalJson) { proposalJson?.let { WeaverCodec.json.decodeFromString<Proposal>(it) } }
+    var input by rememberSaveable(proposalId, stateSaver = ReviewInput.saver) { mutableStateOf(ReviewInput()) }
     var latestRev by remember(proposalId) { mutableStateOf<Long?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -38,9 +42,13 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
             }.let { (result, records) ->
                 result.onSuccess { fresh ->
                     latestRev = fresh.rev
-                    if (proposal == null) proposal = fresh
+                    if (proposalJson == null) {
+                        proposalJson = WeaverCodec.encode(fresh)
+                        input = input.copy(value = WeaverCodec.json.encodeToString(fresh.summary))
+                    }
                 }.onFailure { latestRev = null; error = "제안을 읽을 수 없습니다. 최신 제안을 다시 확인하세요." }
-                record = records.firstOrNull { it.verdict.proposalId == proposalId && it.verdict.rev == proposal?.rev }
+                val reviewedRev = proposalJson?.let { WeaverCodec.json.decodeFromString<Proposal>(it).rev }
+                record = records.firstOrNull { it.verdict.proposalId == proposalId && it.verdict.rev == reviewedRev }
             }
             delay(5_000)
         } while (isActive)
@@ -61,7 +69,7 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
             Text("승인·수정은 사실 검토입니다. 요청 해소나 일정 실행 허가가 아닙니다.")
             if (stale) {
                 Text("새 rev 또는 파일 변경 감지 · 이전 rev는 제출할 수 없습니다")
-                OutlinedButton(onClick = { proposal = null; error = null; onClose() }) { Text("목록으로 돌아가 최신 제안 확인") }
+                OutlinedButton(onClick = { error = null; onClose() }) { Text("목록으로 돌아가 최신 제안 확인") }
             }
             if (record != null) {
                 Text(record!!.status.label)
@@ -74,37 +82,32 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                 }
             }
             key(p.proposalId, p.rev) {
-                var path by remember { mutableStateOf("/summary") }
-                var value by remember { mutableStateOf(WeaverCodec.json.encodeToString(p.summary)) }
-                var edits by remember { mutableStateOf(emptyList<Verdict.Edit>()) }
-                var instruction by remember { mutableStateOf("") }
-                var answers by remember { mutableStateOf(emptyMap<String, String>()) }
-                var reason by remember { mutableStateOf(Verdict.RejectReason.OTHER) }
+                val (path, value, edits, instruction, answers, reason) = input
                 val enabled = !busy && !stale && record == null
                 ReviewDraft.questions(p).forEach { q ->
                     Text("질문 ${q.path}: ${q.ask.question}")
                     q.ask.choices.forEach { c ->
-                        OutlinedButton(enabled = enabled, onClick = { answers = answers + (q.path to c.entityId) }) { Text(c.label) }
+                        OutlinedButton(enabled = enabled, onClick = { input = input.copy(answers = answers + (q.path to c.entityId)) }) { Text(c.label) }
                     }
-                    OutlinedTextField(value = answers[q.path].orEmpty(), onValueChange = { answers = answers + (q.path to it) },
+                    OutlinedTextField(value = answers[q.path].orEmpty(), onValueChange = { input = input.copy(answers = answers + (q.path to it)) },
                         enabled = enabled, label = { Text("답 (자유 답변은 다시 짜기로 전송)") }, modifier = Modifier.fillMaxWidth())
                 }
                 Text("직접 수정: 예 /schedules/0/start · 값은 JSON 문자열이면 따옴표 포함")
-                OutlinedTextField(value = path, onValueChange = { path = it }, enabled = enabled, label = { Text("JSON Pointer") })
-                OutlinedTextField(value = value, onValueChange = { value = it }, enabled = enabled, label = { Text("최종 값 (JSON)") })
+                OutlinedTextField(value = path, onValueChange = { input = input.copy(path = it) }, enabled = enabled, label = { Text("JSON Pointer") })
+                OutlinedTextField(value = value, onValueChange = { input = input.copy(value = it) }, enabled = enabled, label = { Text("최종 값 (JSON)") })
                 OutlinedButton(enabled = enabled, onClick = {
                     runCatching {
                         val next = edits + Verdict.Edit(path, WeaverCodec.json.parseToJsonElement(value))
-                        ReviewDraft.validateEdits(p, next); edits = next; error = null
+                        ReviewDraft.validateEdits(p, next); input = input.copy(edits = next); error = null
                     }.onFailure { error = it.message }
                 }) { Text("수정 추가") }
                 edits.forEach { Text("${it.path} = ${it.value}") }
-                OutlinedButton(enabled = enabled, onClick = { edits = emptyList() }) { Text("수정 초기화") }
-                OutlinedTextField(value = instruction, onValueChange = { instruction = it }, enabled = enabled,
+                OutlinedButton(enabled = enabled, onClick = { input = input.copy(edits = emptyList()) }) { Text("수정 초기화") }
+                OutlinedTextField(value = instruction, onValueChange = { input = input.copy(instruction = it) }, enabled = enabled,
                     label = { Text("다시 짤 자연어 지시") }, modifier = Modifier.fillMaxWidth())
                 Text("거절 사유: $reason")
                 Verdict.RejectReason.entries.forEach { r ->
-                    OutlinedButton(enabled = enabled, onClick = { reason = r }) { Text(r.name.lowercase()) }
+                    OutlinedButton(enabled = enabled, onClick = { input = input.copy(reason = r) }) { Text(r.name.lowercase()) }
                 }
                 Verdict.Kind.entries.forEach { kind ->
                     OutlinedButton(enabled = enabled && (kind != Verdict.Kind.APPROVE || edits.isEmpty()), onClick = {
