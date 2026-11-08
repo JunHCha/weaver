@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,6 +61,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
                 OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
             }
             records.forEach { record ->
+                key(record.verdict.proposalId, record.verdict.rev) { CalendarPanel(record) }
                 Text("${record.verdict.proposalId} r${record.verdict.rev}: ${record.status.label}")
                 if (record.verdict.verdict == Verdict.Kind.REVISE) {
                     Text(if (proposals.any { it.proposalId == record.verdict.proposalId && it.rev > record.verdict.rev })

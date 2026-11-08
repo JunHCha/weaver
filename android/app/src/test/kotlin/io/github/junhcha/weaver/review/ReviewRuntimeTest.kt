@@ -41,6 +41,7 @@ class ReviewRuntimeTest {
             "Synthetic instruction", "2026-11-08T00:00:00Z")
         val store = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
         store.queue(folder, p, verdict)
+        assertEquals(p, ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).records().single().proposal)
         CourierDatabase(context).use { db -> assertTrue(CourierWorker.synchronize(context, folder, db)) }
         assertEquals(ReviewStatus.SENT, ReviewRuntime.records(context).single().status)
         assertEquals(1, publishes)
