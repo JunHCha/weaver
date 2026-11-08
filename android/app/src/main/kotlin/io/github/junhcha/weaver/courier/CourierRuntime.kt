@@ -141,10 +141,10 @@ object CourierRuntime {
             val id = "cap_${newUlid()}"
             val staged = File(staging, "$id.$extension")
             check(temp.renameTo(staged))
-            val manifest = Manifest(1, id, kind, channel, staged.name, sha, size,
-                Instant.now().toString(), occurredAt, Manifest.Hints(counterpart))
-            check(WeaverCodec.encode(manifest).toByteArray().size <= CourierRules.maxJson) { "too_large" }
             val existing = try {
+                val manifest = Manifest(1, id, kind, channel, staged.name, sha, size,
+                    Instant.now().toString(), occurredAt, Manifest.Hints(counterpart))
+                check(WeaverCodec.encode(manifest).toByteArray().size <= CourierRules.maxJson) { "too_large" }
                 CourierDatabase(context).use { it.prepare(original.toString(), manifest, staged) }
             } catch (error: Exception) { staged.delete(); throw error }
             if (existing.stagedPath != staged.absolutePath) staged.delete()
@@ -202,27 +202,38 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
         }
         CourierDatabase(context).use { db ->
             try {
-                val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
-                var successful = client.synchronize()
-                val directory = File(context.filesDir, "courier-verdicts")
-                CourierRuntime.cleanQueueTemporaries(directory)
-                directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
-                    try {
-                        val verdict = file.inputStream().use { CourierClient.decoded<Verdict>(CourierClient.boundedJson(it)) }
-                        check(file.name == "${verdict.proposalId}.r${verdict.rev}.json") { "id_mismatch" }
-                        client.publishVerdict(verdict)
-                        check(file.delete()) { "queue_delete_failed" }
-                    } catch (error: SecurityException) { throw error
-                    } catch (error: Exception) {
-                        db.diagnostic("decisions", file.name, CourierClient.errorCode(error)); successful = false
-                    }
-                }
-                if (successful) Result.success() else Result.retry()
+                if (synchronize(context, folder, db)) Result.success() else Result.retry()
             } catch (_: SecurityException) {
                 CourierRuntime.stop(context); Result.success()
             } catch (error: Exception) {
                 db.diagnostic("courier", "scan", CourierClient.errorCode(error)); Result.retry()
             }
+        }
+    }
+    companion object {
+        internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase): Boolean {
+            val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
+            var successful = client.synchronize()
+            val directory = File(context.filesDir, "courier-verdicts")
+            CourierRuntime.cleanQueueTemporaries(directory)
+            directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
+                try {
+                    val verdict = file.inputStream().use { CourierClient.decoded<Verdict>(CourierClient.boundedJson(it)) }
+                    check(file.name == "${verdict.proposalId}.r${verdict.rev}.json") { "id_mismatch" }
+                    client.publishVerdict(verdict)
+                    check(file.delete()) { "queue_delete_failed" }
+                } catch (error: SecurityException) { throw error
+                } catch (error: Exception) {
+                    db.diagnostic("decisions", file.name, CourierClient.errorCode(error)); successful = false
+                }
+            }
+            try {
+                if (!io.github.junhcha.weaver.shepherd.PendingCalls.reconcile(context)) successful = false
+            } catch (error: Exception) {
+                db.diagnostic("shepherd", "reconcile", CourierClient.errorCode(error))
+                successful = false
+            }
+            return successful
         }
     }
 }
