@@ -100,3 +100,44 @@ Schedule ask is intentionally allowed at approval under the established policy:
 only entities/relations/entry_drafts ask blocks approval. The schedule ask remains
 in the approved journal snapshot and FeedbackEvent; approval does not resolve it
 or authorize calendar execution.
+
+# Feedback (#27)
+
+`SqliteFeedbackStore.from_config(settings, store)` is the `FeedbackSink`. It writes
+`state_root/feedback.sqlite3` (0600, FULL/fullfsync, outside sync/vault): one row per
+event_id `(proposal_id, rev)` with verdict, reviewed_at, reject_reason, instruction,
+outcome (`entries`/`revised`/`rejected`), result IDs and versions. Only edited paths
+keep before/after values and the item's excerpt; the original snapshot stays in the
+review journal. Retries with the same fingerprint are no-ops; a different payload
+raises `FeedbackConflict`. `purge()` nulls raw fragments (before/after, excerpt,
+instruction) after `loom.feedback_retention_days` (default 180) and keeps structure.
+
+Approvals also update the minimal Entity registry in the same transaction;
+`store.index()` is the `EntityIndex` for `LlmExtractor`. Each alias records an
+origin. New approved entities register name/type and their proposed aliases as
+`ai`. An explicit ask-choice link registers only the linked mention name, and an
+alias edit registers the edited aliases, both as `human`. An AI alias colliding
+with another entity's name or active alias is a `conflict`; a human alias demotes a
+colliding AI alias and is itself a conflict only against another entity's name or
+human alias. A new entity name demotes colliding AI aliases of other entities but
+leaves human aliases active (the extractor keeps every collision and asks).
+Conflicts are excluded from the index. Entities are never merged; reject/revise
+never change the registry. Relations are not stored.
+
+`LlmExtractor(client, examples=store)` adds `corrections` only for selected known
+entities: closed-vocabulary corrections (entity link, entity/relation type, entry
+kind) and reject reasons, newest first, `feedback_example_limit` (3) and
+`feedback_example_bytes` (2048). Raw text, values and revise instructions are never
+sent. Each selection is logged in `example_uses`. Disable with
+`[loom] feedback_examples = false`. Pass `extractor.versions` to `Proposer.build`;
+journal v3 stores versions per rev (`loom.extract.v1`, `loom.revise.v1`).
+
+`eval_candidates.export_candidates` writes raw-text-free candidates to
+`state_root/eval_candidates/` (0700/0600). A person writes a fake sample from scratch;
+`mark_authored` (stores the sample sha256) -> `mark_reviewed` -> `promote` copies
+the unchanged reviewed bytes to the eval directory only after a residue check:
+all sample strings (keys and JSON-encoded values included) are NFKC/casefold
+normalized and compared with and without whitespace, and any 8-character run
+shared with an original string fails. Closed vocabularies, durable IDs and JSON
+literals are not treated as original text. The
+format_version 1 layout is provisional until #10.

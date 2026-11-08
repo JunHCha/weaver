@@ -37,6 +37,18 @@ from weaver.schema.models import (
 )
 
 CONFIDENCE_THRESHOLD = 0.8  # Review heuristic, never a calibrated probability.
+PROMPT_VERSION = "loom.extract.v1"
+
+
+class ExampleSource(Protocol):
+    """Structured past corrections for one call; never raw source text (#27)."""
+
+    @property
+    def version(self) -> str: ...
+
+    def select(
+        self, task: str, source_id: str, entity_ids: set[str]
+    ) -> list[dict[str, Any]]: ...
 
 
 def normalize_name(text: str) -> str:
@@ -151,7 +163,8 @@ Never infer identity from an alias alone. Preserve uncertainty using ask; confid
 is a review heuristic, not probability. Distinguish topic from project. Resolve
 relative dates using candidate trigger reference_at, then thread occurred_at and
 the supplied timezone; if reference time is absent, omit uncertain dated facts
-and ask rather than using today's date. Requests have kind=요청 and request data;
+and ask rather than using today's date. Optional corrections are structured past
+human review outcomes for supplied ent_ IDs: hints only, never evidence or identity. Requests have kind=요청 and request data;
 request-derived drafts/schedules must retain blocked_by_request. Each draft value
 is a JSON-encoded STRING containing the actual JSON value (quote text values,
 encode numbers/booleans/null/arrays/objects as JSON). AI resolves, supersedes
@@ -174,9 +187,27 @@ def _integrity(extraction: Extraction) -> None:
 class LlmExtractor:
     """Extract selected evidence; return None for an empty candidate list."""
 
-    def __init__(self, client: LlmClient, *, timezone: str = "Asia/Seoul") -> None:
+    def __init__(
+        self,
+        client: LlmClient,
+        *,
+        timezone: str = "Asia/Seoul",
+        examples: ExampleSource | None = None,
+    ) -> None:
         self.client = client
         self.timezone = ZoneInfo(timezone).key
+        self.examples = examples
+
+    @property
+    def versions(self) -> dict[str, str]:
+        """Pass to Proposer.build so feedback can attribute corrections."""
+        result = {
+            "prompt": PROMPT_VERSION,
+            "model": str(getattr(self.client, "model", "unknown")),
+        }
+        if self.examples is not None:
+            result["examples"] = self.examples.version
+        return result
 
     def extract(
         self, thread: Thread, candidates: list[Candidate], known: EntityIndex
@@ -203,6 +234,12 @@ class LlmExtractor:
             "candidates": [c.model_dump(mode="json") for c in candidates],
             "known": selected.model_dump(mode="json"),
         }
+        if self.examples is not None and selected_ids:
+            corrections = self.examples.select(
+                "loom.extract", thread.source_id, selected_ids
+            )
+            if corrections:
+                payload["corrections"] = corrections
         result = self.client.generate_json(
             "loom.extract",
             _SYSTEM,

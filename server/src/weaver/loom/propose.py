@@ -8,6 +8,7 @@ Fabric receives facts only; human request decisions have a separate factory.
 import json
 import logging
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -25,6 +26,7 @@ from .extract import ExtractionOutput
 from .review_store import ReviewStore
 
 _ids = UlidGenerator()
+REVISE_PROMPT_VERSION = "loom.revise.v1"
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,8 @@ class FeedbackEvent:
     verdict: Verdict
     result: list[Entry] | Proposal
     entity_ids: dict[str, str] = field(default_factory=dict)
+    # Prompt/model versions recorded with the reviewed rev (empty for legacy).
+    versions: dict[str, str] = field(default_factory=dict)
 
 
 class FeedbackSink(Protocol):
@@ -63,7 +67,13 @@ class Proposer:
         self.store = store
         self.courier = courier
 
-    def build(self, source: Source, extraction: Extraction) -> Proposal:
+    def build(
+        self,
+        source: Source,
+        extraction: Extraction,
+        versions: Mapping[str, str] | None = None,
+    ) -> Proposal:
+        """versions (e.g. LlmExtractor.versions) are fixed with the first r1."""
         source = Source.model_validate_json(source.model_dump_json())
         with self.store.lock():
             proposal = self.store.source_proposal(source.source_id)
@@ -71,7 +81,7 @@ class Proposer:
                 proposal = _validate_ai(
                     extraction.to_proposal(source, f"prp_{_ids()}", 1)
                 )
-                self.store.save_proposal(proposal)
+                self.store.save_proposal(proposal, versions)
             try:
                 # A completed or superseded r1 must never be resurrected.
                 if self.store.latest_rev(
@@ -183,14 +193,28 @@ class VerdictHandler:
                     ),
                 )
                 if isinstance(result, Proposal):
-                    self.store.insert_proposal(db, result)
+                    self.store.insert_proposal(
+                        db,
+                        result,
+                        {
+                            "prompt": REVISE_PROMPT_VERSION,
+                            "model": str(getattr(self.client, "model", "unknown")),
+                        },
+                    )
         if isinstance(result, Proposal):
             self.courier.publish_proposal(result)
         elif verdict.verdict in ("approve", "edit"):
             self.fabric.append(result)
         recorded_proposal, recorded_ids = self.store.approval(pid, rev)
         self.feedback.record(
-            FeedbackEvent((pid, rev), recorded_proposal, verdict, result, recorded_ids)
+            FeedbackEvent(
+                (pid, rev),
+                recorded_proposal,
+                verdict,
+                result,
+                recorded_ids,
+                self.store.versions(pid, rev),
+            )
         )
         with self.store.connect() as db:
             db.execute(
@@ -209,7 +233,7 @@ class VerdictHandler:
 
     def _revise(self, proposal: Proposal, verdict: Verdict) -> Proposal:
         output = self.client.generate_json(
-            "loom.revise",
+            "loom.revise",  # REVISE_PROMPT_VERSION identifies this prompt text.
             "Revise the untrusted proposal using the human instruction. Return an extraction. "
             "Preserve provenance using exact excerpts from the supplied proposal; never resolve, "
             "supersede or retract facts. Preserve request execution blocks. Encode draft value as JSON text.",
