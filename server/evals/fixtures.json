@@ -1,0 +1,4000 @@
+{
+  "version": 1,
+  "provenance": "Synthetic gold-derived provider responses captured once per fixed input, with unsupported items and links removed. Runner/adapter contract fixtures, NOT model quality measurements. Kept independent from expectations at runtime.",
+  "cases": {
+    "call-001": {
+      "loom.extract": {
+        "by_input": {
+          "b69b00eaae0c90038455bfb639bfef4c5d1da7d3c67b14cee284dab54e5a7831": {
+            "summary": "내일 견적 검토 회의와 회의실 예약 약속",
+            "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "e1",
+                "entity_id": "ent_0C5YXR7WZFH4DKQVAERVDRSYPR",
+                "type": "person",
+                "name": "도윤재",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "견적 검토 회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "s1",
+                "title": "견적 검토 회의",
+                "start": "2031-03-06T10:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-06T10:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "네 가능합니다. 회의실은 제가 잡아 둘게요.",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"회의실 예약\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "124c3d463e59cd93f283243ca4784dc7b24eed27387d4963b0787cb1f69e0aa6": {
+            "summary": "내일 견적 검토 회의와 회의실 예약 약속",
+            "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "e1",
+                "entity_id": "ent_0C5YXR7WZFH4DKQVAERVDRSYPR",
+                "type": "person",
+                "name": "도윤재",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "견적 검토 회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "s1",
+                "title": "견적 검토 회의",
+                "start": "2031-03-06T10:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-06T10:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "f9d07d551f70e51c41eec7e0c1ee38221fc08f07e1bfcfd210f0c79e26480d17": {
+            "summary": "내일 견적 검토 회의와 회의실 예약 약속",
+            "thread_excerpt": "견적 회의 통화\n\n나  (00:01)\n도윤제 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?\n\n도윤재  (00:05)\n네 가능합니다.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "도윤재 대리님, 내일 오전 열 시에 견적 검토 회의 가능하세요?"
+          },
+          {
+            "segment_id": "s6",
+            "text": "네 가능합니다. 회의실은 제가 잡아 둘게요."
+          }
+        ]
+      }
+    },
+    "call-002": {
+      "loom.extract": {
+        "by_input": {
+          "3806d24165296d40d7843a6dcf2f825de8ab5ff341adba5bb40a0595dc071c90": {
+            "summary": "다음 주 화요일 시안 미팅",
+            "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+                "ref": "s1",
+                "title": "한가람 미팅",
+                "start": "2031-03-11T16:30:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-11T16:30:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"시안 세 가지 지참\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "6ed618e6a8af1adee88c34f116bda38a7b53a5a89135856d114c4aa3df3b07fb": {
+            "summary": "다음 주 화요일 시안 미팅",
+            "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "e1",
+                "entity_id": "ent_19QA0YW7Q1620N5M80QCZMZC0J",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+                "ref": "s1",
+                "title": "한가람 미팅",
+                "start": "2031-03-11T16:30:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "그럼 다음 주 화요일 4시 반에 뵐까요?",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-11T16:30:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"시안 세 가지 지참\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "ddf6642f38401ec9e439e9d26daf240fe55f8d2d4390f2246a318d7a7514c15e": {
+            "summary": "다음 주 화요일 시안 미팅",
+            "thread_excerpt": "시안 통화\n\n나  (00:02)\n그럼 다음 주 화요일 사시 반에 뵐까요?\n\n한가람  (00:06)\n좋아요, 그때 시안 세 가지 가져갈게요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "e1",
+                "entity_id": "ent_19QA0YW7Q1620N5M80QCZMZC0J",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "좋아요, 그때 시안 세 가지 가져갈게요.",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"시안 세 가지 지참\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "그럼 다음 주 화요일 4시 반에 뵐까요?"
+          },
+          {
+            "segment_id": "s6",
+            "text": "좋아요, 그때 시안 세 가지 가져갈게요."
+          }
+        ]
+      }
+    },
+    "call-003": {
+      "loom.extract": {
+        "by_input": {
+          "0fe22760f9988102d077045fbaf82ad9458c6bae7dd5143ed1612898c67dfed4": {
+            "summary": "모레 납품 일정 취소",
+            "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "오세린",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "납품",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "폐기",
+                "field": null,
+                "value": "\"모레 오후 두 시 납품 일정 취소\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "54fcfbeab05c7b4a92ad74ee2a9d5122a2fa33df2a3dd63b621855b20dd6bb8e": {
+            "summary": "모레 납품 일정 취소",
+            "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "e1",
+                "entity_id": "ent_1MZ085BE1VDC991Y8SFP48ACDZ",
+                "type": "person",
+                "name": "오세린",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "납품",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "모레 오후 두 시 납품 일정은 취소하기로 했습니다.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "폐기",
+                "field": null,
+                "value": "\"모레 오후 두 시 납품 일정 취소\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "bcd8109c33f30021f9730f0b5071c45c73e36d882b4bcf74e38185dbb6fe5710": {
+            "summary": "모레 납품 일정 취소",
+            "thread_excerpt": "납품 통화\n\n오세린  (00:03)\n모래 오후 두 시 납품 일정은 취소하기로 했습니다.\n\n나  (00:08)\n알겠습니다.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "모레 오후 두 시 납품 일정은 취소하기로 했습니다."
+          },
+          {
+            "segment_id": "s6",
+            "text": "알겠습니다."
+          }
+        ]
+      }
+    },
+    "call-004": {
+      "loom.extract": {
+        "by_input": {
+          "b940d73cf66cee3b8639e2ddaf56b4a0b3fe3d6264be8d8ac58a8b5407857121": {
+            "summary": "봄빛 리뉴얼 킥오프 확정",
+            "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "권태호",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e2",
+                "entity_id": "ent_1V9G36P07YXCK04FGRYD5W14RR",
+                "type": "project",
+                "name": "봄빛 리뉴얼",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e3",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "봄빛 리뉴얼 킥오프",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "s1",
+                "title": "봄빛 리뉴얼 킥오프",
+                "start": "2031-03-07T15:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "from": "e3",
+                "type": "같은논의",
+                "to": "e2",
+                "reason": "킥오프는 프로젝트의 회의"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "d1",
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "kind": "결정",
+                "field": null,
+                "value": "\"킥오프 금요일 15시 확정\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "d2",
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-07T15:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "46927b8cc0e6b49d2388eb5b09e607d15f5ba25abec1bb245e1f31a9de870218": {
+            "summary": "봄빛 리뉴얼 킥오프 확정",
+            "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e1",
+                "entity_id": "ent_0Y9KCBXPYDQPGDTFYAQGDSRJSX",
+                "type": "person",
+                "name": "권태호",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e2",
+                "entity_id": "ent_1V9G36P07YXCK04FGRYD5W14RR",
+                "type": "project",
+                "name": "봄빛 리뉴얼",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "e3",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "봄빛 리뉴얼 킥오프",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "s1",
+                "title": "봄빛 리뉴얼 킥오프",
+                "start": "2031-03-07T15:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "from": "e3",
+                "type": "같은논의",
+                "to": "e2",
+                "reason": "킥오프는 프로젝트의 회의"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "d1",
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "kind": "결정",
+                "field": null,
+                "value": "\"킥오프 금요일 15시 확정\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.",
+                "ref": "d2",
+                "entities": [
+                  "e2",
+                  "e3"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-07T15:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "4f2811a16a2e46c17e017e81c3ea176b1f7e493ed2ab49c188b112eba7f2fc48": {
+            "summary": "봄빛 리뉴얼 킥오프 확정",
+            "thread_excerpt": "킥오프 통화\n\n권태호  (00:01)\n봄빛리 뉴얼 킥오프는 금요일 오후 세 시로 확정했어요.\n\n나  (00:05)\n네 공유할게요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "봄빛 리뉴얼 킥오프는 금요일 오후 세 시로 확정했어요."
+          },
+          {
+            "segment_id": "s6",
+            "text": "네 공유할게요."
+          }
+        ]
+      }
+    },
+    "call-005": {
+      "loom.extract": {
+        "by_input": {
+          "fa929930b6408aa159970013b8c7f5798cafda9eb5738e0710eea38c1285a5e0": {
+            "summary": "김하늘의 자료 요청, 대상 확인 필요",
+            "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+            "entities": [
+              {
+                "confidence": 0.5,
+                "ask": {
+                  "question": "어느 김하늘인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_1TXR2714YVP5E6YV870XVBD8KK",
+                      "label": "김하늘 (가온소프트)"
+                    },
+                    {
+                      "entity_id": "ent_1SGM5SJ5SQ8GTSNYJ2E88Z3K88",
+                      "label": "김하늘 (별빛디자인)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "김하늘",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "자료",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"자료 전달 요청\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-06T23:59:00+09:00",
+                  "content": "자료를 내일까지 보내 달라"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "2426078b243a3011394d12b855f0c29efd84b023b6839165248a4b305bba7794": {
+            "summary": "김하늘의 자료 요청, 대상 확인 필요",
+            "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+            "entities": [
+              {
+                "confidence": 0.5,
+                "ask": {
+                  "question": "어느 김하늘인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_1TXR2714YVP5E6YV870XVBD8KK",
+                      "label": "김하늘 (가온소프트)"
+                    },
+                    {
+                      "entity_id": "ent_1SGM5SJ5SQ8GTSNYJ2E88Z3K88",
+                      "label": "김하늘 (별빛디자인)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "김하늘",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "자료",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"자료 전달 요청\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-06T23:59:00+09:00",
+                  "content": "자료를 내일까지 보내 달라"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "7d1fbc31a196977346d14bba6cb4f8c7868303513768779e620dd174de8bcb6b": {
+            "summary": "김하늘의 자료 요청, 대상 확인 필요",
+            "thread_excerpt": "자료 요청 통화\n\n표지안  (00:02)\n김하늘씨가 자료를 내일까지 보내 달라고 하셨어요.\n\n나  (00:07)\n어느 김하늘 씨요?",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "김하늘 씨가 자료를 내일까지 보내 달라고 하셨어요."
+          },
+          {
+            "segment_id": "s6",
+            "text": "어느 김하늘 씨요?"
+          }
+        ]
+      }
+    },
+    "call-006": {
+      "loom.extract": {
+        "by_input": {
+          "0aa7f551d78154d05c46cec610e0729cae34e2caddb2901bd1a0e75bb6fb8e03": {
+            "summary": "미팅을 다음 주 월요일로 변경",
+            "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "육선우",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "미팅",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "s1",
+                "title": "미팅",
+                "start": "2031-03-10T11:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "d1",
+                "entities": [
+                  "e2"
+                ],
+                "kind": "변경",
+                "field": "start",
+                "value": "\"목요일 미팅을 3/10 11시로 이동\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "d2",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-10T11:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "3fd070a3a3814c40849262f009f22d38b5b8ffe928cbf717ad9456357a45acdc": {
+            "summary": "미팅을 다음 주 월요일로 변경",
+            "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "e1",
+                "entity_id": "ent_13TXYDBZDT41RQD2GCYC4XQCD2",
+                "type": "person",
+                "name": "육선우",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "미팅",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "s1",
+                "title": "미팅",
+                "start": "2031-03-10T11:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "d1",
+                "entities": [
+                  "e2"
+                ],
+                "kind": "변경",
+                "field": "start",
+                "value": "\"목요일 미팅을 3/10 11시로 이동\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요.",
+                "ref": "d2",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-10T11:00:00+09:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "a2f94594f53081540aca3ad670cea3cb50a16fba01cb9c91d87e8b180458bd04": {
+            "summary": "미팅을 다음 주 월요일로 변경",
+            "thread_excerpt": "일정 변경 통화\n\n육선우  (00:01)\n목요일 미팅을 다음 주 월요일 오전 열 한 시로 옮기자고 하네요.\n\n나  (00:06)\n네 맞춰 볼게요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "목요일 미팅을 다음 주 월요일 오전 열한 시로 옮기자고 하네요."
+          },
+          {
+            "segment_id": "s6",
+            "text": "네 맞춰 볼게요."
+          }
+        ]
+      }
+    },
+    "call-007": {
+      "loom.extract": {
+        "by_input": {
+          "533ca32fd0cca4a77634cb0d6dc1caea54a5e3c56ff8f442c6797fecc1985c49": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "어제 날씨 정말 좋더라. 주말엔 뭐 해?",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          },
+          "af30814e4f2e5fcb217d179f73c3152ef76e8a04f48528d1e256a9d40c64e163": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "안부 통화\n\n차은솔  (00:01)\n어제 날씨 정말 좋더라. 주말엔 뭐 해?\n\n나  (00:04)\n그냥 집에서 쉬려고.",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "어제 날씨 정말 좋더라. 주말엔 뭐 해?"
+          },
+          {
+            "segment_id": "s6",
+            "text": "그냥 집에서 쉬려고."
+          }
+        ]
+      }
+    },
+    "call-008": {
+      "loom.extract": {
+        "by_input": {
+          "af6dde0c2737d3044cad0dbfa431940ac9722301b737340bccc378d4a50c3093": {
+            "summary": "남궁별의 소속 변경",
+            "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "e1",
+                "entity_id": "ent_1JPB1709WVMGRV01G0B6CHRF3G",
+                "type": "person",
+                "name": "남궁별",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "e2",
+                "entity_id": "ent_18B6AR65K7MQD3CDMWKPPBYW7N",
+                "type": "org",
+                "name": "가온소프트",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "from": "e1",
+                "type": "소속",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "변경",
+                "field": "소속",
+                "value": "\"가온소프트\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "06a63e6b317549ac00dc73135efdca4de40863cc524fe65041d1ddc585d4f515": {
+            "summary": "남궁별의 소속 변경",
+            "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "e1",
+                "entity_id": "ent_1JPB1709WVMGRV01G0B6CHRF3G",
+                "type": "person",
+                "name": "남궁별",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "e2",
+                "entity_id": "ent_18B6AR65K7MQD3CDMWKPPBYW7N",
+                "type": "org",
+                "name": "가온소프트",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "from": "e1",
+                "type": "소속",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "남궁별 님은 이제 가온소프트 소속이에요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "변경",
+                "field": "소속",
+                "value": "\"가온소프트\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "34fc8d598b44b9c57190c6178fdd166bf69fa410f3272983de08d0cfaa9c31e7": {
+            "summary": "남궁별의 소속 변경",
+            "thread_excerpt": "소식 통화\n\n금하윤  (00:01)\n남궁 별님은 이제 가온소프트 소속이에요.\n\n나  (00:03)\n아 그렇군요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "남궁별 님은 이제 가온소프트 소속이에요."
+          },
+          {
+            "segment_id": "s6",
+            "text": "아 그렇군요."
+          }
+        ]
+      }
+    },
+    "call-009": {
+      "loom.extract": {
+        "by_input": {
+          "d405dc3941abfaec4b8b517429d113265266edf3d0a396caa7ec590cfc92d943": {
+            "summary": "도 대리의 점검 요청",
+            "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+            "entities": [
+              {
+                "confidence": 0.6,
+                "ask": {
+                  "question": "도 대리가 도윤재인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_0HCNYF38NC7DGDXPHJNDWCTN16",
+                      "label": "도윤재"
+                    }
+                  ]
+                },
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "도 대리",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "점검",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"금요일 오전 점검\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": null,
+                  "content": "금요일 오전에 같이 점검하자"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "db0a443cb1ec300f1475883a56bb84d76609ae5eb84ea14696cf8ee1b8dc2479": {
+            "summary": "도 대리의 점검 요청",
+            "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+            "entities": [
+              {
+                "confidence": 0.6,
+                "ask": {
+                  "question": "도 대리가 도윤재인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_0HCNYF38NC7DGDXPHJNDWCTN16",
+                      "label": "도윤재"
+                    }
+                  ]
+                },
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "도 대리",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "점검",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"금요일 오전 점검\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": null,
+                  "content": "금요일 오전에 같이 점검하자"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "75199898d65fb453dd26ad25cd1a9f5838d2ccc0c45e7354576b20546c5defcb": {
+            "summary": "도 대리의 점검 요청",
+            "thread_excerpt": "점검 통화\n\n한가람  (00:02)\n도대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어.\n\n나  (00:06)\n응 알겠어.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "도 대리가 이번 주 금요일 오전에 와서 같이 점검하자고 했어."
+          },
+          {
+            "segment_id": "s6",
+            "text": "응 알겠어."
+          }
+        ]
+      }
+    },
+    "call-010": {
+      "loom.extract": {
+        "by_input": {
+          "7917e8f0c893888dc76f880372b1e6743bb3bdbf82a32d542784bfadb660c850": {
+            "summary": "은하 프로젝트 예산 논의 연기",
+            "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "e1",
+                "entity_id": "ent_0MS7D22BSHWA7B821HTKG0MG7S",
+                "type": "project",
+                "name": "은하 프로젝트",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "예산",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "from": "e2",
+                "type": "같은논의",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"예산 논의를 다음 달로 미룸\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "4a0dbaf71fd41cd20ad2afeb8b4eac46577b010cbd73fca51aa6095dcaeb58c7": {
+            "summary": "은하 프로젝트 예산 논의 연기",
+            "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "e1",
+                "entity_id": "ent_0MS7D22BSHWA7B821HTKG0MG7S",
+                "type": "project",
+                "name": "은하 프로젝트",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "예산",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "from": "e2",
+                "type": "같은논의",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "은하 프로젝트 예산 논의는 다음 달에 다시 하자.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"예산 논의를 다음 달로 미룸\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "b8a32e253534413e27c597cbb108bc564dc7479ee60c09dc2158a6ccc44c3295": {
+            "summary": "은하 프로젝트 예산 논의 연기",
+            "thread_excerpt": "예산 통화\n\n오세린  (00:01)\n은하 프로젝트 예산 논이는 다음 달에 다시 하자.\n\n나  (00:04)\n네 그럼 그때 자료 준비할게요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "은하 프로젝트 예산 논의는 다음 달에 다시 하자."
+          },
+          {
+            "segment_id": "s6",
+            "text": "네 그럼 그때 자료 준비할게요."
+          }
+        ]
+      }
+    },
+    "call-011": {
+      "loom.extract": {
+        "by_input": {
+          "19b3f8ced0380c523abbf34ca9cd04b93c86814bb13a8c833dcbb55a733df159": {
+            "summary": "뉴욕 기준 화상 회의",
+            "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "표지안",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "화상 회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "s1",
+                "title": "화상 회의",
+                "start": "2031-03-11T23:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-11T09:00:00-04:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "b565cfc75377d1acc9388b658f71db9eaf681d2ab3cd0d6b7d6032973bd0d337": {
+            "summary": "뉴욕 기준 화상 회의",
+            "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "e1",
+                "entity_id": "ent_1FQQ8PC2VSTP1EWSE464HF0R1P",
+                "type": "person",
+                "name": "표지안",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "화상 회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "s1",
+                "title": "화상 회의",
+                "start": "2031-03-11T23:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-11T09:00:00-04:00\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "1e14fbf6926e63e834168671e9cea5569001d16236798fa7e981f9c5dfd0c78e": {
+            "summary": "뉴욕 기준 화상 회의",
+            "thread_excerpt": "해외 회의 통화\n\n표지안  (00:02)\n뉴옥 시간으로 화요일 오전 9시에 화상 회의 잡혔어요.\n\n나  (00:05)\n한국 시간으로 수요일 밤이겠네요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "뉴욕 시간으로 화요일 오전 9시에 화상 회의 잡혔어요."
+          },
+          {
+            "segment_id": "s6",
+            "text": "한국 시간으로 수요일 밤이겠네요."
+          }
+        ]
+      }
+    },
+    "call-012": {
+      "loom.extract": {
+        "by_input": {
+          "b606516ca0018a0e2b90036a0820006f26426e3b88917d487c8c629f0f4eb6ab": {
+            "summary": "워크숍 참석 소식",
+            "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "e1",
+                "entity_id": "ent_0JT360N8PB78ACM30WRCR73979",
+                "type": "person",
+                "name": "남궁별",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "워크숍",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"다음 주 수요일 워크숍 참석 예정\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "7dbecf76ec0837b68d94719f519db6c657fe88610438f07925ce86b6e26c20fe": {
+            "summary": "워크숍 참석 소식",
+            "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "e1",
+                "entity_id": "ent_0JT360N8PB78ACM30WRCR73979",
+                "type": "person",
+                "name": "남궁별",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "워크숍",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"다음 주 수요일 워크숍 참석 예정\"",
+                "occurred_at": "2031-03-05T18:20:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "d2588030c149f6a413f8d8057b5e638fbcfa457aa744fb77097dfffdf69d7b73": {
+            "summary": "워크숍 참석 소식",
+            "thread_excerpt": "워크숍 통화\n\n금하윤  (00:01)\n참, 다음 주 수요일 워크숍에 남궁벌 님도 오신대요.",
+            "entities": [],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s4",
+            "text": "참, 다음 주 수요일 워크숍에 남궁별 님도 오신대요."
+          }
+        ]
+      }
+    },
+    "kakao-001": {
+      "loom.extract": {
+        "by_input": {
+          "fdc3d2d158fdb0b703fbd4949896073d4c24401d97eff7f3ec9be8e4e849b8dc": {
+            "summary": "내일 별빛디자인 미팅",
+            "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "e1",
+                "entity_id": "ent_1SKESB073BTNBQ60KD7S6GW3D9",
+                "type": "org",
+                "name": "별빛디자인",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "별빛디자인 미팅",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "ref": "e3",
+                "entity_id": "ent_1N20A7WNDVE87CAB32Z6518KK5",
+                "type": "person",
+                "name": "권태호",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "s1",
+                "title": "별빛디자인 미팅",
+                "start": "2031-03-06T14:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "from": "e3",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-06T14:00:00+09:00\"",
+                "occurred_at": "2031-03-05T09:10:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "ref": "d2",
+                "entities": [
+                  "e3",
+                  "e2"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"미팅 참석\"",
+                "occurred_at": "2031-03-05T09:12:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "ab3e0bb5cb92bbc4a97c115b04d752a14da2fd18c3fa16906b9c5497105e94a7": {
+            "summary": "내일 별빛디자인 미팅",
+            "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "e1",
+                "entity_id": "ent_1SKESB073BTNBQ60KD7S6GW3D9",
+                "type": "org",
+                "name": "별빛디자인",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "별빛디자인 미팅",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "ref": "e3",
+                "entity_id": "ent_1N20A7WNDVE87CAB32Z6518KK5",
+                "type": "person",
+                "name": "권태호",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "s1",
+                "title": "별빛디자인 미팅",
+                "start": "2031-03-06T14:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "from": "e3",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 오후 2시에 별빛디자인 미팅 있어요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-06T14:00:00+09:00\"",
+                "occurred_at": "2031-03-05T09:10:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 : 저도 참석할게요",
+                "ref": "d2",
+                "entities": [
+                  "e3",
+                  "e2"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"미팅 참석\"",
+                "occurred_at": "2031-03-05T09:12:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오전 9:10, 한가람 : 내일 오후 2시에 별빛디자인 미팅 있어요\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오전 9:12, 권태호 : 저도 참석할게요\n"
+          }
+        ]
+      }
+    },
+    "kakao-002": {
+      "loom.extract": {
+        "by_input": {
+          "8165cddbfe716f3e5d72de81228ddfb10d7c50a3ec878f40d22f6d576eb03a20": {
+            "summary": "견적서 요청",
+            "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+            "entities": [
+              {
+                "confidence": 0.6,
+                "ask": {
+                  "question": "달토끼가 민서현인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_1PSQEHZ9Q7MNHQ7N2SNF2W9X99",
+                      "label": "민서현"
+                    }
+                  ]
+                },
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "달토끼",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "견적서",
+                "aliases": []
+              },
+              {
+                "confidence": 0.7,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e3",
+                "entity_id": "ent_026XXM60PWY4FX0ZXRQ7NPRCG4",
+                "type": "org",
+                "name": "누리물산",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2",
+                  "e3"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"금요일까지 견적서 제출 요청\"",
+                "occurred_at": "2031-03-05T10:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e3",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-07T23:59:00+09:00",
+                  "content": "견적서를 금요일까지"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "96ae75e12f2cfad4f5d4baa95452dedacfce54c23ebb1a25532794e367e4fee0": {
+            "summary": "견적서 요청",
+            "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+            "entities": [
+              {
+                "confidence": 0.6,
+                "ask": {
+                  "question": "달토끼가 민서현인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_1PSQEHZ9Q7MNHQ7N2SNF2W9X99",
+                      "label": "민서현"
+                    }
+                  ]
+                },
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "달토끼",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "견적서",
+                "aliases": []
+              },
+              {
+                "confidence": 0.7,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "e3",
+                "entity_id": "ent_026XXM60PWY4FX0ZXRQ7NPRCG4",
+                "type": "org",
+                "name": "누리물산",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2",
+                  "e3"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"금요일까지 견적서 제출 요청\"",
+                "occurred_at": "2031-03-05T10:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e3",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-07T23:59:00+09:00",
+                  "content": "견적서를 금요일까지"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오전 10:00, 누리물산 구매팀 : 달토끼 님, 견적서 금요일까지 부탁드려요\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오전 10:05, 달토끼 : 넵 확인했습니다\n"
+          }
+        ]
+      }
+    },
+    "kakao-003": {
+      "loom.extract": {
+        "by_input": {
+          "8db36726e6d79efefc76699932dfedd10c60435da0784b08fa2761a85280caaf": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "오늘 점심 뭐 먹지",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          },
+          "ea1191f3085306efa6828a495417edcd4ac2a3330d3146561f5e82b6f9bf832e": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "점심방 님과 카카오톡 대화\n저장한 날짜 : 2031년 3월 5일 오후 9:00\n\n2031년 3월 5일 수요일\n2031년 3월 5일 오전 11:50, 차은솔 : 오늘 점심 뭐 먹지\n2031년 3월 5일 오전 11:51, 육선우 : 김밥 어때요 ㅋㅋ",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오전 11:50, 차은솔 : 오늘 점심 뭐 먹지\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오전 11:51, 육선우 : 김밥 어때요 ㅋㅋ\n"
+          }
+        ]
+      }
+    },
+    "kakao-004": {
+      "loom.extract": {
+        "by_input": {
+          "ad985ad5447467daa4fc8b3ab8801ea14dcaf0e6369acce527bbac0aa3cf8669": {
+            "summary": "다음 주 화요일 회의 취소",
+            "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "폐기",
+                "field": null,
+                "value": "\"3/11 15시 회의 취소\"",
+                "occurred_at": "2031-03-05T14:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "cebce5286c9c7bb163365365f42af58a199f68db7669a0779b57dd30e33f7dab": {
+            "summary": "다음 주 화요일 회의 취소",
+            "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 화요일 3시 회의는 취소됐습니다",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "폐기",
+                "field": null,
+                "value": "\"3/11 15시 회의 취소\"",
+                "occurred_at": "2031-03-05T14:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 2:00, 오세린 : 다음 주 화요일 3시 회의는 취소됐습니다\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오후 2:03, 표지안 : 확인\n"
+          }
+        ]
+      }
+    },
+    "kakao-005": {
+      "loom.extract": {
+        "by_input": {
+          "0fd9c1261baf7c1082420380f6ce0b487e83a1b0340526e6116d210cebc631b7": {
+            "summary": "회의를 금요일 10시로 변경",
+            "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "s1",
+                "title": "회의",
+                "start": "2031-03-07T10:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "변경",
+                "field": "start",
+                "value": "\"목요일에서 금요일 10시로\"",
+                "occurred_at": "2031-03-05T15:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-07T10:00:00+09:00\"",
+                "occurred_at": "2031-03-05T15:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "b472fe885075640ef82bb101b50001ac1f16626e94c65e3c92ba2d7117135394": {
+            "summary": "회의를 금요일 10시로 변경",
+            "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "s1",
+                "title": "회의",
+                "start": "2031-03-07T10:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "변경",
+                "field": "start",
+                "value": "\"목요일에서 금요일 10시로\"",
+                "occurred_at": "2031-03-05T15:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "목요일 회의 금요일 10시로 미룰게요",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-07T10:00:00+09:00\"",
+                "occurred_at": "2031-03-05T15:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 3:00, 오세린 : 목요일 회의 금요일 10시로 미룰게요\n"
+          }
+        ]
+      }
+    },
+    "kakao-006": {
+      "loom.extract": {
+        "by_input": {
+          "098e6558f153886204064bb0dd8125ef05488753567e35d7bc8e3bd0bef7f032": {
+            "summary": "권태호 소속 변경",
+            "thread_excerpt": "권태호 님이 누리물산으로 옮기셨대요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 님이 누리물산으로 옮기셨대요",
+                "ref": "e1",
+                "entity_id": "ent_1MQEG69EN7ZCNBDC5HFCNZF20P",
+                "type": "person",
+                "name": "권태호",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 님이 누리물산으로 옮기셨대요",
+                "ref": "e2",
+                "entity_id": "ent_0GY0E12BPK7D038T99F0AVWMD5",
+                "type": "org",
+                "name": "누리물산",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "권태호 님이 누리물산으로 옮기셨대요",
+                "from": "e1",
+                "type": "소속",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "권태호 님이 누리물산으로 옮기셨대요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "변경",
+                "field": "소속",
+                "value": "\"누리물산\"",
+                "occurred_at": "2031-03-05T16:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 4:00, 금하윤 : 권태호 님이 누리물산으로 옮기셨대요\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오후 4:01, 차은솔 : 와 축하드려야겠다\n"
+          }
+        ]
+      }
+    },
+    "kakao-007": {
+      "loom.extract": {
+        "by_input": {
+          "9cc963ec087eb8bd977e83c9f88e1886577ebec677a0b0e766aeeab0acaddcbb": {
+            "summary": "시안 B안 결정",
+            "thread_excerpt": "그럼 디자인 시안은 B안으로 가는 걸로 결정할게요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "그럼 디자인 시안은 B안으로 가는 걸로 결정할게요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "topic",
+                "name": "디자인 시안",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "그럼 디자인 시안은 B안으로 가는 걸로 결정할게요",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "결정",
+                "field": "시안",
+                "value": "\"B안\"",
+                "occurred_at": "2031-03-05T17:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 5:00, 권태호 : 그럼 디자인 시안은 B안으로 가는 걸로 결정할게요\n"
+          }
+        ]
+      }
+    },
+    "kakao-008": {
+      "loom.extract": {
+        "by_input": {
+          "8e65d55246d54d95f52c4dafa7776d288fd6b50f7fa16454e7d8babeb0960f7d": {
+            "summary": "김하늘의 전화 요청",
+            "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+            "entities": [
+              {
+                "confidence": 0.5,
+                "ask": {
+                  "question": "어느 김하늘인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_0ZRMRWB6B4QPFZQE5SPGHW435V",
+                      "label": "김하늘 (가온소프트)"
+                    },
+                    {
+                      "entity_id": "ent_0KSPWQ18FE7AM3BWYE700EG228",
+                      "label": "김하늘 (별빛디자인)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "김하늘",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "전화",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"내일 10시 전화 요청\"",
+                "occurred_at": "2031-03-05T18:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-06T10:00:00+09:00",
+                  "content": "내일 오전 10시 전화"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "17a3bc3f9bdf2a6c9fae349a67bf5f2871cb70fa1e25468b5a16130ef736e32b": {
+            "summary": "김하늘의 전화 요청",
+            "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+            "entities": [
+              {
+                "confidence": 0.5,
+                "ask": {
+                  "question": "어느 김하늘인가요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_0ZRMRWB6B4QPFZQE5SPGHW435V",
+                      "label": "김하늘 (가온소프트)"
+                    },
+                    {
+                      "entity_id": "ent_0KSPWQ18FE7AM3BWYE700EG228",
+                      "label": "김하늘 (별빛디자인)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "person",
+                "name": "김하늘",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "전화",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"내일 10시 전화 요청\"",
+                "occurred_at": "2031-03-05T18:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-06T10:00:00+09:00",
+                  "content": "내일 오전 10시 전화"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 6:00, 표지안 : 김하늘 대리님이 내일 오전 10시 전화 달라고 하셨어요\n"
+          }
+        ]
+      }
+    },
+    "kakao-009": {
+      "loom.extract": {
+        "by_input": {
+          "11523fef6c5473728337fe6d73f8835680517f5d231cc17ba2016f33d4da5810": {
+            "summary": "보고서 초안 약속",
+            "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "topic",
+                "name": "보고서 초안",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "e2",
+                "entity_id": "ent_0F63HDGDGH5RQ9WJ64DBRC2RDH",
+                "type": "person",
+                "name": "육선우",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "d1",
+                "entities": [
+                  "e2",
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"3/10까지 보고서 초안 전달\"",
+                "occurred_at": "2031-03-05T19:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "d3a46f86cdfa3f5ec7810c7f32835bb405685f96eaf721aff2c89c31875bfe4e": {
+            "summary": "보고서 초안 약속",
+            "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "topic",
+                "name": "보고서 초안",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "e2",
+                "entity_id": "ent_0F63HDGDGH5RQ9WJ64DBRC2RDH",
+                "type": "person",
+                "name": "육선우",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 : 다음 주 월요일까지 보고서 초안 드릴게요",
+                "ref": "d1",
+                "entities": [
+                  "e2",
+                  "e1"
+                ],
+                "kind": "약속",
+                "field": null,
+                "value": "\"3/10까지 보고서 초안 전달\"",
+                "occurred_at": "2031-03-05T19:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 7:00, 육선우 : 다음 주 월요일까지 보고서 초안 드릴게요\n"
+          }
+        ]
+      }
+    },
+    "kakao-010": {
+      "loom.extract": {
+        "by_input": {
+          "e9e642e243d694c6d1c74d6f3f95c9b4376c290c1625b946e3fc8c1c4aa764bf": {
+            "summary": "스탠드업 일정",
+            "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "스탠드업",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "s1",
+                "title": "스탠드업",
+                "start": "2031-03-05T09:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-05T09:00:00+09:00\"",
+                "occurred_at": "2031-03-04T23:50:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "a192451ae27b78e41614b31c59797999c131e429afb5425546fd65ea55c0657f": {
+            "summary": "스탠드업 일정",
+            "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "스탠드업",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "s1",
+                "title": "스탠드업",
+                "start": "2031-03-05T09:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "내일 아침 9시 스탠드업 잊지 마세요",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-05T09:00:00+09:00\"",
+                "occurred_at": "2031-03-04T23:50:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "[오세린] [오후 11:50] 내일 아침 9시 스탠드업 잊지 마세요\n"
+          },
+          {
+            "segment_id": "s7",
+            "text": "[표지안] [오전 12:10] 넵 내일이 아니라 오늘이네요 ㅎㅎ\n"
+          }
+        ]
+      }
+    },
+    "kakao-011": {
+      "loom.extract": {
+        "by_input": {
+          "ff490d4ebd1a9da3e098dfd61725ce563abad179938cded20a4273ca3895c241": {
+            "summary": "다음 주 목요일 워크숍",
+            "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "워크숍",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "ref": "e2",
+                "entity_id": "ent_1PEHWX4B3YZWGKJ4P2DQQ93C2M",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "ref": "e3",
+                "entity_id": "ent_17XKQ2BQCY6RZKNQKF35JSJ8CT",
+                "type": "person",
+                "name": "금하윤",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "s1",
+                "title": "워크숍",
+                "start": "2031-03-13T13:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2",
+                  "e3"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "from": "e2",
+                "type": "참석",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              },
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "from": "e3",
+                "type": "참석",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-13T13:00:00+09:00\"",
+                "occurred_at": "2031-03-05T20:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          },
+          "04f27f1a4f161cc2c66215a0fbd011a0e89918ca570823e0b427d6972e3aa02a": {
+            "summary": "다음 주 목요일 워크숍",
+            "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "워크숍",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "ref": "e2",
+                "entity_id": "ent_1PEHWX4B3YZWGKJ4P2DQQ93C2M",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "ref": "e3",
+                "entity_id": "ent_17XKQ2BQCY6RZKNQKF35JSJ8CT",
+                "type": "person",
+                "name": "금하윤",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "s1",
+                "title": "워크숍",
+                "start": "2031-03-13T13:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2",
+                  "e3"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "from": "e2",
+                "type": "참석",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              },
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정",
+                "from": "e3",
+                "type": "참석",
+                "to": "e1",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 목요일 오후 1시 워크숍",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-13T13:00:00+09:00\"",
+                "occurred_at": "2031-03-05T20:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": [
+          {
+            "segment_id": "s5",
+            "text": "2031년 3월 5일 오후 8:00, 금하윤 : 다음 주 목요일 오후 1시 워크숍\n"
+          },
+          {
+            "segment_id": "s6",
+            "text": "2031년 3월 5일 오후 8:01, 금하윤 : 참석자는 저랑 한가람 님 두 명이에요, 장소는 아직 미정\n"
+          }
+        ]
+      }
+    },
+    "share-001": {
+      "loom.extract": {
+        "by_input": {
+          "0b08b05e38be2d9c3856acfe81e2999097a0ae35bba6fbfc7b2a289f7bef8d2a": {
+            "summary": "계약 검토 회의",
+            "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+                "ref": "e1",
+                "entity_id": "ent_1M3E0Q4AGFTDZSSV22X90DHBBM",
+                "type": "org",
+                "name": "가온소프트",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "계약 검토 회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+                "ref": "s1",
+                "title": "계약 검토 회의",
+                "start": "2031-03-12T14:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e2",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "3월 12일 오후 2시 가온소프트 본사에서 계약 검토 회의.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-12T14:00:00+09:00\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-002": {
+      "loom.extract": {
+        "by_input": {
+          "008f59939ebaeebc69832a50e7025e075d3f32b3ffdfbe30f9ee7e8ab3bffca7": {
+            "summary": "출시 연기 결정",
+            "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+                "ref": "e1",
+                "entity_id": "ent_10AYWYKSVYQ3BAF694VB953BDG",
+                "type": "project",
+                "name": "은하 프로젝트",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "원인은 결제 모듈 지연.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "topic",
+                "name": "결제 모듈",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "원인은 결제 모듈 지연.",
+                "from": "e2",
+                "type": "원인",
+                "to": "this",
+                "reason": "결제 모듈 지연이 연기 원인"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "회의록: 은하 프로젝트 출시를 4월로 미루기로 결정함.",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "결정",
+                "field": "출시",
+                "value": "\"출시 4월로 연기\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-003": {
+      "loom.extract": {
+        "by_input": {
+          "b2b1b1970e5890c0223f8576eb7cf0be07c4521f0655644e7a246be424f848e7": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "오늘 너무 피곤하다. 내일은 좀 일찍 자야지.",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          },
+          "d1939cbaa9f0f026fef70c3dd095f2285438aecf83b48eb4296138823ea47bea": {
+            "summary": "추출할 사실 없음",
+            "thread_excerpt": "오늘 너무 피곤하다. 내일은 좀 일찍 자야지.",
+            "entities": [],
+            "entry_drafts": [],
+            "schedules": [],
+            "relations": []
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-004": {
+      "loom.extract": {
+        "by_input": {
+          "7c69d447ff55891042c3cdef9f77eb27027a10303bce2bd3fd12bf68831efe96": {
+            "summary": "동기 모임",
+            "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "동기 모임",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+                "ref": "s1",
+                "title": "동기 모임",
+                "start": "2031-03-14T19:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "다음 주 금요일 저녁 7시 동기 모임, 장소는 정하는 대로 알려줄게.",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-14T19:00:00+09:00\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-005": {
+      "loom.extract": {
+        "by_input": {
+          "d2d15f497798f91587fdadb33604df171f2ca1d1f19e75cb2a40b21f3b2b1846": {
+            "summary": "런던 지사 재통화",
+            "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "org",
+                "name": "런던 지사",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+                "ref": "e2",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "재통화",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+                "ref": "s1",
+                "title": "런던 지사 재통화",
+                "start": "2031-03-07T01:00:00+09:00",
+                "end": null,
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "entry_ref": "d1",
+                "blocked_by_request": null
+              }
+            ],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+                "from": "e2",
+                "type": "후속조치",
+                "to": "this",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "런던 지사와 통화: 현지 시각 목요일 오후 4시 재통화 예정.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-06T16:00:00+00:00\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-006": {
+      "loom.extract": {
+        "by_input": {
+          "b14056ef8f4e944156799d73cb3546657910e637feb6f0f03e5ddd6ec928874e": {
+            "summary": "데이터 정리 요청",
+            "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+                "ref": "e1",
+                "entity_id": "ent_1T7ZK6DHP9YGK59KWRV8DF4W8Y",
+                "type": "person",
+                "name": "육선우",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+                "ref": "e2",
+                "entity_id": "ent_1C7QZH84YG1K5X1TZ89J0T656C",
+                "type": "project",
+                "name": "은하 프로젝트",
+                "aliases": []
+              }
+            ],
+            "schedules": [
+              {
+                "confidence": 0.85,
+                "ask": null,
+                "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+                "ref": "s1",
+                "title": "데이터 정리 마감",
+                "start": "2031-03-11T23:59:00+09:00",
+                "end": null,
+                "entities": [
+                  "e2"
+                ],
+                "entry_ref": "d2",
+                "blocked_by_request": "d1"
+              }
+            ],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2"
+                ],
+                "kind": "요청",
+                "field": null,
+                "value": "\"데이터 정리 요청\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": {
+                  "requester": "e1",
+                  "targets": [
+                    "e2"
+                  ],
+                  "due_at": "2031-03-11T23:59:00+09:00",
+                  "content": "데이터 정리를 다음 주 화요일까지"
+                },
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "육선우 님이 은하 프로젝트 데이터 정리를 다음 주 화요일까지 해 달라고 요청.",
+                "ref": "d2",
+                "entities": [
+                  "e2"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"2031-03-11T23:59:00+09:00\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": "d1"
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-007": {
+      "loom.extract": {
+        "by_input": {
+          "0976c893053be91cd27b57632ebfbe51539142b5305bc904a4bf035e512aab2f": {
+            "summary": "C안 폐기",
+            "thread_excerpt": "광고 시안 C안은 폐기하고 B안만 다음 주에 다시 보기로.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "광고 시안 C안은 폐기하고 B안만 다음 주에 다시 보기로.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "topic",
+                "name": "광고 시안",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "광고 시안 C안은 폐기하고 B안만 다음 주에 다시 보기로.",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "폐기",
+                "field": null,
+                "value": "\"C안\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "광고 시안 C안은 폐기하고 B안만 다음 주에 다시 보기로.",
+                "ref": "d2",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"B안 다음 주 재검토\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-008": {
+      "loom.extract": {
+        "by_input": {
+          "cf441701e7a7ad8b0227c29979a47ff169331c2924716cfab9f42c4cbe724e5a": {
+            "summary": "내일 회의",
+            "thread_excerpt": "회의 내일 3시.",
+            "entities": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "회의 내일 3시.",
+                "ref": "e1",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "회의",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [],
+            "entry_drafts": [
+              {
+                "confidence": 0.4,
+                "ask": {
+                  "question": "언제 쓴 메모인가요? 날짜를 확인해 주세요.",
+                  "choices": []
+                },
+                "thread_excerpt": "회의 내일 3시.",
+                "ref": "d1",
+                "entities": [
+                  "e1"
+                ],
+                "kind": "일정",
+                "field": null,
+                "value": "\"내일 3시\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    },
+    "share-009": {
+      "loom.extract": {
+        "by_input": {
+          "86af7ead9b7398faaeb1920ed2cadc92d1de7473889d045c58cfc54503229876": {
+            "summary": "두 한가람의 리뷰 참석",
+            "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+            "entities": [
+              {
+                "confidence": 0.7,
+                "ask": {
+                  "question": "가온소프트 한가람이 맞나요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_0AMK4PN1FS8QBFVK7JPQDJEDQP",
+                      "label": "한가람 (가온소프트)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "e1",
+                "entity_id": "ent_0AMK4PN1FS8QBFVK7JPQDJEDQP",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              },
+              {
+                "confidence": 0.7,
+                "ask": {
+                  "question": "별빛디자인 한가람이 맞나요?",
+                  "choices": [
+                    {
+                      "entity_id": "ent_16PW5KPT674ACK8NTCQVBM87BX",
+                      "label": "한가람 (별빛디자인)"
+                    }
+                  ]
+                },
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "e2",
+                "entity_id": "ent_16PW5KPT674ACK8NTCQVBM87BX",
+                "type": "person",
+                "name": "한가람",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "e3",
+                "entity_id": "ent_0WYWBTPEW5CK2ZP22VBTYZ0GY7",
+                "type": "org",
+                "name": "가온소프트",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "e4",
+                "entity_id": "ent_0PDSDG0D87ZMY4E9ASFTQHDPBC",
+                "type": "org",
+                "name": "별빛디자인",
+                "aliases": []
+              },
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "e5",
+                "entity_id": null,
+                "type": "meeting",
+                "name": "리뷰",
+                "aliases": []
+              }
+            ],
+            "schedules": [],
+            "relations": [
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "from": "e1",
+                "type": "소속",
+                "to": "e3",
+                "reason": "고정 합성 fixture의 관계 근거"
+              },
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "from": "e2",
+                "type": "소속",
+                "to": "e4",
+                "reason": "고정 합성 fixture의 관계 근거"
+              },
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "from": "e1",
+                "type": "참석",
+                "to": "e5",
+                "reason": "고정 합성 fixture의 관계 근거"
+              },
+              {
+                "confidence": 0.8,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "from": "e2",
+                "type": "참석",
+                "to": "e5",
+                "reason": "고정 합성 fixture의 관계 근거"
+              }
+            ],
+            "entry_drafts": [
+              {
+                "confidence": 0.9,
+                "ask": null,
+                "thread_excerpt": "가온소프트 한가람 팀장, 별빛디자인 한가람 디자이너 둘 다 다음 주 월요일 리뷰에 옴.",
+                "ref": "d1",
+                "entities": [
+                  "e1",
+                  "e2",
+                  "e5"
+                ],
+                "kind": "논의",
+                "field": null,
+                "value": "\"3/10 리뷰 참석 예정\"",
+                "occurred_at": "2031-03-05T09:00:00+09:00",
+                "supersedes": null,
+                "retracts": null,
+                "request": null,
+                "resolves": null,
+                "blocked_by_request": null
+              }
+            ]
+          }
+        }
+      },
+      "spinner.revise": {
+        "segments": []
+      }
+    }
+  }
+}

@@ -67,6 +67,10 @@ jobs:
         run: |
           mkdir -p reports
           uv run --project server --locked pytest -ra --junitxml=reports/pytest.xml
+      - name: Offline evaluation regression check
+        run: >-
+          uv run --project server --locked python -m weaver.evals run
+          --baseline server/evals/baseline.json --output reports/evals.json
       - name: Schema export matches committed schema/
         run: |
           set -euo pipefail

@@ -69,17 +69,20 @@ class Ledger:
         finally:
             db.close()
 
+    def _reservation_total(self, db: sqlite3.Connection, month: str) -> int:
+        return int(
+            db.execute(
+                "SELECT COALESCE(SUM(charged_nano), 0) FROM llm_calls WHERE month=?",
+                (month,),
+            ).fetchone()[0]
+        )
+
     def reserve(self, record: dict[str, Any], amount: int) -> str:
         call_id = uuid4().hex
         month = datetime.now(UTC).strftime("%Y-%m")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            total = int(
-                db.execute(
-                    "SELECT COALESCE(SUM(charged_nano), 0) FROM llm_calls WHERE month=?",
-                    (month,),
-                ).fetchone()[0]
-            )
+            total = self._reservation_total(db, month)
             blocked = total + amount > round(self.stop_usd * NANO_USD)
             if blocked:
                 record["status"] = BudgetExceeded.code

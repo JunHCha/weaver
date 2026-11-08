@@ -38,3 +38,6 @@ android/.idea/
 keystore.properties
 signing.properties
 signing.env
+
+# Generated local evaluation/test reports
+/reports/
