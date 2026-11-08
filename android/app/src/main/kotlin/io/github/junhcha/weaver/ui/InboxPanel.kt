@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.key
@@ -20,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import io.github.junhcha.weaver.review.ReviewDraft
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxDatabase
 import io.github.junhcha.weaver.inbox.InboxRuntime
@@ -41,6 +44,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
     var proposals by remember { mutableStateOf(emptyList<InboxDatabase.ProposalItem>()) }
+    var questionCounts by remember { mutableStateOf(emptyMap<String, Int?>()) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     var alerts by remember { mutableStateOf(emptyList<InboxDatabase.AlertItem>()) }
@@ -49,7 +53,16 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
         records = withContext(Dispatchers.IO) { ReviewRuntime.records(context) }
         withContext(Dispatchers.IO) {
             Triple(InboxRuntime.proposals(context), InboxRuntime.alerts(context), InboxRuntime.lastScanAt(context))
-        }.let { (p, a, scan) -> proposals = p; alerts = a; lastScan = scan }
+        }.let { (p, a, scan) ->
+            proposals = p; alerts = a; lastScan = scan
+            questionCounts = withContext(Dispatchers.IO) {
+                p.associate { item -> item.proposalId to runCatching {
+                    val proposal = ReviewRuntime.open(context, item.proposalId)
+                    check(proposal.rev == item.rev)
+                    ReviewDraft.questions(proposal).size
+                }.getOrNull() }
+            }
+        }
     }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -57,8 +70,15 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             OutlinedButton(onClick = { CourierRuntime.kick(context) }) { Text("동기화 새로고침") }
             if (proposals.isEmpty()) Text("검토 대기 제안 없음")
             proposals.forEach { item ->
-                Text(item.summary + if (item.revised) " · 다시 짠 제안 (r${item.rev})" else "")
-                OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
+                OutlinedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("출처: ${channelLabel(item.channel)} · 시각: ${item.capturedAt}")
+                        Text("rev ${item.rev} · 미해결 질문 ${questionCounts[item.proposalId]?.let { "${it}개" } ?: if (item.proposalId in questionCounts) "확인 불가" else "확인 중"}" +
+                            if (item.revised) " · 다시 짠 제안" else "")
+                        Text(item.summary.replace('\n', ' '), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
+                    }
+                }
             }
             records.forEach { record ->
                 key(record.verdict.proposalId, record.verdict.rev) { CalendarPanel(record) }
@@ -88,4 +108,12 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             } ?: "아직 없음"))
         }
     }
+}
+
+private fun channelLabel(channel: String): String = when (channel) {
+    "CALL" -> "통화"
+    "VOICE_MEMO" -> "음성 메모"
+    "KAKAO" -> "카카오톡"
+    "SHARE_TEXT" -> "공유 텍스트"
+    else -> channel
 }
