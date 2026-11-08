@@ -3,6 +3,7 @@ package io.github.junhcha.weaver.shepherd
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import io.github.junhcha.weaver.courier.CourierRuntime
@@ -21,23 +22,34 @@ import java.util.UUID
 /** Sender names and declared sizes are deliberately never used as paths or limits. */
 object SharedText {
     const val MAX_BYTES = 10L * 1024 * 1024
+    private const val TEXT_PLAIN = "text/plain"
+    private const val APPLICATION_TXT = "application/txt"
 
     fun receive(context: Context, intent: Intent): File {
-        require(intent.action == Intent.ACTION_SEND) { "한 번에 텍스트 한 항목만 공유하세요." }
-        require(intent.type?.substringBefore(';')?.trim()?.lowercase() == "text/plain") {
-            "text/plain 텍스트만 지원합니다. 음성·오디오 파일은 받을 수 없습니다."
+        require(intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            "한 번에 텍스트 한 항목만 공유하세요."
         }
-        @Suppress("DEPRECATION")
-        val stream = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        val type = intent.type?.substringBefore(';')?.trim()?.lowercase()
+        require(type == TEXT_PLAIN || type == APPLICATION_TXT) {
+            "text/plain 또는 application/txt 텍스트만 지원합니다. 음성·오디오 파일은 받을 수 없습니다."
+        }
+        val stream = streamUri(intent)
         require(intent.clipData == null || intent.clipData!!.itemCount <= 1) { "한 번에 한 항목만 공유하세요." }
         require(stream == null || stream.scheme == "content") { "공유 파일은 content URI여야 합니다." }
         if (stream != null) {
             require(!privateSource(context, stream)) { "앱 내부 또는 Courier 폴더의 파일은 공유 입력으로 받을 수 없습니다." }
             val resolvedType = context.contentResolver.getType(stream)?.substringBefore(';')?.trim()?.lowercase()
-            require(resolvedType == null || resolvedType == "text/plain") { "text/plain 텍스트 파일만 지원합니다." }
+            require(resolvedType == null || resolvedType == TEXT_PLAIN || resolvedType == APPLICATION_TXT) {
+                "text/plain 텍스트 파일만 지원합니다."
+            }
+            if (type == APPLICATION_TXT || resolvedType == APPLICATION_TXT) {
+                require(displayName(context, intent)?.lowercase()?.endsWith(".txt") == true) {
+                    "확장자가 .txt인 텍스트 파일만 지원합니다."
+                }
+            }
         }
-        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
-        require(stream == null || text == null) { "파일 또는 본문 중 한 항목만 공유하세요." }
+        // A file stream wins; the accompanying EXTRA_TEXT (e.g. a preview) is ignored.
+        val text = if (stream == null) intent.getCharSequenceExtra(Intent.EXTRA_TEXT) else null
         val target = File(context.filesDir, "shepherd-shares").apply { mkdirs() }
         target.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 60 * 60 * 1000L }
             ?.forEach { it.delete() }
@@ -78,10 +90,28 @@ object SharedText {
             (document == null && tree == null)
     }
 
+    /** Keep the original intent and its ClipData/read grant while selecting exactly one URI. */
+    @Suppress("DEPRECATION")
+    private fun streamUri(intent: Intent): Uri? {
+        if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            val streams = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+            }
+            require(streams?.size == 1) { "텍스트 파일을 한 개만 선택해 공유하세요." }
+            return requireNotNull(streams.single()) { "공유한 텍스트 파일이 없습니다." }
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        }
+    }
+
     /** Untrusted display metadata is only a selection hint, never a local path. */
     fun displayName(context: Context, intent: Intent): String? {
-        @Suppress("DEPRECATION")
-        val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return null
+        val uri = streamUri(intent) ?: return null
         return runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                 val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
