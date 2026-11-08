@@ -1,6 +1,7 @@
 """Refinement, extraction, linking, and proposals."""
 
-from .extract import Extractor, LlmExtractor
+from .extract import ExampleSource, Extractor, LlmExtractor
+from .feedback import FeedbackConflict, SqliteFeedbackStore
 from .propose import (
     CourierPublisher,
     CourierReviewAdapter,
@@ -20,7 +21,10 @@ __all__ = [
     "Proposer",
     "VerdictHandler",
     "ReviewStore",
+    "ExampleSource",
     "Extractor",
+    "FeedbackConflict",
+    "SqliteFeedbackStore",
     "LlmExtractor",
     "Refiner",
     "RuleRefiner",

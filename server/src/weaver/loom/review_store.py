@@ -4,7 +4,7 @@ import fcntl
 import json
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -28,7 +28,7 @@ class ReviewStore:
             os.chmod(self.path, 0o600)
             with self.connect() as db:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (0, 1, 2):
+                if version not in (0, 1, 2, 3):
                     raise ValueError("unsupported Loom journal version")
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS proposals (
@@ -55,6 +55,14 @@ class ReviewStore:
                         "CREATE INDEX IF NOT EXISTS proposals_source ON proposals(source_id, rev)"
                     )
                     db.execute("PRAGMA user_version=2")
+                if version < 3:
+                    # #27: prompt/model versions of the call that produced a rev.
+                    if not db.in_transaction:
+                        db.execute("BEGIN IMMEDIATE")
+                    db.execute(
+                        "ALTER TABLE proposals ADD COLUMN versions TEXT NOT NULL DEFAULT '{}'"
+                    )
+                    db.execute("PRAGMA user_version=3")
 
     @classmethod
     def from_config(cls, config: ServerConfig) -> "ReviewStore":
@@ -89,12 +97,19 @@ class ReviewStore:
             ).fetchone()
         return row[0] if row else None
 
-    def save_proposal(self, proposal: Proposal) -> None:
+    def save_proposal(
+        self, proposal: Proposal, versions: Mapping[str, str] | None = None
+    ) -> None:
         with self.connect() as db:
-            self.insert_proposal(db, proposal)
+            self.insert_proposal(db, proposal, versions)
 
     @staticmethod
-    def insert_proposal(db: sqlite3.Connection, proposal: Proposal) -> None:
+    def insert_proposal(
+        db: sqlite3.Connection,
+        proposal: Proposal,
+        versions: Mapping[str, str] | None = None,
+    ) -> None:
+        """The first insert fixes versions; identical retries never rewrite them."""
         payload = proposal.model_dump_json()
         row = db.execute(
             "SELECT snapshot FROM proposals WHERE proposal_id=? AND rev=?",
@@ -103,9 +118,24 @@ class ReviewStore:
         if row and row[0] != payload:
             raise ValueError("conflicting proposal snapshot")
         db.execute(
-            "INSERT OR IGNORE INTO proposals (proposal_id,rev,snapshot,source_id) VALUES (?,?,?,?)",
-            (proposal.proposal_id, proposal.rev, payload, proposal.source.source_id),
+            "INSERT OR IGNORE INTO proposals (proposal_id,rev,snapshot,source_id,versions) "
+            "VALUES (?,?,?,?,?)",
+            (
+                proposal.proposal_id,
+                proposal.rev,
+                payload,
+                proposal.source.source_id,
+                json.dumps(dict(versions or {}), sort_keys=True),
+            ),
         )
+
+    def versions(self, proposal_id: str, rev: int) -> dict[str, str]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT versions FROM proposals WHERE proposal_id=? AND rev=?",
+                (proposal_id, rev),
+            ).fetchone()
+        return dict(json.loads(row[0])) if row else {}
 
     def source_proposal(self, source_id: str) -> Proposal | None:
         with self.connect() as db:

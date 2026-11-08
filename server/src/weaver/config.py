@@ -89,6 +89,30 @@ class SpinnerSettings:
 
 
 @dataclass(frozen=True)
+class FeedbackSettings:
+    """Loom feedback use (#27): structured prompt examples and raw-text retention."""
+
+    examples: bool = True
+    example_limit: int = 3
+    example_bytes: int = 2048
+    retention_days: int = 180
+
+    def __post_init__(self) -> None:
+        if type(self.examples) is not bool:
+            raise ConfigError("loom.feedback_examples: expected boolean")
+        for name, low, high in (
+            ("example_limit", 0, 10),
+            ("example_bytes", 0, 16384),
+            ("retention_days", 1, 3650),
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or not low <= value <= high:
+                raise ConfigError(
+                    f"loom.feedback_{name}: expected integer from {low} to {high}"
+                )
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
@@ -96,6 +120,7 @@ class ComponentConfig:
     stt: SttConfig | None = None
     refiner: RefinerConfig | None = None
     retry: SpinnerSettings = SpinnerSettings()
+    feedback: FeedbackSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +145,7 @@ class ServerConfig:
     time: TimeConfig = TimeConfig()
     refiner: RefinerConfig = RefinerConfig()
     spinner_settings: SpinnerSettings = SpinnerSettings()
+    feedback: FeedbackSettings = FeedbackSettings()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -127,7 +153,7 @@ class ServerConfig:
 
     @property
     def loom(self) -> ComponentConfig:
-        return ComponentConfig(self.llm, refiner=self.refiner)
+        return ComponentConfig(self.llm, refiner=self.refiner, feedback=self.feedback)
 
 
 def _path(value: str, base: Path, env: Mapping[str, str], field: str) -> Path:
@@ -255,7 +281,7 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner", "spinner"}:
+    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner", "spinner", "loom"}:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -296,6 +322,18 @@ def load_config(
     }:
         raise ConfigError("spinner: expected retry settings table")
     spinner_settings = SpinnerSettings(**spinner_raw)
+    loom_raw = raw.get("loom", {})
+    loom_keys = {
+        "feedback_examples",
+        "feedback_example_limit",
+        "feedback_example_bytes",
+        "feedback_retention_days",
+    }
+    if not isinstance(loom_raw, dict) or loom_raw.keys() - loom_keys:
+        raise ConfigError("loom: expected feedback settings table")
+    feedback = FeedbackSettings(
+        **{key.removeprefix("feedback_"): value for key, value in loom_raw.items()}
+    )
     llm = _llm_settings(raw.get("llm", {}))
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -342,4 +380,5 @@ def load_config(
         time=time_config,
         refiner=refiner,
         spinner_settings=spinner_settings,
+        feedback=feedback,
     )

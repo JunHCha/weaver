@@ -598,3 +598,34 @@ def test_invalid_spinner_config(tmp_path: Path, extra: str) -> None:
     with pytest.raises(ConfigError) as caught:
         load_config(path, environ={})
     assert "secret-value" not in str(caught.value)
+
+
+def test_loom_feedback_settings_default_and_override(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path), environ={})
+    assert config.feedback.examples is True
+    assert (config.feedback.example_limit, config.feedback.example_bytes) == (3, 2048)
+    assert config.feedback.retention_days == 180
+    assert config.loom.feedback is config.feedback
+    config = load_config(
+        write_config(
+            tmp_path,
+            "[loom]\nfeedback_examples = false\nfeedback_example_limit = 1\n",
+        ),
+        environ={},
+    )
+    assert config.feedback.examples is False and config.feedback.example_limit == 1
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "[loom]\nfeedback_examples = 1",
+        "[loom]\nfeedback_example_limit = 11",
+        "[loom]\nfeedback_retention_days = 0",
+        "[loom]\nunknown = 1",
+        "loom = []",
+    ],
+)
+def test_invalid_loom_feedback_settings(tmp_path: Path, extra: str) -> None:
+    with pytest.raises(ConfigError, match="loom"):
+        load_config(write_config(tmp_path, extra), environ={})

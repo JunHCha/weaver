@@ -673,7 +673,9 @@ def test_v1_journal_migrates_source_lookup(env, tmp_path):
     store = ReviewStore(path)
     assert store.source_proposal(env.proposal.source.source_id) == env.proposal
     with store.connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            db.execute("PRAGMA user_version").fetchone()[0] == 3
+        )  # v2 source lookup, then #27 versions
     assert (
         ReviewStore(path).source_proposal(env.proposal.source.source_id) == env.proposal
     )

@@ -41,6 +41,8 @@ MODEL = "claude-sonnet-5-5"
 
 
 class AnthropicClient:
+    model = MODEL  # Read by Loom version tracking; not part of LlmClient.
+
     def __init__(
         self,
         config: LlmConfig,
