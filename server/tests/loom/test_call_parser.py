@@ -18,19 +18,39 @@ def call_source(occurred_at=None):
     return source("call").model_copy(update={"occurred_at": occurred_at})
 
 
+def line_contents(text):
+    """Expected Segment ranges: each nonempty line without its LF/CRLF."""
+    ranges, start = [], 0
+    parts = text.split("\n")
+    for number, part in enumerate(parts, 1):
+        end = start + len(part) - (number < len(parts) and part.endswith("\r"))
+        if end > start:
+            ranges.append((start, end))
+        start += len(part) + 1
+    return ranges
+
+
 def assert_coverage(result, text):
     thread = result.thread
     assert thread.text == text
-    assert thread.segments[0].start_char == 0
-    assert thread.segments[-1].end_char == len(text)
-    assert all(
-        a.end_char == b.start_char
-        for a, b in zip(thread.segments, thread.segments[1:], strict=False)
-    )
-    assert "".join(text[s.start_char : s.end_char] for s in thread.segments) == text
+    # Segments are exactly the nonempty line contents; only LF/CRLF and empty
+    # lines remain between them, which the Reviser restores verbatim.
+    assert [(s.start_char, s.end_char) for s in thread.segments] == line_contents(text)
+    previous = 0
+    for segment in thread.segments:
+        assert not text[previous : segment.start_char].strip("\r\n")
+        assert "\n" not in text[segment.start_char : segment.end_char]
+        previous = segment.end_char
+    assert not text[previous:].strip("\r\n")
     assert Thread.model_validate_json(thread.model_dump_json()) == thread
     for diagnostic in result.diagnostics:
         assert 0 <= diagnostic.start_char < diagnostic.end_char <= len(text)
+
+
+def body_texts(thread):
+    return [
+        thread.text[s.start_char : s.end_char] for s in thread.segments if s.speaker
+    ]
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
@@ -49,6 +69,15 @@ def test_synthetic_fixture(newline, bom, known_time):
     assert result.thread.occurred_at == occurred_at
     messages = [s for s in result.thread.segments if s.speaker]
     assert [s.speaker for s in messages] == ["나", "홍길동", "나 & 홍길동"]
+    assert body_texts(result.thread) == [
+        "여보세요. ",
+        "응, 토요일에 시간 돼? ",
+        "그래 그날 보자. 😀 ",
+    ]
+    headers = [
+        s for s in result.thread.segments if "  (" in text[s.start_char : s.end_char]
+    ]
+    assert len(headers) == 3 and all(s.speaker is None for s in headers)
     assert [s.start_ms for s in messages] == [1000, 3000, 3607000]
     assert [s.end_ms for s in messages] == [3000, 3607000, None]
     assert [s.occurred_at for s in messages] == [
@@ -67,8 +96,8 @@ def test_empty_header_only_equal_and_regressing_times():
     text = "나  (00:03)\n\n가상  (00:03)\n나  (00:01)"
     result = parse_call(call_source(), text)
     assert_coverage(result, text)
-    messages = [s for s in result.thread.segments if s.speaker]
-    assert len(messages) == 3 and all(s.end_ms is None for s in messages)
+    # Header-only blocks have no body Segment; headers stay structural.
+    assert not any(s.speaker or s.start_ms is not None for s in result.thread.segments)
     assert sum(d.code == "empty_utterance" for d in result.diagnostics) == 3
     assert sum(d.code == "non_increasing_time" for d in result.diagnostics) == 2
 
@@ -157,3 +186,34 @@ def test_missing_preamble_and_block_separator_are_diagnosed():
         "missing_preamble",
         "missing_separator",
     }
+
+
+def test_body_lookalike_parenthesis_stays_body():
+    text = "나  (00:01)\n가짜 메모  (참고\n\n상대  (00:02)\n가짜 응답\n"
+    result = parse_call(call_source(), text)
+    assert_coverage(result, text)
+    assert body_texts(result.thread) == ["가짜 메모  (참고", "가짜 응답"]
+    assert [s.end_ms for s in result.thread.segments if s.speaker] == [2000, None]
+    assert "invalid_header" not in [d.code for d in result.diagnostics]
+
+
+def test_empty_block_still_ends_previous_body():
+    text = "나  (00:01)\n가짜\n\n상대  (00:02)\n\n나  (00:03)\n끝\n"
+    result = parse_call(call_source(), text)
+    assert_coverage(result, text)
+    assert [(s.start_ms, s.end_ms) for s in result.thread.segments if s.speaker] == [
+        (1000, 2000),
+        (3000, None),
+    ]
+    assert [d.code for d in result.diagnostics].count("empty_utterance") == 1
+
+
+def test_whitespace_lines_and_lone_trailing_cr_are_structural():
+    text = "나  (00:01)\r\n가짜\r\n \t\r\n상대  (00:02)\r\n가짜 응답\r"
+    result = parse_call(call_source(), text)
+    assert_coverage(result, text)
+    blank = result.thread.segments[2]
+    assert text[blank.start_char : blank.end_char] == " \t"
+    assert blank.speaker is None
+    # A lone CR is not a line ending, so it stays inside the final body.
+    assert body_texts(result.thread) == ["가짜", "가짜 응답\r"]

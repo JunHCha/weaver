@@ -49,6 +49,10 @@ def _header(line: str) -> tuple[str, int] | None:
 def parse_call(source: Source, text: str) -> ParseResult:
     """Retain preamble, headers, bodies, blank and unknown lines without edits.
 
+    Each nonempty line's content (LF/CRLF excluded) is one Segment. Line endings
+    and empty lines are whitespace separators between Segments, so Thread.text
+    stays exact while the Reviser can restore them verbatim. Only a speech body
+    Segment carries speaker/time; headers and other lines are structural (null).
     A block contains one body line; surplus lines are preserved with diagnostics.
     Header lookalikes in body position are inherently ambiguous and split blocks.
     Missing/invalid structure is diagnostic; entirely unrecognized input fails.
@@ -61,46 +65,51 @@ def parse_call(source: Source, text: str) -> ParseResult:
         raise CallParseError("unsupported_encoding")
     segments: list[Segment] = []
     diagnostics: list[Diagnostic] = []
-    blocks: list[tuple[int, int, int, int]] = []
-    active: tuple[int, int, str, int, int] | None = None
-    has_body = False
+    # (body segment index, line number, header start, header end, ms)
+    blocks: list[tuple[int | None, int, int, int, int]] = []
+    # (line number, ms, speaker, header start, header end, body segment index)
+    active: tuple[int, int, str, int, int, int | None] | None = None
     recognized = False
     title_pending = False
 
     def warn(code: str, number: int, start: int, end: int) -> None:
         diagnostics.append(Diagnostic(code, number, start, end))
 
-    def append(start: int, end: int) -> None:
-        if end > start:
-            segments.append(
-                Segment(
-                    segment_id=f"s{len(segments) + 1}",
-                    start_char=start,
-                    end_char=end,
-                    start_ms=None,
-                    end_ms=None,
-                    speaker=None,
-                    occurred_at=None,
-                )
+    def append(start: int, end: int) -> int | None:
+        if end <= start:
+            return None
+        segments.append(
+            Segment(
+                segment_id=f"s{len(segments) + 1}",
+                start_char=start,
+                end_char=end,
+                start_ms=None,
+                end_ms=None,
+                speaker=None,
+                occurred_at=None,
             )
+        )
+        return len(segments) - 1
 
-    def flush(end: int) -> None:
+    def flush() -> None:
         nonlocal active
         if active is None:
             return
-        start, number, speaker, ms, header_end = active
-        append(start, end)
-        segment = segments[-1]
-        segment.speaker = speaker
-        segment.start_ms = ms
-        if source.occurred_at is not None:
-            try:
-                segment.occurred_at = source.occurred_at + timedelta(milliseconds=ms)
-            except OverflowError:
-                warn("occurred_at_overflow", number, start, header_end)
-        if not has_body:
-            warn("empty_utterance", number, start, header_end)
-        blocks.append((len(segments) - 1, number, start, header_end))
+        number, ms, speaker, header_start, header_end, body = active
+        if body is None:
+            warn("empty_utterance", number, header_start, header_end)
+        else:
+            segment = segments[body]
+            segment.speaker = speaker
+            segment.start_ms = ms
+            if source.occurred_at is not None:
+                try:
+                    segment.occurred_at = source.occurred_at + timedelta(
+                        milliseconds=ms
+                    )
+                except OverflowError:
+                    warn("occurred_at_overflow", number, header_start, header_end)
+        blocks.append((body, number, header_start, header_end, ms))
         active = None
 
     start = 0
@@ -110,6 +119,8 @@ def parse_call(source: Source, text: str) -> ParseResult:
         if not raw:
             continue
         end = start + len(raw)
+        crlf = number < len(parts) and part.endswith("\r")
+        content_end = start + len(part) - int(crlf)
         line = part.removesuffix("\r")
         if start == 0:
             line = line.removeprefix("\ufeff")
@@ -121,19 +132,20 @@ def parse_call(source: Source, text: str) -> ParseResult:
             if title_pending:
                 warn("missing_title", number, start, end)
                 title_pending = False
-            if active is not None and has_body:
+            if active is not None and active[5] is not None:
                 warn("missing_separator", number, start, end)
-            flush(start)
+            flush()
+            append(start, content_end)
             speaker, ms = header
-            active = start, number, speaker, ms, end
-            has_body = False
+            active = number, ms, speaker, start, end, None
             if " & " in speaker:
                 warn("overlap_speakers", number, start, end)
-        elif active is not None and not has_body and line.strip() and "  (" not in line:
-            has_body = True
+        elif active is not None and active[5] is None and line.strip():
+            # _header(line) is None here, so any nonblank text is the body.
+            active = (*active[:5], append(start, content_end))
         else:
-            flush(start)
-            append(start, end)
+            flush()
+            append(start, content_end)
             if number == 1 and line == _NOTICE:
                 recognized = True
                 title_pending = True
@@ -147,7 +159,7 @@ def parse_call(source: Source, text: str) -> ParseResult:
                     end,
                 )
         start = end
-    flush(len(text))
+    flush()
     if not recognized:
         raise CallParseError("unsupported_format")
     if title_pending:
@@ -155,13 +167,10 @@ def parse_call(source: Source, text: str) -> ParseResult:
     if not blocks:
         warn("no_messages", 1, 0, len(text))
     for previous, current in zip(blocks, blocks[1:], strict=False):
-        segment = segments[previous[0]]
-        next_ms = segments[current[0]].start_ms
-        assert segment.start_ms is not None and next_ms is not None
-        if next_ms > segment.start_ms:
-            segment.end_ms = next_ms
-        else:
+        if current[4] <= previous[4]:
             warn("non_increasing_time", current[1], current[2], current[3])
+        elif previous[0] is not None:
+            segments[previous[0]].end_ms = current[4]
     return ParseResult(
         Thread(
             schema_version=1,

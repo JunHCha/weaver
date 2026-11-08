@@ -66,23 +66,30 @@ structural example on issue #56; it contains no real call content. Server input
 is UTF-8 (Android #65 converts the UTF-16 BOM original without losing content).
 Optional Unicode BOM, LF/CRLF and trailing whitespace are retained exactly.
 
-`weaver.loom.call.parse_call(source, text)` returns `ParseResult`. The first
-`AI로 생성된 콘텐츠입니다` line, following nonblank title and all blank lines
-are un-timed, un-speakered preservation Segments. Thread has no separate title
-field; adding one would unnecessarily change v1. A speech Segment spans its
-header `<speaker>  (MM:SS)` and one nonblank body line, including line endings.
+`weaver.loom.call.parse_call(source, text)` returns `ParseResult`. Every
+nonempty line's content, excluding its LF/CRLF, is exactly one Segment. The
+`AI로 생성된 콘텐츠입니다` line, the following nonblank title, whitespace-only
+lines and each header `<speaker>  (MM:SS)` are un-timed, un-speakered structural
+Segments. Thread has no separate title field; adding one would unnecessarily
+change v1. The single nonblank body line after a header is the speech Segment
+and alone carries speaker, start_ms, end_ms and occurred_at. A body line is any
+line that is not a header, even if it contains `  (`.
 `H:MM:SS` accepts 1–9 hour digits; minutes/seconds are exactly two ASCII digits
 in 00–59. Exact header lookalikes in speech split blocks: text cannot distinguish
 quotation from a real header. A missing blank separator is diagnosed.
 
-All Segments partition the original Unicode code points without gaps. Speakers
+Line endings and empty lines lie between Segments: the schema forbids empty
+Segments, and absorbing terminators into some Segments but not speech bodies
+would make ranges inconsistent. The gaps are whitespace only and the Reviser
+restores them verbatim, so Thread.text and every range stay exact. Speakers
 are unchanged, including `나 & 상대` (`overlap_speakers`). start_ms is elapsed
 call time; end_ms is the next recognized block's start only when strictly later.
 Equal/reversed starts diagnose `non_increasing_time` and leave that end null;
 the last end is always null. occurred_at is Source.occurred_at + elapsed time,
 or null if call time is absent/unrepresentable. captured_at is never a fallback.
 
-Empty/header-only blocks retain their header with `empty_utterance`. Unknown and
+Empty/header-only blocks retain their header with `empty_utterance` and have no
+speech Segment; their start still ends the previous body. Unknown and
 malformed lines remain un-timed preservation Segments with `unrecognized_line`
 or `invalid_header`; extra body lines are not silently accepted as normal speech.
 Missing preamble/title and no blocks are diagnosed. Entirely unrecognized,

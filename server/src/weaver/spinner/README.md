@@ -8,7 +8,12 @@ and SHA-256, and decodes UTF-8 without newline conversion.
 - `text/share_text`: original complete text and one Segment, no revision.
 - `text/call`: uses the built-in `GalaxyCallParser` for Galaxy scripts (#56), then an
   injected `Reviser` (production: `LlmReviser(client)`). The manifest's
-  `hints.counterpart` becomes `ReviseHints.counterpart`.
+  `hints.counterpart` becomes `ReviseHints.counterpart`. Only speech Segments
+  (speaker present, nonblank text) are sent to the LLM; headers, notice, title,
+  blank/unknown lines and the separators between Segments pass through verbatim.
+  Revision wire format 2 (`spinner.revise.v2`) allows `start` with a null `end`
+  like Segment; `revision_to_thread` restores original separators instead of
+  joining with `\n` and rejects changed structural Segments.
 - `fleece` and unused channels fail explicitly. STT is deferred by ADR-028.
   `TextSpinner` likewise refuses call scripts rather than treating them as prose.
 
@@ -16,7 +21,7 @@ and SHA-256, and decodes UTF-8 without newline conversion.
 spinner = Spinner.from_config(
     archive,
     settings,
-    configuration_version="galaxy-parser1:model-id:spinner.revise.v1",
+    configuration_version="galaxy-parser1:model-id:spinner.revise.v2",
     reviser=LlmReviser(client),
 )
 thread = spinner.spin(source)
@@ -27,8 +32,12 @@ channel; `parsers={"call": custom_parser}` overrides the built-in Galaxy parser.
 No live LLM client is constructed implicitly. Callers
 supply `configuration_version` for engine settings not advertised by adapters.
 The stored key appends a SHA-256 fingerprint of that caller version, timezone key,
-built-in `PARSER_VERSION`, revision `PROMPT_VERSION`, and optional parser/reviser
-`version` attributes (absent means unversioned). `LlmReviser.version` includes the
+built-in `PARSER_VERSION`, revision `PROMPT_VERSION` and `FORMAT_VERSION`, and the
+`(channel, version)` of every installed parser plus the reviser `version` (absent
+means unversioned). Installing the default `call` parser therefore changed the key
+for every channel, including `kakao` and `share_text`, once: their existing
+checkpoints are recomputed on first use (intended; results are deterministic and
+no LLM is involved for those channels). `LlmReviser.version` includes the
 prompt content and production model identifier; custom clients can advertise their
 own `version`. Bump the built-in parser constant when parsing rules change and an
 adapter's version when its behavior changes. Unversioned adapters remain supported

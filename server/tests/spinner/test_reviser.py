@@ -1,6 +1,7 @@
 """Synthetic Galaxy-script Threads; no speech engine, vault or live API."""
 
 import json
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -8,8 +9,10 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from weaver.llm import LlmError, SchemaMismatch
-from weaver.schema.models import Segment, Thread
+from weaver.loom.call import parse_call
+from weaver.schema.models import Segment, Source, Thread
 from weaver.spinner.reviser import (
+    FORMAT_VERSION,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     ContextLimitError,
@@ -29,6 +32,7 @@ ENTITY_ID = "ent_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
 def make_thread(texts: list[str], *, timed: bool = False) -> Thread:
+    """Speech-only fixture: every Segment has a speaker and reaches the LLM."""
     segments = []
     offset = 0
     for i, text in enumerate(texts):
@@ -39,7 +43,7 @@ def make_thread(texts: list[str], *, timed: bool = False) -> Thread:
                 end_char=offset + len(text),
                 start_ms=1001 + i if timed else None,
                 end_ms=2001 + i if timed else None,
-                speaker="speaker_1" if i % 2 == 0 else None,
+                speaker=f"speaker_{i % 2 + 1}",
                 occurred_at="2026-11-08T09:00:00+09:00",
             )
         )
@@ -114,7 +118,7 @@ def test_wire_roundtrip_and_unicode_character_ranges() -> None:
     original = make_thread(texts)
     wire = LlmReviser(FakeLlm(texts)).revise(original, ReviseHints())
     parsed = parse_revision(wire)
-    assert json.loads(wire)["format_version"] == 1
+    assert json.loads(wire)["format_version"] == FORMAT_VERSION == 2
     assert json.loads(wire)["prompt_version"] == PROMPT_VERSION
     assert parse_revision(serialize_revision(parsed)) == parsed
     thread = revision_to_thread(parsed, original)
@@ -146,7 +150,7 @@ def test_synthetic_regression(source: str, corrected: str) -> None:
     revised = revision_to_thread(parse_revision(result), thread)
     assert revised.text == corrected + "\n네, 겹쳐서 말했어요."
     assert revised.segments[1].start_ms < revised.segments[0].end_ms
-    assert revised.segments[1].speaker is None
+    assert revised.segments[1].speaker == "speaker_2"
 
 
 def test_prompt_guards() -> None:
@@ -230,14 +234,11 @@ def test_llm_error_propagates_and_no_sensitive_logs(
     assert "비밀" not in caplog.text
 
 
-@pytest.mark.parametrize("start,end,text", [(1.0, 1.0, "문장"), (None, None, "")])
-def test_unrepresentable_thread_fails(
-    start: float | None, end: float | None, text: str
-) -> None:
+def test_unrepresentable_thread_fails() -> None:
     revision = Revision(
         segments=[
             RevisionSegment(
-                segment_id="s1", start=start, end=end, speaker=None, text=text
+                segment_id="s1", start=None, end=None, speaker=None, text=""
             )
         ]
     )
@@ -261,8 +262,10 @@ def test_seconds_to_milliseconds_rounds_outward() -> None:
 @pytest.mark.parametrize(
     "patch",
     [
-        {"format_version": 2},
+        {"format_version": 1},
+        {"format_version": 3},
         {"format_version": True},
+        {"prompt_version": "spinner.revise.v1"},
         {"prompt_version": "future"},
         {"unknown": 1},
     ],
@@ -278,6 +281,7 @@ def test_wire_rejects_unknown_versions_and_fields(patch: dict[str, object]) -> N
     [
         {"start": -1, "end": 2},
         {"start": 2, "end": 1},
+        {"start": 1, "end": 1},
         {"start": None, "end": 1},
         {"start": float("inf"), "end": float("inf")},
     ],
@@ -365,7 +369,9 @@ def test_same_alias_candidates_remain_hints() -> None:
 def test_parse_errors_do_not_expose_conversation(invalid: str) -> None:
     secret = "PRIVATE_CONVERSATION_취소된약속"
     segment = dict(segment_id="s1", start=None, end=None, speaker=None, text=secret)
-    payload = dict(format_version=1, prompt_version=PROMPT_VERSION, segments=[segment])
+    payload = dict(
+        format_version=FORMAT_VERSION, prompt_version=PROMPT_VERSION, segments=[segment]
+    )
     if invalid == "duplicate":
         payload["segments"].append(segment.copy())
     else:
@@ -446,7 +452,13 @@ def test_whitespace_separators_need_no_duplicate_full_text() -> None:
     thread = Thread.model_validate(thread.model_dump())
     fake = FakeLlm(["앞", "뒤"])
     wire = LlmReviser(fake).revise(thread, ReviseHints())
-    assert revision_to_thread(parse_revision(wire), thread).text == "앞\n뒤"
+    # v2: original separators are restored verbatim instead of joined by "\n".
+    rebuilt = revision_to_thread(parse_revision(wire), thread)
+    assert rebuilt.text == " \n앞\t\n뒤\n "
+    assert [rebuilt.text[s.start_char : s.end_char] for s in rebuilt.segments] == [
+        "앞",
+        "뒤",
+    ]
     payload = json.loads(fake.calls[0][2])
     assert set(payload) == {"segments", "hints"}
     assert [s["text"] for s in payload["segments"]] == ["앞", "뒤"]
@@ -458,3 +470,133 @@ def test_thread_conversion_cannot_discard_uncovered_content() -> None:
     original.text += "비밀 꼬리말"
     with pytest.raises(RevisionError, match="^uncovered_text$"):
         revision_to_thread(parse_revision(wire), original)
+
+
+def call_source(occurred_at: datetime | None = None) -> Source:
+    return Source(
+        schema_version=1,
+        source_id=SOURCE_ID,
+        capture_id="cap_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        kind="text",
+        channel="call",
+        captured_at=datetime.fromisoformat("2026-11-08T10:00:00+09:00"),
+        occurred_at=occurred_at,
+        sha256="0" * 64,
+        hints={"counterpart": None},
+        payload_ref="payloads/fake.txt",
+    )
+
+
+class EchoLlm(FakeLlm):
+    """Edits every segment it receives, so pass-through cannot be faked."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def generate_json[T: BaseModel](
+        self, task: str, system: str, user: str, schema: type[T]
+    ) -> T:
+        self.calls.append((task, system, user, schema))
+        segments = json.loads(user)["segments"]
+        return schema.model_validate(
+            {
+                "segments": [
+                    {"segment_id": s["segment_id"], "text": s["text"] + "!"}
+                    for s in segments
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_parsed_call_end_to_end_with_real_reviser(newline: str) -> None:
+    text = newline.join(
+        [
+            "\ufeffAI로 생성된 콘텐츠입니다",
+            "",
+            "가짜 제목",
+            "",
+            "나  (00:01)",
+            "가짜 인사 ",
+            "",
+            "상대  (00:03)",
+            "",
+            "나 & 상대  (00:07)",
+            "가짜 마무리",
+            "",
+        ]
+    )
+    occurred_at = datetime.fromisoformat("2026-11-08T09:00:00+09:00")
+    original = parse_call(call_source(occurred_at), text).thread
+    fake = EchoLlm()
+    wire = LlmReviser(fake).revise(original, ReviseHints())
+    sent = json.loads(fake.calls[0][2])["segments"]
+    # Only speech bodies reach the LLM: no header, notice, title or newline.
+    assert [s["text"] for s in sent] == ["가짜 인사 ", "가짜 마무리"]
+    assert [(s["start"], s["end"]) for s in sent] == [(1.0, 3.0), (7.0, None)]
+    revised = revision_to_thread(parse_revision(wire), original)
+    assert revised.text == text.replace("가짜 인사 ", "가짜 인사 !").replace(
+        "가짜 마무리", "가짜 마무리!"
+    )
+    assert "\n\n\n" not in revised.text.replace("\r", "")
+    for old, new in zip(original.segments, revised.segments, strict=True):
+        assert (old.start_ms, old.end_ms, old.speaker, old.occurred_at) == (
+            new.start_ms,
+            new.end_ms,
+            new.speaker,
+            new.occurred_at,
+        )
+        before = original.text[old.start_char : old.end_char]
+        after = revised.text[new.start_char : new.end_char]
+        assert after == (before + "!" if old.speaker else before)
+    assert revised.segments[-1].end_ms is None
+
+
+def test_open_ended_time_round_trips() -> None:
+    thread = make_thread(["마지막 발화"], timed=True)
+    thread.segments[0].end_ms = None
+    thread = Thread.model_validate(thread.model_dump())
+    wire = LlmReviser(FakeLlm(["마지막 발화."])).revise(thread, ReviseHints())
+    parsed = parse_revision(wire)
+    assert (parsed.segments[0].start, parsed.segments[0].end) == (1.001, None)
+    assert parse_revision(serialize_revision(parsed)) == parsed
+    segment = revision_to_thread(parsed, thread).segments[0]
+    assert (segment.start_ms, segment.end_ms) == (1001, None)
+
+
+def test_structure_only_thread_skips_llm() -> None:
+    text = "AI로 생성된 콘텐츠입니다\n\n가짜 제목\n\n나  (00:01)\n"
+    original = parse_call(call_source(), text).thread
+    fake = FakeLlm([])
+    wire = LlmReviser(fake).revise(original, ReviseHints())
+    assert not fake.calls
+    assert revision_to_thread(parse_revision(wire), original).text == text
+
+
+def test_speakerless_and_blank_segments_pass_through() -> None:
+    thread = make_thread(["머리말", "본문", " \t"])
+    thread.segments[0].speaker = None
+    thread = Thread.model_validate(thread.model_dump())
+    fake = EchoLlm()
+    wire = LlmReviser(fake).revise(thread, ReviseHints())
+    assert [s["segment_id"] for s in json.loads(fake.calls[0][2])["segments"]] == ["s2"]
+    assert revision_to_thread(parse_revision(wire), thread).text == "머리말\n본문!\n \t"
+
+
+def test_structural_segment_must_not_change() -> None:
+    original = parse_call(call_source(), "나  (00:01)\n가짜\n").thread
+    revision = parse_revision(LlmReviser(EchoLlm()).revise(original, ReviseHints()))
+    revision.segments[0].text = "바뀐 헤더"
+    with pytest.raises(RevisionError, match="^structural_segment_changed$"):
+        revision_to_thread(revision, original)
+
+
+def test_unrepresentable_segment_error_is_content_free() -> None:
+    secret = "PRIVATE_CONVERSATION_비밀"
+    thread = make_thread([secret], timed=True)
+    # Bypass Thread validation, as an injected adapter could.
+    thread.segments[0].end_ms = 0
+    with pytest.raises(RevisionError, match="^unrepresentable_segment$") as caught:
+        LlmReviser(FakeLlm([secret])).revise(thread, ReviseHints())
+    assert secret not in str(caught.value)
+    assert caught.value.__suppress_context__

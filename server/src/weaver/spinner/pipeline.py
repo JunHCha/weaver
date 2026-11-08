@@ -24,6 +24,7 @@ from weaver.llm import LlmError
 from weaver.loom.call import GalaxyCallParser
 from weaver.schema.models import Source, Thread
 from weaver.spinner.reviser import (
+    FORMAT_VERSION,
     PROMPT_VERSION,
     ReviseHints,
     Reviser,
@@ -83,6 +84,7 @@ class Spinner:
                 self._timezone.key,
                 PARSER_VERSION,
                 PROMPT_VERSION,
+                FORMAT_VERSION,
                 sorted(
                     (channel, getattr(parser, "version", None))
                     for channel, parser in self._parsers.items()
