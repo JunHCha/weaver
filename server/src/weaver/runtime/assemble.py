@@ -25,14 +25,15 @@ from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
 
+from .gate import LlmGate, LlmStatus
 from .ledger import RuntimeLedger
-from .loop import LlmStatus, MaintenanceTask, Runtime, VaultPublisher
+from .loop import MaintenanceTask, Runtime, VaultPublisher
 from .pipeline import (
     AlertDetector,
     EntityIndexSource,
+    GatedLlm,
     NoAlerts,
     TextSourceProcessor,
-    UnavailableLlm,
     llm_status,
 )
 
@@ -63,15 +64,19 @@ def build_runtime(
 ) -> Runtime[Source]:
     plugins = plugins or Plugins()
     env = os.environ if environ is None else environ
-    llm = llm_status(config.llm, env)
-    client: LlmClient
+    real: LlmClient | None
     if plugins.client is not None:
-        client = plugins.client
-        llm = LlmStatus(True, "injected")
-    elif llm.available:
-        client = create_client(config.llm, state_root=config.state_root)
+        real = plugins.client
+        gate = LlmGate(lambda: LlmStatus(True, "injected"))
     else:
-        client = UnavailableLlm()
+        # Constructing the client needs no credentials; the gate decides use.
+        real = (
+            create_client(config.llm, state_root=config.state_root)
+            if config.llm.backend == "anthropic"
+            else None
+        )
+        gate = LlmGate(lambda: llm_status(config.llm, env))
+    client = GatedLlm(real, gate)
     archive = ArchiveStore.from_config(config)
     reviews = ReviewStore.from_config(config)
     store = SqliteFeedbackStore.from_config(config, reviews)
@@ -86,12 +91,12 @@ def build_runtime(
     adapter = CourierReviewAdapter(handler)
     courier = Courier(config.courier, archive, adapter, adapter)
     publisher.courier = courier
-    usable = llm.available
+    ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     spinner = Spinner.from_config(
         archive,
         config,
         configuration_version=CONFIGURATION_VERSION,
-        reviser=LlmReviser(client) if usable else None,
+        reviser=LlmReviser(client),
     )
     processor = TextSourceProcessor(
         spinner=spinner,
@@ -100,23 +105,23 @@ def build_runtime(
             client,
             timezone=config.time.timezone,
             examples=store if config.feedback.examples else None,
-        )
-        if usable
-        else None,
+        ),
         proposer=Proposer(reviews, publisher),
         reviews=reviews,
         entities=plugins.entities or store,
         alerts=plugins.alerts,
         alert_sink=courier,
-        llm_available=usable,
+        cache=ledger,
+        gate=gate,
     )
     return Runtime(
         state_root=config.state_root,
         scanner=courier,
         sources=archive,
+        decode=Source.model_validate_json,
         processor=processor,
-        ledger=RuntimeLedger(config.state_root / "runtime.sqlite3"),
-        llm=llm,
+        ledger=ledger,
+        gate=gate,
         interval=interval,
         publisher=plugins.publisher,
         maintenance=[

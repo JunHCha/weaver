@@ -14,12 +14,15 @@ log_root = "data/logs"
 backend = "anthropic"
 # Reference only: provide the value outside the configuration file.
 api_key_env = "ANTHROPIC_API_KEY"
+# For the launchd agent (no shell environment): an absolute path to a private
+# key file (regular file, owned by you, chmod 600). It wins over api_key_env.
+# api_key_file = "~/.config/weaver/anthropic.key"
 
 # All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
 # To create missing directories explicitly (existing data is preserved):
-# uv run --project server python -m weaver.app --config <file> --init-directories
+# uv run --project server python -m weaver.app run --config <file> --init-directories
 # To validate without changing files:
-# uv run --project server python -m weaver.app --config <file> --check-config
+# uv run --project server python -m weaver.app run --config <file> --check-config
 # Selection: --config > WEAVER_CONFIG > $XDG_CONFIG_HOME/weaver/config.toml
 #            > ~/.config/weaver/config.toml (if XDG_CONFIG_HOME is unset/empty).
 # One file only; no merging, per-field env overrides, or $VAR expansion.

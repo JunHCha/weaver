@@ -21,13 +21,31 @@ ConfigOption = Annotated[
 ]
 
 
+EX_CONFIG = 78  # sysexits.h: configuration error
+
+
 def _load(config: str | None, *, init_directories: bool = False) -> "ServerConfig":
+    """Configuration errors exit 78 (EX_CONFIG) with field names only.
+
+    Under launchd (WEAVER_SUPERVISED=1) the process first waits, because
+    KeepAlive cannot exclude an exit code and would otherwise restart a
+    broken configuration every ThrottleInterval.
+    """
+    import os
+
     from weaver.config import ConfigError, load_config
 
     try:
         return load_config(config, init_directories=init_directories)
     except ConfigError as error:
-        raise typer.BadParameter(str(error)) from None
+        typer.echo(f"Error: invalid configuration: {error}", err=True)
+        from weaver.runtime import launchd
+
+        if os.environ.get(launchd.SUPERVISED_ENV) == "1":
+            import time
+
+            time.sleep(launchd.CONFIG_ERROR_HOLD_SECONDS)
+        raise typer.Exit(code=EX_CONFIG) from None
 
 
 @cli.command()
@@ -104,12 +122,20 @@ def install_agent(
     interpreter = Path(python) if python else Path(sys.executable).absolute()
     if not interpreter.is_absolute() or not interpreter.is_file():
         raise typer.BadParameter("python: expected an existing absolute path")
+    for name, directory in (
+        ("state_root", settings.state_root),
+        ("log_root", settings.log_root),
+    ):
+        if not directory.is_dir():
+            typer.echo(f"Error: {name} does not exist; run --init-directories")
+            raise typer.Exit(code=EX_CONFIG)
     plist = launchd.render_plist(
         python=interpreter,
         config_file=settings.config_file,
         log_root=settings.log_root,
         working_directory=settings.state_root,
     )
+    _warn_llm_under_launchd(settings, plist)
     if print_only:
         typer.echo(plist.decode("utf-8"), nl=False)
         return
@@ -123,12 +149,32 @@ def install_agent(
     typer.echo(f"Installed {target}")
 
 
+def _warn_llm_under_launchd(settings: "ServerConfig", plist: bytes) -> None:
+    """launchd passes only the plist's EnvironmentVariables, not the shell's."""
+    import plistlib
+
+    from weaver.runtime.pipeline import llm_status
+
+    environment = plistlib.loads(plist).get("EnvironmentVariables", {})
+    llm = llm_status(settings.llm, environment)
+    if not llm.available:
+        typer.echo(
+            f"Warning: under launchd the LLM stage will be skipped ({llm.reason}); "
+            "set llm.api_key_file to a private key file (chmod 600).",
+            err=True,
+        )
+
+
 @cli.command("uninstall-agent")
 def uninstall_agent() -> None:
     """Stop the LaunchAgent and remove its plist (logs and state are kept)."""
     from weaver.runtime import launchd
 
-    removed = launchd.uninstall(home=Path.home(), launchctl=launchd.run_launchctl)
+    try:
+        removed = launchd.uninstall(home=Path.home(), launchctl=launchd.run_launchctl)
+    except launchd.LaunchdError as error:
+        typer.echo(f"Error: {error}; plist kept", err=True)
+        raise typer.Exit(code=1) from None
     typer.echo("Removed LaunchAgent." if removed else "LaunchAgent not installed.")
 
 

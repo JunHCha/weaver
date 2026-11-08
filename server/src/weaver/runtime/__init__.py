@@ -4,12 +4,12 @@ Importing this package has no side effects; ``weaver.runtime.assemble`` wires
 the real stores and is imported only by ``weaver.app run``.
 """
 
+from .gate import Interrupted, LlmGate, LlmStatus
 from .ledger import RuntimeLedger
 from .loop import (
     EXIT_ALREADY_RUNNING,
     AlreadyRunning,
     InstanceLock,
-    LlmStatus,
     MaintenanceTask,
     Outcome,
     Runtime,
@@ -19,6 +19,8 @@ __all__ = [
     "EXIT_ALREADY_RUNNING",
     "AlreadyRunning",
     "InstanceLock",
+    "Interrupted",
+    "LlmGate",
     "LlmStatus",
     "MaintenanceTask",
     "Outcome",

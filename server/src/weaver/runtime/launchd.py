@@ -6,15 +6,20 @@ paths only (no shell, no PATH, no current directory). ``<python>`` is the
 prepares; its symlink is kept unresolved so the venv stays active.
 
 Restart policy: KeepAlive restarts only after an unsuccessful exit (crash,
-duplicate-instance exit 3, config error 2); ThrottleInterval spaces restarts
-at least 30 s apart so repeated failures cannot storm. SIGTERM from
-``launchctl bootout`` exits 0 within ExitTimeOut (60 s) before SIGKILL.
-No credentials are written to the plist.
+duplicate-instance exit 3); ThrottleInterval spaces restarts at least 30 s
+apart so repeated failures cannot storm. launchd's KeepAlive cannot exclude a
+specific exit code, so a configuration error (EX_CONFIG, 78) under launchd
+(``WEAVER_SUPERVISED=1``) first waits CONFIG_ERROR_HOLD_SECONDS and then
+exits, i.e. one retry every ~10 minutes instead of every 30 s. SIGTERM from
+``launchctl bootout`` exits 0 within ExitTimeOut (300 s, above the 120 s LLM
+deadline so an in-flight paid call can finish) before SIGKILL.
+No credentials are written to the plist; give the key via llm.api_key_file.
 """
 
 import os
 import plistlib
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -23,7 +28,11 @@ from weaver.courier.atomic import write_bytes_atomic
 
 LABEL = "io.github.junhcha.weaver"
 THROTTLE_SECONDS = 30
-EXIT_TIMEOUT_SECONDS = 60
+EXIT_TIMEOUT_SECONDS = 300
+CONFIG_ERROR_HOLD_SECONDS = 600
+SUPERVISED_ENV = "WEAVER_SUPERVISED"
+UNLOAD_POLLS = 20
+POLL_SECONDS = 0.25
 
 type Launchctl = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
@@ -78,6 +87,7 @@ def render_plist(
         "EnvironmentVariables": {
             "PYTHONUNBUFFERED": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
+            SUPERVISED_ENV: "1",
         },
         "StandardOutPath": str(log_root / "launchd.out.log"),
         "StandardErrorPath": str(log_root / "launchd.err.log"),
@@ -89,32 +99,66 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
+def _target(label: str) -> str:
+    return f"{_domain()}/{label}"
+
+
+def is_loaded(launchctl: Launchctl, label: str = LABEL) -> bool:
+    return launchctl(["print", _target(label)]).returncode == 0
+
+
+def _unload(launchctl: Launchctl, label: str, sleep: Callable[[float], None]) -> None:
+    """bootout a loaded job and wait until launchd no longer lists it."""
+    if not is_loaded(launchctl, label):
+        return
+    result = launchctl(["bootout", _target(label)])
+    if result.returncode != 0 and is_loaded(launchctl, label):
+        raise LaunchdError(f"bootout exited {result.returncode}")
+    for _ in range(UNLOAD_POLLS):
+        if not is_loaded(launchctl, label):
+            return
+        sleep(POLL_SECONDS)
+    raise LaunchdError("job still loaded after bootout")
+
+
 def install(
     plist: bytes,
     *,
     home: Path,
     launchctl: Launchctl = run_launchctl,
     label: str = LABEL,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> Path:
     """Write the plist (0644, as launchd requires) and (re)bootstrap it."""
+    _unload(launchctl, label, sleep)
     target = plist_path(home, label)
     target.parent.mkdir(parents=True, exist_ok=True)
     write_bytes_atomic(target, plist)
     os.chmod(target, 0o644)
-    # Replace a previously loaded job; "not loaded" is not an error here.
-    launchctl(["bootout", f"{_domain()}/{label}"])
     result = launchctl(["bootstrap", _domain(), str(target)])
+    if result.returncode != 0:
+        # bootout can finish asynchronously; one delayed retry covers it.
+        sleep(1.0)
+        result = launchctl(["bootstrap", _domain(), str(target)])
     if result.returncode != 0:
         raise LaunchdError(f"bootstrap exited {result.returncode}")
     return target
 
 
 def uninstall(
-    *, home: Path, launchctl: Launchctl = run_launchctl, label: str = LABEL
+    *,
+    home: Path,
+    launchctl: Launchctl = run_launchctl,
+    label: str = LABEL,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
-    """Stop the job (SIGTERM) and remove its plist; logs and state are kept."""
+    """Stop the job (SIGTERM) and remove its plist; logs and state are kept.
+
+    If the job is loaded and bootout fails, the plist is kept and
+    LaunchdError is raised.
+    """
+    _unload(launchctl, label, sleep)
     target = plist_path(home, label)
-    launchctl(["bootout", f"{_domain()}/{label}"])
     if target.exists():
         target.unlink()
         return True
@@ -122,7 +166,7 @@ def uninstall(
 
 
 def status(*, launchctl: Launchctl = run_launchctl, label: str = LABEL) -> str:
-    result = launchctl(["print", f"{_domain()}/{label}"])
+    result = launchctl(["print", _target(label)])
     if result.returncode != 0:
         return "not loaded"
     keys = ("state =", "pid =", "last exit code =")

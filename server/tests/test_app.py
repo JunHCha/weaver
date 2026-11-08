@@ -113,5 +113,5 @@ def test_runtime_requires_valid_configuration(tmp_path: Path) -> None:
         'import runpy, sys\nsys.argv = ["weaver.app", "run"]\n'
         'runpy.run_module("weaver.app", run_name="__main__")\n',
     )
-    assert result.returncode == 2
+    assert result.returncode == 78  # EX_CONFIG
     assert "cannot read configuration" in result.stderr

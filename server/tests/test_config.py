@@ -231,7 +231,7 @@ def test_cli_check_and_explicit_initialization(
     path = write_config(tmp_path, create=False)
     with pytest.raises(SystemExit) as error:
         main(["run", "--config", str(path), "--check-config"])
-    assert error.value.code == 2
+    assert error.value.code == 78  # EX_CONFIG
     assert not (tmp_path / "sync_root").exists()
     assert main(["run", "--config", str(path), "--init-directories"]) == 0
     assert main(["run", "--config", str(path), "--check-config"]) == 0

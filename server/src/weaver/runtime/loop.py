@@ -3,8 +3,18 @@
 Every tick rescans Courier folders and the archive, so files that arrived
 while the process was stopped or the Mac was asleep are recovered without
 relying on file-system notifications. A wall-clock gap much longer than the
-scheduled wait is reported as a resume. SIGTERM/SIGINT stop between Sources:
-the Source in flight finishes and is recorded before the process exits.
+scheduled wait is reported as a resume. SIGTERM/SIGINT are checked before each
+LLM/journal stage: a stage already running finishes, the rest is left for the
+next start, and nothing is recorded as failed.
+
+Failure classes (per Source):
+- ValueError (invalid archive row, unsupported input): ``failed`` at once.
+- LLM contract violations (InvalidJson, SchemaMismatch, MissingOutput,
+  Refusal, invalid extraction output): retried, ``failed`` after 3.
+- AuthenticationError, BudgetExceeded, LlmUnavailable: ``waiting_llm``; the
+  LLM gate turns off and is re-probed every minute.
+- Anything else (RateLimited, TransientError, LlmTimeout, OSError, ...):
+  ``retry`` with exponential backoff, ``failed`` after 20 attempts.
 
 Logs carry only opaque IDs, counts and exception type names, never content.
 """
@@ -17,7 +27,7 @@ import os
 import signal
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,8 +35,17 @@ from types import FrameType
 from typing import Literal, Protocol
 
 from weaver.courier.atomic import write_bytes_atomic
+from weaver.llm.errors import (
+    AuthenticationError,
+    BudgetExceeded,
+    InvalidJson,
+    MissingOutput,
+    Refusal,
+    SchemaMismatch,
+)
 
-from .ledger import RuntimeLedger
+from .gate import ExtractionInvalid, Interrupted, LlmGate, LlmUnavailable
+from .ledger import Progress, RuntimeLedger
 
 logger = logging.getLogger("weaver.runtime")
 
@@ -35,9 +54,15 @@ type Outcome = Literal["done", "waiting_llm"]
 EXIT_ALREADY_RUNNING = 3
 MAX_TICK_BACKOFF_SECONDS = 300.0
 MAX_RETRY_BACKOFF_SECONDS = 3600.0
+MAX_RETRY_ATTEMPTS = 20
+MAX_CONTRACT_FAILURES = 3
+LLM_RECHECK_SECONDS = 60.0
 RESUME_SLACK_SECONDS = 60.0
 LOCK_NAME = "weaver.lock"
 STATUS_NAME = "runtime-status.json"
+
+_CONTRACT = (InvalidJson, SchemaMismatch, MissingOutput, Refusal, ExtractionInvalid)
+_LLM_OFF = (AuthenticationError, BudgetExceeded, LlmUnavailable)
 
 
 class AlreadyRunning(Exception):
@@ -82,18 +107,14 @@ class HasSourceId(Protocol):
     def source_id(self) -> str: ...
 
 
-class SourceFeed[S: HasSourceId](Protocol):
-    def sources(self) -> Sequence[S]: ...
+class SourceRows(Protocol):
+    def source_rows(self, exclude: Collection[str] = ()) -> list[tuple[str, str]]:
+        """(source_id, unvalidated JSON) in arrival order, minus ``exclude``."""
+        ...
 
 
 class SourceProcessor[S: HasSourceId](Protocol):
-    def process(self, source: S) -> Outcome:
-        """Return ``done`` or ``waiting_llm``.
-
-        Raise ValueError for permanent input/contract failures; any other
-        exception is retried after a backoff.
-        """
-        ...
+    def process(self, source: S, stop: threading.Event) -> Outcome: ...
 
 
 class VaultPublisher(Protocol):
@@ -114,12 +135,6 @@ class MaintenanceTask:
     name: str
     interval_seconds: float
     run: Callable[[], object]
-
-
-@dataclass(frozen=True)
-class LlmStatus:
-    available: bool
-    reason: str
 
 
 @contextlib.contextmanager
@@ -144,10 +159,11 @@ class Runtime[S: HasSourceId]:
         *,
         state_root: Path,
         scanner: Scanner,
-        sources: SourceFeed[S],
+        sources: SourceRows,
+        decode: Callable[[str], S],
         processor: SourceProcessor[S],
         ledger: RuntimeLedger,
-        llm: LlmStatus,
+        gate: LlmGate,
         interval: float,
         publisher: VaultPublisher | None = None,
         maintenance: Sequence[MaintenanceTask] = (),
@@ -159,9 +175,10 @@ class Runtime[S: HasSourceId]:
         self.state_root = state_root
         self.scanner = scanner
         self.feed = sources
+        self.decode = decode
         self.processor = processor
         self.ledger = ledger
-        self.llm = llm
+        self.gate = gate
         self.interval = interval
         self.publisher = publisher or NoPublisher()
         self.maintenance = list(maintenance)
@@ -170,6 +187,7 @@ class Runtime[S: HasSourceId]:
         self.resumes = 0
         self.consecutive_failures = 0
         self._last_run: dict[str, float] = {}
+        self._last_llm_check: float | None = None
         self._started_at = datetime.now(UTC).isoformat()
 
     # ---- process lifecycle -----------------------------------------------------
@@ -199,8 +217,8 @@ class Runtime[S: HasSourceId]:
             return EXIT_ALREADY_RUNNING
 
     def run(self, stop: threading.Event) -> None:
-        if not self.llm.available:
-            logger.warning("llm stage skipped: %s", self.llm.reason)
+        if not self.gate.available:
+            logger.warning("llm stage skipped: %s", self.gate.status.reason)
         wait = self._wait or stop.wait
         expected: float | None = None
         last: float | None = None
@@ -221,6 +239,7 @@ class Runtime[S: HasSourceId]:
 
     def _tick(self, stop: threading.Event) -> float:
         try:
+            self._recheck_llm()
             self.scanner.scan_once()
             self._process_sources(stop)
             if not stop.is_set():
@@ -244,48 +263,110 @@ class Runtime[S: HasSourceId]:
         self._safe_status("running")
         return self.interval
 
+    def _recheck_llm(self) -> None:
+        if self.gate.available:
+            return
+        now = self.clock()
+        if (
+            self._last_llm_check is not None
+            and now - self._last_llm_check < LLM_RECHECK_SECONDS
+        ):
+            return
+        if self._last_llm_check is not None:  # the startup probe already ran
+            if self.gate.refresh().available:
+                logger.info("llm available again; resuming waiting sources")
+        self._last_llm_check = now
+
     def _process_sources(self, stop: threading.Event) -> None:
         progress = self.ledger.progress()
-        for source in self.feed.sources():
+        for sid, raw in self.feed.source_rows(exclude=self.ledger.final_ids()):
             if stop.is_set():
                 return
-            sid = source.source_id
             known = progress.get(sid)
             if known is not None:
-                if known.status in ("done", "failed"):
-                    continue
-                if known.status == "waiting_llm" and not self.llm.available:
+                if known.status == "waiting_llm" and not self.gate.available:
                     continue
                 if known.status == "retry" and (
                     known.next_attempt_at is not None
                     and known.next_attempt_at > self.clock()
                 ):
                     continue
-            self._process_one(source, known.attempts if known else 0)
+            self._process_one(sid, raw, known, stop)
 
-    def _process_one(self, source: S, attempts: int) -> None:
-        sid = source.source_id
+    def _process_one(
+        self, sid: str, raw: str, known: Progress | None, stop: threading.Event
+    ) -> None:
+        attempts = (known.attempts if known else 0) + 1
+        contract = known.contract_failures if known else 0
         try:
-            outcome = self.processor.process(source)
-        except ValueError as error:
-            self.ledger.record(sid, "failed", error_class=type(error).__name__)
-            logger.warning("source failed: %s %s", sid, type(error).__name__)
-        except Exception as error:
-            delay = min(
-                self.interval * 2.0 ** (attempts + 1), MAX_RETRY_BACKOFF_SECONDS
-            )
+            source = self.decode(raw)
+            if source.source_id != sid:
+                raise ValueError("source_id mismatch")
+            outcome = self.processor.process(source, stop)
+        except Interrupted:
+            return  # stop requested before the next stage; nothing failed
+        except _LLM_OFF as error:
+            reason = getattr(error, "code", type(error).__name__)
+            if self.gate.available:
+                self.gate.disable(reason)
+                logger.warning("llm disabled: %s", reason)
             self.ledger.record(
                 sid,
-                "retry",
+                "waiting_llm",
+                attempts=attempts,
+                contract_failures=contract,
                 error_class=type(error).__name__,
-                next_attempt_at=self.clock() + delay,
             )
-            logger.warning(
-                "source retry in %.0fs: %s %s", delay, sid, type(error).__name__
+        except _CONTRACT as error:
+            contract += 1
+            self._retry_or_fail(
+                sid, error, attempts, contract, contract >= MAX_CONTRACT_FAILURES
+            )
+        except ValueError as error:
+            self.ledger.record(
+                sid,
+                "failed",
+                attempts=attempts,
+                contract_failures=contract,
+                error_class=type(error).__name__,
+            )
+            logger.warning("source failed: %s %s", sid, type(error).__name__)
+        except Exception as error:
+            self._retry_or_fail(
+                sid, error, attempts, contract, attempts >= MAX_RETRY_ATTEMPTS
             )
         else:
-            self.ledger.record(sid, outcome)
+            self.ledger.record(
+                sid, outcome, attempts=attempts, contract_failures=contract
+            )
             logger.info("source %s: %s", outcome, sid)
+
+    def _retry_or_fail(
+        self, sid: str, error: Exception, attempts: int, contract: int, give_up: bool
+    ) -> None:
+        name = type(error).__name__
+        if give_up:
+            self.ledger.record(
+                sid,
+                "failed",
+                attempts=attempts,
+                contract_failures=contract,
+                error_class=name,
+            )
+            logger.warning(
+                "source failed after %d attempts: %s %s", attempts, sid, name
+            )
+            return
+        delay = min(self.interval * 2.0**attempts, MAX_RETRY_BACKOFF_SECONDS)
+        self.ledger.record(
+            sid,
+            "retry",
+            attempts=attempts,
+            contract_failures=contract,
+            error_class=name,
+            next_attempt_at=self.clock() + delay,
+        )
+        logger.warning("source retry in %.0fs: %s %s", delay, sid, name)
 
     def _run_maintenance(self) -> None:
         now = self.clock()
@@ -315,10 +396,14 @@ class Runtime[S: HasSourceId]:
             "pid": os.getpid(),
             "started_at": self._started_at,
             "updated_at": datetime.now(UTC).isoformat(),
-            "llm": {"available": self.llm.available, "reason": self.llm.reason},
+            "llm": {
+                "available": self.gate.available,
+                "reason": self.gate.status.reason,
+            },
             "resumes": self.resumes,
             "consecutive_failures": self.consecutive_failures,
             "sources": self.ledger.counts(),
+            "failed": self.ledger.failures(),
         }
         data = json.dumps(status, ensure_ascii=True, indent=2).encode()
         write_bytes_atomic(self.state_root / STATUS_NAME, data)

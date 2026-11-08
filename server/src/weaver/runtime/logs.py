@@ -48,11 +48,16 @@ def configure_logging(log_root: Path, *, level: int = logging.INFO) -> Path:
         path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8"
     )
     handler.setFormatter(_NoTracebacks(_FORMAT))
-    root = logging.getLogger()
-    for old in list(root.handlers):
-        root.removeHandler(old)
-    root.addHandler(handler)
-    root.setLevel(level)
+    # Only our own loggers write here; dependencies' INFO/DEBUG (HTTP request
+    # lines and the like) never reach the file.
+    weaver = logging.getLogger("weaver")
+    for old in list(weaver.handlers):
+        weaver.removeHandler(old)
+        old.close()
+    weaver.addHandler(handler)
+    weaver.setLevel(level)
+    for noisy in ("httpx", "httpcore", "anthropic"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     def excepthook(
         kind: type[BaseException],

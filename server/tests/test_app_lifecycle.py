@@ -6,19 +6,32 @@ import os
 import signal
 import stat
 import threading
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import pytest
 
+from weaver.llm.errors import (
+    AuthenticationError,
+    BudgetExceeded,
+    InvalidJson,
+    LlmTimeout,
+    RateLimited,
+    Refusal,
+    SchemaMismatch,
+    TransientError,
+)
 from weaver.runtime import (
     AlreadyRunning,
     InstanceLock,
+    Interrupted,
+    LlmGate,
     LlmStatus,
     MaintenanceTask,
-    Outcome,
     Runtime,
     RuntimeLedger,
 )
+from weaver.runtime.gate import ExtractionInvalid
+from weaver.runtime.loop import LLM_RECHECK_SECONDS
 
 
 @dataclass(frozen=True)
@@ -41,9 +54,18 @@ class FakeScanner:
 @dataclass
 class FakeSources:
     items: list = field(default_factory=list)
+    raw: dict = field(default_factory=dict)  # source_id -> damaged JSON
+    excluded: list = field(default_factory=list)
 
-    def sources(self):
-        return list(self.items)
+    def source_rows(self, exclude=()):
+        self.excluded.append(set(exclude))
+        rows = [(s.source_id, json.dumps(asdict(s))) for s in self.items]
+        rows += list(self.raw.items())
+        return [row for row in rows if row[0] not in exclude]
+
+
+def decode(raw: str) -> FakeSource:
+    return FakeSource(**json.loads(raw))
 
 
 @dataclass
@@ -51,9 +73,11 @@ class FakeProcessor:
     outcomes: dict = field(default_factory=dict)
     seen: list = field(default_factory=list)
 
-    def process(self, source) -> Outcome:
+    def process(self, source, stop):
         self.seen.append(source.source_id)
         result = self.outcomes.get(source.source_id, "done")
+        if isinstance(result, list):
+            result = result.pop(0) if len(result) > 1 else result[0]
         if isinstance(result, BaseException):
             raise result
         return result
@@ -85,6 +109,10 @@ class Waiter:
         return self.stop.is_set()
 
 
+def gate(available=True, reason="configured"):
+    return LlmGate(lambda: LlmStatus(available, reason))
+
+
 def make(tmp_path, *, scanner=None, sources=None, processor=None, waits=1, **kw):
     clock = Clock()
     stop = threading.Event()
@@ -93,15 +121,20 @@ def make(tmp_path, *, scanner=None, sources=None, processor=None, waits=1, **kw)
         state_root=tmp_path,
         scanner=scanner or FakeScanner(),
         sources=sources or FakeSources(),
+        decode=decode,
         processor=processor or FakeProcessor(),
         ledger=RuntimeLedger(tmp_path / "runtime.sqlite3"),
-        llm=kw.pop("llm", LlmStatus(True, "configured")),
+        gate=kw.pop("gate", None) or gate(),
         interval=5.0,
         clock=clock,
         wait=waiter,
         **kw,
     )
     return runtime, stop, waiter, clock
+
+
+def counts(tmp_path):
+    return RuntimeLedger(tmp_path / "runtime.sqlite3").counts()
 
 
 def test_startup_rescans_backlog_and_never_reprocesses_done(tmp_path):
@@ -116,12 +149,14 @@ def test_startup_rescans_backlog_and_never_reprocesses_done(tmp_path):
     # then every interval rescans; completed sources are not handed out twice.
     assert scanner.scans == 2
     assert processor.seen == ["src_a", "src_b"]
+    # done IDs are excluded in the archive query, not after reading rows.
+    assert sources.excluded[-1] == {"src_a", "src_b"}
 
     restarted = FakeProcessor()
     again, stop2, _, _ = make(tmp_path, sources=sources, processor=restarted)
     again.run(stop2)
     assert restarted.seen == []
-    assert RuntimeLedger(tmp_path / "runtime.sqlite3").counts() == {"done": 2}
+    assert counts(tmp_path) == {"done": 2}
 
 
 def test_resume_after_sleep_gap_is_detected_and_rescanned(tmp_path, caplog):
@@ -150,27 +185,27 @@ def test_resume_after_sleep_gap_is_detected_and_rescanned(tmp_path, caplog):
     assert status["sources"] == {"done": 1}
 
 
-def test_sigterm_finishes_current_tick_then_exits(tmp_path):
+def test_sigterm_stops_between_sources_then_exits(tmp_path):
     sources = FakeSources([FakeSource("src_a"), FakeSource("src_b")])
     scanner = FakeScanner()
 
     class Terminating(FakeProcessor):
-        def process(self, source):
+        def process(self, source, stop):
             if not self.seen:
                 os.kill(os.getpid(), signal.SIGTERM)
-            return super().process(source)
+            return super().process(source, stop)
 
     processor = Terminating()
-    clock = Clock()
     runtime = Runtime(
         state_root=tmp_path,
         scanner=scanner,
         sources=sources,
+        decode=decode,
         processor=processor,
         ledger=RuntimeLedger(tmp_path / "runtime.sqlite3"),
-        llm=LlmStatus(True, "configured"),
+        gate=gate(),
         interval=60.0,
-        clock=clock,
+        clock=Clock(),
     )
     previous = signal.getsignal(signal.SIGTERM)
     code = runtime.serve()
@@ -178,14 +213,22 @@ def test_sigterm_finishes_current_tick_then_exits(tmp_path):
     # The in-flight source completed durably; the next one was not started.
     assert processor.seen == ["src_a"]
     assert scanner.scans == 1
-    assert RuntimeLedger(tmp_path / "runtime.sqlite3").counts() == {"done": 1}
+    assert counts(tmp_path) == {"done": 1}
     assert signal.getsignal(signal.SIGTERM) == previous
     assert json.loads((tmp_path / "runtime-status.json").read_text())["state"] == (
         "stopped"
     )
-    # The instance lock was released on exit.
-    with InstanceLock(tmp_path / "weaver.lock"):
+    with InstanceLock(tmp_path / "weaver.lock"):  # released on exit
         pass
+
+
+def test_interrupted_stage_is_not_recorded(tmp_path):
+    processor = FakeProcessor({"src_a": Interrupted()})
+    runtime, stop, _, _ = make(
+        tmp_path, sources=FakeSources([FakeSource("src_a")]), processor=processor
+    )
+    runtime.run(stop)
+    assert counts(tmp_path) == {}
 
 
 def test_duplicate_instance_refuses_to_run(tmp_path):
@@ -201,6 +244,19 @@ def test_duplicate_instance_refuses_to_run(tmp_path):
     assert processor.seen == []
     mode = stat.S_IMODE((tmp_path / "weaver.lock").stat().st_mode)
     assert mode == 0o600
+
+
+def test_damaged_archive_row_fails_alone(tmp_path):
+    sources = FakeSources([FakeSource("src_ok")], raw={"src_bad": "{not json"})
+    processor = FakeProcessor()
+    runtime, stop, _, _ = make(tmp_path, sources=sources, processor=processor)
+    runtime.run(stop)
+    assert processor.seen == ["src_ok"]
+    assert counts(tmp_path) == {"done": 1, "failed": 1}
+    status = json.loads((tmp_path / "runtime-status.json").read_text())
+    assert status["failed"] == [
+        {"source_id": "src_bad", "error_class": "JSONDecodeError"}
+    ]
 
 
 def test_failures_are_classified_and_backed_off(tmp_path, caplog):
@@ -220,7 +276,7 @@ def test_failures_are_classified_and_backed_off(tmp_path, caplog):
         sources=sources,
         processor=processor,
         waits=3,
-        llm=LlmStatus(False, "api_key_missing"),
+        gate=gate(False, "api_key_missing"),
     )
     with caplog.at_level(logging.DEBUG):
         runtime.run(stop)
@@ -229,21 +285,83 @@ def test_failures_are_classified_and_backed_off(tmp_path, caplog):
     assert processor.seen.count("src_bad") == 1
     assert processor.seen.count("src_llm") == 1
     assert processor.seen.count("src_flaky") == 2
-    counts = RuntimeLedger(tmp_path / "runtime.sqlite3").counts()
-    assert counts == {"failed": 1, "retry": 1, "waiting_llm": 1}
+    assert counts(tmp_path) == {"failed": 1, "retry": 1, "waiting_llm": 1}
     assert all(secret not in r.getMessage() for r in caplog.records)
     assert any(
         "llm stage skipped: api_key_missing" in r.getMessage() for r in caplog.records
     )
     status = json.loads((tmp_path / "runtime-status.json").read_text())
     assert status["llm"] == {"available": False, "reason": "api_key_missing"}
+    assert status["failed"] == [{"source_id": "src_bad", "error_class": "ValueError"}]
+
+
+@pytest.mark.parametrize(
+    "error", [InvalidJson(), SchemaMismatch(), Refusal(), ExtractionInvalid("x")]
+)
+def test_contract_violation_fails_after_three(tmp_path, error):
+    processor = FakeProcessor({"src_a": error})
+    runtime, stop, _, clock = make(
+        tmp_path, sources=FakeSources([FakeSource("src_a")]), processor=processor
+    )
+    for _ in range(5):  # jump past every backoff so each tick retries
+        runtime._tick(stop)
+        clock.now += 4000
+    assert processor.seen == ["src_a"] * 3
+    assert counts(tmp_path) == {"failed": 1}
+
+
+@pytest.mark.parametrize(
+    "error", [RateLimited(), TransientError(), LlmTimeout(), OSError()]
+)
+def test_transient_errors_retry_until_cap(tmp_path, error):
+    from weaver.runtime.loop import MAX_RETRY_ATTEMPTS
+
+    processor = FakeProcessor({"src_a": error})
+    runtime, stop, _, clock = make(
+        tmp_path, sources=FakeSources([FakeSource("src_a")]), processor=processor
+    )
+    for _ in range(MAX_RETRY_ATTEMPTS + 3):
+        runtime._tick(stop)
+        clock.now += 4000
+    assert len(processor.seen) == MAX_RETRY_ATTEMPTS
+    assert counts(tmp_path) == {"failed": 1}
+
+
+@pytest.mark.parametrize("error", [AuthenticationError(), BudgetExceeded()])
+def test_auth_or_budget_turns_llm_off_and_rechecks(tmp_path, error):
+    state = {"available": True}
+    probes = []
+
+    def probe():
+        probes.append(1)
+        return LlmStatus(state["available"], "configured")
+
+    llm = LlmGate(probe)
+    processor = FakeProcessor({"src_a": [error, "done"]})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+    )
+    runtime._tick(stop)
+    assert counts(tmp_path) == {"waiting_llm": 1}
+    assert not llm.available and llm.status.reason == error.code
+    clock.now += 5
+    runtime._tick(stop)  # gate off: not retried, first recheck only arms
+    assert processor.seen == ["src_a"]
+    clock.now += LLM_RECHECK_SECONDS
+    runtime._tick(stop)  # re-probed after a minute: available again
+    assert llm.available and len(probes) == 2
+    assert processor.seen == ["src_a", "src_a"]
+    assert counts(tmp_path) == {"done": 1}
 
 
 def test_waiting_llm_sources_resume_when_llm_available(tmp_path):
     sources = FakeSources([FakeSource("src_llm")])
     first = FakeProcessor({"src_llm": "waiting_llm"})
     runtime, stop, _, _ = make(
-        tmp_path, sources=sources, processor=first, llm=LlmStatus(False, "none")
+        tmp_path, sources=sources, processor=first, gate=gate(False, "backend_none")
     )
     runtime.run(stop)
     second = FakeProcessor()
