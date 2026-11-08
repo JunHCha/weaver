@@ -238,6 +238,12 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
                 }
             }
             try {
+                if (!io.github.junhcha.weaver.review.ReviewRuntime.synchronize(context, folder)) successful = false
+            } catch (error: SecurityException) { throw error
+            } catch (error: Exception) {
+                db.diagnostic("decisions", "review", CourierClient.errorCode(error)); successful = false
+            }
+            try {
                 if (!io.github.junhcha.weaver.shepherd.PendingCalls.reconcile(context)) successful = false
             } catch (error: Exception) {
                 db.diagnostic("shepherd", "reconcile", CourierClient.errorCode(error))
