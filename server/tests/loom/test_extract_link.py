@@ -556,3 +556,46 @@ def test_review_request_heuristic_does_not_set_execution_block():
     assert proposal.schedules[0].ask.question == "요청에서 나온 항목인가요?"
     assert proposal.entry_drafts[1].blocked_by_request is None
     assert all(d.resolves is None for d in proposal.entry_drafts)
+
+
+@pytest.mark.parametrize(
+    ("collection", "expected"),
+    [
+        ("entities", "김민수"),
+        ("relations", "김민수"),
+        ("entry_drafts", "점검 회의 요청"),
+        ("schedules", "점검 회의"),
+    ],
+)
+def test_low_confidence_question_identifies_structured_target(collection, expected):
+    data = response()
+    data[collection][0]["confidence"] = 0.5
+    result, _ = run(data)
+    question = getattr(result, collection)[0].ask.question
+    assert expected in question
+    assert TEXT not in question
+    assert len(question) <= 120
+
+
+def test_confirmation_question_truncates_and_quotes_untrusted_target():
+    data = response()
+    data["schedules"][0].update(
+        confidence=0.5, title='synthetic "title"\n' + "긴 값" * 100
+    )
+    result, _ = run(data)
+    question = result.schedules[0].ask.question
+    assert len(question) == 120
+    assert question.endswith("…")
+    assert "\n" not in question
+    assert "\\n" in question
+    assert TEXT not in question
+
+
+def test_generated_question_stays_bounded_after_request_followup():
+    data = response()
+    data["entry_drafts"][1]["blocked_by_request"] = None
+    data["schedules"][0].update(
+        confidence=0.5, title="합성 일정" * 100, blocked_by_request=None
+    )
+    result, _ = run(data)
+    assert len(result.schedules[0].ask.question) <= 120

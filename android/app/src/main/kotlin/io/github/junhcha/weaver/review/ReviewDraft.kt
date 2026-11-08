@@ -32,7 +32,11 @@ object JsonPointer {
     }
 }
 
-data class ReviewQuestion(val path: String, val ask: Proposal.Ask)
+data class ReviewQuestion(val path: String, val ask: Proposal.Ask, val summary: String, val confidence: Double) {
+    val confidenceLabel: String get() = "확신도 ${kotlin.math.round(confidence * 100).toInt()}%"
+    // Schedule ask edits are excluded by the v1 server whitelist.
+    val canConfirm: Boolean get() = ask.choices.isEmpty() && !path.startsWith("/schedules/")
+}
 
 /** Keep the whitelist aligned with server/src/weaver/loom/edits.py; never widen v1. */
 object ReviewDraft {
@@ -42,11 +46,29 @@ object ReviewDraft {
         "entry_drafts" to setOf("kind", "field", "value", "occurred_at", "entities", "ask"),
         "schedules" to setOf("title", "start", "end", "entities"),
     )
+    private fun label(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
+    private fun entityType(type: Proposal.EntityType): String = when (type) {
+        Proposal.EntityType.PERSON -> "인물"; Proposal.EntityType.ORG -> "조직"
+        Proposal.EntityType.PROJECT -> "프로젝트"; Proposal.EntityType.TOPIC -> "주제"
+        Proposal.EntityType.MEETING -> "회의"
+    }
     fun questions(p: Proposal): List<ReviewQuestion> = buildList {
-        p.entities.forEachIndexed { i, item -> item.ask?.let { add(ReviewQuestion("/entities/$i", it)) } }
-        p.relations.forEachIndexed { i, item -> item.ask?.let { add(ReviewQuestion("/relations/$i", it)) } }
-        p.entryDrafts.forEachIndexed { i, item -> item.ask?.let { add(ReviewQuestion("/entry_drafts/$i", it)) } }
-        p.schedules.forEachIndexed { i, item -> item.ask?.let { add(ReviewQuestion("/schedules/$i", it)) } }
+        fun name(ref: String): String = if (ref == "this") "이 자료" else
+            p.entities.firstOrNull { it.ref == ref || it.entityId == ref }?.name ?: ref
+        p.entities.forEachIndexed { i, item -> item.ask?.let {
+            add(ReviewQuestion("/entities/$i", it, "${item.name} · ${entityType(item.type)}", item.confidence))
+        } }
+        p.relations.forEachIndexed { i, item -> item.ask?.let {
+            add(ReviewQuestion("/relations/$i", it,
+                "${name(item.from)} → ${name(item.to)} · ${label(WeaverCodec.json.encodeToJsonElement(item.type))}", item.confidence))
+        } }
+        p.entryDrafts.forEachIndexed { i, item -> item.ask?.let {
+            add(ReviewQuestion("/entry_drafts/$i", it,
+                "${label(WeaverCodec.json.encodeToJsonElement(item.kind))} · ${item.field ?: "필드 없음"} · ${label(item.value)} · ${item.occurredAt}", item.confidence))
+        } }
+        p.schedules.forEachIndexed { i, item -> item.ask?.let {
+            add(ReviewQuestion("/schedules/$i", it, "${item.title} · ${item.start}", item.confidence))
+        } }
     }
 
     fun validateEdits(p: Proposal, edits: List<Verdict.Edit>): Proposal {
@@ -82,7 +104,7 @@ object ReviewDraft {
 
     /** A choice can link an entity and acknowledge its ask. Free text needs server regeneration. */
     fun verdict(p: Proposal, kind: Verdict.Kind, edits: List<Verdict.Edit>, reason: Verdict.RejectReason?,
-                instruction: String, answers: Map<String, String>, reviewedAt: String): Verdict {
+                instruction: String, answers: Map<String, String>, reviewedAt: String, confirmations: Set<String> = emptySet()): Verdict {
         val applied = edits.toMutableList()
         val regeneration = mutableListOf<String>()
         if (kind in setOf(Verdict.Kind.APPROVE, Verdict.Kind.EDIT, Verdict.Kind.REVISE)) {
@@ -94,6 +116,8 @@ object ReviewDraft {
                         applied += Verdict.Edit("${q.path}/entity_id", JsonPrimitive(choice.entityId))
                         applied += Verdict.Edit("${q.path}/ask", JsonNull)
                     } else regeneration += "${q.path}: ${q.ask.question}\n답: $answer"
+                } else if (q.path in confirmations && q.canConfirm) {
+                    applied += Verdict.Edit("${q.path}/ask", JsonNull)
                 }
             }
         }
@@ -104,8 +128,10 @@ object ReviewDraft {
         }
         if (finalKind in setOf(Verdict.Kind.APPROVE, Verdict.Kind.EDIT)) {
             val corrected = validateEdits(p, applied)
-            require((corrected.entities.map { it.ask } + corrected.relations.map { it.ask } +
-                corrected.entryDrafts.map { it.ask }).all { it == null }) { "질문에 답하거나 다시 짜기를 선택하세요" }
+            val unresolved = questions(corrected).filter { !it.path.startsWith("/schedules/") }
+            require(unresolved.isEmpty()) {
+                "미해결 질문 ${unresolved.size}개: ${unresolved.joinToString("; ") { it.summary }}. 질문에 답하거나 다시 짜기를 선택하세요"
+            }
         }
         val instructions = buildList {
             if (instruction.isNotBlank()) add(instruction.trim())

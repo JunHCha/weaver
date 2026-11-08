@@ -94,6 +94,37 @@ def _choice_labels(known: EntityIndex) -> dict[str, str]:
     }
 
 
+def _confirmation_question(item: Evidence, extraction: Extraction) -> str:
+    """Quote only structured target values as data, never candidate/source text."""
+
+    def name(ref: str) -> str:
+        if ref == "this":
+            return "이 자료"
+        return next(
+            (e.name for e in extraction.entities if ref in (e.ref, e.entity_id)), ref
+        )
+
+    values: list[Any]
+    if isinstance(item, ExtractedEntity):
+        kind, values = "대상", [item.name, item.type]
+    elif isinstance(item, ExtractedRelation):
+        kind, values = "관계", [name(item.from_ref), item.type, name(item.to)]
+    elif isinstance(item, EntryDraft):
+        kind, values = (
+            "기록",
+            [item.kind, item.field, item.value, item.occurred_at.isoformat()],
+        )
+    elif isinstance(item, Schedule):
+        kind, values = "일정", [item.title, item.start.isoformat()]
+    else:
+        raise TypeError("unsupported confirmation target")
+    # JSON quoting keeps delimiters/newlines in extracted values from becoming
+    # question structure when this question is later included in a revise prompt.
+    target = json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+    question = f"이 {kind} 내용이 맞는지 확인해 주세요 (대상 데이터): {target}"
+    return question if len(question) <= 120 else question[:119] + "…"
+
+
 def matching_entities(text: str, known: EntityIndex) -> list[IndexedEntity]:
     """Keep every collision; names/aliases must occur in the selected raw text."""
     return [
@@ -279,13 +310,15 @@ class LlmExtractor:
         for draft in extraction.entry_drafts:
             if draft.request:
                 references.extend([draft.request.requester, *draft.request.targets])
+        generated_questions: list[Ask] = []
         for item in items:
             if item.ask and any(c.entity_id not in indexed for c in item.ask.choices):
                 raise ValueError("unknown ask choice ID")
             if item.confidence < CONFIDENCE_THRESHOLD and item.ask is None:
                 item.ask = Ask(
-                    question="확신이 낮은 추출 내용을 확인해 주세요.", choices=[]
+                    question=_confirmation_question(item, extraction), choices=[]
                 )
+                generated_questions.append(item.ask)
         deferred: dict[str, str] = {}
         for entity in extraction.entities:
             matches = [
@@ -376,6 +409,9 @@ class LlmExtractor:
                     item.ask = Ask(question=question, choices=[])
                 elif question not in item.ask.question:
                     item.ask.question += " " + question
+        for ask in generated_questions:
+            if len(ask.question) > 120:
+                ask.question = ask.question[:119] + "…"
         for item in items:
             if item.ask:
                 for choice in item.ask.choices:

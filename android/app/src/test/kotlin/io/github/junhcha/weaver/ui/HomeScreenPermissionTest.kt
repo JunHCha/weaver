@@ -86,8 +86,15 @@ class HomeScreenPermissionTest {
             compose.onNodeWithText("스크립트 미공유 통화").assertExists()
             compose.onNodeWithText("전체 통화 보기").assertExists()
             compose.onNodeWithText("처리됨").assertDoesNotExist()
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("처리 안 함").fetchSemanticsNodes().size == 1
+            }
             compose.onNodeWithText("처리 안 함").performClick()
             compose.waitUntil(5_000) { ShepherdRuntime.pendingCalls(app).isEmpty() }
+            // The database can finish before the asynchronous screen refresh.
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("통화 없음").fetchSemanticsNodes().size == 1
+            }
             compose.onNodeWithText("통화 없음").assertExists()
             assertTrue(shadowOf(manager).allNotifications.isEmpty())
         } finally {

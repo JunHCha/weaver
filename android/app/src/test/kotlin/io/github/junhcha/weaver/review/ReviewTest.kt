@@ -159,4 +159,77 @@ class ReviewTest {
         assertEquals(ReviewStatus.INFERRED, store.records().single().status)
     }
 
+    @Test fun confirmationCreatesNullEditWithoutRegenerationAndFreeAnswerWins() {
+        val base = proposal()
+        val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+        val p = base.copy(entryDrafts = base.entryDrafts.mapIndexed { i, item ->
+            if (i == 0) item.copy(ask = ask) else item
+        })
+        val path = "/entry_drafts/0"
+        val confirmed = ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time, setOf(path))
+        assertEquals(Verdict.Kind.EDIT, confirmed.verdict)
+        assertEquals(listOf(Verdict.Edit("$path/ask", JsonNull)), confirmed.edits)
+        assertNull(confirmed.instruction)
+        assertNull(ReviewDraft.validateEdits(p, confirmed.edits).entryDrafts[0].ask)
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time)
+        }
+        assertTrue(error.message!!.contains("미해결 질문 1개"))
+        assertTrue(error.message!!.contains(ReviewDraft.questions(p).single().summary))
+        val answered = ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "",
+            mapOf(path to "Synthetic correction"), time, setOf(path))
+        assertEquals(Verdict.Kind.REVISE, answered.verdict)
+        assertTrue(answered.instruction!!.contains("Synthetic correction"))
+        assertTrue(answered.edits.isEmpty())
+    }
+
+    @Test fun questionSummariesResolveNamesAndIncludeEveryGroupAndConfidence() {
+        val base = proposal()
+        val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+        val p = base.copy(entities = base.entities.map { it.copy(ask = ask) },
+            relations = base.relations.map { it.copy(ask = ask) },
+            entryDrafts = base.entryDrafts.map { it.copy(ask = ask) },
+            schedules = base.schedules.map { it.copy(ask = ask) })
+        val questions = ReviewDraft.questions(p).associateBy { it.path }
+        assertTrue(questions.getValue("/entities/0").summary.contains("${p.entities[0].name} · 인물"))
+        assertEquals("${p.entities[0].name} → ${p.entities[1].name} · 소속", questions.getValue("/relations/0").summary)
+        val entry = p.entryDrafts[0]
+        val entrySummary = questions.getValue("/entry_drafts/0").summary
+        assertTrue(entrySummary.contains("요청"))
+        assertTrue(entrySummary.contains(entry.value.jsonPrimitive.content))
+        assertTrue(entrySummary.contains(entry.occurredAt))
+        assertEquals("${p.schedules[0].title} · ${p.schedules[0].start}", questions.getValue("/schedules/0").summary)
+        assertEquals("확신도 92%", questions.getValue("/entities/0").confidenceLabel)
+        assertFalse(questions.getValue("/schedules/0").canConfirm)
+        val direct = p.copy(relations = p.relations.map { it.copy(to = p.entities[1].entityId!!) })
+        assertEquals(questions.getValue("/relations/0").summary,
+            ReviewDraft.questions(direct).first { it.path == "/relations/0" }.summary)
+    }
+
+    @Test fun confirmsOnlySupportedEmptyChoiceQuestionsAndListsRemainingTargets() {
+        val base = proposal()
+        val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+        val p = base.copy(entities = base.entities.map { it.copy(ask = ask) },
+            relations = base.relations.map { it.copy(ask = ask) })
+        val questions = ReviewDraft.questions(p)
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time,
+                setOf("/entities/0"))
+        }
+        assertTrue(error.message!!.contains("미해결 질문 ${questions.size - 1}개"))
+        questions.filter { it.path != "/entities/0" }.forEach { assertTrue(error.message!!.contains(it.summary)) }
+        val result = ReviewDraft.verdict(p, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time,
+            questions.map { it.path }.toSet())
+        assertEquals(Verdict.Kind.EDIT, result.verdict)
+        assertEquals(questions.map { Verdict.Edit("${it.path}/ask", JsonNull) }, result.edits)
+        val choice = Proposal.Choice("ent_01ARZ3NDEKTSV4RRFFQ69G5FAV", "Synthetic choice")
+        val withChoice = base.copy(entities = base.entities.mapIndexed { i, e ->
+            if (i == 0) e.copy(ask = Proposal.Ask("Who?", listOf(choice))) else e
+        })
+        assertThrows(IllegalArgumentException::class.java) {
+            ReviewDraft.verdict(withChoice, Verdict.Kind.APPROVE, emptyList(), null, "", emptyMap(), time,
+                setOf("/entities/0"))
+        }
+    }
+
 }

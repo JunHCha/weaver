@@ -200,4 +200,75 @@ class ReviewPanelTest {
         assertEquals(Verdict.Kind.EDIT, ReviewRuntime.records(context).single().verdict.verdict)
     }
 
+    private fun confirmationProposal(): Pair<Context, Proposal> = prepare { p ->
+        p.copy(entities = p.entities.map { it.copy(ask = null) },
+            entryDrafts = p.entryDrafts.mapIndexed { i, item ->
+                if (i == 0) item.copy(ask = Proposal.Ask("Synthetic confirmation", emptyList())) else item
+            })
+    }
+
+    @Test fun confirmationCanBeCancelledRestoresAcrossRotationAndSubmitsEdit() {
+        val (context, p) = confirmationProposal()
+        open(p)
+        val q = ReviewDraft.questions(p).single()
+        compose.onNodeWithText("질문 대상: ${q.summary} · ${q.confidenceLabel}").assertExists()
+        compose.onNodeWithText("이 내용이 맞음").performScrollTo().performClick()
+        compose.onNodeWithText("확인 취소").performScrollTo().performClick()
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("미해결 질문 1개:", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue(ReviewRuntime.records(context).isEmpty())
+        compose.onNodeWithText("이 내용이 맞음").performScrollTo().performClick()
+        compose.activityRule.scenario.recreate()
+        awaitProposal(p)
+        compose.onNodeWithText("확인 취소").assertExists()
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(Verdict.Kind.EDIT, verdict.verdict)
+        assertEquals(listOf(Verdict.Edit("/entry_drafts/0/ask", kotlinx.serialization.json.JsonNull)), verdict.edits)
+        assertNull(verdict.instruction)
+    }
+
+    @Test fun savedConfirmationAndFreeAnswerRestoreAndSubmitRevise() {
+        val (context, p) = confirmationProposal()
+        compose.runOnUiThread {
+            compose.activity.findViewById<android.view.ViewGroup>(android.R.id.content).removeAllViews()
+        }
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            MaterialTheme { Column(Modifier.verticalScroll(rememberScrollState())) { InboxPanel() } }
+        }
+        open(p)
+        compose.onNodeWithText("이 내용이 맞음").performScrollTo().performClick()
+        compose.onNodeWithText("답 (자유 답변은 다시 짜기로 전송)").performScrollTo().performTextReplacement("Synthetic correction")
+        restoration.emulateSavedInstanceStateRestore()
+        awaitProposal(p)
+        compose.onNodeWithText("확인 취소").assertExists()
+        compose.onNodeWithText("답 (자유 답변은 다시 짜기로 전송)").assertTextContains("Synthetic correction")
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(Verdict.Kind.REVISE, verdict.verdict)
+        assertTrue(verdict.instruction!!.contains("Synthetic correction"))
+        assertTrue(verdict.edits.isEmpty())
+    }
+
+    @Test fun displaysQuestionTargetsForEveryGroup() {
+        val (_, p) = prepare { original ->
+            val ask = Proposal.Ask("Synthetic confirmation", emptyList())
+            original.copy(entities = original.entities.map { it.copy(ask = ask) },
+                relations = original.relations.map { it.copy(ask = ask) },
+                entryDrafts = original.entryDrafts.map { it.copy(ask = ask) },
+                schedules = original.schedules.map { it.copy(ask = ask) })
+        }
+        open(p)
+        ReviewDraft.questions(p).forEach { q ->
+            compose.onNodeWithText("질문 대상: ${q.summary} · ${q.confidenceLabel}").assertExists()
+        }
+        compose.onAllNodesWithText("이 내용이 맞음").assertCountEquals(
+            p.entities.size + p.relations.size + p.entryDrafts.size)
+    }
+
 }
