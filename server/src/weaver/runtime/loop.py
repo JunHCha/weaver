@@ -13,7 +13,8 @@ Failure classes (per Source):
   Refusal, invalid extraction output): retried, ``failed`` after 3.
 - AuthenticationError, BudgetExceeded, LlmUnavailable: ``waiting_llm``; the
   LLM gate turns off and is re-probed every minute.
-- InsufficientCredit: the same, but re-probed hourly (a restart retries at
+- InsufficientCredit, UsageLimited (subscription allowance or daily call cap
+  reached): the same, but re-probed hourly (a restart retries at
   once) so an empty account is not hammered.
 - Anything else (RateLimited, TransientError, LlmTimeout, OSError, ...):
   ``retry`` with exponential backoff, ``failed`` after 20 attempts.
@@ -45,6 +46,7 @@ from weaver.llm.errors import (
     MissingOutput,
     Refusal,
     SchemaMismatch,
+    UsageLimited,
 )
 
 from .gate import ExtractionInvalid, Interrupted, LlmGate, LlmUnavailable
@@ -66,7 +68,14 @@ LOCK_NAME = "weaver.lock"
 STATUS_NAME = "runtime-status.json"
 
 _CONTRACT = (InvalidJson, SchemaMismatch, MissingOutput, Refusal, ExtractionInvalid)
-_LLM_OFF = (AuthenticationError, BudgetExceeded, InsufficientCredit, LlmUnavailable)
+_LLM_OFF = (
+    AuthenticationError,
+    BudgetExceeded,
+    InsufficientCredit,
+    LlmUnavailable,
+    UsageLimited,
+)
+_HOURLY_REASONS = (InsufficientCredit.code, UsageLimited.code)
 
 
 class AlreadyRunning(Exception):
@@ -273,7 +282,7 @@ class Runtime[S: HasSourceId]:
         now = self.clock()
         recheck = (
             CREDIT_RECHECK_SECONDS
-            if self.gate.status.reason == InsufficientCredit.code
+            if self.gate.status.reason in _HOURLY_REASONS
             else LLM_RECHECK_SECONDS
         )
         if self._last_llm_check is not None and now - self._last_llm_check < recheck:

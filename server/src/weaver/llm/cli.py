@@ -7,6 +7,7 @@ a billed API call. Prompts travel over stdin, never argv. Response bodies and
 stderr are parsed in memory and never logged or placed in exceptions.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ from .errors import (
     MissingOutput,
     RateLimited,
     SchemaMismatch,
+    UsageLimited,
 )
 from .ledger import Ledger
 from .types import TokenUsage
@@ -81,14 +83,22 @@ def find_claude(config: LlmConfig, environ: Mapping[str, str]) -> str | None:
     return shutil.which("claude", path=environ.get("PATH", os.defpath))
 
 
-def _drain(stream: Any, cap: int, sink: list[bytes], flag: threading.Event) -> None:
+def _drain(
+    stream: Any, cap: int, sink: list[bytes], flag: threading.Event | None
+) -> None:
+    """Keep up to ``cap`` bytes. Past it: kill signal via ``flag``, or, without
+    a flag, discard the excess but keep reading so the child never blocks."""
     total = 0
     try:
         while chunk := stream.read(65536):
+            if total + len(chunk) > cap:
+                if flag is not None:
+                    flag.set()
+                    return
+                chunk = chunk[: cap - total]
+                if not chunk:
+                    continue
             total += len(chunk)
-            if total > cap:
-                flag.set()
-                return
             sink.append(chunk)
     except (OSError, ValueError):
         return
@@ -126,7 +136,7 @@ def subprocess_runner(
         threading.Thread(
             target=_drain, args=(proc.stdout, MAX_OUTPUT_BYTES, out, overflow)
         ),
-        threading.Thread(target=_drain, args=(proc.stderr, 65536, err, overflow)),
+        threading.Thread(target=_drain, args=(proc.stderr, 65536, err, None)),
     ]
 
     def feed() -> None:
@@ -155,6 +165,9 @@ def subprocess_runner(
     # Grandchildren holding the pipes were killed with the group.
     for thread in readers:
         thread.join(timeout=2)
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        with contextlib.suppress(OSError, ValueError):
+            stream.close()
     return RunResult(
         proc.returncode, b"".join(out), b"".join(err), timed_out, overflow.is_set()
     )
@@ -224,9 +237,9 @@ def _classify(text: str, status: object) -> LlmError:
         lowered,
     ):
         return AuthenticationError()
-    if status == 429 or re.search(
-        r"usage limit|rate limit|limit reached|too many requests|quota", lowered
-    ):
+    if re.search(r"usage limit|limit reached|quota", lowered):
+        return UsageLimited()
+    if status == 429 or re.search(r"rate limit|too many requests", lowered):
         return RateLimited()
     return LlmError()
 
@@ -340,7 +353,7 @@ class ClaudeCliClient:
         day = datetime.now().astimezone().date().isoformat()
         if not self.ledger.take_daily_call(day, self.config.max_cli_calls_per_day):
             logger.warning("Claude CLI daily call cap reached; call refused")
-            raise RateLimited()
+            raise UsageLimited()
         self.workdir.mkdir(mode=0o700, exist_ok=True)
         record["attempts"] = 1
         attempt: dict[str, Any] = {"status": "pending", "usage": None}

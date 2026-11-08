@@ -20,6 +20,7 @@ from weaver.llm import (
     MissingOutput,
     RateLimited,
     SchemaMismatch,
+    UsageLimited,
     create_client,
 )
 from weaver.llm.cli import RunResult, child_env, cli_status, subprocess_runner
@@ -189,7 +190,7 @@ def test_json_failures(tmp_path: Path, fake_claude: Path, result, error) -> None
             AuthenticationError,
         ),
         (ok(is_error=True, result="x", api_error_status=401), AuthenticationError),
-        (ok(is_error=True, result="Claude usage limit reached"), RateLimited),
+        (ok(is_error=True, result="Claude usage limit reached"), UsageLimited),
         (ok(is_error=True, result="x", api_error_status=429), RateLimited),
         (ok(is_error=True, result="boom"), LlmError),
         (RunResult(1, b"", b"Error: not logged in"), AuthenticationError),
@@ -224,11 +225,24 @@ def test_daily_cap_refuses_without_calling(
     client.generate_text("t.x", "s", "u")
     client.generate_text("t.x", "s", "u")
     with caplog.at_level("WARNING"):
-        with pytest.raises(RateLimited):
+        with pytest.raises(UsageLimited):
             client.generate_text("t.x", "s", "u")
     assert len(runner.calls) == 2
     assert "daily call cap" in caplog.text
-    assert ledger.records()[-1]["status"] == "rate_limited"
+    assert ledger.records()[-1]["status"] == "usage_limited"
+
+
+def test_timeouts_still_retryable_until_cap_then_usage_limited(
+    tmp_path: Path, fake_claude: Path
+) -> None:
+    timeout = RunResult(-9, b"", b"", timed_out=True)
+    client, runner, _ = make(tmp_path, fake_claude, timeout, timeout, cap=2)
+    for _ in range(2):
+        with pytest.raises(LlmTimeout):
+            client.generate_text("t.x", "s", "u")
+    with pytest.raises(UsageLimited):
+        client.generate_text("t.x", "s", "u")
+    assert len(runner.calls) == 2  # the capped attempt never spawns a process
 
 
 def test_daily_cap_is_atomic_across_clients(tmp_path: Path) -> None:
@@ -325,6 +339,23 @@ def test_runner_output_cap(tmp_path: Path) -> None:
     )
     res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=20)
     assert res.overflow and len(res.stdout) <= 4 * 1024 * 1024
+
+
+def test_runner_stderr_overflow_keeps_stdout(tmp_path: Path) -> None:
+    fake = script(
+        tmp_path,
+        """
+        import sys
+        sys.stdout.write('{"result": "fine"}')
+        sys.stdout.flush()
+        sys.stderr.write("e" * 200_000)
+        """,
+    )
+    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=20)
+    assert not res.overflow and not res.timed_out
+    assert res.returncode == 0
+    assert res.stdout == b'{"result": "fine"}'
+    assert len(res.stderr) == 65536
 
 
 # ---- availability -----------------------------------------------------------

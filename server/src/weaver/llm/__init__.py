@@ -20,6 +20,7 @@ from .errors import (
     TransientError,
     UnsupportedBackend,
     UnsupportedStructuredOutput,
+    UsageLimited,
 )
 from .ledger import Ledger
 from .types import LlmClient
@@ -42,6 +43,7 @@ __all__ = [
     "TransientError",
     "UnsupportedBackend",
     "UnsupportedStructuredOutput",
+    "UsageLimited",
 ]
 
 

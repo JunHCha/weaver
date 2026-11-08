@@ -460,3 +460,48 @@ def test_credit_error_after_recovery_still_waits_full_hour(tmp_path):
     runtime._tick(stop)  # an hour later it retries
     assert processor.seen == ["src_a", "src_a"]
     assert counts(tmp_path) == {"done": 1}
+
+
+def test_usage_limited_waits_hourly_without_retry_storm(tmp_path):
+    from weaver.llm.errors import UsageLimited
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS
+
+    llm = LlmGate(lambda: LlmStatus(True, "configured"))
+    processor = FakeProcessor({"src_a": [UsageLimited(), "done"]})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+    )
+    runtime._tick(stop)
+    # Never failed or retry: waiting with the reason visible in status.
+    assert counts(tmp_path) == {"waiting_llm": 1}
+    status = json.loads((tmp_path / "runtime-status.json").read_text())
+    assert status["llm"] == {"available": False, "reason": "usage_limited"}
+    for step in (5, LLM_RECHECK_SECONDS, CREDIT_RECHECK_SECONDS - 200):
+        clock.now += step
+        runtime._tick(stop)
+    assert processor.seen == ["src_a"]
+    clock.now += CREDIT_RECHECK_SECONDS
+    runtime._tick(stop)  # released: exactly one more processing
+    assert processor.seen == ["src_a", "src_a"]
+    assert counts(tmp_path) == {"done": 1}
+
+
+def test_usage_limited_never_becomes_failed(tmp_path):
+    from weaver.llm.errors import UsageLimited
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS, MAX_RETRY_ATTEMPTS
+
+    llm = LlmGate(lambda: LlmStatus(True, "configured"))
+    processor = FakeProcessor({"src_a": [UsageLimited()]})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+    )
+    for _ in range(MAX_RETRY_ATTEMPTS + 2):
+        runtime._tick(stop)
+        clock.now += CREDIT_RECHECK_SECONDS
+    assert counts(tmp_path) == {"waiting_llm": 1}
