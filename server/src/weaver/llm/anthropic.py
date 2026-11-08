@@ -46,7 +46,18 @@ def _silence_transport_logs() -> None:
                 logger.addFilter(_PRIVATE_LOG_FILTER)
 
 
+# Statuses where the provider rejects the request before any processing, so
+# nothing is billed. 408/409 and other 4xx may arrive after work started and
+# stay on the conservative path (reservation kept).
+_UNBILLED_STATUSES = frozenset({400, 401, 403, 404, 413, 422, 429})
+
+
 def _is_credit_exhausted(message: object) -> bool:
+    # Matches on wording on purpose: the real API reports credit exhaustion as
+    # error.type "invalid_request_error", the same as other 400s, so the
+    # structured field cannot tell them apart. If the wording changes this
+    # simply stops matching and the 400 falls back to the ordinary
+    # UnbilledRejection retry path, which is safe.
     return isinstance(message, str) and "credit balance" in message.lower()
 
 
@@ -123,7 +134,7 @@ class AnthropicTransport:
             # The message is used only to classify; it is never kept or logged.
             if exc.status_code == 400 and _is_credit_exhausted(exc.message):
                 raise InsufficientCredit() from None
-            if 400 <= exc.status_code < 500:
+            if exc.status_code in _UNBILLED_STATUSES:
                 # Rejected before processing: certainly not billed.
                 raise UnbilledRejection() from None
             raise LlmError() from None

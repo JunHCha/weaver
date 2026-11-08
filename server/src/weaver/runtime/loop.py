@@ -315,6 +315,9 @@ class Runtime[S: HasSourceId]:
             reason = getattr(error, "code", type(error).__name__)
             if self.gate.available:
                 self.gate.disable(reason)
+                # Restart the recheck interval from this failure, not from an
+                # older recovery, so the wait is honoured (credit: one hour).
+                self._last_llm_check = self.clock()
                 logger.warning("llm disabled: %s", reason)
             self.ledger.record(
                 sid,

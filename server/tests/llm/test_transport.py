@@ -305,6 +305,15 @@ def test_other_4xx_is_unbilled_rejection(fake_sdk, status):
     assert str(caught.value) == "backend_error"
 
 
+@pytest.mark.parametrize("status", [408, 409, 418, 451])
+def test_ambiguous_4xx_keeps_conservative_llm_error(fake_sdk, status):
+    from weaver.llm.errors import UnbilledRejection
+
+    with pytest.raises(LlmError) as caught:
+        _send_rejected(fake_sdk, status, "x")
+    assert not isinstance(caught.value, UnbilledRejection)
+
+
 def test_5xx_is_not_an_unbilled_rejection(fake_sdk):
     from weaver.llm.errors import UnbilledRejection
 
