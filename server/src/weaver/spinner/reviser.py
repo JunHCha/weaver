@@ -111,7 +111,10 @@ def serialize_revision(revision: Revision) -> str:
 
 def parse_revision(serialized: str) -> Revision:
     """Parse strict versioned JSON. Empty revise output has no Revision payload."""
-    return Revision.model_validate_json(serialized)
+    revision = Revision.model_validate_json(serialized)
+    if not {"format_version", "prompt_version"} <= revision.model_fields_set:
+        raise RevisionError("missing_version")
+    return revision
 
 
 def _milliseconds(seconds: float, *, end: bool) -> int:
