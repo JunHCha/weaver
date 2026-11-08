@@ -31,10 +31,13 @@ import io.github.junhcha.weaver.R
 
 /** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
 @Composable
-fun HomeScreen() {
+fun HomeScreen(showPendingCalls: Boolean = false) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }
-    val refresh = { granted = Feature.entries.associateWith { it.isGranted(context) } }
+    val refresh = {
+        granted = Feature.entries.associateWith { it.isGranted(context) }
+        io.github.junhcha.weaver.shepherd.ShepherdRuntime.schedule(context)
+    }
     LifecycleResumeEffect(Unit) {
         refresh()
         onPauseOrDispose { }
@@ -54,12 +57,18 @@ fun HomeScreen() {
             ) {
                 Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                ShepherdPanel(showPendingCalls)
                 CourierPanel()
                 Feature.entries.forEach { feature ->
                     FeatureCard(
                         feature = feature,
                         granted = granted.getValue(feature),
-                        onRequest = { launcher.launch(feature.permissions().toTypedArray()) },
+                        onRequest = {
+                            if (feature == Feature.SHEPHERD) {
+                                io.github.junhcha.weaver.shepherd.ShepherdRuntime.activate(context)
+                            }
+                            launcher.launch(feature.permissions().toTypedArray())
+                        },
                     )
                 }
             }

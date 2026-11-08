@@ -5,7 +5,7 @@
     <string name="feature_notifications">알림</string>
     <string name="feature_notifications_desc">새 제안과 변경 경고를 알립니다.</string>
     <string name="feature_shepherd">Shepherd</string>
-    <string name="feature_shepherd_desc">통화 녹음과 음성 메모를 찾아 outbox로 보냅니다.</string>
+    <string name="feature_shepherd_desc">Recordings/Call/의 메타데이터로 통화를 감지합니다. 음성은 읽거나 전송하지 않습니다.</string>
     <string name="feature_calendar">일정 등록</string>
     <string name="feature_calendar_desc">승인된 일정을 기기 캘린더에 등록합니다.</string>
     <string name="permission_granted">허용됨</string>
