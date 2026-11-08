@@ -19,7 +19,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from weaver.config import ServerConfig
-from weaver.schema import Entry
+from weaver.schema import EntityState, Entry
 from weaver.schema.models import EntityId, EntryKind, EntrySource, Timestamp
 
 SCHEMA_VERSION = 1
@@ -118,10 +118,11 @@ class EntryQuery(BaseModel):
 
 
 class Fabric(Protocol):
-    """Persistence boundary; state(entity_id) belongs to the state-folding issue."""
+    """Append-only facts and deterministic current state; no execution permission."""
 
     def append(self, entries: list[Entry]) -> None: ...
     def entries(self, query: EntryQuery) -> list[Entry]: ...
+    def state(self, entity_id: str) -> EntityState: ...
 
 
 def _time(value: datetime) -> str:
@@ -218,8 +219,8 @@ class FabricStore:
         """Append all or none; identical retries preserve timestamps and rows.
 
         Replacement/retraction requires the same entity set and field. A
-        retraction cannot itself be retracted. Request references target kind
-        요청; resolves additionally requires matching entities and a human
+        retraction cannot itself be retracted or superseded. Request references
+        target kind 요청; resolves additionally requires matching entities and a human
         decision (enforced by Entry). All reference cycles are rejected.
         """
         batch: dict[str, Entry] = {}
@@ -297,8 +298,13 @@ class FabricStore:
                         raise InvalidReference(key, field, "entity_mismatch")
                     if item.field != target.field:
                         raise InvalidReference(key, field, "field_mismatch")
-                    if field == "retracts" and target.retracts is not None:
-                        raise InvalidReference(key, field, "retraction_of_retraction")
+                    if target.retracts is not None:
+                        reason = (
+                            "retraction_of_retraction"
+                            if field == "retracts"
+                            else "supersede_of_retraction"
+                        )
+                        raise InvalidReference(key, field, reason)
                 else:
                     if target.kind != "요청":
                         raise InvalidReference(key, field, "target_not_request")
@@ -357,3 +363,10 @@ class FabricStore:
                 params,
             ).fetchall()
         return [Entry.model_validate_json(row[0]) for row in rows]
+
+    def state(self, entity_id: str) -> EntityState:
+        """Replay one entity snapshot using UTC occurrence/recording/ID order."""
+        from .state import fold_state
+
+        query = EntryQuery(entity_id=entity_id)
+        return fold_state(entity_id, self.entries(query))

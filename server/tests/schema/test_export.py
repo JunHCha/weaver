@@ -49,6 +49,9 @@ def test_internal_models_are_not_exported(tmp_path: Path):
     export(tmp_path)
     text = "\n".join(p.read_text() for p in tmp_path.glob("*.json"))
     for internal in [
+        "EntityState",
+        "SetState",
+        "StateValue",
         "ArchivedSource",
         "payload_path",
         "Candidate",
