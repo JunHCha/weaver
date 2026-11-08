@@ -29,7 +29,9 @@ NOTICE = (
     "고칠 내용은 복사해서 산출물로 만드세요."
 )
 _HASH_LINE = re.compile(rf"^{HASH_KEY}: ([0-9a-f]{{64}})\n", re.MULTILINE)
-_LINK_UNSAFE = str.maketrans({"|": "/", "[": "(", "]": ")", "#": "＃", "^": "＾"})
+_LINK_UNSAFE = str.maketrans(
+    {"|": "/", "[": "(", "]": ")", "#": "＃", "^": "＾", ":": "：", "%": "％"}
+)
 
 
 @dataclass(frozen=True)
@@ -58,12 +60,22 @@ def one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def plain(text: str) -> str:
+    """One line of free text that cannot form links, tags, comments or
+    Dataview fields: CommonMark backslash escapes render the same characters.
+    """
+    escaped = one_line(text).replace("\\", "\\\\")
+    for char in "[]#%":
+        escaped = escaped.replace(char, "\\" + char)
+    return escaped.replace("::", "\\:\\:")
+
+
 def value_text(value: JsonValue) -> str:
     if value is None:
         return "없음"
     if isinstance(value, str):
-        return one_line(value)
-    return one_line(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        return plain(value)
+    return plain(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
 def entity_name(entity_id: str, names: Mapping[str, IndexedEntity]) -> str:
@@ -90,9 +102,9 @@ def local_date(moment: datetime, zone: ZoneInfo) -> str:
 
 def summary(item: Entry) -> str:
     if item.request is not None:
-        return one_line(item.request.content)
+        return plain(item.request.content)
     if item.field is not None:
-        return f"{item.field} = {value_text(item.value)}"
+        return f"{plain(item.field)} = {value_text(item.value)}"
     return value_text(item.value)
 
 
@@ -187,7 +199,7 @@ def _relation_lines(
 ) -> list[str]:
     outgoing, incoming = [], []
     for rel in relations:
-        reason = f" — {one_line(rel.reason)}" if rel.reason else ""
+        reason = f" — {plain(rel.reason)}" if rel.reason else ""
         if entity_id in rel.from_ids:
             # Dataview reads `Key:: Value` to the end of the line.
             outgoing.append(f"{rel.type}:: {links(rel.to_ids, names)}{reason}")
@@ -221,7 +233,7 @@ def render_entity(
     for key in sorted(state.fields):
         held = state.fields[key]
         current.append(
-            f"- {key}: {value_text(held.value)} ({link(held.entry_id, names)})"
+            f"- {plain(key)}: {value_text(held.value)} ({link(held.entry_id, names)})"
         )
     for key in sorted(state.sets):
         members = state.sets[key].members
@@ -232,7 +244,7 @@ def render_entity(
             for m in members
         )
         current.append(
-            f"- {key}: {shown or '없음'} ({link(state.sets[key].entry_id, names)})"
+            f"- {plain(key)}: {shown or '없음'} ({link(state.sets[key].entry_id, names)})"
         )
     if current:
         body += ["", "## 현재 상태", "", *current]
@@ -321,7 +333,7 @@ def render_entry(
         f"- 상태: {status}",
     ]
     if item.field is not None:
-        body.append(f"- 필드: {item.field}")
+        body.append(f"- 필드: {plain(item.field)}")
     if item.request is not None:
         req = item.request
         body.append(f"- 요청자: {link(req.requester, names)}")

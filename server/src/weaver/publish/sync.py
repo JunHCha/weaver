@@ -41,25 +41,35 @@ class ReviewRelations:
                 "WHERE stage='APPLIED' AND approved IS NOT NULL ORDER BY rowid"
             ).fetchall()
         links: list[RelationLink] = []
-        for verdict, result, approved, entity_ids in rows:
-            if json.loads(verdict).get("verdict") not in ("approve", "edit"):
-                continue
-            proposal = Proposal.model_validate_json(approved)
-            ids: dict[str, str] = json.loads(entity_ids)
-            records = tuple(item["entry_id"] for item in json.loads(result))
-            source = proposal.source.source_id
-            this = records or (source,)
-            for rel in proposal.relations:
-                links.append(
-                    RelationLink(
-                        rel.type,
-                        _resolve(rel.from_ref, ids, this),
-                        _resolve(rel.to, ids, this),
-                        rel.reason,
-                        source,
-                    )
-                )
+        for row in rows:
+            try:
+                links.extend(_row_links(*row))
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                # One unreadable journal row must not hide every other relation.
+                logger.warning("publish relation row skipped: %s", type(error).__name__)
         return links
+
+
+def _row_links(
+    verdict: str, result: str, approved: str, entity_ids: str
+) -> list[RelationLink]:
+    if json.loads(verdict).get("verdict") not in ("approve", "edit"):
+        return []
+    proposal = Proposal.model_validate_json(approved)
+    ids = {str(k): str(v) for k, v in json.loads(entity_ids).items()}
+    records = tuple(str(item["entry_id"]) for item in json.loads(result))
+    source = proposal.source.source_id
+    this = records or (source,)
+    return [
+        RelationLink(
+            rel.type,
+            _resolve(rel.from_ref, ids, this),
+            _resolve(rel.to, ids, this),
+            rel.reason,
+            source,
+        )
+        for rel in proposal.relations
+    ]
 
 
 def _resolve(ref: str, ids: dict[str, str], this: tuple[str, ...]) -> tuple[str, ...]:
@@ -70,7 +80,9 @@ class VaultSync:
     """Runtime ``VaultPublisher``: publish entities touched since the last call.
 
     The cursor (last recorded_at plus the IDs seen at it) advances only after a
-    successful publish, so a failed tick is retried by the next one.
+    successful publish, so a failed tick is retried by the next one. Failures
+    are contained here and logged by type only, so the runtime tick (and its
+    maintenance tasks) is never degraded by vault output problems.
     """
 
     def __init__(
@@ -90,8 +102,16 @@ class VaultSync:
         self.full_interval = full_interval
         self.clock = clock
         self._last_full: float | None = None
+        self.failures = 0
 
     def publish(self) -> None:
+        try:
+            self._publish()
+        except Exception as error:
+            self.failures += 1
+            logger.error("publish failed: %s", type(error).__name__)
+
+    def _publish(self) -> None:
         now = self.clock()
         full = self._last_full is None or now - self._last_full >= self.full_interval
         raw = self.state.get(_CURSOR)

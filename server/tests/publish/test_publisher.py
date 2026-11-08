@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from weaver.config import ConfigError, load_config
-from weaver.fabric import FabricStore
+from weaver.fabric import FabricStore, InvalidReference
 from weaver.loom.review_store import ReviewStore
 from weaver.publish import (
     AiFolder,
@@ -355,10 +356,10 @@ def test_symlinked_note_is_not_followed(world: World, tmp_path: Path) -> None:
 def test_manifest_records_hash_and_ids_for_output_watcher(world: World) -> None:
     world.publisher.publish([P])
     outputs = world.state.outputs()
-    path, digest = outputs[P]
-    assert path == f"Weaver/Projects/{P}.md"
-    assert embedded_hash((world.vault / path).read_bytes()) == digest
-    assert outputs[eid(3)][0] == f"Weaver/Records/2026-11/{eid(3)}.md"
+    row = outputs[P]
+    assert (row.path, row.status) == (f"Weaver/Projects/{P}.md", "current")
+    assert embedded_hash((world.vault / row.path).read_bytes()) == row.sha256
+    assert outputs[eid(3)].path == f"Weaver/Records/2026-11/{eid(3)}.md"
 
 
 def test_vault_sync_publishes_changes_since_cursor(world: World) -> None:
@@ -467,3 +468,172 @@ def test_same_input_same_bytes_across_stores(tmp_path: Path) -> None:
             {k: v for k, v in world.files().items() if k.startswith("Weaver/")}
         )
     assert outputs[0] == outputs[1]
+
+
+# ---- review round 1 -----------------------------------------------------------
+
+
+def test_multi_entity_record_status_is_order_independent(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    a = entry(7, entities=[P, K], field="status", value="초안")
+    b = entry(8, entities=[P, K], field="status", value="확정", supersedes=eid(7))
+    world.fabric.append([a, b])
+    world.publisher.publish([K])
+    first = world.note(eid(7)).read_bytes()
+    assert "- 상태: 대체됨" in first.decode()
+    world.publisher.publish([P])
+    world.publisher.publish([K, P])
+    assert world.note(eid(7)).read_bytes() == first
+    # Fabric itself refuses a replacement with a different entity set, so a
+    # record's status never depends on which of its entities is published.
+    with pytest.raises(InvalidReference):
+        world.fabric.append(
+            [entry(9, entities=[P], field="status", value="x", supersedes=eid(7))]
+        )
+
+
+def test_type_change_moves_weaver_placed_note_only(world: World) -> None:
+    world.publisher.publish([K, O])
+    old_k = world.note(K)
+    old_o = world.note(O)
+    old_o.write_text(old_o.read_text() + "사람 메모\n")
+    world.names.entities[1] = IndexedEntity(
+        entity_id=K, type="org", name="김 과장", aliases=[]
+    )
+    world.names.entities[2] = IndexedEntity(
+        entity_id=O, type="topic", name="가나다 상사", aliases=[]
+    )
+    written = world.publisher.publish([K, O])
+    moved = world.ai / "Entities" / "Orgs" / f"{K}.md"
+    assert list(world.ai.rglob(f"{K}.md")) == [moved] and moved in written
+    assert not old_k.exists()  # renamed into place, not deleted
+    assert '"org"' in frontmatter(moved.read_text())
+    assert list(world.ai.rglob(f"{O}.md")) == [old_o]  # edited: stays put
+    assert "사람 메모" in old_o.read_text()
+    assert world.state.outputs()[K].path == f"Weaver/Entities/Orgs/{K}.md"
+
+
+def test_vault_sync_contains_failures_and_keeps_cursor(world: World) -> None:
+    sync = VaultSync(world.publisher, world.fabric, world.names, world.state)
+    world.ai.write_text("사람 파일\n")  # the Weaver folder is a file
+    sync.publish()  # must not raise into the runtime tick
+    assert sync.failures == 1
+    assert world.state.get("fabric_cursor") is None
+    assert world.ai.read_text() == "사람 파일\n"
+    world.ai.unlink()
+    sync.publish()
+    assert sync.failures == 1
+    assert world.state.get("fabric_cursor") is not None
+
+
+def test_bad_review_row_is_skipped(tmp_path: Path) -> None:
+    reviews = ReviewStore(tmp_path / "loom.sqlite3")
+    proposal = json.loads((ROOT / "schema" / "examples" / "Proposal.json").read_text())
+    good = json.dumps(proposal)
+    with reviews.connect() as db:
+        for pid, approved, result in (
+            ("prp_1", "{broken", "[]"),
+            ("prp_2", good, '[{"no_id": 1}]'),
+            ("prp_3", good, "[]"),
+        ):
+            db.execute(
+                "INSERT INTO reviews (proposal_id,rev,verdict,result,stage,approved,"
+                "entity_ids) VALUES (?,1,?,?,'APPLIED',?,?)",
+                (
+                    pid,
+                    '{"verdict": "approve"}',
+                    result,
+                    approved,
+                    json.dumps({"e1": K}),
+                ),
+            )
+    links = ReviewRelations(reviews).relations()
+    assert [(r.from_ids, r.type) for r in links] == [((K,), "소속")]
+
+
+def test_unchanged_publish_touches_no_manifest_row(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publisher.publish([P, K])
+    calls: list[int] = []
+    original = world.state.connect
+
+    def counting():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(world.state, "connect", counting)
+    assert world.publisher.publish([P, K]) == []
+    assert len(calls) == 1  # the single manifest read, no write transaction
+
+
+def test_note_mode_is_0644_and_existing_mode_is_kept(world: World) -> None:
+    world.publisher.publish([P])
+    note = world.note(P)
+    assert stat.S_IMODE(note.stat().st_mode) == 0o644
+    note.chmod(0o640)
+    world.fabric.append([entry(7, field="status", value="진행")])
+    assert note in world.publisher.publish([P])
+    assert stat.S_IMODE(note.stat().st_mode) == 0o640
+
+
+def test_free_text_cannot_forge_links_tags_or_fields(world: World) -> None:
+    evil = "[[가짜]] #태그 키:: 값 %%숨김%%\n다음줄:: x"
+    world.fabric.append(
+        [entry(7, field="a::b\n#c", value=evil), entry(8, kind="논의", value=evil)]
+    )
+    world.relations.items.append(RelationLink("원인", (P,), (K,), evil, SRC))
+    world.publisher.publish([P])
+    for path in (world.note(P), world.note(eid(7)), world.note(eid(8))):
+        text = path.read_text()
+        assert "[[가짜" not in text and " #태그" not in text and "%%" not in text
+        fields = dataview_fields(text)
+        assert not {"키", "다음줄", "a"} & set(fields), fields
+    assert "\\[\\[가짜\\]\\] \\#태그 키\\:\\: 값" in world.note(eid(8)).read_text()
+
+
+def test_entity_id_with_trailing_newline_is_rejected(world: World) -> None:
+    with pytest.raises(ValueError):
+        world.publisher.publish([P + "\n"])
+
+
+def test_human_edit_is_listed_for_output_watcher(world: World) -> None:
+    world.publisher.publish([K])
+    world.note(K).write_text(world.note(K).read_text() + "수정\n")
+    world.fabric.append([entry(7, entities=[K], field="phone", value="010")])
+    world.publisher.publish([K])
+    stalled = world.state.stalled()
+    assert set(stalled) == {K} and stalled[K].status == "human_owned"
+
+
+def test_duplicate_ids_outside_canonical_path_are_left_alone(world: World) -> None:
+    world.publisher.publish([K])
+    canonical = world.note(K)
+    copies = [world.ai / "A" / f"{K}.md", world.ai / "B" / f"{K}.md"]
+    for copy in copies:
+        copy.parent.mkdir()
+        shutil.copy(canonical, copy)
+    canonical.unlink()
+    before = [c.read_bytes() for c in copies]
+    world.fabric.append([entry(7, entities=[K], field="phone", value="010")])
+    world.publisher.publish([K])
+    assert [c.read_bytes() for c in copies] == before
+    assert not canonical.exists()
+    assert (f"Weaver/A/{K}.md", "duplicate_id") in {
+        (c.path, c.reason) for c in world.publisher.conflicts
+    }
+
+
+@pytest.mark.parametrize("variant", ["crlf", "bom"])
+def test_crlf_or_bom_resaved_note_is_human_owned(world: World, variant: str) -> None:
+    world.publisher.publish([K])
+    note = world.note(K)
+    data = note.read_bytes()
+    note.write_bytes(
+        data.replace(b"\n", b"\r\n") if variant == "crlf" else b"\xef\xbb\xbf" + data
+    )
+    kept = note.read_bytes()
+    world.fabric.append([entry(7, entities=[K], field="phone", value="010")])
+    world.publisher.publish([K])
+    assert note.read_bytes() == kept
+    assert world.publisher.conflicts[0].reason == "human_owned"
