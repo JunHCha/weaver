@@ -25,9 +25,11 @@ from weaver.loom import (
 from weaver.publish import (
     AiFolder,
     EntityDirectory,
+    OutputSync,
     Publisher,
     PublishState,
     ReviewRelations,
+    SqliteOutputWatcher,
     VaultSync,
 )
 from weaver.schema import Source
@@ -82,7 +84,15 @@ def vault_publisher(
         state=state,
         timezone=config.time.zone,
     )
-    return VaultSync(publisher, fabric, entities, state)
+    watcher = SqliteOutputWatcher(
+        publisher.folder,
+        config.state_root / "output-watcher.sqlite3",
+        timezone=config.time.zone,
+        manifest=state,
+    )
+    return VaultSync(
+        publisher, fabric, entities, state, outputs=OutputSync(watcher, fabric)
+    )
 
 
 def build_runtime(

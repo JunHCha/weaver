@@ -5,13 +5,14 @@ weaver_note_kind: "entry"
 weaver_entry_kind: "변경"
 weaver_occurred_at: "2026-11-07T10:02:00+09:00"
 weaver_entry_status: "대체됨"
+deadline: "2026-11-30"
 weaver_source_ids:
   - "src_00000000000000000000000001"
 weaver_entity_ids:
   - "ent_00000000000000000000000001"
 weaver_entry_ids:
   - "evt_00000000000000000000000002"
-weaver_content_sha256: b16701fd39caba335c8164f398f9ce5e06a92cd1c92886cc7d8a7de5191879fd
+weaver_content_sha256: be19ec737893667a7d1fed0ce9eb7d9e1f7a7affcb2b16995fc084171b06661f
 ---
 
 # 변경 · 2026-11-07

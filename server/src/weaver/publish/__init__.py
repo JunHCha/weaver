@@ -12,6 +12,7 @@ from .publisher import (
     validate_folder,
 )
 from .sync import ReviewRelations, VaultSync
+from .watcher import OutputSync, OutputWatcher, SqliteOutputWatcher
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -19,6 +20,9 @@ __all__ = [
     "Conflict",
     "EntityDirectory",
     "Note",
+    "OutputWatcher",
+    "OutputSync",
+    "SqliteOutputWatcher",
     "PublishPathError",
     "PublishState",
     "Publisher",
