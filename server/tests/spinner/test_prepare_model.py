@@ -51,7 +51,7 @@ def test_missing_dependency_has_install_guidance_without_creating_files(
     from weaver.spinner.stt import SttEngineError
 
     def missing(name):
-        raise ModuleNotFoundError(name)
+        raise ModuleNotFoundError(name, name="hub_transitive_dependency")
 
     monkeypatch.setattr("weaver.spinner.stt.importlib.import_module", missing)
     destination = tmp_path / "not-created" / "model"
@@ -68,7 +68,7 @@ def test_cli_missing_dependency_shows_install_guidance(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
     def missing(name):
-        raise ModuleNotFoundError(name)
+        raise ModuleNotFoundError(name, name="hub_transitive_dependency")
 
     monkeypatch.setattr("weaver.spinner.stt.importlib.import_module", missing)
     monkeypatch.setattr(
@@ -79,3 +79,4 @@ def test_cli_missing_dependency_shows_install_guidance(tmp_path, monkeypatch):
     result = CliRunner().invoke(module.cli)
     assert result.exit_code == 1
     assert "uv sync --project server --locked --extra stt" in result.output
+    assert "hub_transitive_dependency" in result.output

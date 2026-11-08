@@ -369,18 +369,43 @@ def test_invalid_decode_deadline_is_rejected(model, timeout):
 def test_missing_optional_dependency_fails_at_engine_creation(
     model, monkeypatch, missing
 ):
-    from types import SimpleNamespace
-
-    def import_module(name):
-        if name == missing:
-            raise ModuleNotFoundError(name)
-        return SimpleNamespace()
-
-    monkeypatch.setattr("weaver.spinner.stt.importlib.import_module", import_module)
-    with pytest.raises(
-        SttEngineError, match="uv sync --project server --locked --extra stt"
-    ):
+    monkeypatch.setattr(
+        "weaver.spinner.stt.importlib.util.find_spec",
+        lambda name: None if name == missing else object(),
+    )
+    with pytest.raises(SttEngineError) as error:
         MlxStt(model)
+    assert missing in str(error.value)
+    assert "uv sync --project server --locked --extra stt" in str(error.value)
+
+
+def test_engine_creation_only_checks_presence(model, monkeypatch):
+    monkeypatch.setattr(
+        "weaver.spinner.stt.importlib.util.find_spec", lambda _: object()
+    )
+    monkeypatch.setattr(
+        "weaver.spinner.stt.importlib.import_module",
+        lambda _: pytest.fail("constructor imported optional runtime"),
+    )
+    MlxStt(model)
+
+
+def test_transitive_import_failure_names_missing_module(
+    model, audio, decoder, monkeypatch
+):
+    monkeypatch.setattr(
+        "weaver.spinner.stt.importlib.util.find_spec", lambda _: object()
+    )
+
+    def missing(name):
+        raise ModuleNotFoundError("missing transitive dependency", name="mlx.core")
+
+    monkeypatch.setattr("weaver.spinner.stt.importlib.import_module", missing)
+    stt = MlxStt(model)
+    with pytest.raises(SttEngineError) as error:
+        stt.transcribe(audio)
+    assert "mlx.core" in str(error.value)
+    assert "uv sync --project server --locked --extra stt" in str(error.value)
 
 
 def test_importing_stt_and_preparation_never_loads_optional_dependencies():

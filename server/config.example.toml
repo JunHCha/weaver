@@ -32,7 +32,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Courier child directories must stay at their fixed locations within sync.
 
 # Optional: defaults to state_root/models/whisper-large-v3-turbo.
-# Preparation is explicit: python -m weaver.spinner.prepare_model --config <file>
+# Preparation requires --extra stt and is explicit:
+# python -m weaver.spinner.prepare_model --config <file>
 # [stt]
 # model_path = "models/whisper-large-v3-turbo"
 

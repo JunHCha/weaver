@@ -25,7 +25,6 @@ pytestmark = [
 
 
 def test_offline_korean_and_silence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    pytest.importorskip("mlx_whisper")
     assert platform.system() == "Darwin" and platform.machine() == "arm64"
     model = Path(os.environ["WEAVER_STT_MODEL"])
     audio = Path(os.environ["WEAVER_STT_AUDIO"])
