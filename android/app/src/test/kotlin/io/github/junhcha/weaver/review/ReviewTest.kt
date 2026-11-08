@@ -38,6 +38,19 @@ class ReviewTest {
         override fun delete(folder: String, name: String): Unit = error("phone must not delete review files")
         fun put(p: Proposal) { files["proposals/${p.proposalId}.r${p.rev}.json"] = WeaverCodec.encode(p) }
     }
+    @Test fun missingProposalUsesDedicatedException() {
+        val store = ReviewStore(temporary.newFolder())
+        assertThrows(ReviewStore.ProposalMissingException::class.java) { store.latest(Folder(), id) }
+    }
+
+    @Test fun capturedAtUsesLocalTimeAndPreservesInvalidInput() {
+        assertEquals("2026-11-07 09:00", io.github.junhcha.weaver.ui.capturedAtLabel(
+            "2026-11-07T00:00:00Z", java.time.ZoneId.of("Asia/Seoul")))
+        assertEquals("2026-11-06 19:00", io.github.junhcha.weaver.ui.capturedAtLabel(
+            "2026-11-07T00:00:00Z", java.time.ZoneId.of("America/New_York")))
+        assertEquals("invalid synthetic timestamp", io.github.junhcha.weaver.ui.capturedAtLabel("invalid synthetic timestamp"))
+    }
+
     @Test fun fourVerdictsRoundTripAndPublishOnce() {
         Verdict.Kind.entries.forEach { kind ->
             val folder = Folder(); val p = proposal(); folder.put(p)

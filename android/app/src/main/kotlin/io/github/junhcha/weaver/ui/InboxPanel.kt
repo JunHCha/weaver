@@ -72,7 +72,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             proposals.forEach { item ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("출처: ${channelLabel(item.channel)} · 시각: ${item.capturedAt}")
+                        Text("출처: ${channelLabel(item.channel)} · 시각: ${capturedAtLabel(item.capturedAt)}")
                         Text("rev ${item.rev} · 미해결 질문 ${questionCounts[item.proposalId]?.let { "${it}개" } ?: if (item.proposalId in questionCounts) "확인 불가" else "확인 중"}" +
                             if (item.revised) " · 다시 짠 제안" else "")
                         Text(item.summary.replace('\n', ' '), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -117,3 +117,8 @@ private fun channelLabel(channel: String): String = when (channel) {
     "SHARE_TEXT" -> "공유 텍스트"
     else -> channel
 }
+
+internal fun capturedAtLabel(value: String, zone: ZoneId = ZoneId.systemDefault()): String =
+    runCatching {
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(Instant.parse(value).atZone(zone))
+    }.getOrDefault(value)

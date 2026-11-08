@@ -48,9 +48,9 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                 // ReviewStore.latest reports this only after a successful listing with no candidate.
                 // Permission, decoding and other read failures must still be visible.
                 proposalMissing = result.exceptionOrNull()?.let {
-                    it is IllegalStateException && it.message == "제안이 없습니다"
+                    it is ReviewStore.ProposalMissingException
                 } == true
-                readError = if (result.isFailure && !(proposalMissing && record != null))
+                readError = if (result.isFailure)
                     "제안을 읽을 수 없습니다. 최신 제안을 다시 확인하세요." else null
                 result.onSuccess { fresh ->
                     latestRev = fresh.rev
@@ -63,11 +63,13 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
             delay(5_000)
         } while (isActive)
     }
+    val inferred = proposalMissing && record?.let {
+        it.published || it.status in setOf(ReviewStatus.SENT, ReviewStatus.INFERRED)
+    } == true
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onClose) { Text("검토 닫기") }
         val p = proposal
         if (p != null) {
-            val inferred = proposalMissing && record != null
             val stale = latestRev != p.rev && !inferred
             ReviewSection("안내")
             Text(FACT_REVIEW_GUIDANCE)
@@ -126,6 +128,10 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                 OutlinedButton(onClick = { advancedExpanded = !advancedExpanded }) {
                     Text(if (advancedExpanded) "고급: 직접 수정 접기" else "고급: 직접 수정")
                 }
+                if (edits.isNotEmpty()) {
+                    Text("수정 ${edits.size}건 추가됨")
+                    Text("수정이 있어 승인이 비활성화되었습니다. 수정 제출을 사용하세요.")
+                }
                 if (advancedExpanded) {
                     Text("직접 수정: 예 /schedules/0/start · 값은 JSON 문자열이면 따옴표 포함")
                     OutlinedTextField(value = path, onValueChange = { input = input.copy(path = it) }, enabled = enabled, label = { Text("JSON Pointer") }, modifier = Modifier.fillMaxWidth())
@@ -176,7 +182,7 @@ fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
                 if (busy) Text("전송 준비 중")
             }
         }
-        readError?.let { Text(it) }
+        if (!inferred) readError?.let { Text(it) }
         error?.let { Text(it) }
     }
 }

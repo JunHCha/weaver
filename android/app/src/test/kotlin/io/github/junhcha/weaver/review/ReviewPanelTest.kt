@@ -24,6 +24,7 @@ import io.github.junhcha.weaver.storage.AppStorage
 import io.github.junhcha.weaver.ui.ReviewPanel
 import io.github.junhcha.weaver.ui.FACT_REVIEW_GUIDANCE
 import io.github.junhcha.weaver.ui.INFERRED_REVIEW_LABEL
+import io.github.junhcha.weaver.ui.capturedAtLabel
 import org.junit.Assert.*
 import org.junit.After
 import androidx.work.*
@@ -315,6 +316,10 @@ class ReviewPanelTest {
         open(p)
         compose.onNodeWithText("거절").performScrollTo().performClick()
         compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val tree = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", TestDocumentsProvider.ROOT)
+        assertTrue(ReviewRuntime.synchronize(context, SafCourierFolder(context.contentResolver, tree)))
+        assertEquals(ReviewStatus.SENT, ReviewRuntime.records(context).single().status)
+        assertTrue(ReviewRuntime.records(context).single().published)
         removeProposal(context, p)
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText(INFERRED_REVIEW_LABEL).fetchSemanticsNodes().isNotEmpty()
@@ -323,6 +328,69 @@ class ReviewPanelTest {
         compose.onNodeWithText("새 rev 또는 파일 변경 감지 · 이전 rev는 제출할 수 없습니다").assertDoesNotExist()
         compose.onNodeWithText("목록으로 돌아가 최신 제안 확인").assertDoesNotExist()
         compose.onNodeWithText("승인").assertIsNotEnabled()
+    }
+
+    private fun assertUnpublishedMissingProposal(status: ReviewStatus) {
+        val (context, p) = prepare()
+        open(p)
+        val tree = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", TestDocumentsProvider.ROOT)
+        val folder = SafCourierFolder(context.contentResolver, tree)
+        val store = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
+        val verdict = ReviewDraft.verdict(p, Verdict.Kind.REJECT, emptyList(),
+            Verdict.RejectReason.OTHER, "", emptyMap(), "2026-11-07T00:00:00Z")
+        synchronized(CourierRuntime.lock) { store.queue(folder, p, verdict) }
+        if (status == ReviewStatus.CONFLICT) {
+            folder.publish("decisions", "${p.proposalId}.r${p.rev}.json") {
+                it.write("synthetic conflicting decision".toByteArray())
+            }
+            assertFalse(ReviewRuntime.synchronize(context, folder))
+        }
+        removeProposal(context, p)
+        if (status == ReviewStatus.ERROR) assertFalse(ReviewRuntime.synchronize(context, folder))
+        assertEquals(status, ReviewRuntime.records(context).single().status)
+        assertFalse(ReviewRuntime.records(context).single().published)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("제안을 읽을 수 없습니다. 최신 제안을 다시 확인하세요.").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(INFERRED_REVIEW_LABEL).assertDoesNotExist()
+        compose.onNodeWithText("새 rev 또는 파일 변경 감지 · 이전 rev는 제출할 수 없습니다").assertExists()
+        compose.onNodeWithText(status.label).assertExists()
+        if (status in setOf(ReviewStatus.PENDING, ReviewStatus.ERROR)) {
+            compose.onNodeWithText("동일한 검토 결과 재시도").assertExists().assertIsEnabled()
+        }
+        compose.onNodeWithText("승인").assertIsNotEnabled()
+    }
+
+    @Test fun pendingMissingProposalKeepsStatusErrorAndRetry() {
+        assertUnpublishedMissingProposal(ReviewStatus.PENDING)
+    }
+
+    @Test fun errorMissingProposalKeepsStatusErrorAndRetry() {
+        assertUnpublishedMissingProposal(ReviewStatus.ERROR)
+    }
+
+    @Test fun conflictMissingProposalKeepsConflictStatus() {
+        assertUnpublishedMissingProposal(ReviewStatus.CONFLICT)
+    }
+
+    @Test fun collapsedAdvancedEditsKeepSummaryAndApprovalExplanation() {
+        val (_, p) = prepare()
+        open(p)
+        expandAdvanced()
+        compose.onNodeWithText("최종 값 (JSON)").performScrollTo().performTextReplacement("\"corrected summary\"")
+        compose.onNodeWithText("수정 추가").performScrollTo().performClick()
+        compose.onNodeWithText("고급: 직접 수정 접기").performScrollTo().performClick()
+        compose.onNodeWithText("JSON Pointer").assertDoesNotExist()
+        compose.onNodeWithText("수정 1건 추가됨").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("수정이 있어 승인이 비활성화되었습니다. 수정 제출을 사용하세요.").assertExists()
+        compose.onNodeWithText("승인").assertIsNotEnabled()
+        compose.onNodeWithText("수정 제출").assertIsEnabled()
+        expandAdvanced()
+        compose.onNodeWithText("/summary = \"corrected summary\"").assertExists()
+        compose.onNodeWithText("수정 초기화").performScrollTo().performClick()
+        compose.onNodeWithText("수정 1건 추가됨").assertDoesNotExist()
+        compose.onNodeWithText("수정이 있어 승인이 비활성화되었습니다. 수정 제출을 사용하세요.").assertDoesNotExist()
+        compose.onNodeWithText("승인").assertIsEnabled()
     }
 
     @Test fun unsubmittedMissingProposalKeepsErrorAndStale() {
@@ -373,7 +441,7 @@ class ReviewPanelTest {
             compose.onNodeWithText("rev ${proposal.rev} · 미해결 질문 ${ReviewDraft.questions(proposal).size}개").assertExists()
             compose.onNodeWithText("제안 r${proposal.rev} 검토").assertExists()
         }
-        compose.onAllNodesWithText("출처: 공유 텍스트 · 시각: ${p.source.capturedAt}").assertCountEquals(2)
+        compose.onAllNodesWithText("출처: 공유 텍스트 · 시각: ${capturedAtLabel(p.source.capturedAt)}").assertCountEquals(2)
     }
 
     @Test fun submittedProposalStillDetectsNewRevision() {
