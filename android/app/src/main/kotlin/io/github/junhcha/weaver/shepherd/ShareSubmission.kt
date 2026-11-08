@@ -10,9 +10,11 @@ import io.github.junhcha.weaver.schema.Manifest
 import java.io.File
 
 object ShareSubmission {
-    fun submit(context: Context, file: File, channel: Channel, callId: String?): Manifest = synchronized(CourierRuntime.lock) {
+    data class Result(val manifest: Manifest, val duplicate: Boolean)
+    fun submit(context: Context, file: File, channel: Channel, callId: String?): Result = synchronized(CourierRuntime.lock) {
         require(channel in listOf(Channel.SHARE_TEXT, Channel.KAKAO, Channel.CALL))
         SharedText.validate(file)
+        PendingCalls.recoverLinks(context)
         val hash = SharedText.digest(file)
         val existing = CourierDatabase(context).use { db -> db.captures().firstOrNull { it.manifest.sha256 == hash } }
         if (existing != null) {
@@ -25,10 +27,12 @@ object ShareSubmission {
             }
             CourierRuntime.kick(context)
             file.delete()
-            return@synchronized existing.manifest
+            return@synchronized Result(existing.manifest, true)
         }
         val call = if (channel == Channel.CALL) PendingCalls.repository(context).pending()
             .firstOrNull { it.id == callId } ?: error("연결할 미처리 통화가 없습니다. 저장하지 않았습니다.") else null
+        val occurredAt = PendingCalls.validTime(call?.occurredAt)
+        val counterpart = call?.counterpart?.trim()?.takeIf(String::isNotEmpty)
         // The durable intent survives death between queueing and link persistence.
         val links = context.getSharedPreferences("shepherd-call-drafts", Context.MODE_PRIVATE)
         if (call != null) {
@@ -39,13 +43,13 @@ object ShareSubmission {
                 .putString(hash, call.id).commit())
         }
         val manifest = CourierRuntime.prepare(context, Uri.fromFile(file), CaptureKind.TEXT, channel, "txt",
-            call?.occurredAt, call?.counterpart)
+            occurredAt, counterpart)
         if (call != null) {
             check(context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE).edit()
                 .putString(manifest.captureId, call.id).commit())
         }
         links.edit().remove(hash).commit()
         file.delete()
-        manifest
+        Result(manifest, false)
     }
 }

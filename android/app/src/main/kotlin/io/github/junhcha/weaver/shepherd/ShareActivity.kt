@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.schema.Channel
 import java.io.File
@@ -42,7 +43,7 @@ class ShareActivity : ComponentActivity() {
                         listOf(Channel.SHARE_TEXT to "일반 텍스트", Channel.KAKAO to "카카오톡 내보내기",
                             Channel.CALL to "통화 스크립트").forEach { (kind, label) ->
                             Row {
-                                RadioButton(selected = channel == kind, enabled = !busy && file != null &&
+                                RadioButton(modifier = Modifier.testTag("channel-${kind.name}"), selected = channel == kind, enabled = !busy && file != null &&
                                     (kind != Channel.CALL || calls.isNotEmpty()), onClick = { channel = kind })
                                 Text(label, modifier = Modifier.padding(top = 12.dp))
                             }
@@ -52,7 +53,7 @@ class ShareActivity : ComponentActivity() {
                             Text("연결할 통화 (가장 최근 미처리 통화가 기본)")
                             calls.forEach { call ->
                                 TextButton(enabled = !busy, onClick = { callId = call.id }) {
-                                    Text("${if (callId == call.id) "● " else "○ "}${call.occurredAt} · ${call.counterpart ?: "알 수 없음"}")
+                                    Text("${if (callId == call.id) "● " else "○ "}${call.occurredAt ?: "시각 미상"} · ${call.displayName} · ${call.counterpart ?: "알 수 없음"}")
                                 }
                             }
                         }
@@ -101,7 +102,8 @@ class ShareActivity : ComponentActivity() {
                 runOnUiThread {
                     file = null
                     busy = false
-                    message = "Courier 등록 완료: ${result.captureId}. 전송은 동기화 폴더 연결 후 진행됩니다."
+                    message = if (result.duplicate) "이미 등록된 텍스트입니다."
+                        else "Courier 등록 완료: ${result.manifest.captureId}. 전송은 동기화 폴더 연결 후 진행됩니다."
                 }
             } catch (error: Exception) { showError(error) }
         }

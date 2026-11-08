@@ -37,7 +37,7 @@ class ShareSubmissionTest {
         File(context.filesDir, "shepherd-shares").deleteRecursively()
         PendingCalls.repository = { object : PendingCallRepository {
             override fun pending() = pending
-            override fun markProcessed(callId: String, captureId: String) { processed.add(callId); pending = emptyList() }
+            override fun markProcessed(callId: String, captureId: String): Boolean { processed.add(callId); pending = emptyList(); return true }
         } }
     }
     @After fun restore() { PendingCalls.repository = originalRepository }
@@ -46,7 +46,7 @@ class ShareSubmissionTest {
 
     @Test fun ordinaryAndKakaoUseTextKindAndRemainDistinct() {
         listOf(Channel.SHARE_TEXT, Channel.KAKAO).forEach { channel ->
-            val manifest = ShareSubmission.submit(context, text(channel.name), channel, null)
+            val manifest = ShareSubmission.submit(context, text(channel.name), channel, null).manifest
             assertEquals(CaptureKind.TEXT, manifest.kind)
             assertEquals(channel, manifest.channel)
             assertNull(manifest.occurredAt)
@@ -55,13 +55,13 @@ class ShareSubmissionTest {
         CourierDatabase(context).use { assertEquals(2, it.captures().size) }
     }
     @Test fun replayAfterReopeningDatabaseReusesCapture() {
-        val first = ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null)
-        val repeated = ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null)
+        val first = ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null).manifest
+        val repeated = ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null).manifest
         assertEquals(first, repeated)
         CourierDatabase(context).use { assertEquals(1, it.captures().size) }
     }
     @Test fun callUsesMetadataAndIsProcessedOnlyAfterSuccessfulPublication() {
-        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id)
+        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id).manifest
         assertEquals(call.occurredAt, manifest.occurredAt)
         assertEquals(call.counterpart, manifest.hints.counterpart)
         PendingCalls.reconcile(context)
@@ -83,7 +83,7 @@ class ShareSubmissionTest {
         CourierDatabase(context).use { assertEquals(1, it.captures().size) }
     }
     @Test fun interruptedLinkWriteRecoversFromDurableDraft() {
-        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id)
+        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id).manifest
         context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("shepherd-call-drafts", Context.MODE_PRIVATE).edit()
             .putString(manifest.sha256, call.id).commit()
@@ -132,4 +132,89 @@ class ShareSubmissionTest {
         assertEquals(File(context.filesDir, "shepherd-shares"), file.parentFile)
         assertFalse(file.name.contains("evil"))
     }
+    @Test fun falseAndThrowingCallsKeepLinksAndOtherCallsContinue() {
+        val call2 = call.copy(id = "call-2")
+        pending = listOf(call, call2)
+        val first = ShareSubmission.submit(context, text("first"), Channel.CALL, call.id).manifest
+        val second = ShareSubmission.submit(context, text("second"), Channel.CALL, call2.id).manifest
+        CourierDatabase(context).use { db ->
+            db.state(first.captureId, "SENT", 1); db.state(second.captureId, "SENT", 1)
+        }
+        var throwFirst = false
+        PendingCalls.repository = { object : PendingCallRepository {
+            override fun pending() = pending
+            override fun markProcessed(callId: String, captureId: String): Boolean {
+                if (callId == call.id) {
+                    if (throwFirst) error("synthetic_failure")
+                    return false
+                }
+                processed.add(callId); return true
+            }
+        } }
+        assertFalse(PendingCalls.reconcile(context))
+        val links = context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE)
+        assertEquals(setOf(first.captureId), links.all.keys)
+        assertEquals(listOf(call2.id), processed)
+        throwFirst = true
+        processed.clear()
+        links.edit().putString(second.captureId, call2.id).commit()
+        assertFalse(PendingCalls.reconcile(context))
+        assertEquals(listOf(call2.id), processed)
+        assertTrue(links.contains(first.captureId))
+        CourierDatabase(context).use { assertTrue(it.diagnostics().any { line -> line.contains("shepherd/reconcile") }) }
+        PendingCalls.repository = { object : PendingCallRepository {
+            override fun pending() = pending
+            override fun markProcessed(callId: String, captureId: String) = true
+        } }
+        assertTrue(PendingCalls.reconcile(context))
+        assertTrue(links.all.isEmpty())
+    }
+    @Test fun adapterFiltersProcessedSortsInstantsAndKeepsUnknownLast() {
+        val records = listOf(
+            CallRecord("unknown", "unknown file", null, null, CallStatus.UNSHARED),
+            CallRecord("older", "old file", null, "2026-11-08T13:00:00+09:00", CallStatus.UNSHARED),
+            CallRecord("processed", "done", null, "2026-11-09T01:00:00Z", CallStatus.PROCESSED),
+            CallRecord("recent", "new file", null, "2026-11-08T05:00:00Z", CallStatus.UNSHARED))
+        val result = PendingCalls.adapt(records)
+        assertEquals(listOf("recent", "older", "unknown"), result.map { it.id })
+        assertEquals("new file", result.first().displayName)
+    }
+    @Test fun invalidMetadataNormalizesBeforePersistingAndPrepareCleansFailedManifest() {
+        pending = listOf(call.copy(occurredAt = "2026-11-08T12:00+09:00", counterpart = "  "))
+        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id).manifest
+        assertNull(manifest.occurredAt); assertNull(manifest.hints.counterpart)
+        val before = File(context.filesDir, "courier-staging").listFiles()!!.map { it.name }.toSet()
+        val source = File(context.cacheDir, "invalid-meta.txt").apply { writeText("different") }
+        assertThrows(IllegalArgumentException::class.java) {
+            io.github.junhcha.weaver.courier.CourierRuntime.prepare(context, Uri.fromFile(source),
+                CaptureKind.TEXT, Channel.CALL, "txt", "invalid", "  ")
+        }
+        assertEquals(before, File(context.filesDir, "courier-staging").listFiles()!!.map { it.name }.toSet())
+    }
+    @Test fun crashDraftReservesCallBeforeNextSubmission() {
+        val first = ShareSubmission.submit(context, text("first"), Channel.CALL, call.id).manifest
+        context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("shepherd-call-drafts", Context.MODE_PRIVATE).edit()
+            .putString(first.sha256, call.id).commit()
+        assertThrows(IllegalArgumentException::class.java) {
+            ShareSubmission.submit(context, text("second"), Channel.CALL, call.id)
+        }
+        CourierDatabase(context).use { assertEquals(1, it.captures().size) }
+    }
+    @Test fun duplicateIsExplicitAndPrivateUrisAreRejected() {
+        assertFalse(ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null).duplicate)
+        assertTrue(ShareSubmission.submit(context, text(), Channel.SHARE_TEXT, null).duplicate)
+        val root = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FWeaverCourier"
+        context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit().putString("tree", root).commit()
+        listOf("content://${context.packageName}.files/private.txt",
+            "$root/document/primary%3ADocuments%2FWeaverCourier%2Foutbox%2Fcap.txt",
+            "content://com.android.externalstorage.documents/document/primary%3ADocuments%2FWeaverCourier%2Foutbox%2Fcap.txt"
+        ).forEach { uri ->
+            assertThrows(IllegalArgumentException::class.java) {
+                SharedText.receive(context, Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_STREAM, Uri.parse(uri)))
+            }
+        }
+    }
+
 }

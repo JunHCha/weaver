@@ -3,6 +3,8 @@ package io.github.junhcha.weaver.shepherd
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierClient
 import java.io.File
 import java.io.FileOutputStream
@@ -25,6 +27,7 @@ object SharedText {
         require(intent.clipData == null || intent.clipData!!.itemCount <= 1) { "한 번에 한 항목만 공유하세요." }
         require(stream == null || stream.scheme == "content") { "공유 파일은 content URI여야 합니다." }
         if (stream != null) {
+            require(!privateSource(context, stream)) { "앱 내부 또는 Courier 폴더의 파일은 공유 입력으로 받을 수 없습니다." }
             val resolvedType = context.contentResolver.getType(stream)?.substringBefore(';')?.trim()?.lowercase()
             require(resolvedType == null || resolvedType == "text/plain") { "text/plain 텍스트 파일만 지원합니다." }
         }
@@ -67,6 +70,19 @@ object SharedText {
             file.delete()
             throw error
         }
+    }
+
+    internal fun privateSource(context: Context, uri: Uri): Boolean {
+        val authority = uri.authority ?: return true
+        if (authority == context.packageName || authority.startsWith("${context.packageName}.")) return true
+        val courier = CourierRuntime.tree(context) ?: return false
+        if (uri.authority != courier.authority) return false
+        // Reject the entire selected tree, including document-only URI aliases.
+        val root = runCatching { DocumentsContract.getTreeDocumentId(courier) }.getOrNull() ?: return true
+        val document = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+        val tree = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+        return listOfNotNull(document, tree).any { it == root || it.startsWith("$root/") } ||
+            (document == null && tree == null)
     }
 
     fun copy(input: InputStream, file: File) {

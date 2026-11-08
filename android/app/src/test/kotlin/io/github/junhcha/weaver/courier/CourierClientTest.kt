@@ -39,6 +39,31 @@ class CourierClientTest {
     }
     private fun addReceipt(r: Receipt = receipt) { folder.put("receipts", "$id.json", WeaverCodec.encode(r)) }
 
+    @Test fun reconcileExceptionDoesNotSkipQueuedVerdictsAndRequestsRetry() {
+        val previous = io.github.junhcha.weaver.shepherd.PendingCalls.repository
+        val callManifest = manifest.copy(channel = Channel.CALL)
+        prepare(callManifest)
+        context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE).edit()
+            .putString(id, "synthetic-call").commit()
+        io.github.junhcha.weaver.shepherd.PendingCalls.repository = {
+            error("synthetic_reconcile_failure")
+        }
+        val verdict = Verdict(1, "prp_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, Verdict.Kind.APPROVE,
+            emptyList(), null, null, "2026-11-07T00:00:00Z")
+        val queued = File(context.filesDir, "courier-verdicts").apply { mkdirs() }
+        val name = "${verdict.proposalId}.r1.json"
+        File(queued, name).writeText(WeaverCodec.encode(verdict))
+        try {
+            assertFalse(CourierWorker.synchronize(context, folder, db))
+            assertTrue(folder.files.containsKey("decisions/$name"))
+            assertFalse(File(queued, name).exists())
+            assertTrue(db.diagnostics().any { it.contains("shepherd/reconcile") })
+        } finally {
+            io.github.junhcha.weaver.shepherd.PendingCalls.repository = previous
+            context.getSharedPreferences("shepherd-call-links", Context.MODE_PRIVATE).edit().clear().commit()
+        }
+    }
+
     @Test fun failedManifestRetriesWithSameIdAndBodyAfterDatabaseRestart() {
         prepare()
         folder.failName = "$id.json"
