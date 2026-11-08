@@ -25,9 +25,11 @@ Metadata such as `weaver_entry_status` remains descriptive and is not editable
 fact input. Markdown prose is never interpreted. No language model is involved.
 
 The supported flat frontmatter dialect includes JSON/YAML quoted or plain
-scalars, inline JSON arrays, and YAML block lists (Publisher's format). Weaver
-properties reject duplicate keys, nesting, aliases, tags and multiline values;
-other properties are ignored. Frontmatter is limited to 64 KiB. An invalid field,
+scalars, inline JSON arrays, and YAML block lists, with or without indentation.
+Inline comments preserve hashes inside quoted strings. Duplicate keys, nesting,
+aliases, tags and multiline values reject the whole file, including unsupported
+structures in unknown properties. Unknown flat properties are validated but are
+not used as facts. Frontmatter is limited to 64 KiB. An invalid field,
 unknown schema, or incomplete source/entity/entry metadata rejects that file's
 whole snapshot, logs only an error type, and preserves its previous baseline.
 

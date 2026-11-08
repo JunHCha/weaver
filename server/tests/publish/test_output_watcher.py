@@ -431,3 +431,125 @@ def test_pending_deleted_output_still_delivers(h: Harness) -> None:
     assert h.restart().scan() == entries
     h.watcher.acknowledge([e.entry_id for e in entries])
     assert h.watcher.scan() == []
+
+
+@pytest.mark.parametrize(
+    "formatted",
+    ["'open' # unchanged", '"open" # unchanged', "open # unchanged"],
+)
+def test_inline_comments_do_not_create_facts(h: Harness, formatted: str) -> None:
+    p = h.write()
+    h.watcher.scan()
+    before = h.baseline()
+    p.write_text(
+        p.read_text()
+        .replace('status: "open"', f"status: {formatted}")
+        .replace('deadline: "2026-12-01"', "deadline: 2026-12-01 # same date")
+    )
+    h.tomorrow()
+    assert h.watcher.scan() == []
+    assert h.baseline() == before
+
+
+def test_commented_null_clears_field(h: Harness) -> None:
+    p = h.write()
+    h.watcher.scan()
+    p.write_text(p.read_text().replace('status: "open"', "status: null # clear"))
+    h.tomorrow()
+    entries = h.watcher.scan()
+    assert len(entries) == 1
+    assert entries[0].field == "status" and entries[0].value is None
+
+
+@pytest.mark.parametrize(
+    ("formatted", "value"),
+    [
+        ("'open # still open' # comment", "open # still open"),
+        ('"open # still open" # comment', "open # still open"),
+        ("'it''s # open' # comment", "it's # open"),
+        ('"say \\"open\\" # now" # comment', 'say "open" # now'),
+        ("open#now # comment", "open#now"),
+    ],
+)
+def test_hash_inside_scalar_is_preserved(
+    h: Harness, formatted: str, value: str
+) -> None:
+    p = h.write()
+    h.watcher.scan()
+    p.write_text(p.read_text().replace('status: "open"', f"status: {formatted}"))
+    assert read_properties(p)["status"] == value
+    h.tomorrow()
+    entries = h.watcher.scan()
+    assert len(entries) == 1 and entries[0].value == value
+
+
+@pytest.mark.parametrize("indent", ["", "  "])
+def test_block_assignees_preserve_fabric(
+    h: Harness, tmp_path: Path, indent: str
+) -> None:
+    from publish.test_publisher import entry
+
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append([entry(1, field="assignees", value={"add": [PERSON], "remove": []})])
+    before_fabric = fabric.state(ENTITY)
+    p = h.write()
+    h.watcher.scan()
+    before_baseline = h.baseline()
+    p.write_text(
+        p.read_text().replace(
+            f"assignees: {json.dumps([PERSON])}",
+            f"assignees: # same people\n{indent}- {PERSON} # unchanged",
+        )
+    )
+    assert read_properties(p)["assignees"] == [PERSON]
+    h.tomorrow()
+    assert h.watcher.scan() == []
+    OutputSync(h.watcher, fabric).run()
+    assert h.baseline() == before_baseline
+    assert fabric.state(ENTITY) == before_fabric
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        "status: parent\n  child: nested",
+        "status:\n  child: nested",
+        'status: ["open", ["nested"]]',
+        "status: {child: nested}",
+        "status:\n- child: nested",
+        "status:\n- open\n  - nested",
+        'status:\n- ["nested"]',
+        "status: |\n  multiline",
+        "status: >-\n  multiline",
+        "status: 'unclosed # quote",
+        "status: 'open' trailing",
+        "status: &anchor open",
+        "status: *anchor",
+        "status: !tag open",
+        "status: yes # implicit boolean",
+        "status: 1.5 # numeric scalar",
+        "status: 0x10",
+        "status: -",
+        "status: open\nstatus: closed",
+        "status: open\ncustom: one\ncustom: two",
+        "status: closed\ncustom:\n  child: nested",
+        'status: closed\ncustom: ["one", {"child": "nested"}]',
+        "status: closed\ncustom: plain\n  continuation",
+    ],
+)
+def test_unsupported_frontmatter_rejects_whole_snapshot(
+    h: Harness, unsupported: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    p = h.write()
+    h.watcher.scan()
+    before = h.baseline()
+    p.write_text(p.read_text().replace('status: "open"', unsupported))
+    with pytest.raises(ValueError):
+        read_properties(p)
+    h.tomorrow()
+    assert h.watcher.scan() == []
+    assert h.baseline() == before
+    assert "output skipped: ValueError" in caplog.text
+    h.write(status="valid again")
+    h.tomorrow()
+    assert [e.value for e in h.watcher.scan()] == ["valid again"]
