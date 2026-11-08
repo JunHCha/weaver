@@ -1,12 +1,14 @@
 """Source -> Spinner (text only) -> refine -> extract -> Proposer, and the LLM gate.
 
 FeedbackSink and EntityIndex come from #27's SqliteFeedbackStore (wired in
-``assemble``); AlertDetector (#9) defaults to a no-op. LLM availability is a
+``assemble``). Change alerts (#9) run in AlertingPublisher, after every proposal
+publication (r1 and revised revs), not on the raw Thread. LLM availability is a
 runtime gate: without a usable key the processor still archives, parses and
 refines, and Sources needing the LLM (call revision, extraction with
 candidates) are reported as ``waiting_llm``. The gate is re-probed while off.
 """
 
+import logging
 import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
@@ -17,15 +19,17 @@ from weaver.config import LlmConfig
 from weaver.llm.keys import KeyUnavailable, resolve_api_key
 from weaver.llm.types import LlmClient
 from weaver.loom.extract import Extractor
-from weaver.loom.propose import Proposer
+from weaver.loom.propose import ProposalPublisher, Proposer
 from weaver.loom.refine import Refiner
 from weaver.loom.review_store import ReviewStore
-from weaver.schema import Alert, Source, Thread
+from weaver.schema import Alert, Proposal, Source
 from weaver.schema.internal import EntityIndex, Extraction
 from weaver.spinner.pipeline import Spinner
 
 from .gate import ExtractionInvalid, Interrupted, LlmGate, LlmStatus, LlmUnavailable
 from .loop import Outcome
+
+logger = logging.getLogger(__name__)
 
 
 def llm_status(config: LlmConfig, environ: Mapping[str, str]) -> LlmStatus:
@@ -74,18 +78,60 @@ class EntityIndexSource(Protocol):
 
 
 class AlertDetector(Protocol):
-    """#9 boundary: alerts derived from a spun Thread."""
+    """#9 boundary: alerts for a pending proposal against approved Fabric state.
 
-    def detect(self, source: Source, thread: Thread) -> list[Alert]: ...
+    ``published`` is called after an alert file was written, so a failed write
+    is retried by the next publication instead of being remembered as sent.
+    """
+
+    def detect(self, proposal: Proposal) -> list[Alert]: ...
+    def published(self, alert: Alert) -> None: ...
 
 
 class NoAlerts:
-    def detect(self, source: Source, thread: Thread) -> list[Alert]:
+    def detect(self, proposal: Proposal) -> list[Alert]:
         return []
+
+    def published(self, alert: Alert) -> None:
+        return None
 
 
 class AlertSink(Protocol):
     def publish_alert(self, alert: Alert) -> Any: ...
+
+
+class AlertingPublisher:
+    """ProposalPublisher that publishes change alerts after each proposal.
+
+    The proposal is published first and its failure propagates unchanged. Alerts
+    are auxiliary: their failure is logged (type and proposal_id only) and never
+    blocks proposal or review flow. The server never deletes alert files; the
+    phone removes them (#33).
+    """
+
+    def __init__(
+        self, inner: ProposalPublisher, detector: AlertDetector, sink: AlertSink
+    ) -> None:
+        self.inner = inner
+        self.detector = detector
+        self.sink = sink
+
+    def publish_proposal(self, proposal: Proposal) -> object:
+        result = self.inner.publish_proposal(proposal)
+        try:
+            for alert in self.detector.detect(proposal):
+                self.sink.publish_alert(alert)
+                self.detector.published(alert)
+        except Exception as error:
+            logger.warning(
+                "alert publication failed: %s %s",
+                type(error).__name__,
+                proposal.proposal_id,
+            )
+        return result
+
+    def clean_review(self, proposal_id: str, rev: int) -> None:
+        self.inner.clean_review(proposal_id, rev)
 
 
 class ExtractionCache(Protocol):
@@ -113,8 +159,6 @@ class TextSourceProcessor:
         proposer: Proposer,
         reviews: ReviewStore,
         entities: EntityIndexSource,
-        alerts: AlertDetector,
-        alert_sink: AlertSink,
         cache: ExtractionCache,
         gate: LlmGate,
     ) -> None:
@@ -124,8 +168,6 @@ class TextSourceProcessor:
         self.proposer = proposer
         self.reviews = reviews
         self.entities = entities
-        self.alerts = alerts
-        self.alert_sink = alert_sink
         self.cache = cache
         self.gate = gate
 
@@ -137,8 +179,6 @@ class TextSourceProcessor:
             return "waiting_llm"  # call scripts need the LLM Reviser
         _check(stop)
         thread = self.spinner.spin(source)
-        for alert in self.alerts.detect(source, thread):
-            self.alert_sink.publish_alert(alert)
         candidates = self.refiner.select(thread)
         if not candidates:
             return "done"

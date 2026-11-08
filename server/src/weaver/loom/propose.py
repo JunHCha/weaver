@@ -18,7 +18,7 @@ from weaver.courier import Courier
 from weaver.courier.files import CourierFileError
 from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
-from weaver.schema import Entry, Proposal, Source, Verdict
+from weaver.schema import Alert, Entry, Proposal, Source, Verdict
 from weaver.schema.internal import Extraction, materialize_entries
 
 from .edits import edit_proposal
@@ -424,3 +424,8 @@ class CourierPublisher:
         if self.courier is None:
             raise RuntimeError("CourierPublisher is not bound")
         self.courier.clean_review(proposal_id, rev)
+
+    def publish_alert(self, alert: Alert) -> object:
+        if self.courier is None:
+            raise RuntimeError("CourierPublisher is not bound")
+        return self.courier.publish_alert(alert)

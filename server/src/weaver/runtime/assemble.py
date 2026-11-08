@@ -2,8 +2,9 @@
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
+from weaver.alert import ScheduleAlertDetector
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
@@ -30,9 +31,9 @@ from .ledger import RuntimeLedger
 from .loop import MaintenanceTask, Runtime, VaultPublisher
 from .pipeline import (
     AlertDetector,
+    AlertingPublisher,
     EntityIndexSource,
     GatedLlm,
-    NoAlerts,
     TextSourceProcessor,
     llm_status,
 )
@@ -49,7 +50,7 @@ class Plugins:
 
     feedback: FeedbackSink | None = None
     entities: EntityIndexSource | None = None
-    alerts: AlertDetector = field(default_factory=NoAlerts)  # #9
+    alerts: AlertDetector | None = None  # #9; None means ScheduleAlertDetector
     publisher: VaultPublisher | None = None  # #7
     maintenance: Sequence[MaintenanceTask] = ()  # in addition to feedback purge
     client: LlmClient | None = None  # tests/alternative adapters
@@ -80,11 +81,17 @@ def build_runtime(
     archive = ArchiveStore.from_config(config)
     reviews = ReviewStore.from_config(config)
     store = SqliteFeedbackStore.from_config(config, reviews)
+    fabric = FabricStore.from_config(config)
     publisher = CourierPublisher(reviews)
+    alerting = AlertingPublisher(
+        publisher,
+        plugins.alerts or ScheduleAlertDetector.from_config(config, fabric),
+        publisher,
+    )
     handler = VerdictHandler(
         reviews,
-        FabricStore.from_config(config),
-        publisher,
+        fabric,
+        alerting,
         plugins.feedback or store,
         client,
     )
@@ -106,11 +113,9 @@ def build_runtime(
             timezone=config.time.timezone,
             examples=store if config.feedback.examples else None,
         ),
-        proposer=Proposer(reviews, publisher),
+        proposer=Proposer(reviews, alerting),
         reviews=reviews,
         entities=plugins.entities or store,
-        alerts=plugins.alerts,
-        alert_sink=courier,
         cache=ledger,
         gate=gate,
     )
