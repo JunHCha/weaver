@@ -79,6 +79,7 @@ object CourierRuntime {
     fun stop(context: Context) {
         prefs(context).edit().putBoolean("stopped", true)
             .putString("status", "Courier 접근 실패: 작업 중지. 폴더를 다시 선택하세요.").commit()
+        io.github.junhcha.weaver.widget.WidgetUpdates.request(context)
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("courier", "Courier", NotificationManager.IMPORTANCE_DEFAULT))
         if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context,
@@ -207,7 +208,9 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             } catch (_: SecurityException) {
                 CourierRuntime.stop(context); Result.success()
             } catch (error: Exception) {
-                db.diagnostic("courier", "scan", CourierClient.errorCode(error)); Result.retry()
+                db.diagnostic("courier", "scan", CourierClient.errorCode(error))
+                io.github.junhcha.weaver.widget.WidgetUpdates.scanFinished(context, false)
+                Result.retry()
             }
         }
     }
@@ -249,6 +252,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
                 db.diagnostic("shepherd", "reconcile", CourierClient.errorCode(error))
                 successful = false
             }
+            io.github.junhcha.weaver.widget.WidgetUpdates.scanFinished(context, successful)
             return successful
         }
     }

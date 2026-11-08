@@ -37,7 +37,7 @@ object InboxRuntime {
     private const val MAX_LINES = 3
 
     private val version = MutableStateFlow(0L)
-    /** Bumps whenever the local list changes; UI and (later) the widget observe it. */
+    /** Bumps whenever the local list changes; UI observes it; WidgetUpdates refreshes installed widget instances. */
     val changes: StateFlow<Long> get() = version
 
     /**
@@ -100,6 +100,7 @@ object InboxRuntime {
             }
         }
         version.value = version.value + 1
+        io.github.junhcha.weaver.widget.WidgetUpdates.request(context)
     }
 
     private fun manager(context: Context): NotificationManager {

@@ -11,4 +11,6 @@
     <string name="permission_granted">허용됨</string>
     <string name="permission_denied">권한 없음</string>
     <string name="permission_request">권한 요청</string>
+    <string name="proposal_widget_name">Weaver 승인 대기</string>
+    <string name="proposal_widget_description">승인 대기 제안과 승인 전 일정 변경 경고</string>
 </resources>
