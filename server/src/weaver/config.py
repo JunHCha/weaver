@@ -4,6 +4,7 @@ No files or credentials are read on import. Data paths are relative to the
 selected configuration file, and validation never prints supplied values.
 """
 
+import math
 import os
 import re
 import tomllib
@@ -69,12 +70,32 @@ class RefinerConfig:
 
 
 @dataclass(frozen=True)
+class SpinnerSettings:
+    """Bounded retries for explicitly transient parser/reviser failures."""
+
+    max_attempts: int = 3
+    backoff_seconds: float = 0.25
+    max_backoff_seconds: float = 4
+
+    def __post_init__(self) -> None:
+        if type(self.max_attempts) is not int or self.max_attempts < 1:
+            raise ConfigError("spinner.max_attempts: expected positive integer")
+        for name in ("backoff_seconds", "max_backoff_seconds"):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ConfigError(f"spinner.{name}: expected finite nonnegative number")
+        if self.backoff_seconds > self.max_backoff_seconds:
+            raise ConfigError("spinner: backoff exceeds maximum")
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
     llm: LlmConfig
     stt: SttConfig | None = None
     refiner: RefinerConfig | None = None
+    retry: SpinnerSettings = SpinnerSettings()
 
 
 @dataclass(frozen=True)
@@ -98,10 +119,11 @@ class ServerConfig:
     stt: SttConfig
     time: TimeConfig = TimeConfig()
     refiner: RefinerConfig = RefinerConfig()
+    spinner_settings: SpinnerSettings = SpinnerSettings()
 
     @property
     def spinner(self) -> ComponentConfig:
-        return ComponentConfig(self.llm, self.stt)
+        return ComponentConfig(self.llm, self.stt, retry=self.spinner_settings)
 
     @property
     def loom(self) -> ComponentConfig:
@@ -233,7 +255,7 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner"}:
+    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner", "spinner"}:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -266,6 +288,14 @@ def load_config(
     if not isinstance(refiner_raw, dict) or refiner_raw.keys() - {"before", "after"}:
         raise ConfigError("refiner: expected a table containing only before/after")
     refiner = RefinerConfig(**refiner_raw)
+    spinner_raw = raw.get("spinner", {})
+    if not isinstance(spinner_raw, dict) or spinner_raw.keys() - {
+        "max_attempts",
+        "backoff_seconds",
+        "max_backoff_seconds",
+    }:
+        raise ConfigError("spinner: expected retry settings table")
+    spinner_settings = SpinnerSettings(**spinner_raw)
     llm = _llm_settings(raw.get("llm", {}))
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -311,4 +341,5 @@ def load_config(
         stt=stt,
         time=time_config,
         refiner=refiner,
+        spinner_settings=spinner_settings,
     )

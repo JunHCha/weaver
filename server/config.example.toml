@@ -47,3 +47,10 @@ timezone = "Asia/Seoul"
 # [refiner]
 # before = 1
 # after = 1
+
+# Spinner retries only explicit SpinnerTransientError, never LlmError.
+# Synchronous parser calls have no forced timeout.
+[spinner]
+max_attempts = 3
+backoff_seconds = 0.25
+max_backoff_seconds = 4

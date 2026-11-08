@@ -24,6 +24,8 @@ def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
         raise ValueError("expected text Source")
     if not text.strip("\ufeff \t\r\n"):
         raise KakaoParseError("empty_input")
+    if source.channel not in {"kakao", "share_text"}:
+        raise ValueError("unsupported_text_channel")
     if source.channel == "kakao":
         result = parse_kakao(source, text, timezone=timezone)
         # Never log text, speaker, archive path or timestamps.
