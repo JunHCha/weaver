@@ -133,10 +133,11 @@ to apply an edit.
 Thread segments retain source_id through their parent and use unique segment IDs.
 `[start_char,end_char)` indexes Unicode code points in Thread.text, not bytes or
 UTF-16 indices (Android must convert indices accordingly). Kakao retains speaker,
-message occurred_at and text position; call/audio use start_ms/end_ms offsets from payload start. Both may be null;
-a known start_ms permits a null end_ms (unknown end), while a non-null end_ms
-requires start_ms and end_ms > start_ms. Cross-value ordering is checked by
-Python, and consumers must enforce it too. Text segments can have null times/speaker. Python additionally
+message occurred_at and text position; call/audio use start_ms/end_ms offsets
+from call start/audio payload start. Both may be null; a known start_ms permits
+a null end_ms (unknown end), while a non-null end_ms requires start_ms and
+end_ms > start_ms. Cross-value ordering is checked by Python, and consumers must
+enforce it too. Text segments can have null times/speaker. Python additionally
 checks nonempty ordered ranges and bounds, time ordering, local reference integrity
 and block propagation, which JSON Schema cannot express across values. Clients
 should retain these fields without inferring missing times or speakers.
