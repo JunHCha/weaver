@@ -11,12 +11,16 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 @Serializable
-data class CalendarTarget(val id: Long, val name: String, val account: String, val type: String)
+data class CalendarTarget(val id: Long, val name: String, val account: String, val type: String) {
+    fun sameIdentity(other: CalendarTarget) = id == other.id && account == other.account && type == other.type
+}
 @Serializable
 data class CalendarMapping(
     val proposalId: String, val rev: Long, val ref: String,
     val calendar: CalendarTarget, val marker: String = "Weaver registration ${UUID.randomUUID()}",
     val uri: String? = null, val rowId: Long? = null,
+    val event: CalendarEvent? = null,
+    val manualReview: Boolean = false, val needsTarget: Boolean = false,
 )
 @Serializable
 private data class CalendarState(val selected: CalendarTarget? = null, val mappings: List<CalendarMapping> = emptyList())
@@ -46,6 +50,7 @@ class CalendarJournal(private val file: File) {
     }
 }
 
+@Serializable
 data class CalendarEvent(val title: String, val start: Long, val end: Long, val timezone: String) {
     companion object {
         fun from(schedule: Proposal.Schedule, timezone: String): CalendarEvent {
@@ -57,10 +62,12 @@ data class CalendarEvent(val title: String, val start: Long, val end: Long, val 
     }
 }
 
+data class CalendarRow(val uri: String, val id: Long, val calendarId: Long, val event: CalendarEvent?)
+
 interface CalendarProvider {
     fun calendars(): List<CalendarTarget>
-    /** null means a successful query proved absence; query failures MUST throw. */
-    fun find(marker: String): Pair<String, Long>?
+    /** An empty list proves absence; query failures MUST throw. Return ALL marker matches. */
+    fun find(marker: String): List<CalendarRow>
     fun insert(target: CalendarTarget, marker: String, event: CalendarEvent): Pair<String, Long>
 }
 
@@ -80,30 +87,57 @@ class CalendarRegistration(private val journal: CalendarJournal, private val pro
         journal.mappings().filter {
             it.proposalId == proposal.proposalId && it.rev == proposal.rev && it.ref in allowed && it.uri == null
         }.forEach { pending ->
-            provider.find(pending.marker)?.let { row -> journal.put(pending.copy(uri = row.first, rowId = row.second)) }
+            val rows = provider.find(pending.marker)
+            val row = matching(pending, rows)
+            journal.put(when {
+                pending.manualReview -> pending
+                row != null -> pending.copy(uri = row.uri, rowId = row.id)
+                rows.isNotEmpty() || pending.event == null -> pending.copy(manualReview = true)
+                else -> pending.copy(needsTarget = provider.calendars().none { it.sameIdentity(pending.calendar) })
+            })
         }
     }
 
-    /** User-triggered only. Never changes a review or updates an existing Calendar event. */
-    fun register(record: ReviewRecord, target: CalendarTarget, timezone: String): List<String> {
+    private fun matching(pending: CalendarMapping, rows: List<CalendarRow>): CalendarRow? =
+        rows.singleOrNull()?.takeIf { pending.event != null && it.calendarId == pending.calendar.id && it.event == pending.event }
+
+    /** User-triggered only. restartRef is a separate, explicit new-registration decision. */
+    fun register(record: ReviewRecord, target: CalendarTarget, timezone: String, restartRef: String? = null): List<String> {
         val proposal = candidate(record) ?: return emptyList()
-        require(provider.calendars().contains(target)) { "쓰기 가능한 캘린더를 다시 선택하세요" }
-        return proposal.schedules.map { schedule ->
+        val selected = provider.calendars().firstOrNull { it.sameIdentity(target) }
+        requireNotNull(selected) { "쓰기 가능한 캘린더를 다시 선택하세요" }
+        return proposal.schedules.filter { restartRef == null || it.ref == restartRef }.map { schedule ->
             if (schedule.blockedByRequest != null) return@map "${schedule.title}: 요청 미해소 · 등록 차단"
             try {
                 val old = journal.mappings().firstOrNull {
                     it.proposalId == proposal.proposalId && it.rev == proposal.rev && it.ref == schedule.ref
                 }
                 if (old?.uri != null) return@map "${schedule.title}: 등록됨"
-                val event = CalendarEvent.from(schedule, timezone)
-                val pending = old ?: CalendarMapping(proposal.proposalId, proposal.rev, schedule.ref, target)
+                var pending = old ?: CalendarMapping(proposal.proposalId, proposal.rev, schedule.ref, selected,
+                    event = CalendarEvent.from(schedule, timezone))
                 journal.put(pending)
-                // Recover an insert committed before a crash or a lost insert response. Never guess
-                // absence after an exception/null cursor, or associate another proposal's event.
-                val row = provider.find(pending.marker) ?: run {
-                    require(pending.calendar in provider.calendars()) { "이전 등록 대상 캘린더를 확인하세요" }
-                    provider.insert(pending.calendar, pending.marker, event)
+                // Never infer absence from query errors, or accept a copied DESCRIPTION as ownership.
+                val rows = provider.find(pending.marker)
+                val found = matching(pending, rows)
+                if (!pending.manualReview && found != null) {
+                    journal.put(pending.copy(uri = found.uri, rowId = found.id))
+                    return@map "${schedule.title}: 등록됨"
                 }
+                val current = provider.calendars().firstOrNull { it.sameIdentity(pending.calendar) }
+                val manual = pending.manualReview || rows.isNotEmpty() || pending.event == null
+                pending = pending.copy(manualReview = manual, needsTarget = !manual && current == null)
+                journal.put(pending)
+                if (manual || current == null) {
+                    if (restartRef != schedule.ref) return@map "${schedule.title}: " +
+                        if (manual) "수동 확인 필요 · 확인 후 새로 등록" else "이전 대상 사용 불가 · 새 대상 선택 후 새로 등록"
+                    // Explicit replacement starts a new durable attempt; the old marker is never reused.
+                    pending = CalendarMapping(proposal.proposalId, proposal.rev, schedule.ref, selected,
+                        event = pending.event ?: CalendarEvent.from(schedule, timezone))
+                } else {
+                    pending = pending.copy(calendar = current)
+                }
+                journal.put(pending)
+                val row = provider.insert(pending.calendar, pending.marker, checkNotNull(pending.event))
                 journal.put(pending.copy(uri = row.first, rowId = row.second))
                 "${schedule.title}: 등록됨"
             } catch (_: Exception) {

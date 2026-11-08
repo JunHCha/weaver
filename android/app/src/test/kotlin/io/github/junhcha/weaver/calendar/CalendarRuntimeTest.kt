@@ -52,7 +52,8 @@ class CalendarRuntimeTest {
                     addRow(arrayOf<Any>(71L, "Synthetic calendar", "synthetic@example.invalid", "LOCAL"))
                 } else {
                     inserts.forEachIndexed { index, values ->
-                        if (values.getAsString(Events.DESCRIPTION) == selectionArgs!!.single()) addRow(arrayOf(index + 1L))
+                        if (values.getAsString(Events.DESCRIPTION) == selectionArgs!!.single()) addRow(arrayOf<Any?>(index + 1L, values.getAsLong(Events.CALENDAR_ID), values.getAsString(Events.TITLE),
+                            values.getAsLong(Events.DTSTART), values.getAsLong(Events.DTEND), values.getAsString(Events.EVENT_TIMEZONE)))
                     }
                 }
             }
@@ -123,6 +124,26 @@ class CalendarRuntimeTest {
         provider.denied = false
         assertTrue(background { register() }.single().contains("등록됨"))
         assertEquals(1, provider.inserts.size)
+    }
+
+    @Test fun copiedMarkerWithDifferentCalendarAndTimeNeverRecoversOrAutomaticallyInserts() {
+        background { register() }
+        val journal = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
+        val pending = journal.mappings().single().copy(uri = null, rowId = null)
+        journal.put(pending)
+        val copied = provider.inserts.single()
+        copied.put(Events.CALENDAR_ID, 999L)
+        copied.put(Events.DTSTART, copied.getAsLong(Events.DTSTART) + 60_000)
+        background { CalendarRuntime.recover(context, record.verdict.proposalId, record.verdict.rev) }
+        assertNull(journal.mappings().single().uri)
+        assertTrue(journal.mappings().single().manualReview)
+        journal.put(pending)
+        assertTrue(background { register() }.single().contains("수동 확인"))
+        assertNull(journal.mappings().single().uri)
+        assertEquals(1, provider.inserts.size) // Only the original fixture, no new writes.
+        background { CalendarRuntime.register(context, record.verdict.proposalId, record.verdict.rev, target, pending.ref) }
+        assertEquals(2, provider.inserts.size)
+        assertEquals(target.id, provider.inserts.last().getAsLong(Events.CALENDAR_ID))
     }
 
     @Test fun calendarsAreFilteredByWriteAccessAndNullRecoveryCursorThrows() {

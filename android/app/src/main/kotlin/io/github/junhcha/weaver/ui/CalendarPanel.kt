@@ -19,7 +19,11 @@ import kotlinx.coroutines.withContext
 /** Always reachable from durable review history even after the PC removes its proposal. */
 @Composable
 fun CalendarPanel(record: ReviewRecord) {
-    val proposal = remember(record) { CalendarRegistration.candidate(record) } ?: return
+    val proposal = remember(record) { CalendarRegistration.candidate(record) }
+    if (proposal == null) {
+        if (record.published && record.proposal == null) Text("원안 스냅샷이 없는 이전 승인 이력은 캘린더에 등록할 수 없습니다")
+        return
+    }
     if (proposal.schedules.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -28,14 +32,16 @@ fun CalendarPanel(record: ReviewRecord) {
     var message by remember { mutableStateOf("캘린더를 선택한 뒤 등록 버튼을 누르세요") }
     var busy by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<String>>(emptyList()) }
+    var actions by remember { mutableStateOf<List<CalendarMapping>>(emptyList()) }
     LaunchedEffect(proposal.proposalId, proposal.rev) {
         runCatching { withContext(Dispatchers.IO) {
             if (Feature.CALENDAR.isGranted(context)) {
                 // Read-only provider reconciliation; a missing row still requires a registration tap.
                 runCatching { CalendarRuntime.recover(context, proposal.proposalId, proposal.rev) }
             }
-            CalendarRuntime.status(context, proposal.proposalId, proposal.rev) to CalendarRuntime.selected(context)
-        } }.onSuccess { (saved, target) -> results = saved; selected = target }
+            Triple(CalendarRuntime.status(context, proposal.proposalId, proposal.rev), CalendarRuntime.selected(context),
+                CalendarRuntime.actions(context, proposal.proposalId, proposal.rev))
+        } }.onSuccess { (saved, target, pending) -> results = saved; selected = target; actions = pending }
             .onFailure { message = "등록 기록 읽기 실패 · 수동 재시도" }
     }
     val load = {
@@ -43,7 +49,7 @@ fun CalendarPanel(record: ReviewRecord) {
             busy = true
             runCatching { withContext(Dispatchers.IO) { CalendarRuntime.targets(context) to CalendarRuntime.selected(context) } }
                 .onSuccess { (list, saved) ->
-                    targets = list; selected = saved?.takeIf { it in list }
+                    targets = list; selected = list.firstOrNull { saved?.sameIdentity(it) == true }
                     message = if (list.isEmpty()) "쓰기 가능한 캘린더 없음 · 계정/권한 확인 후 다시 시도" else "등록 대상을 선택하세요"
                 }.onFailure { message = "권한과 캘린더를 확인하고 다시 시도하세요" }
             busy = false
@@ -81,12 +87,30 @@ fun CalendarPanel(record: ReviewRecord) {
         }
         selected?.let { Text("선택됨: ${it.name} · ${it.account} · ${it.type}") }
         Text("재시도 시 이미 등록된 일정은 건너뛰고, 중단된 시도는 당시 선택한 캘린더에서 복구합니다.")
+        Text("이전 대상 사용 불가 시 새 대상을 선택하세요. 수동 확인이 필요한 경우 기존 캘린더의 일정을 확인하세요. 새로 등록은 중복 일정을 만들 수 있습니다.")
+        actions.forEach { pending ->
+            OutlinedButton(enabled = !busy && selected != null, onClick = {
+                val target = checkNotNull(selected)
+                busy = true
+                scope.launch {
+                    runCatching { withContext(Dispatchers.IO) {
+                        val result = CalendarRuntime.register(context, proposal.proposalId, proposal.rev, target, pending.ref)
+                        result to CalendarRuntime.actions(context, proposal.proposalId, proposal.rev)
+                    } }.onSuccess { (result, remaining) -> results = result; actions = remaining }
+                        .onFailure { message = "복구 조회 실패 · 새로 등록 차단 · 권한 확인 후 재시도" }
+                    busy = false
+                }
+            }) { Text("${pending.ref}: " + if (pending.manualReview) "확인했음 · 새로 등록" else "선택한 새 대상에 새로 등록") }
+        }
         OutlinedButton(enabled = !busy && selected != null && proposal.schedules.any { it.blockedByRequest == null }, onClick = {
             val target = checkNotNull(selected)
             busy = true
             scope.launch {
-                runCatching { withContext(Dispatchers.IO) { CalendarRuntime.register(context, proposal.proposalId, proposal.rev, target) } }
-                    .onSuccess { results = it }.onFailure { message = "등록 실패 · 승인 유지됨 · 권한/캘린더 확인 후 수동 재시도" }
+                runCatching { withContext(Dispatchers.IO) {
+                    val result = CalendarRuntime.register(context, proposal.proposalId, proposal.rev, target)
+                    result to CalendarRuntime.actions(context, proposal.proposalId, proposal.rev)
+                } }
+                    .onSuccess { (result, remaining) -> results = result; actions = remaining }.onFailure { message = "등록 실패 · 승인 유지됨 · 권한/캘린더 확인 후 수동 재시도" }
                 busy = false
             }
         }) { Text("승인 일정 등록 / 등록만 재시도") }

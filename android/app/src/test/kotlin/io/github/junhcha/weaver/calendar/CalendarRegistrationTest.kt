@@ -27,7 +27,7 @@ class CalendarRegistrationTest {
         "synthetic", ReviewStatus.SENT, published, p)
     private class Provider : CalendarProvider {
         var targets = listOf(CalendarTarget(42, "Synthetic", "test@example.invalid", "LOCAL"))
-        val events = mutableMapOf<String, Pair<String, Long>>()
+        val events = mutableMapOf<String, List<CalendarRow>>()
         val values = mutableListOf<CalendarEvent>()
         val usedTargets = mutableListOf<CalendarTarget>()
         var inserts = 0
@@ -36,15 +36,15 @@ class CalendarRegistrationTest {
         var lostResponse = false
         var crash = false
         override fun calendars() = targets
-        override fun find(marker: String): Pair<String, Long>? {
+        override fun find(marker: String): List<CalendarRow> {
             if (failQuery) error("synthetic provider failure")
-            return events[marker]
+            return events[marker].orEmpty()
         }
         override fun insert(target: CalendarTarget, marker: String, event: CalendarEvent): Pair<String, Long> {
             if (failInsert) throw SecurityException("synthetic revoked permission")
             inserts++; values += event; usedTargets += target
             val row = "content://com.android.calendar/events/$inserts" to inserts.toLong()
-            events[marker] = row
+            events[marker] = listOf(CalendarRow(row.first, row.second, target.id, event))
             if (crash) throw AssertionError("simulated process death after provider commit")
             if (lostResponse) error("synthetic lost response")
             return row
@@ -159,12 +159,99 @@ class CalendarRegistrationTest {
         assertEquals(0, provider.inserts)
         val other = target.copy(id = 99)
         provider.targets = listOf(other)
-        assertTrue(registration(provider).register(record(), other, "Asia/Seoul").single().contains("등록 실패"))
+        assertTrue(registration(provider).register(record(), other, "Asia/Seoul").single().contains("이전 대상 사용 불가"))
         assertEquals(0, provider.inserts) // Never send an old target id to a replacement account/calendar.
         provider.targets = listOf(target, other)
         registration(provider).register(record(), other, "Asia/Seoul")
         assertEquals(target, journal().mappings().single().calendar)
         assertEquals(1, provider.inserts)
+    }
+
+    @Test fun renamedCalendarKeepsIdentityAndPersistedEventOnRetry() {
+        val provider = Provider().apply { failQuery = true }
+        registration(provider).register(record(), target, "Asia/Seoul")
+        val event = journal().mappings().single().event
+        val renamed = target.copy(name = "Renamed")
+        provider.targets = listOf(renamed); provider.failQuery = false
+        registration(provider).register(record(), renamed, "America/New_York")
+        assertEquals(listOf(renamed), provider.usedTargets)
+        assertEquals(event, provider.values.single())
+    }
+
+    @Test fun removedOrUnwritableTargetRequiresExplicitReplacementAfterProvedAbsence() {
+        val provider = Provider().apply { failQuery = true }
+        registration(provider).register(record(), target, "Asia/Seoul")
+        val other = target.copy(id = 99)
+        provider.targets = listOf(other); provider.failQuery = false
+        registration(provider).recover(record())
+        assertTrue(journal().mappings().single().needsTarget)
+        registration(provider).register(record(), other, "Asia/Seoul")
+        assertEquals(0, provider.inserts)
+        val ref = proposal().schedules.single().ref
+        provider.failQuery = true
+        registration(provider).register(record(), other, "Asia/Seoul", ref)
+        assertEquals(0, provider.inserts)
+        provider.failQuery = false
+        registration(provider).register(record(), other, "Asia/Seoul", ref)
+        assertEquals(listOf(other), provider.usedTargets)
+        assertEquals(other, journal().mappings().single().calendar)
+    }
+
+    @Test fun copiedMarkerRequiresManualDecisionInRecoverAndRegister() {
+        val provider = Provider().apply { failQuery = true }
+        registration(provider).register(record(), target, "Asia/Seoul")
+        val pending = journal().mappings().single()
+        provider.failQuery = false
+        val copied = CalendarRow("content://com.android.calendar/events/999", 999, 99,
+            pending.event!!.copy(start = pending.event.start + 60_000))
+        provider.events[pending.marker] = listOf(copied)
+        registration(provider).recover(record())
+        assertNull(journal().mappings().single().uri)
+        assertTrue(journal().mappings().single().manualReview)
+        // Check register independently of the state set by recover.
+        journal().put(pending)
+        assertTrue(registration(provider).register(record(), target, "Asia/Seoul").single().contains("수동 확인"))
+        assertNull(journal().mappings().single().uri)
+        assertEquals(0, provider.inserts)
+        provider.events.clear()
+        registration(provider).register(record(), target, "Asia/Seoul")
+        assertEquals(0, provider.inserts) // Manual state remains even if the copied row disappears.
+        registration(provider).register(record(), target, "Asia/Seoul", pending.ref)
+        assertEquals(1, provider.inserts)
+        assertNotEquals(pending.marker, journal().mappings().single().marker)
+    }
+
+    @Test fun eachChangedEventFieldRequiresManualReview() {
+        val provider = Provider().apply { failQuery = true }
+        registration(provider).register(record(), target, "Asia/Seoul")
+        val pending = journal().mappings().single()
+        val event = pending.event!!
+        provider.failQuery = false
+        for (changed in listOf(event.copy(title = "Copied title"), event.copy(start = event.start + 1),
+            event.copy(end = event.end + 1), event.copy(timezone = "America/New_York"))) {
+            journal().put(pending)
+            provider.events[pending.marker] = listOf(CalendarRow("content://com.android.calendar/events/999", 999, target.id, changed))
+            registration(provider).recover(record())
+            assertTrue(journal().mappings().single().manualReview)
+            assertNull(journal().mappings().single().uri)
+        }
+        assertEquals(0, provider.inserts)
+    }
+
+    @Test fun multipleMatchesAndLegacyJournalWithoutValuesRequireManualConfirmation() {
+        val provider = Provider().apply { failQuery = true }
+        registration(provider).register(record(), target, "Asia/Seoul")
+        val pending = journal().mappings().single()
+        val row = CalendarRow("content://com.android.calendar/events/999", 999, target.id, pending.event)
+        provider.failQuery = false; provider.events[pending.marker] = listOf(row, row.copy(id = 1000))
+        registration(provider).recover(record())
+        registration(provider).register(record(), target, "Asia/Seoul")
+        assertNull(journal().mappings().single().uri)
+        assertTrue(journal().mappings().single().manualReview)
+        provider.events.clear(); journal().put(pending.copy(event = null))
+        registration(provider).register(record(), target, "Asia/Seoul")
+        assertTrue(journal().mappings().single().manualReview)
+        assertEquals(0, provider.inserts)
     }
 
     @Test fun seoulMidnightAndDstOffsetsRemainTimedWithOneHourFallback() {

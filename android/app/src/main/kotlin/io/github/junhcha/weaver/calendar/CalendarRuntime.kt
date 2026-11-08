@@ -16,24 +16,31 @@ object CalendarRuntime {
     private fun journal(context: Context) = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
     fun status(context: Context, id: String, rev: Long): List<String> = synchronized(lock) {
         journal(context).mappings().filter { it.proposalId == id && it.rev == rev }.map {
-            "${it.ref}: " + (if (it.uri != null) "등록됨" else "시도 중 중단 · 수동 재시도로 복구") +
+            "${it.ref}: " + (if (it.uri != null) "등록됨" else when {
+                it.manualReview -> "수동 확인 필요 · 확인 후 새로 등록"
+                it.needsTarget -> "이전 대상 사용 불가 · 새 대상 선택 후 새로 등록"
+                else -> "시도 중 중단 · 수동 재시도로 복구"
+            }) +
                 " · ${it.calendar.name} · ${it.calendar.account} · ${it.calendar.type}"
         }
+    }
+    fun actions(context: Context, id: String, rev: Long) = synchronized(lock) {
+        journal(context).mappings().filter { it.proposalId == id && it.rev == rev && it.uri == null && (it.manualReview || it.needsTarget) }
     }
     fun targets(context: Context) = synchronized(lock) { DeviceCalendarProvider(context).calendars() }
     fun selected(context: Context) = synchronized(lock) { journal(context).selected() }
     fun select(context: Context, target: CalendarTarget) = synchronized(lock) {
-        require(target in DeviceCalendarProvider(context).calendars())
+        require(DeviceCalendarProvider(context).calendars().any { it.sameIdentity(target) })
         journal(context).select(target)
     }
     fun recover(context: Context, id: String, rev: Long) = synchronized(lock) {
         val record = ReviewRuntime.records(context).first { it.verdict.proposalId == id && it.verdict.rev == rev }
         CalendarRegistration(journal(context), DeviceCalendarProvider(context)).recover(record)
     }
-    fun register(context: Context, id: String, rev: Long, target: CalendarTarget): List<String> = synchronized(lock) {
+    fun register(context: Context, id: String, rev: Long, target: CalendarTarget, restartRef: String? = null): List<String> = synchronized(lock) {
         val record = ReviewRuntime.records(context).first { it.verdict.proposalId == id && it.verdict.rev == rev }
         val journal = journal(context)
-        CalendarRegistration(journal, DeviceCalendarProvider(context)).register(record, target, TimeZone.getDefault().id)
+        CalendarRegistration(journal, DeviceCalendarProvider(context)).register(record, target, TimeZone.getDefault().id, restartRef)
     }
 }
 
@@ -50,12 +57,18 @@ class DeviceCalendarProvider(context: Context) : CalendarProvider {
             }
         }
     }
-    override fun find(marker: String): Pair<String, Long>? = checkNotNull(resolver.query(
-        Events.CONTENT_URI, arrayOf(Events._ID), "${Events.DESCRIPTION} = ? AND ${Events.DELETED} = 0",
+    override fun find(marker: String): List<CalendarRow> = checkNotNull(resolver.query(
+        Events.CONTENT_URI, arrayOf(Events._ID, Events.CALENDAR_ID, Events.TITLE, Events.DTSTART, Events.DTEND, Events.EVENT_TIMEZONE),
+        "${Events.DESCRIPTION} = ? AND ${Events.DELETED} = 0",
         arrayOf(marker), null)) { "등록 복구 조회 실패" }.use { cursor ->
-        check(cursor.count <= 1) { "여러 복구 행 발견 · 수동 확인 필요" }
-        if (cursor.moveToFirst()) cursor.getLong(0).let { ContentUris.withAppendedId(Events.CONTENT_URI, it).toString() to it }
-        else null
+        buildList {
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                val event = if ((1..5).any { cursor.isNull(it) }) null else
+                    CalendarEvent(cursor.getString(2), cursor.getLong(3), cursor.getLong(4), cursor.getString(5))
+                add(CalendarRow(ContentUris.withAppendedId(Events.CONTENT_URI, id).toString(), id, cursor.getLong(1), event))
+            }
+        }
     }
     override fun insert(target: CalendarTarget, marker: String, event: CalendarEvent): Pair<String, Long> {
         val values = ContentValues().apply {
