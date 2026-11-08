@@ -116,6 +116,29 @@ class FeedbackSettings:
 
 
 @dataclass(frozen=True)
+class PublishSettings:
+    """Vault output (#7): off by default; writes only vault_root/folder."""
+
+    enabled: bool = False
+    folder: str = "Weaver"
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ConfigError("publish.enabled: expected boolean")
+        if (
+            not isinstance(self.folder, str)
+            or not self.folder
+            or "\\" in self.folder
+            or "\0" in self.folder
+            or any(
+                part in ("", ".", "..") or part.startswith(".")
+                for part in self.folder.split("/")
+            )
+        ):
+            raise ConfigError("publish.folder: expected relative folder name")
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
@@ -149,6 +172,7 @@ class ServerConfig:
     refiner: RefinerConfig = RefinerConfig()
     spinner_settings: SpinnerSettings = SpinnerSettings()
     feedback: FeedbackSettings = FeedbackSettings()
+    publish: PublishSettings = PublishSettings()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -292,7 +316,16 @@ def load_config(
         raise ConfigError("config_file: invalid TOML") from None
     except (OSError, ValueError):
         raise ConfigError("config_file: cannot read configuration") from None
-    if raw.keys() - {*_ROOTS, "llm", "stt", "time", "refiner", "spinner", "loom"}:
+    if raw.keys() - {
+        *_ROOTS,
+        "llm",
+        "stt",
+        "time",
+        "refiner",
+        "spinner",
+        "loom",
+        "publish",
+    }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
     for field in _ROOTS:
@@ -345,6 +378,10 @@ def load_config(
     feedback = FeedbackSettings(
         **{key.removeprefix("feedback_"): value for key, value in loom_raw.items()}
     )
+    publish_raw = raw.get("publish", {})
+    if not isinstance(publish_raw, dict) or publish_raw.keys() - {"enabled", "folder"}:
+        raise ConfigError("publish: expected a table containing only enabled/folder")
+    publish = PublishSettings(**publish_raw)
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -397,4 +434,5 @@ def load_config(
         refiner=refiner,
         spinner_settings=spinner_settings,
         feedback=feedback,
+        publish=publish,
     )
