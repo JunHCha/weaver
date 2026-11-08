@@ -267,3 +267,47 @@ def test_debug_sdk_logs_never_include_credentials_or_content(
     assert "safe-metrics-marker" in caplog.text
     for secret in ("fake-key", "private-system", "private-user", "private-response"):
         assert secret not in caplog.text
+
+
+def _send_rejected(fake_sdk, status, message):
+    requests, clients = fake_sdk(
+        lambda _: httpx.Response(
+            status,
+            json={"type": "error", "error": {"type": "x", "message": message}},
+        )
+    )
+    asyncio.run(
+        AnthropicTransport().send(
+            Request("claude-sonnet-5-5", "s", "u", 10), "fake-key"
+        )
+    )
+    return requests, clients
+
+
+def test_credit_exhausted_400_is_dedicated_error_without_body(fake_sdk, caplog):
+    from weaver.llm.errors import InsufficientCredit
+
+    with caplog.at_level(0), pytest.raises(InsufficientCredit) as caught:
+        _send_rejected(fake_sdk, 400, "Your credit balance is too low SECRET-BODY-TEXT")
+    assert str(caught.value) == "insufficient_credit"
+    assert "SECRET-BODY-TEXT" not in caplog.text
+    assert "SECRET-BODY-TEXT" not in repr(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize("status", [400, 404, 413, 422])
+def test_other_4xx_is_unbilled_rejection(fake_sdk, status):
+    from weaver.llm.errors import InsufficientCredit, UnbilledRejection
+
+    with pytest.raises(UnbilledRejection) as caught:
+        _send_rejected(fake_sdk, status, "invalid request")
+    assert not isinstance(caught.value, InsufficientCredit)
+    assert str(caught.value) == "backend_error"
+
+
+def test_5xx_is_not_an_unbilled_rejection(fake_sdk):
+    from weaver.llm.errors import UnbilledRejection
+
+    with pytest.raises(LlmError) as caught:
+        _send_rejected(fake_sdk, 501, "x")
+    assert not isinstance(caught.value, UnbilledRejection)

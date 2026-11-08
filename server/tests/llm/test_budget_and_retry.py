@@ -13,7 +13,13 @@ from pydantic import BaseModel, Field
 from weaver.config import LlmConfig
 from weaver.llm import AuthenticationError, BudgetExceeded, LlmError, LlmTimeout
 from weaver.llm.client import AnthropicClient
-from weaver.llm.errors import RateLimited, SchemaMismatch, TransientError
+from weaver.llm.errors import (
+    InsufficientCredit,
+    RateLimited,
+    SchemaMismatch,
+    TransientError,
+    UnbilledRejection,
+)
 from weaver.llm.ledger import NANO_USD, Ledger
 from weaver.llm.types import BackendReply, TokenUsage
 
@@ -207,3 +213,56 @@ def test_preparation_consumes_deadline_without_dispatch(
     row = ledger.records()[0]
     assert row["attempts"] == 0
     assert row["budget_held_usd"] == 0
+
+
+def _held(ledger: Ledger) -> int:
+    month = datetime.now(UTC).strftime("%Y-%m")
+    with ledger._connect() as db:
+        return ledger._reservation_total(db, month)
+
+
+@pytest.mark.parametrize("error", [InsufficientCredit, UnbilledRejection])
+def test_unbilled_rejection_settles_zero_and_is_not_retried(
+    tmp_path: Path, error
+) -> None:
+    client, transport, ledger = make_client(tmp_path, error(), BackendReply("never"))
+    with pytest.raises(error):
+        client.generate_text("spinner.revise", "s", "u")
+    assert len(transport.requests) == 1
+    row = ledger.records()[0]
+    assert row["status"] == error.code
+    assert row["budget_held_usd"] == 0
+    assert row["attempt_records"][0]["status"] == error.code
+    assert _held(ledger) == 0
+
+
+def test_rejected_calls_do_not_consume_monthly_budget(tmp_path: Path) -> None:
+    client, _, ledger = make_client(tmp_path, *[InsufficientCredit() for _ in range(5)])
+    ledger.stop_usd = 0.5  # a single held reservation would exceed this
+    for _ in range(5):
+        with pytest.raises(InsufficientCredit):
+            client.generate_text("spinner.revise", "s", "u")
+    assert all(r["budget_held_usd"] == 0 for r in ledger.records())
+
+
+@pytest.mark.parametrize("error", [LlmTimeout, TransientError, LlmError])
+def test_uncertain_failures_keep_reservation(tmp_path: Path, error) -> None:
+    client, _, ledger = make_client(tmp_path, error(), error())
+    with pytest.raises(error):
+        client.generate_text("spinner.revise", "s", "u")
+    assert ledger.records()[0]["budget_held_usd"] > 0
+
+
+def test_concurrent_rejections_settle_atomically(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "llm.sqlite3")
+    ids = [ledger.reserve({"status": "pending"}, 100_000_000) for _ in range(8)]
+
+    def settle(call_id: str) -> None:
+        ledger.finish(call_id, {"status": "insufficient_credit"}, 0)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(settle, ids))
+    rows = ledger.records()
+    assert len(rows) == 8
+    assert all(r["budget_held_usd"] == 0 for r in rows)
+    assert _held(ledger) == 0

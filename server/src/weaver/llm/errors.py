@@ -28,6 +28,22 @@ class AuthenticationError(LlmError):
     code = "authentication_error"
 
 
+class InsufficientCredit(LlmError):
+    """Provider rejected the request because the account has no credit left.
+
+    Retrying cannot help until the account is topped up; never billed.
+    """
+
+    code = "insufficient_credit"
+
+
+class UnbilledRejection(LlmError):
+    """4xx the provider returned before processing, so nothing was billed.
+
+    Keeps the generic ``backend_error`` code; only the ledger tells it apart.
+    """
+
+
 class RateLimited(LlmError):
     code = "rate_limited"
 

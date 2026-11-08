@@ -6,10 +6,12 @@ import anthropic
 
 from .errors import (
     AuthenticationError,
+    InsufficientCredit,
     LlmError,
     LlmTimeout,
     RateLimited,
     TransientError,
+    UnbilledRejection,
 )
 from .types import BackendReply, Request, TokenUsage
 
@@ -42,6 +44,10 @@ def _silence_transport_logs() -> None:
             # existing logger or ANTHROPIC_LOG resets its level.
             if _PRIVATE_LOG_FILTER not in logger.filters:
                 logger.addFilter(_PRIVATE_LOG_FILTER)
+
+
+def _is_credit_exhausted(message: object) -> bool:
+    return isinstance(message, str) and "credit balance" in message.lower()
 
 
 class AnthropicTransport:
@@ -114,6 +120,12 @@ class AnthropicTransport:
         except anthropic.APIStatusError as exc:
             if exc.status_code in {500, 502, 503, 504, 529}:
                 raise TransientError() from None
+            # The message is used only to classify; it is never kept or logged.
+            if exc.status_code == 400 and _is_credit_exhausted(exc.message):
+                raise InsufficientCredit() from None
+            if 400 <= exc.status_code < 500:
+                # Rejected before processing: certainly not billed.
+                raise UnbilledRejection() from None
             raise LlmError() from None
         except (anthropic.APIError, ValueError, TypeError):
             raise LlmError() from None

@@ -397,3 +397,36 @@ def test_ledger_and_status_files_are_private(tmp_path):
     ledger = RuntimeLedger(tmp_path / "runtime.sqlite3")
     assert ledger.pragma("journal_mode") == "wal"
     assert ledger.pragma("synchronous") == 2  # FULL
+
+
+def test_insufficient_credit_waits_hourly_and_reports_reason(tmp_path):
+    from weaver.llm.errors import InsufficientCredit
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS
+
+    probes = []
+
+    def probe():
+        probes.append(1)
+        return LlmStatus(True, "configured")
+
+    llm = LlmGate(probe)
+    processor = FakeProcessor({"src_a": [InsufficientCredit(), "done"]})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+    )
+    runtime._tick(stop)
+    assert counts(tmp_path) == {"waiting_llm": 1}
+    status = json.loads((tmp_path / "runtime-status.json").read_text())
+    assert status["llm"] == {"available": False, "reason": "insufficient_credit"}
+    # No retry storm: neither the usual minute nor 59 minutes re-calls the LLM.
+    for step in (5, LLM_RECHECK_SECONDS, CREDIT_RECHECK_SECONDS - 200):
+        clock.now += step
+        runtime._tick(stop)
+    assert processor.seen == ["src_a"] and len(probes) == 1
+    clock.now += CREDIT_RECHECK_SECONDS
+    runtime._tick(stop)  # resolved: exactly one more processing
+    assert processor.seen == ["src_a", "src_a"]
+    assert counts(tmp_path) == {"done": 1}
