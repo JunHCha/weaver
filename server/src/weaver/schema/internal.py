@@ -100,6 +100,8 @@ class IndexedEntity(Contract):
 
 
 class EntityIndex(Contract):
+    """Caller-owned approved Fabric entity/alias snapshot; extraction reads only."""
+
     entities: list[IndexedEntity]
 
 
@@ -123,8 +125,8 @@ class ExtractedRelation(Evidence):
 class Extraction(Contract):
     """Validated extraction boundary, not a provider-portable structured schema.
 
-    A future Extractor adapter must simplify allOf/if/then and regex constraints
-    for the chosen LLM provider, then revalidate against this complete contract.
+    loom.extract.ExtractionOutput simplifies provider-incompatible constraints.
+    LlmExtractor revalidates this full contract and Proposal reference integrity.
     """
 
     summary: NonEmpty
