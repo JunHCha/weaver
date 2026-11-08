@@ -132,6 +132,7 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
     testImplementation(libs.androidx.glance.appwidget.testing)
     testImplementation(libs.androidx.work.testing)
     testImplementation(libs.junit)
