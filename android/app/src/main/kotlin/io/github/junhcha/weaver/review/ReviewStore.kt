@@ -27,6 +27,8 @@ data class ReviewRecord(
  * Callers hold CourierRuntime.lock. No phone deletion of proposals or decisions, even on rejection.
  */
 class ReviewStore(private val directory: File) {
+    class ProposalMissingException : IllegalStateException("제안이 없습니다")
+
     private val json = Json { encodeDefaults = true }
     init { check(directory.exists() || directory.mkdirs()) }
     private fun name(v: Verdict) = "${v.proposalId}.r${v.rev}.json"
@@ -52,7 +54,7 @@ class ReviewStore(private val directory: File) {
             CourierRules.revision.matchEntire(entry.name)?.takeIf { it.groupValues[1] == id }
                 ?.groupValues?.get(2)?.toLongOrNull()?.let { it to entry }
         }
-        val newest = candidates.maxByOrNull { it.first } ?: error("제안이 없습니다")
+        val newest = candidates.maxByOrNull { it.first } ?: throw ProposalMissingException()
         check(newest.second.regular) { "최신 rev가 일반 파일이 아닙니다" }
         val watermark = File(directory, "$id.latest")
         check(newest.first >= (watermark.takeIf { it.exists() }?.readText()?.toLong() ?: 0L)) { "최신 rev가 아직 동기화되지 않았습니다" }
