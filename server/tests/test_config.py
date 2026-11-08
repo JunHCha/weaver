@@ -230,24 +230,12 @@ def test_cli_check_and_explicit_initialization(
     monkeypatch.setenv("HOME", str(tmp_path))
     path = write_config(tmp_path, create=False)
     with pytest.raises(SystemExit) as error:
-        main(["--config", str(path), "--check-config"])
+        main(["run", "--config", str(path), "--check-config"])
     assert error.value.code == 2
     assert not (tmp_path / "sync_root").exists()
-    assert main(["--config", str(path), "--init-directories"]) == 0
-    assert main(["--config", str(path), "--check-config"]) == 0
+    assert main(["run", "--config", str(path), "--init-directories"]) == 0
+    assert main(["run", "--config", str(path), "--check-config"]) == 0
     assert "valid" in capsys.readouterr().out
-
-
-def test_cli_runtime_remains_unimplemented(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from weaver.app import main
-
-    path = write_config(tmp_path)
-    with pytest.raises(SystemExit) as error:
-        main(["--config", str(path)])
-    assert error.value.code == 2
-    assert "not implemented" in capsys.readouterr().err
 
 
 def test_example_configuration(tmp_path: Path) -> None:

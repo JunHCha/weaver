@@ -110,7 +110,7 @@ def test_module_help_has_no_side_effects(tmp_path: Path) -> None:
 def test_runtime_requires_valid_configuration(tmp_path: Path) -> None:
     result = run_isolated(
         tmp_path,
-        'import runpy, sys\nsys.argv = ["weaver.app"]\n'
+        'import runpy, sys\nsys.argv = ["weaver.app", "run"]\n'
         'runpy.run_module("weaver.app", run_name="__main__")\n',
     )
     assert result.returncode == 2

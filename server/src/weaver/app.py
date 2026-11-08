@@ -1,18 +1,38 @@
-"""Typer CLI for server configuration; resident runtime follows in later issues."""
+"""Typer CLI: resident runtime and its user LaunchAgent (#16).
 
+Imports stay free of configuration, user data and threads; every command
+imports what it needs lazily.
+"""
+
+import sys
 from collections.abc import Sequence
-from typing import Annotated
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
+if TYPE_CHECKING:
+    from weaver.config import ServerConfig
+
 cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+ConfigOption = Annotated[
+    str | None, typer.Option("--config", help="TOML file (overrides WEAVER_CONFIG)")
+]
+
+
+def _load(config: str | None, *, init_directories: bool = False) -> "ServerConfig":
+    from weaver.config import ConfigError, load_config
+
+    try:
+        return load_config(config, init_directories=init_directories)
+    except ConfigError as error:
+        raise typer.BadParameter(str(error)) from None
 
 
 @cli.command()
 def run(
-    config: Annotated[
-        str | None, typer.Option("--config", help="TOML file (overrides WEAVER_CONFIG)")
-    ] = None,
+    config: ConfigOption = None,
     check_config: Annotated[
         bool, typer.Option("--check-config", help="Validate settings and exit")
     ] = False,
@@ -23,20 +43,108 @@ def run(
             help="Validate, create missing data directories, and exit",
         ),
     ] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", min=0.5, help="Rescan interval seconds")
+    ] = 5.0,
 ) -> None:
-    """Weaver server (Spinner and Loom). Runtime is not implemented yet."""
-    # Keep --help and imports free from configuration and user-data access.
-    from weaver.config import ConfigError, load_config
-
-    try:
-        load_config(config, init_directories=init_directories)
-    except ConfigError as error:
-        raise typer.BadParameter(str(error)) from None
+    """Run Weaver in the foreground until SIGTERM (launchd-friendly)."""
+    settings = _load(config, init_directories=init_directories)
     if check_config or init_directories:
         typer.echo("Configuration valid.")
         return
-    typer.echo("Error: server runtime is not implemented yet", err=True)
-    raise typer.Exit(code=2)
+
+    import logging
+
+    from weaver.runtime import EXIT_ALREADY_RUNNING, AlreadyRunning, InstanceLock
+    from weaver.runtime.logs import configure_logging
+
+    log_file = configure_logging(settings.log_root)
+    logger = logging.getLogger("weaver.runtime")
+    try:
+        # Lock before opening any store so a duplicate never touches state.
+        with InstanceLock(settings.state_root / "weaver.lock"):
+            from weaver.runtime.assemble import build_runtime
+
+            try:
+                runtime = build_runtime(settings, interval=interval)
+            except Exception as error:
+                logger.critical("runtime setup failed: %s", type(error).__name__)
+                typer.echo(
+                    f"Error: runtime setup failed ({type(error).__name__}); "
+                    f"see {log_file}",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
+            code = runtime.serve(acquire_lock=False)
+    except AlreadyRunning:
+        logger.error("another weaver instance holds the state lock; exiting")
+        typer.echo("Error: another weaver instance is running", err=True)
+        raise typer.Exit(code=EXIT_ALREADY_RUNNING) from None
+    if code:
+        raise typer.Exit(code=code)
+
+
+@cli.command("install-agent")
+def install_agent(
+    config: ConfigOption = None,
+    python: Annotated[
+        str | None,
+        typer.Option(
+            "--python", help="Absolute interpreter (default: this one, unresolved)"
+        ),
+    ] = None,
+    print_only: Annotated[
+        bool, typer.Option("--print", help="Print the plist without installing")
+    ] = False,
+) -> None:
+    """Install and start the user LaunchAgent (~/Library/LaunchAgents)."""
+    from weaver.runtime import launchd
+
+    settings = _load(config)
+    interpreter = Path(python) if python else Path(sys.executable).absolute()
+    if not interpreter.is_absolute() or not interpreter.is_file():
+        raise typer.BadParameter("python: expected an existing absolute path")
+    plist = launchd.render_plist(
+        python=interpreter,
+        config_file=settings.config_file,
+        log_root=settings.log_root,
+        working_directory=settings.state_root,
+    )
+    if print_only:
+        typer.echo(plist.decode("utf-8"), nl=False)
+        return
+    try:
+        target = launchd.install(
+            plist, home=Path.home(), launchctl=launchd.run_launchctl
+        )
+    except launchd.LaunchdError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Installed {target}")
+
+
+@cli.command("uninstall-agent")
+def uninstall_agent() -> None:
+    """Stop the LaunchAgent and remove its plist (logs and state are kept)."""
+    from weaver.runtime import launchd
+
+    removed = launchd.uninstall(home=Path.home(), launchctl=launchd.run_launchctl)
+    typer.echo("Removed LaunchAgent." if removed else "LaunchAgent not installed.")
+
+
+@cli.command()
+def status(config: ConfigOption = None) -> None:
+    """Show launchd state and the running instance's last status report."""
+    from weaver.runtime import launchd
+
+    settings = _load(config)
+    typer.echo(f"launchd: {launchd.status(launchctl=launchd.run_launchctl)}")
+    report = settings.state_root / "runtime-status.json"
+    try:
+        typer.echo(report.read_text(encoding="utf-8"), nl=False)
+    except FileNotFoundError:
+        typer.echo("runtime: no status report yet")
+    typer.echo(f"\nlog: {settings.log_root / 'weaver.log'}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
