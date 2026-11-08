@@ -5,6 +5,9 @@ weaver_note_kind: "entity"
 weaver_entity_type: "project"
 aliases:
   - "프로젝트 A"
+deadline: "2026-12-05"
+assignees:
+  - "ent_00000000000000000000000002"
 weaver_source_ids:
   - "src_00000000000000000000000001"
 weaver_entity_ids:
@@ -15,7 +18,7 @@ weaver_entry_ids:
   - "evt_00000000000000000000000003"
   - "evt_00000000000000000000000004"
   - "evt_00000000000000000000000005"
-weaver_content_sha256: 6eb57c9f3cbe8e84617b28ca263482787bcb7ccec60fb45ebc5a58edfa21acff
+weaver_content_sha256: 565446ac77e7a2f5c5c8a56b2ede2814a651b0419405e8361d92adadb441b862
 ---
 
 # 프로젝트 A

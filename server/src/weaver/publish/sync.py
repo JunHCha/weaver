@@ -14,6 +14,7 @@ from weaver.schema import Proposal
 
 from .notes import RelationLink
 from .publisher import EntityDirectory, Publisher, PublishState
+from .watcher import OutputSync
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,11 @@ class VaultSync:
         entities: EntityDirectory,
         state: PublishState,
         *,
+        outputs: OutputSync | None = None,
         full_interval: float = FULL_SYNC_INTERVAL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self.outputs = outputs
         self.publisher = publisher
         self.fabric = fabric
         self.entities = entities
@@ -112,6 +115,8 @@ class VaultSync:
             logger.error("publish failed: %s", type(error).__name__)
 
     def _publish(self) -> None:
+        if self.outputs is not None:
+            self.outputs.run()
         now = self.clock()
         full = self._last_full is None or now - self._last_full >= self.full_interval
         raw = self.state.get(_CURSOR)

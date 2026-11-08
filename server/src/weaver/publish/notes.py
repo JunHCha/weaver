@@ -22,6 +22,8 @@ from pydantic import JsonValue
 from weaver.schema import EntityState, Entry
 from weaver.schema.internal import IndexedEntity
 
+from .fields import OUTPUT_FIELDS, normalize_field
+
 SCHEMA_VERSION = 1
 HASH_KEY = "weaver_content_sha256"
 NOTICE = (
@@ -213,6 +215,24 @@ def _relation_lines(
     return lines
 
 
+def editable_properties(
+    values: Mapping[str, JsonValue],
+) -> list[tuple[str, str | Sequence[str]]]:
+    properties: list[tuple[str, str | Sequence[str]]] = []
+    for key in OUTPUT_FIELDS:
+        if key not in values or values[key] is None:
+            continue
+        try:
+            value = normalize_field(key, values[key])
+        except ValueError:
+            continue  # Existing Fabric fields may predate this editable contract.
+        if isinstance(value, str):
+            properties.append((key, value))
+        elif isinstance(value, list):
+            properties.append((key, [str(v) for v in value]))
+    return properties
+
+
 def render_entity(
     entity_id: str,
     state: EntityState,
@@ -303,7 +323,16 @@ def render_entity(
     return _finish(
         entity_id,
         "entity",
-        [("weaver_entity_type", entity_type), ("aliases", aliases)],
+        [
+            ("weaver_entity_type", entity_type),
+            ("aliases", aliases),
+            *editable_properties(
+                {
+                    **{k: v.value for k, v in state.fields.items()},
+                    **{k: [m.value for m in v.members] for k, v in state.sets.items()},
+                }
+            ),
+        ],
         body,
         source_ids=[item.source_id for item in entries],
         entity_ids=[entity_id],
@@ -355,6 +384,7 @@ def render_entry(
             ("weaver_entry_kind", item.kind),
             ("weaver_occurred_at", item.occurred_at.astimezone(zone).isoformat()),
             ("weaver_entry_status", status),
+            *editable_properties({item.field: item.value} if item.field else {}),
         ],
         body,
         source_ids=[item.source_id],
