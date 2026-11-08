@@ -22,6 +22,14 @@ from weaver.loom import (
     SqliteFeedbackStore,
     VerdictHandler,
 )
+from weaver.publish import (
+    AiFolder,
+    EntityDirectory,
+    Publisher,
+    PublishState,
+    ReviewRelations,
+    VaultSync,
+)
 from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
@@ -54,6 +62,27 @@ class Plugins:
     publisher: VaultPublisher | None = None  # #7
     maintenance: Sequence[MaintenanceTask] = ()  # in addition to feedback purge
     client: LlmClient | None = None  # tests/alternative adapters
+
+
+def vault_publisher(
+    config: ServerConfig,
+    fabric: FabricStore,
+    entities: EntityDirectory,
+    reviews: ReviewStore,
+) -> VaultPublisher | None:
+    """[publish] enabled=true wires #7; otherwise the loop keeps its no-op."""
+    if not config.publish.enabled:
+        return None
+    state = PublishState(config.state_root / "publish.sqlite3")
+    publisher = Publisher(
+        AiFolder(config.vault_root, config.publish.folder),
+        fabric,
+        entities,
+        relations=ReviewRelations(reviews),
+        state=state,
+        timezone=config.time.zone,
+    )
+    return VaultSync(publisher, fabric, entities, state)
 
 
 def build_runtime(
@@ -128,7 +157,8 @@ def build_runtime(
         ledger=ledger,
         gate=gate,
         interval=interval,
-        publisher=plugins.publisher,
+        publisher=plugins.publisher
+        or vault_publisher(config, fabric, plugins.entities or store, reviews),
         maintenance=[
             MaintenanceTask(
                 "feedback_purge", FEEDBACK_PURGE_INTERVAL_SECONDS, store.purge

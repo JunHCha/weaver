@@ -58,12 +58,17 @@ def temporary_name(final: Path) -> Path:
     return final.with_name(f".{final.name}.{secrets.token_hex(8)}.tmp")
 
 
-def write_bytes_atomic(final: Path, data: bytes) -> None:
-    """Publish ``data`` at ``final`` or leave the previous state untouched."""
+def write_bytes_atomic(final: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Publish ``data`` at ``final`` or leave the previous state untouched.
+
+    The file is 0600 by default; ``mode`` sets exact permission bits instead.
+    """
     temporary = temporary_name(final)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as stream:
+            if mode is not None:
+                os.fchmod(stream.fileno(), mode)
             stream.write(data)
             stream.flush()
             full_fsync(stream.fileno())
