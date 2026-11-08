@@ -1,11 +1,11 @@
 """One-shot text pipeline with private, durable checkpoints and atomic results.
 
-Configuration versions are caller-owned engine/model/prompt identifiers. Change
-that identifier whenever an injected parser or reviser changes its behavior.
+Cache keys combine caller versions with built-in and optional adapter versions.
 """
 
 import fcntl
 import hashlib
+import json
 import logging
 import os
 import sqlite3
@@ -14,19 +14,22 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from functools import partial
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
+
+from pydantic import ValidationError
 
 from weaver.config import ServerConfig, SpinnerSettings
 from weaver.llm import LlmError
 from weaver.schema.models import Source, Thread
 from weaver.spinner.reviser import (
+    PROMPT_VERSION,
     ReviseHints,
     Reviser,
     parse_revision,
     revision_to_thread,
 )
-from weaver.spinner.text import SourceLocator, text_to_thread
+from weaver.spinner.text import PARSER_VERSION, SourceLocator, text_to_thread
 
 _LOG = logging.getLogger(__name__)
 
@@ -41,6 +44,11 @@ class SpinnerTransientError(Exception):
 
 class TextParser(Protocol):
     """Galaxy call-script (#56) and replaceable channel parser boundary."""
+
+    # Optional at runtime; unversioned adapters rely on the caller version.
+    @property
+    def version(self) -> str | None:
+        return None
 
     def parse(self, source: Source, text: str) -> Thread: ...
 
@@ -61,12 +69,28 @@ class Spinner:
     ) -> None:
         if not configuration_version.strip():
             raise ValueError("configuration_version must be nonempty")
+        state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = (state_root / "spinner.sqlite3").resolve()
         self._store = store
-        self._version = configuration_version
         self._timezone = timezone or ZoneInfo("Asia/Seoul")
         self._parsers = dict(parsers or {})
         self._reviser = reviser
+        fingerprint = json.dumps(
+            [
+                configuration_version,
+                self._timezone.key,
+                PARSER_VERSION,
+                PROMPT_VERSION,
+                sorted(
+                    (channel, getattr(parser, "version", None))
+                    for channel, parser in self._parsers.items()
+                ),
+                getattr(reviser, "version", None),
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        self._version = f"{configuration_version}:{hashlib.sha256(fingerprint.encode()).hexdigest()}"
         self._settings = settings or SpinnerSettings()
         self._clock = clock
         self._sleep = sleep
@@ -84,11 +108,12 @@ class Spinner:
                     error_class TEXT, elapsed_seconds REAL
                 );
             """)
-            # A process killed during a stage leaves durable evidence of the
-            # interrupted attempt; its elapsed time is deliberately unknown.
-            db.execute(
-                "UPDATE attempts SET status='interrupted' WHERE status='running'"
-            )
+            self._recover(db)
+
+    @staticmethod
+    def _recover(db: sqlite3.Connection) -> None:
+        # Called only while holding flock: no live owner can be interrupted.
+        db.execute("UPDATE attempts SET status='interrupted' WHERE status='running'")
 
     @classmethod
     def from_config(
@@ -134,6 +159,8 @@ class Spinner:
                 os.chmod(f"{self.path}{suffix}", 0o600)
         db = sqlite3.connect(self.path, timeout=30)
         try:
+            if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
+                raise SpinnerError("state_requires_wal")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
             db.execute("PRAGMA checkpoint_fullfsync=ON")
@@ -161,11 +188,22 @@ class Spinner:
             assert cursor.lastrowid is not None
             return cursor.lastrowid
 
-    def _finish(self, record: int, started: float, error: BaseException | None) -> None:
+    def _finish(
+        self,
+        record: int,
+        started: float,
+        error: BaseException | None,
+        *,
+        source: Source | None = None,
+        result: Thread | None = None,
+        field: Literal["parsed", "thread"] | None = None,
+    ) -> None:
         elapsed = max(0.0, self._clock() - started)
         # Never store exception messages: injected adapters may include content.
         category = (
-            "llm"
+            "interrupted"
+            if error is not None and not isinstance(error, Exception)
+            else "llm"
             if isinstance(error, LlmError)
             else "transient"
             if isinstance(error, SpinnerTransientError)
@@ -173,10 +211,19 @@ class Spinner:
             if error is not None
             else None
         )
+        status = (
+            "interrupted"
+            if category == "interrupted"
+            else "failed"
+            if error
+            else "succeeded"
+        )
         with self._connect() as db:
+            if source is not None and result is not None and field is not None:
+                self._save_result(db, source, result, field)
             db.execute(
                 "UPDATE attempts SET status=?,error_class=?,elapsed_seconds=? WHERE id=?",
-                ("failed" if error else "succeeded", category, elapsed, record),
+                (status, category, elapsed, record),
             )
         _LOG.info(
             "spinner record=%d status=%s elapsed_seconds=%f",
@@ -185,15 +232,36 @@ class Spinner:
             elapsed,
         )
 
+    def _save_result(
+        self,
+        db: sqlite3.Connection,
+        source: Source,
+        result: Thread,
+        field: Literal["parsed", "thread"],
+    ) -> None:
+        db.execute(
+            f"UPDATE results SET {field}=? WHERE source_id=? AND version=?",
+            (result.model_dump_json(), source.source_id, self._version),
+        )
+
     def _run(
-        self, source: Source, attempt: int, stage: str, operation: Callable[[], Thread]
+        self,
+        source: Source,
+        attempt: int,
+        stage: str,
+        operation: Callable[[], Thread],
+        *,
+        field: Literal["parsed", "thread"] | None = None,
     ) -> Thread:
         record = self._start(source, attempt, stage)
         started = self._clock()
         try:
-            result = operation()
-            # Revalidate injected adapters, including unchecked model_copy output.
-            result = Thread.model_validate(result.model_dump())
+            try:
+                result = operation()
+                # Revalidate injected adapters, including unchecked model_copy output.
+                result = Thread.model_validate(result.model_dump())
+            except ValidationError:
+                raise SpinnerError("invalid_adapter_thread") from None
             if (result.source_id, result.channel, result.occurred_at) != (
                 source.source_id,
                 source.channel,
@@ -203,7 +271,7 @@ class Spinner:
         except BaseException as error:
             self._finish(record, started, error)
             raise
-        self._finish(record, started, None)
+        self._finish(record, started, None, source=source, result=result, field=field)
         return result
 
     def _parse(self, source: Source) -> Thread:
@@ -216,7 +284,12 @@ class Spinner:
         archived = self._store.locate(source.source_id)
         if archived.source != source:
             raise SpinnerError("archive_source_mismatch")
-        payload = archived.payload_path.read_bytes()
+        fd = os.open(
+            archived.payload_path,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+        with os.fdopen(fd, "rb") as stream:
+            payload = stream.read()
         if hashlib.sha256(payload).hexdigest() != source.sha256:
             raise SpinnerError("payload_mismatch")
         try:
@@ -241,11 +314,18 @@ class Spinner:
     def spin(self, source: Source, *, reprocess: bool = False) -> Thread:
         """Return only a committed complete Thread, preserving failed checkpoints."""
         with self._lock():
+            with self._connect() as db:
+                self._recover(db)
             return self._run(
                 source, 0, "spin", partial(self._spin_locked, source, reprocess)
             )
 
     def _spin_locked(self, source: Source, reprocess: bool) -> Thread:
+        if source.channel == "call":
+            if "call" not in self._parsers:
+                raise SpinnerError("call_parser_not_configured")
+            if self._reviser is None:
+                raise SpinnerError("call_reviser_not_configured")
         key = (source.source_id, self._version)
         with self._connect() as db:
             row = db.execute(
@@ -271,13 +351,12 @@ class Spinner:
             try:
                 if parsed is None:
                     parsed = self._run(
-                        source, attempt, "parse", lambda: self._parse(source)
+                        source,
+                        attempt,
+                        "parse",
+                        lambda: self._parse(source),
+                        field="parsed",
                     )
-                    with self._connect() as db:
-                        db.execute(
-                            "UPDATE results SET parsed=? WHERE source_id=? AND version=?",
-                            (parsed.model_dump_json(), *key),
-                        )
                 result = parsed
                 if source.channel == "call":
                     result = self._run(
@@ -285,12 +364,11 @@ class Spinner:
                         attempt,
                         "revise",
                         partial(self._revise, source, parsed),
+                        field="thread",
                     )
-                with self._connect() as db:
-                    db.execute(
-                        "UPDATE results SET thread=? WHERE source_id=? AND version=?",
-                        (result.model_dump_json(), *key),
-                    )
+                else:
+                    with self._connect() as db:
+                        self._save_result(db, source, result, "thread")
             except BaseException as error:
                 self._finish(total, started, error)
                 if (

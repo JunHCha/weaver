@@ -11,6 +11,8 @@ from weaver.loom.kakao import KakaoParseError, parse_kakao
 from weaver.schema.internal import ArchivedSource
 from weaver.schema.models import Segment, Source, Thread
 
+PARSER_VERSION = "spinner.text.v1"
+
 _LOG = logging.getLogger(__name__)
 
 

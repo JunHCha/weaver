@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -152,8 +153,9 @@ def test_unsupported_paths_fail_explicitly(tmp_path, src, error):
     assert all(r["status"] == "failed" for r in records(spin))
 
 
-def test_call_revision_hints_retry_and_checkpoint(tmp_path):
-    src = source("call")
+def test_call_revision_hints_retry_and_checkpoint(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    src = source("call", hints={"counterpart": "합성 비공개 상대"})
     parser, reviser = Parser(), Reviser([SpinnerTransientError("private details")])
     sleeps = []
     spin, store, _ = pipeline(
@@ -172,7 +174,9 @@ def test_call_revision_hints_retry_and_checkpoint(tmp_path):
         "total",
         "revise",
     ]
-    assert "private details" not in str(records(spin))
+    for private in ("private details", TEXT, src.hints.counterpart):
+        assert private not in str(records(spin))
+        assert private not in caplog.text
 
 
 def test_llm_failure_no_nested_retry_and_restart_reuses_parsing(tmp_path):
@@ -390,3 +394,245 @@ def test_call_with_llm_reviser_adapter(tmp_path):
         tmp_path, src, parsers={"call": Parser()}, reviser=LlmReviser(Client())
     )
     assert spin.spin(src).text == TEXT + "!"
+
+
+def test_timezone_change_creates_independent_result(tmp_path):
+    text = "--------------- 2026년 11월 7일 토요일 ---------------\n[합성] [오전 9:00] 테스트\n"
+    src = source("kakao", text)
+    store = Store(tmp_path, src, text)
+    seoul = Spinner(
+        store, tmp_path, configuration_version="v1", timezone=ZoneInfo("Asia/Seoul")
+    )
+    utc = Spinner(store, tmp_path, configuration_version="v1", timezone=ZoneInfo("UTC"))
+    assert (
+        seoul.spin(src).segments[-1].occurred_at
+        != utc.spin(src).segments[-1].occurred_at
+    )
+    with sqlite3.connect(seoul.path) as db:
+        assert (
+            db.execute(
+                "SELECT count(DISTINCT version) FROM results WHERE thread IS NOT NULL"
+            ).fetchone()[0]
+            == 2
+        )
+    assert store.calls == 2
+
+
+@pytest.mark.parametrize(
+    "component",
+    ["parser", "reviser", "builtin_parser", "prompt", "model", "prompt_text"],
+)
+def test_internal_version_changes_invalidate_cache(tmp_path, monkeypatch, component):
+    import weaver.spinner.pipeline as module
+    import weaver.spinner.reviser as revision
+    from weaver.llm import AnthropicClient
+    from weaver.spinner.reviser import LlmReviser
+
+    class Client(AnthropicClient):
+        def __init__(self):
+            self.calls = 0
+
+        def generate_json(self, task, system, user, schema):
+            self.calls += 1
+            payload = json.loads(user)
+            return schema.model_validate(
+                {
+                    "segments": [
+                        {"segment_id": s["segment_id"], "text": s["text"] + "!"}
+                        for s in payload["segments"]
+                    ]
+                }
+            )
+
+    parser, reviser = Parser(), Reviser()
+    client = Client()
+    adapter = LlmReviser(client) if component in {"model", "prompt_text"} else reviser
+    spin, store, src = pipeline(
+        tmp_path, source("call"), parsers={"call": parser}, reviser=adapter
+    )
+    spin.spin(src)
+    if component == "parser":
+        parser.version = "v2"
+    elif component == "reviser":
+        reviser.version = "v2"
+    elif component == "builtin_parser":
+        monkeypatch.setattr(module, "PARSER_VERSION", "v2")
+    elif component == "prompt":
+        monkeypatch.setattr(module, "PROMPT_VERSION", "v2")
+    elif component == "model":
+        monkeypatch.setattr(revision, "MODEL", "new-model")
+    else:
+        monkeypatch.setattr(revision, "SYSTEM_PROMPT", "new-prompt")
+    other = Spinner(
+        store,
+        tmp_path,
+        configuration_version="parser1:model1:prompt1",
+        parsers={"call": parser},
+        reviser=adapter,
+    )
+    other.spin(src)
+    assert parser.calls == 2
+    assert (client.calls if isinstance(adapter, LlmReviser) else reviser.calls) == 2
+    with sqlite3.connect(spin.path) as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM results WHERE thread IS NOT NULL"
+            ).fetchone()[0]
+            == 2
+        )
+
+
+@pytest.mark.parametrize("stage", ["parse", "revise"])
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_control_flow_exceptions_are_interrupted(tmp_path, stage, error_type):
+    parser = Parser([error_type()] if stage == "parse" else [])
+    reviser = Reviser([error_type()] if stage == "revise" else [])
+    spin, _, src = pipeline(
+        tmp_path, source("call"), parsers={"call": parser}, reviser=reviser
+    )
+    with pytest.raises(error_type):
+        spin.spin(src)
+    interrupted = [r for r in records(spin) if r["stage"] in {"spin", "total", stage}]
+    assert all(r["status"] == r["error_class"] == "interrupted" for r in interrupted)
+
+
+def test_existing_instance_recovers_dead_owners_at_spin(tmp_path):
+    spin, _, src = pipeline(tmp_path)
+    with sqlite3.connect(spin.path) as db:
+        db.execute(
+            "INSERT INTO attempts(source_id,version,attempt,stage,status) VALUES(?,?,1,'parse','running')",
+            (src.source_id, "old-owner"),
+        )
+    spin.spin(src)
+    assert records(spin)[0]["status"] == "interrupted"
+
+
+@pytest.mark.parametrize("stage", ["parse", "revise", "revalidate"])
+def test_adapter_validation_errors_are_private(tmp_path, caplog, stage):
+    import traceback
+
+    from weaver.schema.models import Thread
+
+    counterpart = "합성 비공개 상대"
+    secret = TEXT + counterpart
+
+    class InvalidParser(Parser):
+        def parse(self, src, text):
+            if stage == "parse":
+                return Thread.model_validate({"text": secret})
+            result = super().parse(src, text)
+            if stage == "revalidate":
+                return result.model_copy(update={"schema_version": secret})
+            return result
+
+    class InvalidReviser(Reviser):
+        def revise(self, thread, hints):
+            return Thread.model_validate({"text": secret})
+
+    spin, _, src = pipeline(
+        tmp_path,
+        source("call", hints={"counterpart": counterpart}),
+        parsers={"call": InvalidParser()},
+        reviser=InvalidReviser(),
+    )
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(SpinnerError, match="^invalid_adapter_thread$") as caught,
+    ):
+        spin.spin(src)
+    rendered = "".join(traceback.format_exception(caught.value))
+    for private in (TEXT, src.hints.counterpart):
+        assert private not in rendered
+        assert private not in caplog.text
+        assert private not in str(records(spin))
+    assert caught.value.__suppress_context__
+
+
+def test_missing_reviser_fails_before_parser_or_payload(tmp_path):
+    parser = Parser()
+    spin, store, src = pipeline(tmp_path, source("call"), parsers={"call": parser})
+    with pytest.raises(SpinnerError, match="call_reviser_not_configured"):
+        spin.spin(src)
+    assert parser.calls == store.calls == 0
+    assert [r["stage"] for r in records(spin)] == ["spin"]
+
+
+def test_missing_state_root_is_created_private_and_wal(tmp_path):
+    src = source()
+    state = tmp_path / "nested" / "state"
+    spin = Spinner(Store(tmp_path, src), state, configuration_version="v1")
+    assert state.stat().st_mode & 0o777 == 0o700
+    assert spin.spin(src).text == TEXT
+    with sqlite3.connect(spin.path) as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_payload_symlink_is_rejected(tmp_path):
+    spin, store, src = pipeline(tmp_path)
+    original = tmp_path / "original"
+    store.path.rename(original)
+    store.path.symlink_to(original)
+    with pytest.raises(OSError):
+        spin.spin(src)
+    with sqlite3.connect(spin.path) as db:
+        assert db.execute("SELECT thread FROM results").fetchone()[0] is None
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_revision_success_and_result_commit_atomically_across_crash(tmp_path, phase):
+    import subprocess
+    import sys
+
+    # A pre-existing instance must also recover attempts left by the child.
+    src = source("call")
+    reviser = Reviser()
+    spin = Spinner(
+        Store(tmp_path, src),
+        tmp_path,
+        configuration_version="v1",
+        parsers={"call": Parser()},
+        reviser=reviser,
+    )
+    script = """
+import os
+import sys
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from server.tests.spinner.test_spinner import Parser, Reviser, Store, source
+from weaver.spinner import Spinner
+class CrashSpinner(Spinner):
+    @contextmanager
+    def _connect(self):
+        with super()._connect() as db:
+            yield db
+            if sys.argv[2] == "before_commit" and db.execute(
+                "SELECT 1 FROM attempts WHERE stage='revise' AND status='succeeded'"
+            ).fetchone():
+                os._exit(23)
+    def _finish(self, record, started, error, **kwargs):
+        super()._finish(record, started, error, **kwargs)
+        if sys.argv[2] == "after_commit" and error is None:
+            with sqlite3.connect(self.path) as db:
+                stage = db.execute("SELECT stage FROM attempts WHERE id=?", (record,)).fetchone()[0]
+            if stage == "revise":
+                os._exit(23)
+root = Path(sys.argv[1])
+src = source("call")
+CrashSpinner(Store(root, src), root, configuration_version="v1",
+             parsers={"call": Parser()}, reviser=Reviser()).spin(src)
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), phase], check=False
+    )
+    assert child.returncode == 23
+    with sqlite3.connect(spin.path) as db:
+        parsed, thread = db.execute("SELECT parsed,thread FROM results").fetchone()
+        succeeded = db.execute(
+            "SELECT count(*) FROM attempts WHERE stage='revise' AND status='succeeded'"
+        ).fetchone()[0]
+    assert parsed
+    assert bool(thread) == bool(succeeded) == (phase == "after_commit")
+    assert spin.spin(src).text == TEXT + "!"
+    assert reviser.calls == (0 if phase == "after_commit" else 1)
+    assert not any(r["status"] == "running" for r in records(spin))
