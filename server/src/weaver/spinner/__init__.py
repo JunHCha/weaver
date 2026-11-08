@@ -1,5 +1,11 @@
 """Speech transcription and revision (without importing speech runtimes)."""
 
+from weaver.spinner.pipeline import (
+    Spinner,
+    SpinnerError,
+    SpinnerTransientError,
+    TextParser,
+)
 from weaver.spinner.stt import (
     AudioDecodeError,
     InvalidEngineOutputError,
@@ -20,6 +26,10 @@ __all__ = [
     "ModelNotFoundError",
     "MlxStt",
     "Segment",
+    "Spinner",
+    "SpinnerError",
+    "SpinnerTransientError",
+    "TextParser",
     "Stt",
     "SttEngineError",
     "SttError",

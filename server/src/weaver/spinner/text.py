@@ -11,6 +11,8 @@ from weaver.loom.kakao import KakaoParseError, parse_kakao
 from weaver.schema.internal import ArchivedSource
 from weaver.schema.models import Segment, Source, Thread
 
+PARSER_VERSION = "spinner.text.v1"
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -24,6 +26,8 @@ def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
         raise ValueError("expected text Source")
     if not text.strip("\ufeff \t\r\n"):
         raise KakaoParseError("empty_input")
+    if source.channel not in {"kakao", "share_text"}:
+        raise ValueError("unsupported_text_channel")
     if source.channel == "kakao":
         result = parse_kakao(source, text, timezone=timezone)
         # Never log text, speaker, archive path or timestamps.

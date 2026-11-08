@@ -5,13 +5,15 @@ seconds and speaker; conversion rebuilds Unicode character offsets. No partial
 results, splitting, retry policy, provider SDK calls or content logging live here.
 """
 
+import hashlib
 import json
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, StrictStr, ValidationError, field_validator, model_validator
 
-from weaver.llm import LlmClient, SchemaMismatch
+from weaver.llm import AnthropicClient, LlmClient, SchemaMismatch
+from weaver.llm.client import MODEL
 from weaver.schema.models import Contract, EntityId, NonEmpty, Ref, Segment, Thread
 
 PROMPT_VERSION: Literal["spinner.revise.v1"] = "spinner.revise.v1"
@@ -52,6 +54,11 @@ class ReviseHints(Contract):
 
 
 class Reviser(Protocol):
+    # Optional at runtime; Spinner uses the caller version when absent.
+    @property
+    def version(self) -> str | None:
+        return None
+
     def revise(self, thread: Thread, hints: ReviseHints) -> str: ...
 
 
@@ -210,6 +217,16 @@ class LlmReviser:
             raise ValueError("max_request_bytes must be a positive integer")
         self._client = client
         self._max_request_bytes = max_request_bytes
+
+    @property
+    def version(self) -> str:
+        model = (
+            MODEL
+            if isinstance(self._client, AnthropicClient)
+            else getattr(self._client, "version", type(self._client).__qualname__)
+        )
+        prompt = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
+        return f"{PROMPT_VERSION}:{prompt}:{model}"
 
     def revise(self, thread: Thread, hints: ReviseHints) -> str:
         _validate_thread_segments(thread)

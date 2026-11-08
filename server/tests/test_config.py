@@ -562,3 +562,39 @@ def test_all_shared_config_tables_coexist(tmp_path: Path) -> None:
     assert config.time.timezone == "America/New_York"
     assert config.loom.refiner is config.refiner
     assert (config.refiner.before, config.refiner.after) == (0, 2)
+
+
+def test_spinner_retry_config_and_factory(tmp_path: Path) -> None:
+    from weaver.spinner import Spinner
+
+    path = write_config(
+        tmp_path,
+        "[spinner]\nmax_attempts=4\nbackoff_seconds=0.5\nmax_backoff_seconds=2\n",
+    )
+    config = load_config(path, environ={})
+    assert config.spinner.retry.max_attempts == 4
+    assert config.spinner.retry.backoff_seconds == 0.5
+    assert config.spinner.retry.max_backoff_seconds == 2
+
+    class NoReads:
+        def locate(self, source_id):
+            raise AssertionError("factory must not read payloads")
+
+    spinner = Spinner.from_config(NoReads(), config, configuration_version="test-v1")
+    assert spinner.path == config.state_root / "spinner.sqlite3"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'spinner="secret-value"',
+        '[spinner]\nunknown="secret-value"',
+        "[spinner]\nmax_attempts=true",
+        "[spinner]\nbackoff_seconds=nan",
+    ],
+)
+def test_invalid_spinner_config(tmp_path: Path, extra: str) -> None:
+    path = write_config(tmp_path, extra)
+    with pytest.raises(ConfigError) as caught:
+        load_config(path, environ={})
+    assert "secret-value" not in str(caught.value)
