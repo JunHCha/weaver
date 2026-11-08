@@ -13,13 +13,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxDatabase
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.review.ReviewRecord
+import io.github.junhcha.weaver.review.ReviewRuntime
+import io.github.junhcha.weaver.review.ReviewStatus
+import io.github.junhcha.weaver.schema.Verdict
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,16 +33,19 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** Minimal review entry from notifications: the local list only. Full review is #35. */
+/** Review entry shared by home and notifications. */
 @Composable
 fun InboxPanel(openedFromNotification: Boolean = false) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
     var proposals by remember { mutableStateOf(emptyList<InboxDatabase.ProposalItem>()) }
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     var alerts by remember { mutableStateOf(emptyList<InboxDatabase.AlertItem>()) }
     var lastScan by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(changes) {
+        records = withContext(Dispatchers.IO) { ReviewRuntime.records(context) }
         withContext(Dispatchers.IO) {
             Triple(InboxRuntime.proposals(context), InboxRuntime.alerts(context), InboxRuntime.lastScanAt(context))
         }.let { (p, a, scan) -> proposals = p; alerts = a; lastScan = scan }
@@ -44,10 +53,25 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (openedFromNotification) "알림에서 연 검토 대기 목록" else "검토 대기 제안 ${proposals.size}건")
+            OutlinedButton(onClick = { CourierRuntime.kick(context) }) { Text("동기화 새로고침") }
             if (proposals.isEmpty()) Text("검토 대기 제안 없음")
             proposals.forEach { item ->
                 Text(item.summary + if (item.revised) " · 다시 짠 제안 (r${item.rev})" else "")
+                OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
             }
+            records.forEach { record ->
+                Text("${record.verdict.proposalId} r${record.verdict.rev}: ${record.status.label}")
+                if (record.verdict.verdict == Verdict.Kind.REVISE) {
+                    Text(if (proposals.any { it.proposalId == record.verdict.proposalId && it.rev > record.verdict.rev })
+                        "새 rev 도착 · 최신 제안을 확인하세요" else "새 rev 대기")
+                }
+                if (record.status in setOf(ReviewStatus.ERROR,
+                        ReviewStatus.PENDING)) {
+                    OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
+                }
+            }
+            selected?.let { id -> ReviewPanel(id, onClose = { selected = null }) }
+            Text("통화 정리는 갤럭시 스크립트 텍스트를 공유해 시작하세요. 홈의 Shepherd 통화 목록에서 확인할 수 있습니다.")
             Text("변경 경고 ${alerts.size}건")
             alerts.forEach { alert ->
                 Text("승인 전 · 일정이 바뀔 수 있음")
