@@ -15,6 +15,7 @@ import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.io.PushbackInputStream
 import java.nio.charset.CodingErrorAction
+import java.nio.charset.MalformedInputException
 import java.util.UUID
 
 /** Sender names and declared sizes are deliberately never used as paths or limits. */
@@ -130,13 +131,8 @@ object SharedText {
                     if (first >= 0) source.unread(first)
                     source.copyTo(target, 64 * 1024)
                 } else {
-                    val decoder = charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    val encoder = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    // The source BOM is consumed above. UTF-8's encoder adds no BOM.
-                    val reader = InputStreamReader(source, decoder)
-                    OutputStreamWriter(target, encoder).use { writer -> reader.copyTo(writer) }
+                    // The source BOM is consumed above. UTF-8 output never gets a BOM.
+                    transcodeUtf16(source, charset == Charsets.UTF_16BE, target)
                 }
                 output.fd.sync()
             }
@@ -145,6 +141,64 @@ object SharedText {
             file.delete()
             throw error
         }
+    }
+
+    /**
+     * Decodes UTF-16 by hand: Android's ICU decoder behind InputStreamReader may drop a trailing
+     * odd byte or unpaired high surrogate instead of reporting it, so every unit is checked here.
+     */
+    private fun transcodeUtf16(input: InputStream, bigEndian: Boolean, output: OutputStream) {
+        val bytes = ByteArray(8192)
+        val out = ByteArray(bytes.size * 2 + 4)
+        var pending = -1
+        var high = -1
+        var first = true
+        while (true) {
+            val count = input.read(bytes)
+            if (count < 0) break
+            var size = 0
+            for (index in 0 until count) {
+                val byte = bytes[index].toInt() and 0xff
+                if (pending < 0) { pending = byte; continue }
+                val unit = if (bigEndian) (pending shl 8) or byte else (byte shl 8) or pending
+                pending = -1
+                val point = when {
+                    high >= 0 -> {
+                        if (unit !in 0xdc00..0xdfff) throw MalformedInputException(2)
+                        (0x10000 + ((high - 0xd800) shl 10) + (unit - 0xdc00)).also { high = -1 }
+                    }
+                    unit in 0xd800..0xdbff -> { high = unit; -1 }
+                    unit in 0xdc00..0xdfff -> throw MalformedInputException(2)
+                    // A second BOM is content in UTF-16, but would read as a UTF-8 BOM after conversion.
+                    first && unit == 0xfeff -> -1
+                    else -> unit
+                }
+                first = false
+                when {
+                    point < 0 -> {}
+                    point < 0x80 -> out[size++] = point.toByte()
+                    point < 0x800 -> {
+                        out[size++] = (0xc0 or (point shr 6)).toByte()
+                        out[size++] = (0x80 or (point and 0x3f)).toByte()
+                    }
+                    point < 0x10000 -> {
+                        out[size++] = (0xe0 or (point shr 12)).toByte()
+                        out[size++] = (0x80 or ((point shr 6) and 0x3f)).toByte()
+                        out[size++] = (0x80 or (point and 0x3f)).toByte()
+                    }
+                    else -> {
+                        out[size++] = (0xf0 or (point shr 18)).toByte()
+                        out[size++] = (0x80 or ((point shr 12) and 0x3f)).toByte()
+                        out[size++] = (0x80 or ((point shr 6) and 0x3f)).toByte()
+                        out[size++] = (0x80 or (point and 0x3f)).toByte()
+                    }
+                }
+            }
+            output.write(out, 0, size)
+        }
+        if (pending >= 0) throw MalformedInputException(1)
+        if (high >= 0) throw MalformedInputException(2)
+        output.flush()
     }
 
     fun validate(file: File) {

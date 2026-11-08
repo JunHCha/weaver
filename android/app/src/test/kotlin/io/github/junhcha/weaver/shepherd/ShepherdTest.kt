@@ -136,10 +136,19 @@ class ShepherdTest {
         assertEquals("2026-11-08T12:34:56+09:00",
             CallFilename.parse("Call recording Person_20261108_123456.m4a", zone).occurredAt)
         listOf("Person_261132_123456.m4a", "Person_261108_253456.m4a", "Person_261108_123456.mp3",
-            "Person_261108_123456 (1).m4a", "_261108_123456.m4a").forEach {
+            "Person_261108_123456 (1).m4a", "_261108_123456.m4a", "통화 _261108_123456.m4a").forEach {
             assertEquals(CallHints(null, null), CallFilename.parse(it, zone))
         }
         assertEquals(CallHints(null, null), CallFilename.parse("Person_261101_013000.m4a", ZoneId.of("America/New_York")))
+    }
+    @Test fun recorderPrefixesAreNotPartOfCounterpart() {
+        val zone = ZoneId.of("Asia/Seoul")
+        listOf("통화 홍길동_261108_123456.m4a", "통화 녹음 홍길동_261108_123456.m4a",
+            "Call recording 홍길동_261108_123456.m4a", "Call recording 홍길동_20261108_123456.m4a",
+            "홍길동_261108_123456.m4a").forEach {
+            assertEquals(it, CallHints("홍길동", "2026-11-08T12:34:56+09:00"), CallFilename.parse(it, zone))
+        }
+        assertEquals("통화녹음", CallFilename.parse("통화녹음_261108_123456.m4a", zone).counterpart)
     }
     @Test fun pathsAreExactAndDoNotIncludeVoiceMemos() {
         assertTrue(RecordingPaths.matches("Recordings/Call/", null))

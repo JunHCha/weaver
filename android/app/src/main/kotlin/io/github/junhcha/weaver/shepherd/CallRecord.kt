@@ -36,10 +36,16 @@ internal data class CallHints(val counterpart: String?, val occurredAt: String?)
 internal object CallFilename {
     private val short = Regex("([^/\\r\\n]+)_([0-9]{6}_[0-9]{6})\\.m4a")
     private val long = Regex("Call recording ([^/\\r\\n]+)_([0-9]{8}_[0-9]{6})\\.m4a")
+    /** Recorder prefixes that are not part of the counterpart name; longest first. */
+    private val prefixes = listOf("통화 녹음 ", "Call recording ", "통화 ")
+
+    fun stripPrefix(name: String): String = prefixes.firstOrNull { name.startsWith(it) }
+        ?.let { name.removePrefix(it) } ?: name
+
     fun parse(name: String, zone: ZoneId): CallHints {
         val full = long.matchEntire(name)
         val match = full ?: short.matchEntire(name) ?: return CallHints(null, null)
-        val counterpart = match.groupValues[1]
+        val counterpart = if (full == null) stripPrefix(match.groupValues[1]) else match.groupValues[1]
         if (counterpart.isBlank() || counterpart != counterpart.trim()) return CallHints(null, null)
         val stamp = if (full == null) "20${match.groupValues[2]}" else match.groupValues[2]
         return try {
