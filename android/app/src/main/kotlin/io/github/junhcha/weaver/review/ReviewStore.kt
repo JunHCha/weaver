@@ -20,6 +20,7 @@ data class ReviewRecord(
     val verdict: Verdict, val tree: String, val status: ReviewStatus,
     // Never forget a successful publication when a later listing/read fails.
     val published: Boolean = false,
+    val proposal: Proposal? = null,
 )
 
 /** Durable immutable intent plus delivery observations, all inside the backup-excluded exchange dir.
@@ -69,7 +70,7 @@ class ReviewStore(private val directory: File) {
             check(existing.verdict == verdict && existing.tree == folder.identity) { "이미 제출한 rev의 내용은 바꿀 수 없습니다" }
             return
         }
-        save(ReviewRecord(verdict, folder.identity, ReviewStatus.PENDING))
+        save(ReviewRecord(verdict, folder.identity, ReviewStatus.PENDING, proposal = p))
     }
     fun synchronize(folder: CourierFolder): Boolean {
         var success = true
