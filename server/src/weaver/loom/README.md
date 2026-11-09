@@ -94,6 +94,13 @@ revision. Any revised non-request item overlapping a previously blocked item's
 overlapping evidence or entity identities must remain blocked, even if another blocked
 item keeps the total count unchanged. This conservative rejection policy may
 reject legitimate restructuring; the user can revise again or reject the proposal.
+
+Courier rescans an unapplied decision file, so a revise that spent a model call
+without a usable result (validation failure, timeout, contract violation) is
+counted durably per exact Verdict in `revise_failures`. After three failures the
+file stays in place, Courier reports `revise_exhausted`, and no further call is
+made until a different Verdict arrives. Usage-cap and closed-gate errors are not
+counted because they spend no call.
 Excerpt matching checks provenance rather than semantic truth.
 
 Schedule ask is intentionally allowed at approval under the established policy:
