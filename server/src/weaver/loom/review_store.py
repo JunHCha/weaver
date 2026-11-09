@@ -39,6 +39,9 @@ class ReviewStore:
                         verdict TEXT NOT NULL, result TEXT NOT NULL,
                         stage TEXT NOT NULL CHECK(stage IN ('PREPARED','APPLIED')),
                         PRIMARY KEY(proposal_id, rev));
+                    CREATE TABLE IF NOT EXISTS revise_failures (
+                        verdict TEXT PRIMARY KEY NOT NULL,
+                        failures INTEGER NOT NULL);
 
                 """)
                 if version < 2:
@@ -181,6 +184,21 @@ class ReviewStore:
     def is_applied(self, proposal_id: str, rev: int) -> bool:
         row = self.review(proposal_id, rev)
         return row is not None and row[2] == "APPLIED"
+
+    def revise_failures(self, verdict: str) -> int:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT failures FROM revise_failures WHERE verdict=?", (verdict,)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def record_revise_failure(self, verdict: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO revise_failures VALUES (?,1) "
+                "ON CONFLICT(verdict) DO UPDATE SET failures=failures+1",
+                (verdict,),
+            )
 
     def pending(self, proposal_id: str) -> list[tuple[str, int]]:
         with self.connect() as db:

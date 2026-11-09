@@ -17,6 +17,13 @@ from weaver.archive.ulid import UlidGenerator
 from weaver.courier import Courier
 from weaver.courier.files import CourierFileError
 from weaver.fabric.store import Fabric
+from weaver.llm.errors import (
+    InvalidJson,
+    LlmTimeout,
+    MissingOutput,
+    Refusal,
+    SchemaMismatch,
+)
 from weaver.llm.types import LlmClient
 from weaver.schema import Alert, Entry, Proposal, Source, Verdict
 from weaver.schema.internal import Extraction, materialize_entries
@@ -27,6 +34,18 @@ from .review_store import ReviewStore
 
 _ids = UlidGenerator()
 REVISE_PROMPT_VERSION = "loom.revise.v1"
+MAX_REVISE_FAILURES = 3
+# Each of these spent a model call without a usable result, and Courier rescans
+# the unchanged decision file. Availability errors (usage cap, closed LLM gate)
+# spend nothing and must keep waiting. ValueError covers validation failures.
+_REVISE_FAILURES = (
+    ValueError,
+    LlmTimeout,
+    InvalidJson,
+    SchemaMismatch,
+    MissingOutput,
+    Refusal,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -142,7 +161,7 @@ class VerdictHandler:
             approved = proposal
             entity_ids: dict[str, str] = {}
             if verdict.verdict == "revise":
-                result = self._revise(proposal, verdict)
+                result = self._revise_limited(proposal, verdict)
             elif verdict.verdict == "reject":
                 result = []
             else:
@@ -230,6 +249,16 @@ class VerdictHandler:
         if isinstance(data, list):
             return [Entry.model_validate(item) for item in data]
         return Proposal.model_validate(data)
+
+    def _revise_limited(self, proposal: Proposal, verdict: Verdict) -> Proposal:
+        """Counted per exact verdict, so a resent or different one starts over."""
+        if self.store.revise_failures(verdict.model_dump_json()) >= MAX_REVISE_FAILURES:
+            raise ValueError("revise attempts exhausted")
+        try:
+            return self._revise(proposal, verdict)
+        except _REVISE_FAILURES:
+            self.store.record_revise_failure(verdict.model_dump_json())
+            raise
 
     def _revise(self, proposal: Proposal, verdict: Verdict) -> Proposal:
         output = self.client.generate_json(
@@ -393,6 +422,12 @@ class CourierReviewAdapter:
                 "stale_rev" if latest and verdict.rev < latest else "verdict_conflict"
             )
             raise CourierFileError(code)
+        if (
+            verdict.verdict == "revise"
+            and self.handler.store.revise_failures(verdict.model_dump_json())
+            >= MAX_REVISE_FAILURES
+        ):
+            raise CourierFileError("revise_exhausted")
 
     def latest_rev(self, proposal_id: str) -> int | None:
         self._recover(proposal_id)

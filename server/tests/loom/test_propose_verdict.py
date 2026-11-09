@@ -9,6 +9,14 @@ import pytest
 from weaver.config import CourierPaths
 from weaver.courier import Courier
 from weaver.fabric import EntryQuery, FabricStore
+from weaver.llm import (
+    InvalidJson,
+    LlmTimeout,
+    MissingOutput,
+    Refusal,
+    SchemaMismatch,
+    UsageLimited,
+)
 from weaver.loom import (
     CourierPublisher,
     CourierReviewAdapter,
@@ -16,6 +24,8 @@ from weaver.loom import (
     ReviewStore,
     VerdictHandler,
 )
+from weaver.loom.propose import MAX_REVISE_FAILURES
+from weaver.runtime.gate import LlmUnavailable
 from weaver.schema import Proposal, Source, Verdict
 from weaver.schema.internal import Extraction
 from weaver.schema.models import Ask
@@ -679,3 +689,80 @@ def test_v1_journal_migrates_source_lookup(env, tmp_path):
     assert (
         ReviewStore(path).source_proposal(env.proposal.source.source_id) == env.proposal
     )
+
+
+def failing_client(env, monkeypatch, error):
+    calls = []
+
+    def generate_json(task, system, user, schema):
+        calls.append(task)
+        raise error
+
+    monkeypatch.setattr(env.client, "generate_json", generate_json)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("revision evidence outside supplied source"),
+        LlmTimeout(),
+        InvalidJson(),
+        SchemaMismatch(),
+        MissingOutput(),
+        Refusal(),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_failed_revise_stops_calling_llm_after_limit(env, monkeypatch, error):
+    decision = verdict(env, "revise")
+    calls = failing_client(env, monkeypatch, error)
+    for _ in range(MAX_REVISE_FAILURES + 3):
+        report = env.courier.scan_once()
+    assert len(calls) == MAX_REVISE_FAILURES
+    assert set(report.problems.values()) == {"revise_exhausted"}
+    assert env.store.review(decision.proposal_id, 1) is None
+    assert list(env.paths.decisions.iterdir())
+    with pytest.raises(ValueError, match="exhausted"):
+        env.handler.apply(decision)
+    assert len(calls) == MAX_REVISE_FAILURES
+
+
+def test_revise_failure_count_survives_restart(env, monkeypatch):
+    verdict(env, "revise")
+    calls = failing_client(env, monkeypatch, LlmTimeout())
+    for _ in range(MAX_REVISE_FAILURES - 1):
+        env.courier.scan_once()
+    env.handler.store = ReviewStore(env.store.path)
+    for _ in range(3):
+        env.courier.scan_once()
+    assert len(calls) == MAX_REVISE_FAILURES
+
+
+@pytest.mark.parametrize("error", [UsageLimited(), LlmUnavailable()])
+def test_unavailable_llm_does_not_spend_revise_attempts(env, monkeypatch, error):
+    decision = verdict(env, "revise")
+    calls = failing_client(env, monkeypatch, error)
+    for _ in range(MAX_REVISE_FAILURES + 2):
+        report = env.courier.scan_once()
+    assert len(calls) == MAX_REVISE_FAILURES + 2
+    assert "revise_exhausted" not in report.problems.values()
+    monkeypatch.undo()
+    env.courier.scan_once()
+    assert env.store.latest_rev(decision.proposal_id) == 2
+
+
+@pytest.mark.parametrize(
+    "kind,changes",
+    [("reject", {}), ("revise", {"instruction": "요청 내용은 유지하고 다시 확인"})],
+)
+def test_exhausted_revise_allows_a_different_verdict(env, monkeypatch, kind, changes):
+    decision = verdict(env, "revise")
+    failing_client(env, monkeypatch, ValueError("invalid"))
+    for _ in range(MAX_REVISE_FAILURES):
+        env.courier.scan_once()
+    monkeypatch.undo()
+    verdict(env, kind, **changes)
+    report = env.courier.scan_once()
+    assert report.problems == {}
+    assert env.store.is_applied(decision.proposal_id, 1)
