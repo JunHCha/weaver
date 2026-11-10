@@ -76,3 +76,12 @@ def test_invalid_references_rollback_and_valid_batch(tmp_path):
     store.append([draft("r", retracts="d")])
     with pytest.raises(InvalidReference):
         store.append([draft("rr", retracts="r")])
+
+
+def test_effective_tags_and_retracted_correction(tmp_path):
+    store = FabricStore(tmp_path / "db")
+    store.append([draft("a", tags=["A"]), draft("b", kind="태그정정", correction={"target": "a", "remove": ["A"], "add": ["B"]}), draft("c", kind="태그정정", correction={"target": "a", "remove": ["B"], "add": ["C"]})])
+    assert [t.thread_id for t in store.entries(ThreadQuery(tag="C"))] == ["a"]
+    store.append([draft("r", retracts="c")])
+    assert [t.thread_id for t in store.entries(ThreadQuery(tag="B"))] == ["a"]
+    assert store.entries(ThreadQuery(tag="C")) == []

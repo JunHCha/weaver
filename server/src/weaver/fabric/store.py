@@ -166,7 +166,16 @@ class FabricStore:
         """Read immutable facts in occurrence, recording, sequence order."""
         query = ThreadQuery.model_validate(query.model_dump())
         with self._connect() as db:
-            rows = db.execute("SELECT seq, payload FROM threads WHERE seq > ?", (query.after_seq,)).fetchall()
+            rows = db.execute("SELECT seq, payload FROM threads").fetchall()
         result = [Thread.model_validate({**json.loads(payload), "seq": seq}) for seq, payload in rows]
-        result = [t for t in result if (query.kind is None or t.kind == query.kind) and (query.since is None or t.occurred_at >= query.since) and (query.until is None or t.occurred_at < query.until) and (query.tag is None or query.tag in t.tags)]
+        result.sort(key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
+        retracted = {t.retracts for t in result if t.retracts is not None}
+        effective = {t.thread_id: list(dict.fromkeys(t.tags)) for t in result}
+        for t in result:
+            if t.correction is not None and t.thread_id not in retracted and t.retracts is None:
+                tags = effective[t.correction.target]
+                tags[:] = [tag for tag in tags if tag not in t.correction.remove]
+                tags.extend(tag for tag in t.correction.add if tag not in tags)
+        result = [t.model_copy(update={"tags": effective[t.thread_id]}) for t in result]
+        result = [t for t in result if t.seq > query.after_seq and (query.kind is None or t.kind == query.kind) and (query.since is None or t.occurred_at >= query.since) and (query.until is None or t.occurred_at < query.until) and (query.tag is None or query.tag in t.tags)]
         return sorted(result, key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
