@@ -5,15 +5,18 @@ from pathlib import Path
 
 from weaver.archive import ArchiveStore
 from weaver.courier.atomic import write_json_atomic
+from weaver.fabric.v2 import Fabric, ThreadQuery
+from weaver.loom.calendar_v2 import approved_schedules, write_approved_schedules
 from weaver.loom.summary import SummaryDrafts
-from weaver.loom.summary_review import SummaryReview
+from weaver.loom.summary_review import Prepared, SummaryReview
+from weaver.loom.summary_state import SummaryState
 from weaver.schema import Source
 from weaver.schema.v2 import EventSummary, ReviewPackage, Verdict
 from weaver.spinner import Spinner
 from weaver.wiki.compiler import Summary
 
 from .gate import Interrupted, LlmGate
-from .loop import Outcome
+from .loop import Outcome, VaultPublisher
 
 
 class SummaryLookup:
@@ -122,3 +125,45 @@ class SummaryProcessor:
             raise Interrupted()
         self.drafts.create(source.source_id, script.text, source.hints.counterpart)
         return "done"
+
+
+class SchedulePublisher:
+    """Reproject approved schedules from the full log on every runtime tick."""
+
+    def __init__(
+        self,
+        root: Path,
+        fabric: Fabric,
+        state: SummaryState,
+        publisher: VaultPublisher | None,
+    ) -> None:
+        self.root, self.fabric, self.state, self.publisher = (
+            root,
+            fabric,
+            state,
+            publisher,
+        )
+
+    def publish(self) -> None:
+        with self.state.connect() as db:
+            rows = db.execute(
+                "SELECT id, prepared FROM reviews WHERE stage='APPLIED'"
+            ).fetchall()
+        snapshot = self.fabric.entries(ThreadQuery())
+        by_id = {thread.thread_id: thread for thread in snapshot}
+        schedules = []
+        for package_id, raw in rows:
+            prepared = Prepared.model_validate_json(raw)
+            if prepared.summary is None:
+                continue
+            selected = [
+                by_id[t.thread_id] for t in prepared.threads if t.thread_id in by_id
+            ]
+            schedules.extend(
+                approved_schedules(
+                    package_id, prepared.summary.summary_id, selected, snapshot
+                )
+            )
+        write_approved_schedules(self.root, schedules)
+        if self.publisher is not None:
+            self.publisher.publish()

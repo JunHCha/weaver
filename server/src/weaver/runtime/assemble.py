@@ -44,7 +44,7 @@ from .pipeline import (
     GatedLlm,
     llm_status,
 )
-from .summary import ReviewAdapter, SummaryLookup, SummaryProcessor
+from .summary import ReviewAdapter, SchedulePublisher, SummaryLookup, SummaryProcessor
 from .wiki import WikiJob
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
@@ -127,6 +127,7 @@ def build_runtime(
         summaries.archive,
         state_root=config.state_root,
         proposals=config.courier.proposals,
+        timezone=config.time.timezone,
     )
     adapter = ReviewAdapter(review, summaries)
     courier = CourierV2(config.courier, archive, adapter, adapter)
@@ -172,6 +173,8 @@ def build_runtime(
         ledger=ledger,
         gate=gate,
         interval=interval,
-        publisher=plugins.publisher,
+        publisher=SchedulePublisher(
+            config.sync_root, fabric_v2, review.state, plugins.publisher
+        ),
         maintenance=maintenance,
     )

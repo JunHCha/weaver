@@ -160,8 +160,9 @@ class ContextDictionary:
         """Return the exact canonical name's kind, preferring its wiki entry."""
         with self._connect() as db:
             row = db.execute(
-                "SELECT kind FROM wiki WHERE name=? UNION ALL "
-                "SELECT kind FROM learned WHERE name=? LIMIT 1",
+                "SELECT kind FROM (SELECT kind, 0 AS priority FROM wiki WHERE name=? "
+                "UNION ALL SELECT kind, 1 AS priority FROM learned WHERE name=?) "
+                "ORDER BY priority LIMIT 1",
                 (name, name),
             ).fetchone()
         if row is None:

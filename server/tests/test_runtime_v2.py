@@ -411,3 +411,146 @@ def test_wiki_config_rejects_invalid_values(tmp_path):
         config_file.write_text(roots + "\n[wiki]\n" + value)
         with pytest.raises(ConfigError):
             load_config(config_file, init_directories=True)
+
+
+def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
+    import json
+    from datetime import UTC, datetime
+
+    from weaver.fabric.v2 import FabricStore, ThreadQuery
+    from weaver.schema.v2 import ApprovedSchedule, ThreadDraft
+
+    class ScheduleLlm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            if task == "loom.approve":
+                assert json.loads(user)["timezone"] == "America/New_York"
+                base = {
+                    "occurred_at": "2026-01-01T00:00:00Z",
+                    "tags": [],
+                    "resolves": None,
+                    "retracts": None,
+                }
+                return schema.model_validate(
+                    {
+                        "body": "요약",
+                        "corrections": [],
+                        "threads": [
+                            base
+                            | {
+                                "kind": "요청",
+                                "content": "준비",
+                                "field": None,
+                                "value": None,
+                                "direction": "받음",
+                            },
+                            base
+                            | {
+                                "kind": "일정",
+                                "content": "회의",
+                                "field": "schedule",
+                                "value": {
+                                    "start": "2026-01-02T09:00:00",
+                                    "end": None,
+                                    "timezone": None,
+                                },
+                                "direction": None,
+                                "blocked_by_index": 0,
+                            },
+                        ],
+                    }
+                )
+            return super().generate_json(task, system, user, schema)
+
+    config_file = tmp_path / "server.toml"
+    config_file.write_text(
+        "\n".join(
+            f'{key}_root = "{key}"'
+            for key in ("sync", "archive", "vault", "state", "log")
+        )
+        + '\n[time]\ntimezone = "America/New_York"\n'
+    )
+    config = load_config(config_file, init_directories=True)
+    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    package, _ = runtime.processor.drafts.create(
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문"
+    )
+    (config.courier.decisions / f"{package.package_id}.r1.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "package_id": package.package_id,
+                "revision": 1,
+                "action": "approve",
+                "answers": [],
+                "edited_body": None,
+                "feedback": None,
+            }
+        )
+    )
+    runtime._tick(threading.Event())
+    fabric = FabricStore.from_config(config)
+    request, schedule = fabric.entries(ThreadQuery())
+    path = config.courier.proposals / "schedules" / f"{schedule.thread_id}.json"
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert (result.package_id, result.blocked_by, result.timezone, result.revision) == (
+        package.package_id,
+        request.thread_id,
+        "America/New_York",
+        1,
+    )
+    assert (
+        config.archive_root
+        / "summaries"
+        / result.summary_id[:2]
+        / f"{result.summary_id}.json"
+    ).exists()
+    runtime._tick(threading.Event())
+    assert ApprovedSchedule.model_validate_json(path.read_text()).revision == 1
+    now = datetime.now(UTC)
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="decision",
+                kind="결정",
+                content="완료",
+                occurred_at=now,
+                recorded_at=now,
+                tags=[],
+                field=None,
+                value=None,
+                source_id=package.source_id,
+                actor="human",
+                direction=None,
+                resolves=request.thread_id,
+                retracts=None,
+                correction=None,
+            )
+        ]
+    )
+    runtime._tick(threading.Event())
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert result.blocked_by is None and result.revision == 2
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="withdrawal",
+                kind="기록",
+                content="취소",
+                occurred_at=now,
+                recorded_at=now,
+                tags=[],
+                field=None,
+                value=None,
+                source_id=package.source_id,
+                actor="human",
+                direction=None,
+                resolves=None,
+                retracts=schedule.thread_id,
+                correction=None,
+            )
+        ]
+    )
+    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    runtime._tick(threading.Event())
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert result.retracted and result.revision == 3
