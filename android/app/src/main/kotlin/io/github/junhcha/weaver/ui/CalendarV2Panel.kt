@@ -60,11 +60,7 @@ fun CalendarV2Panel(packageId: String) {
         }
         selected?.let { Text("선택됨: ${it.name} · ${it.account}") }
         schedules.forEach { schedule ->
-            Text("${schedule.title} · ${schedule.start} ~ ${schedule.end ?: "1시간"}")
-            when {
-                schedule.retracted -> Text("철회됨 · 캘린더에서 직접 등록 해제하세요")
-                schedule.blockedBy != null -> Text("요청 ${schedule.blockedBy} 미해소 · 등록 차단")
-                else -> OutlinedButton(enabled = !busy && selected != null, onClick = {
+            CalendarV2Schedule(schedule, !busy && selected != null) {
                     val target = checkNotNull(selected)
                     busy = true
                     scope.launch {
@@ -72,9 +68,18 @@ fun CalendarV2Panel(packageId: String) {
                             .onSuccess { message = it }.onFailure { message = "등록 실패 · 다시 시도하세요" }
                         busy = false
                     }
-                }) { Text("캘린더에 등록") }
             }
         }
         if (message.isNotEmpty()) Text(message)
+    }
+}
+
+@Composable
+internal fun CalendarV2Schedule(schedule: ApprovedSchedule, enabled: Boolean, onRegister: () -> Unit) {
+    Text("${schedule.title} · ${schedule.start} ~ ${schedule.end ?: "1시간"}")
+    when {
+        schedule.retracted -> Text("철회됨 · 캘린더에서 직접 등록 해제하세요")
+        schedule.blockedBy != null -> Text("요청 ${schedule.blockedBy} 미해소 · 등록 차단")
+        else -> OutlinedButton(enabled = enabled, onClick = onRegister) { Text("캘린더에 등록") }
     }
 }
