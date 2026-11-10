@@ -7,6 +7,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, JsonValue
 
@@ -18,6 +19,7 @@ from weaver.loom.summary_state import SummaryState
 from weaver.schema.v2 import (
     EventSummary,
     ReviewPackage,
+    ScheduleValue,
     ThreadDraft,
     ThreadSink,
     Verdict,
@@ -44,6 +46,7 @@ class ExtractedThread(BaseModel):
     direction: Literal["받음", "보냄"] | None
     resolves: str | None
     retracts: str | None
+    blocked_by_index: int | None = None
 
 
 class ApprovedResponse(BaseModel):
@@ -83,7 +86,9 @@ class SummaryReview:
         *,
         state_root: Path,
         proposals: Path | None = None,
+        timezone: str = "Asia/Seoul",
     ) -> None:
+        self.timezone = ZoneInfo(timezone).key
         self.llm = llm
         self.context = context
         self.sink = sink
@@ -296,9 +301,17 @@ class SummaryReview:
                 "사람이 작성한 본문에서 사실만 추출한다."
                 if verdict.action == "edit"
                 else "검토 답을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
+            )
+            + (
+                " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
+                " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
+                " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
+                " blocked_by_index에 같은 응답 threads 배열의 요청 인덱스(0부터)를 쓴다."
+                " 의존 관계를 추측하지 말고 없거나 불확실하면 null로 둔다."
             ),
             json.dumps(
                 {
+                    "timezone": self.timezone,
                     "body": verdict.edited_body
                     if verdict.action == "edit"
                     else package.draft_body,
@@ -323,18 +336,61 @@ class SummaryReview:
             ).encode()
         ).hexdigest()
         summary = EventSummary.model_validate({"summary_id": digest, **fields})
-        drafts = [
-            ThreadDraft(
-                thread_id="thr_"
-                + hashlib.sha256(f"{digest}:{index}".encode()).hexdigest(),
-                **thread.model_dump(),
-                recorded_at=timestamp,
-                source_id=package.source_id,
-                actor="human" if verdict.action == "edit" else "ai_approved",
-                correction=None,
-            )
-            for index, thread in enumerate(response.threads)
+        ids = [
+            "thr_" + hashlib.sha256(f"{digest}:{index}".encode()).hexdigest()
+            for index in range(len(response.threads))
         ]
+        drafts: list[ThreadDraft] = []
+        for thread in response.threads:
+            data = thread.model_dump(exclude={"blocked_by_index"})
+            if thread.field == "schedule" and thread.value is not None:
+                if not isinstance(thread.value, dict):
+                    raise ValueError("schedule value must be an object")
+                value = dict(thread.value)
+                zone_name = value.get("timezone")
+                if zone_name is None:
+                    zone_name = self.timezone
+                if not isinstance(zone_name, str):
+                    raise ValueError("schedule timezone must be a string")
+                zone = ZoneInfo(zone_name)
+                value["timezone"] = zone.key
+                for key in ("start", "end"):
+                    raw = value.get(key)
+                    if raw is not None:
+                        if not isinstance(raw, str):
+                            raise ValueError("schedule time must be a string")
+                        dt = datetime.fromisoformat(raw)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=zone)
+                            if dt.astimezone(UTC).astimezone(zone).replace(
+                                tzinfo=None
+                            ) != dt.replace(tzinfo=None):
+                                raise ValueError("nonexistent local schedule time")
+                        value[key] = dt.isoformat()
+                data["value"] = ScheduleValue.model_validate(value).model_dump(
+                    mode="json"
+                )
+            index = thread.blocked_by_index
+            if index is not None and (
+                thread.kind != "일정"
+                or index < 0
+                or index >= len(response.threads)
+                or response.threads[index].kind != "요청"
+            ):
+                raise ValueError(
+                    "blocked_by_index must reference a request in this batch"
+                )
+            drafts.append(
+                ThreadDraft(
+                    thread_id=ids[len(drafts)],
+                    **data,
+                    blocked_by=ids[index] if index is not None else None,
+                    recorded_at=timestamp,
+                    source_id=package.source_id,
+                    actor="human" if verdict.action == "edit" else "ai_approved",
+                    correction=None,
+                )
+            )
         corrections = response.corrections if verdict.action == "approve" else []
         for correction in corrections:
             if (

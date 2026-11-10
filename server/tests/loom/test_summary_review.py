@@ -347,3 +347,148 @@ def test_feedback_publication_failure_replays_prepared_revision(
     assert llm.calls == 1
     assert review.state.load_package("pkg", 2) == (result, "원문")
     assert (tmp_path / "proposals/pkg.r2.diff").is_file()
+
+
+def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            assert "명시" in system and "blocked_by_index" in system
+            assert json.loads(user)["timezone"] == "America/New_York"
+            base = {
+                "occurred_at": NOW.isoformat(),
+                "tags": [],
+                "direction": None,
+                "resolves": None,
+                "retracts": None,
+            }
+            return schema.model_validate(
+                {
+                    "body": "요청을 마치면 회의한다. 별도 회의도 한다.",
+                    "corrections": [],
+                    "threads": [
+                        base
+                        | {
+                            "kind": "요청",
+                            "content": "자료를 요청했다",
+                            "direction": "받음",
+                            "field": None,
+                            "value": None,
+                        },
+                        base
+                        | {
+                            "kind": "일정",
+                            "content": "요청을 마치면 회의한다",
+                            "field": "schedule",
+                            "value": {
+                                "start": "2026-01-02T09:00:00",
+                                "end": "2026-01-02T10:00:00",
+                                "timezone": None,
+                            },
+                            "blocked_by_index": 0,
+                        },
+                        base
+                        | {
+                            "kind": "일정",
+                            "content": "별도 회의",
+                            "field": "schedule",
+                            "value": {"start": "2026-01-03T09:00:00", "end": None},
+                            "blocked_by_index": None,
+                        },
+                    ],
+                }
+            )
+
+    sink = FakeSink()
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        timezone="America/New_York",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "원문", verdict, now=NOW)
+    assert sink.drafts[1].blocked_by == sink.drafts[0].thread_id
+    assert sink.drafts[2].blocked_by is None
+    assert sink.drafts[1].value == {
+        "start": "2026-01-02T09:00:00-05:00",
+        "end": "2026-01-02T10:00:00-05:00",
+        "timezone": "America/New_York",
+    }
+
+
+def test_schedule_extraction_rejects_invalid_times_and_references(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    class Llm(FakeLlm):
+        value: object = None
+        index: int | None = None
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            return schema.model_validate(
+                {
+                    "body": "회의",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "일정",
+                            "content": "회의",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": [],
+                            "field": "schedule",
+                            "value": self.value,
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                            "blocked_by_index": self.index,
+                        }
+                    ],
+                }
+            )
+
+    llm = Llm()
+    sink = FakeSink()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    for value, index in [
+        ({"start": "invalid", "end": None}, None),
+        ({"start": "2026-01-02T10:00:00", "end": "2026-01-02T09:00:00"}, None),
+        ({"start": "2026-01-02T10:00:00", "end": None}, 0),
+    ]:
+        llm.value, llm.index = value, index
+        with pytest.raises(ValueError):
+            review.approve(package(), "원문", verdict, now=NOW)
+    assert sink.drafts == []
