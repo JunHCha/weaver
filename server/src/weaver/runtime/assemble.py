@@ -4,24 +4,21 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from weaver.alert import ScheduleAlertDetector
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
-from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
+from weaver.context import ContextDictionary
+from weaver.courier import SCAN_INTERVAL_SECONDS
+from weaver.courier.courier_v2 import CourierV2
 from weaver.fabric.store import FabricStore
+from weaver.fabric.v2 import FabricStore as FabricV2
 from weaver.llm import create_client
 from weaver.llm.types import LlmClient
 from weaver.loom import (
-    CourierPublisher,
-    CourierReviewAdapter,
     FeedbackSink,
-    LlmExtractor,
-    Proposer,
     ReviewStore,
-    RuleRefiner,
-    SqliteFeedbackStore,
-    VerdictHandler,
 )
+from weaver.loom.summary import SummaryDrafts
+from weaver.loom.summary_review import SummaryReview
 from weaver.publish import (
     AiFolder,
     EntityDirectory,
@@ -41,15 +38,14 @@ from .ledger import RuntimeLedger
 from .loop import MaintenanceTask, Runtime, VaultPublisher
 from .pipeline import (
     AlertDetector,
-    AlertingPublisher,
     EntityIndexSource,
     GatedLlm,
-    TextSourceProcessor,
     llm_status,
 )
+from .summary import ReviewAdapter, SummaryLookup, SummaryProcessor
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
-CONFIGURATION_VERSION = "weaver.runtime.v1"
+CONFIGURATION_VERSION = "weaver.runtime.v2"
 # Raw-fragment retention is counted in days; a few runs a day are plenty.
 FEEDBACK_PURGE_INTERVAL_SECONDS = 6 * 3600.0
 
@@ -118,25 +114,19 @@ def build_runtime(
         gate = LlmGate(lambda: llm_status(config.llm, env))
     client = GatedLlm(real, gate)
     archive = ArchiveStore.from_config(config)
-    reviews = ReviewStore.from_config(config)
-    store = SqliteFeedbackStore.from_config(config, reviews)
-    fabric = FabricStore.from_config(config)
-    publisher = CourierPublisher(reviews)
-    alerting = AlertingPublisher(
-        publisher,
-        plugins.alerts or ScheduleAlertDetector.from_config(config, fabric),
-        publisher,
-    )
-    handler = VerdictHandler(
-        reviews,
-        fabric,
-        alerting,
-        plugins.feedback or store,
+    context = ContextDictionary(config.state_root)
+    fabric_v2 = FabricV2.from_config(config)
+    summaries = SummaryLookup(config.archive_root / "summaries", archive)
+    review = SummaryReview(
         client,
+        context,
+        fabric_v2,
+        summaries.archive,
+        state_root=config.state_root,
+        proposals=config.courier.proposals,
     )
-    adapter = CourierReviewAdapter(handler)
-    courier = Courier(config.courier, archive, adapter, adapter)
-    publisher.courier = courier
+    adapter = ReviewAdapter(review, summaries)
+    courier = CourierV2(config.courier, archive, adapter, adapter)
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     spinner = Spinner.from_config(
         archive,
@@ -144,20 +134,11 @@ def build_runtime(
         configuration_version=CONFIGURATION_VERSION,
         reviser=LlmReviser(client),
     )
-    processor = TextSourceProcessor(
-        spinner=spinner,
-        refiner=RuleRefiner(config.refiner),
-        extractor=LlmExtractor(
-            client,
-            timezone=config.time.timezone,
-            examples=store if config.feedback.examples else None,
-        ),
-        proposer=Proposer(reviews, alerting),
-        reviews=reviews,
-        entities=plugins.entities or store,
-        cache=ledger,
-        gate=gate,
+    drafts = SummaryDrafts(
+        client, context, config.courier.proposals, state_root=config.state_root
     )
+    processor = SummaryProcessor(spinner, drafts, gate)
+
     return Runtime(
         state_root=config.state_root,
         scanner=courier,
@@ -167,12 +148,6 @@ def build_runtime(
         ledger=ledger,
         gate=gate,
         interval=interval,
-        publisher=plugins.publisher
-        or vault_publisher(config, fabric, plugins.entities or store, reviews),
-        maintenance=[
-            MaintenanceTask(
-                "feedback_purge", FEEDBACK_PURGE_INTERVAL_SECONDS, store.purge
-            ),
-            *plugins.maintenance,
-        ],
+        publisher=plugins.publisher,
+        maintenance=plugins.maintenance,
     )

@@ -239,9 +239,6 @@ def test_offline_tick_archives_and_reports_llm_skipped(tmp_path, caplog):
     (config.courier.outbox / f"{CAP}.json").write_text(json.dumps(raw))
 
     runtime = build_runtime(config, environ={})
-    # #27 store is the FeedbackSink/EntityIndex source and is purged periodically.
-    assert (config.state_root / "feedback.sqlite3").exists()
-    assert [task.name for task in runtime.maintenance] == ["feedback_purge"]
     stop = threading.Event()
     waits = iter([False, True])
     runtime._wait = lambda _timeout: next(waits)  # two ticks, no real sleep
@@ -354,4 +351,5 @@ def test_damaged_archive_row_does_not_block_others(tmp_path):
         {"source_id": rows[0][0], "error_class": "ValidationError"}
     ]
     assert sum(status["sources"].values()) == 2
-    assert runtime.feed.source_rows(exclude=runtime.ledger.final_ids()) == []
+    assert len(runtime.feed.source_rows(exclude=runtime.ledger.final_ids())) == 1
+    assert status["sources"]["waiting_llm"] == 1
