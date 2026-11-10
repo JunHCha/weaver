@@ -210,3 +210,10 @@ def test_query_filters_use_effective_tags_and_time_bounds(tmp_path):
         )
     ] == ["a"]
     assert store.entries(ThreadQuery(kind="기록", tag="A")) == []
+
+
+def test_config_uses_separate_v2_database(tmp_path):
+    from types import SimpleNamespace
+
+    config = SimpleNamespace(state_root=tmp_path)
+    assert FabricStore.from_config(config).path.name == "fabric-v2.sqlite3"
