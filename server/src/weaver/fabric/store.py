@@ -1,372 +1,140 @@
-"""Append-only local facts; state folding and execution eligibility are separate.
+"""Append-only SQLite storage for version 2 Threads."""
 
-Times are supplied by the materializer, never rewritten on retry. v1 requires
-known, timezone-aware occurred_at and recorded_at. Queries compare UTC instants,
-using (occurred_at, recorded_at, entry_id), or (recorded_at, entry_id).
-Bounds are inclusive since, exclusive until, on the selected ordering clock.
-"""
-
-import fcntl
 import json
-import os
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from collections.abc import Iterator
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from weaver.config import ServerConfig
-from weaver.schema import EntityState, Thread
-from weaver.schema.models import EntityId, ThreadKind, ThreadSource, Timestamp
-
-SCHEMA_VERSION = 1
-_REFERENCES = ("supersedes", "retracts", "resolves", "blocked_by_request")
-_SCHEMA = (
-    """CREATE TABLE entries (
-        entry_id TEXT PRIMARY KEY NOT NULL,
-        kind TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        occurred_at TEXT NOT NULL,
-        recorded_at TEXT NOT NULL,
-        supersedes TEXT REFERENCES entries(entry_id) DEFERRABLE INITIALLY DEFERRED,
-        retracts TEXT REFERENCES entries(entry_id) DEFERRABLE INITIALLY DEFERRED,
-        resolves TEXT REFERENCES entries(entry_id) DEFERRABLE INITIALLY DEFERRED,
-        blocked_by_request TEXT REFERENCES entries(entry_id)
-            DEFERRABLE INITIALLY DEFERRED,
-        entry_json TEXT NOT NULL
-    )""",
-    """CREATE TABLE entry_entities (
-        entry_id TEXT NOT NULL REFERENCES entries(entry_id),
-        entity_id TEXT NOT NULL,
-        PRIMARY KEY (entry_id, entity_id)
-    )""",
-    "CREATE INDEX entries_occurred ON entries(occurred_at, recorded_at, entry_id)",
-    "CREATE INDEX entries_recorded ON entries(recorded_at, entry_id)",
-    "CREATE INDEX entries_kind ON entries(kind, occurred_at, recorded_at, entry_id)",
-    "CREATE INDEX entries_source ON entries(source_id, occurred_at, recorded_at, entry_id)",
-    "CREATE INDEX entities_lookup ON entry_entities(entity_id, entry_id)",
-    *(f"CREATE INDEX entries_{field} ON entries({field})" for field in _REFERENCES),
-    *(
-        f"""CREATE TRIGGER {table}_no_{operation.lower()}
-        BEFORE {operation} ON {table}
-        BEGIN SELECT RAISE(ABORT, 'Fabric is append-only'); END"""
-        for table in ("entries", "entry_entities")
-        for operation in ("UPDATE", "DELETE")
-    ),
-    # REPLACE can bypass DELETE triggers with recursive_triggers=OFF.
-    """CREATE TRIGGER entries_no_replace BEFORE INSERT ON entries
-        WHEN EXISTS (SELECT 1 FROM entries WHERE entry_id = NEW.entry_id)
-        BEGIN SELECT RAISE(ABORT, 'Fabric duplicate entry'); END""",
-    """CREATE TRIGGER entities_no_replace BEFORE INSERT ON entry_entities
-        WHEN EXISTS (SELECT 1 FROM entry_entities
-                     WHERE entry_id = NEW.entry_id AND entity_id = NEW.entity_id)
-        BEGIN SELECT RAISE(ABORT, 'Fabric duplicate entity link'); END""",
-)
+from weaver.schema.v2 import Thread, ThreadDraft
 
 
 class FabricError(Exception):
-    """Storage failure; messages do not include fact content."""
+    """Fabric storage error."""
 
 
 class SchemaVersionError(FabricError):
-    """An unsupported DB version must be migrated by a newer implementation."""
+    """Unsupported database version."""
 
 
 class ThreadConflict(FabricError):
-    """An ID was reused with different content, in storage or inside a batch."""
-
-    def __init__(self, entry_id: str) -> None:
-        self.entry_id = entry_id
-        super().__init__("entry_id already has different content")
+    """A thread identifier was reused with different content."""
 
 
 class InvalidReference(FabricError):
-    """Structured reference error for callers; never includes Thread.value."""
-
-    def __init__(self, entry_id: str, field: str, reason: str) -> None:
-        self.entry_id = entry_id
-        self.field = field
-        self.reason = reason
-        super().__init__(f"invalid {field}: {reason}")
+    """A thread references an invalid target."""
 
 
 class ThreadQuery(BaseModel):
-    """AND filters; UTC bounds apply to order_by, default occurrence time.
-
-    Empty query returns all immutable facts, including retracted/superseded
-    entries. No state folding or action permission is implied by this API.
-    """
+    """Filters over occurrence time and the append sequence."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    entity_id: EntityId | None = None
-    kind: ThreadKind | None = None
-    source_id: ThreadSource | None = None
-    since: Timestamp | None = None
-    until: Timestamp | None = None
-    order_by: Literal["occurred_at", "recorded_at"] = "occurred_at"
-    descending: bool = False
+    after_seq: int = 0
+    since: datetime | None = None
+    until: datetime | None = None
+    kind: str | None = None
+    tag: str | None = None
 
     @model_validator(mode="after")
-    def time_range(self) -> "ThreadQuery":
-        if self.since is not None and self.until is not None:
-            if self.since.astimezone(UTC) > self.until.astimezone(UTC):
-                raise ValueError("since must not be after until")
+    def validate_range(self) -> "ThreadQuery":
+        if self.after_seq < 0:
+            raise ValueError("after_seq must be nonnegative")
+        if any(t is not None and t.utcoffset() is None for t in (self.since, self.until)):
+            raise ValueError("timestamps must be timezone-aware")
+        if self.since and self.until and self.since > self.until:
+            raise ValueError("since must not be after until")
         return self
 
 
 class Fabric(Protocol):
-    """Append-only facts and deterministic current state; no execution permission."""
+    """Append-only thread log."""
 
-    def append(self, entries: list[Thread]) -> None: ...
+    def append(self, threads: list[ThreadDraft]) -> list[Thread]: ...
     def entries(self, query: ThreadQuery) -> list[Thread]: ...
-    def state(self, entity_id: str) -> EntityState: ...
 
 
 def _time(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
-def _canonical(entry: Thread) -> str:
-    payload = entry.model_dump(mode="json")
-    payload["occurred_at"] = _time(entry.occurred_at)
-    payload["recorded_at"] = _time(entry.recorded_at)
-    if entry.request is not None and entry.request.due_at is not None:
-        payload["request"]["due_at"] = _time(entry.request.due_at)
-    return json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+def _canonical(item: ThreadDraft) -> str:
+    data = item.model_dump(mode="json")
+    data["occurred_at"] = _time(item.occurred_at)
+    data["recorded_at"] = _time(item.recorded_at)
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 class FabricStore:
-    """SQLite v1 store, one connection per call, safe across threads/processes.
-
-    Production callers use from_config to select state_root/fabric.sqlite3,
-    outside Courier and the vault. Explicit paths support isolated tests/tools.
-    BEGIN IMMEDIATE serializes validation and writes; deferred FKs allow forward
-    references within an atomic batch. No connections survive method return.
-    """
+    """SQLite log; each write is serialized in a single immediate transaction."""
 
     def __init__(self, path: Path) -> None:
         self.path = path.resolve()
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # journal_mode transitions can return SQLITE_BUSY without honoring the
-        # busy timeout. Serialize initialization across processes and threads.
-        with self._init_lock():
-            self._initialize()
-
-    @contextmanager
-    def _init_lock(self) -> Iterator[None]:
-        lock = self.path.with_name("." + self.path.name + ".lock")
-        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(fd)
-
-    def _initialize(self) -> None:
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
-        os.close(fd)
-        # Repair existing files before SQLite can read them or create sidecars.
-        self._restrict_permissions()
         with self._connect() as db:
-            if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
-                raise FabricError("SQLite WAL is unavailable")
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
-                for statement in _SCHEMA:
-                    db.execute(statement)
-                db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            elif version != SCHEMA_VERSION:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
+                    raise SchemaVersionError("unversioned database is not empty")
+                db.execute("CREATE TABLE threads (seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)")
+                for op in ("UPDATE", "DELETE"):
+                    db.execute(f"CREATE TRIGGER threads_no_{op.lower()} BEFORE {op} ON threads BEGIN SELECT RAISE(ABORT, 'append only'); END")
+                db.execute("CREATE TRIGGER threads_no_replace BEFORE INSERT ON threads WHEN EXISTS (SELECT 1 FROM threads WHERE thread_id=NEW.thread_id OR seq=NEW.seq) BEGIN SELECT RAISE(ABORT, 'duplicate'); END")
+                db.execute("PRAGMA user_version=2")
+            elif version != 2:
                 raise SchemaVersionError("unsupported Fabric database version")
             db.commit()
-        self._restrict_permissions()
-
-    def _restrict_permissions(self) -> None:
-        # WAL and SHM may still exist while another connection is open. Newly
-        # created sidecars inherit the now-private DB mode, independent of umask.
-        for suffix in ("", "-wal", "-shm"):
-            with suppress(FileNotFoundError):
-                os.chmod(f"{self.path}{suffix}", 0o600)
+        self.path.chmod(0o600)
 
     @classmethod
     def from_config(cls, config: ServerConfig) -> "FabricStore":
+        """Use the configured private state directory."""
         return cls(config.state_root / "fabric.sqlite3")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         try:
-            db.execute("PRAGMA foreign_keys=ON")
-            if db.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                raise FabricError("SQLite foreign keys are unavailable")
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute("PRAGMA fullfsync=ON")
-            db.execute("PRAGMA checkpoint_fullfsync=ON")
             yield db
-        except sqlite3.Error as exc:
-            raise FabricError("Fabric SQLite operation failed") from exc
         finally:
             if db.in_transaction:
                 db.rollback()
             db.close()
 
-    def append(self, entries: list[Thread]) -> None:
-        """Append all or none; identical retries preserve timestamps and rows.
-
-        Replacement/retraction requires the same entity set and field. A
-        retraction cannot itself be retracted or superseded. Request references
-        target kind 요청; resolves additionally requires matching entities and a human
-        decision (enforced by Thread). All reference cycles are rejected.
-        """
-        batch: dict[str, Thread] = {}
-        payloads: dict[str, str] = {}
-        for supplied in entries:
-            # Revalidate mutable or model_copy-constructed instances as well.
-            item = Thread.model_validate(supplied.model_dump(mode="python"))
+    def append(self, threads: list[ThreadDraft]) -> list[Thread]:
+        """Append all drafts atomically; identical retries return original seqs."""
+        batch: dict[str, tuple[ThreadDraft, str]] = {}
+        for supplied in threads:
+            item = ThreadDraft.model_validate(supplied.model_dump(mode="python"))
             payload = _canonical(item)
-            if item.entry_id in payloads and payloads[item.entry_id] != payload:
-                raise ThreadConflict(item.entry_id)
-            batch[item.entry_id] = item
-            payloads[item.entry_id] = payload
-        if not batch:
-            return
+            if item.thread_id in batch and batch[item.thread_id][1] != payload:
+                raise ThreadConflict(item.thread_id)
+            batch[item.thread_id] = (item, payload)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            fresh = {}
-            for key, item in batch.items():
-                row = db.execute(
-                    "SELECT entry_json FROM entries WHERE entry_id=?", (key,)
-                ).fetchone()
-                if row is None:
-                    fresh[key] = item
-                elif row[0] != payloads[key]:
-                    raise ThreadConflict(key)
-            self._validate_references(db, batch)
-            for key, item in fresh.items():
-                db.execute(
-                    "INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        key,
-                        item.kind,
-                        item.source_id,
-                        _time(item.occurred_at),
-                        _time(item.recorded_at),
-                        item.supersedes,
-                        item.retracts,
-                        item.resolves,
-                        item.blocked_by_request,
-                        payloads[key],
-                    ),
-                )
-                db.executemany(
-                    "INSERT INTO entry_entities VALUES (?, ?)",
-                    [(key, entity) for entity in sorted(set(item.entities))],
-                )
-            db.commit()
-
-    @staticmethod
-    def _validate_references(db: sqlite3.Connection, batch: dict[str, Thread]) -> None:
-        targets = dict(batch)
-        edges: dict[str, set[str]] = {}
-        for key, item in batch.items():
-            if item.supersedes is not None and item.retracts is not None:
-                raise InvalidReference(key, "supersedes/retracts", "mutually_exclusive")
-            edges[key] = set()
-            for field in _REFERENCES:
-                target_id = getattr(item, field)
-                if target_id is None:
-                    continue
-                if target_id == key:
-                    raise InvalidReference(key, field, "self_reference")
-                if target_id not in targets:
-                    row = db.execute(
-                        "SELECT entry_json FROM entries WHERE entry_id=?", (target_id,)
-                    ).fetchone()
-                    if row is None:
-                        raise InvalidReference(key, field, "missing_target")
-                    targets[target_id] = Thread.model_validate_json(row[0])
-                target = targets[target_id]
-                if target_id in batch:
-                    edges[key].add(target_id)
-                if field in ("supersedes", "retracts"):
-                    if set(item.entities) != set(target.entities):
-                        raise InvalidReference(key, field, "entity_mismatch")
-                    if item.field != target.field:
-                        raise InvalidReference(key, field, "field_mismatch")
-                    if target.retracts is not None:
-                        reason = (
-                            "retraction_of_retraction"
-                            if field == "retracts"
-                            else "supersede_of_retraction"
-                        )
-                        raise InvalidReference(key, field, reason)
+            result: dict[str, Thread] = {}
+            for key, (item, payload) in batch.items():
+                row = db.execute("SELECT seq, payload FROM threads WHERE thread_id=?", (key,)).fetchone()
+                if row is not None:
+                    if row[1] != payload:
+                        raise ThreadConflict(key)
+                    seq = row[0]
                 else:
-                    if target.kind != "요청":
-                        raise InvalidReference(key, field, "target_not_request")
-                    if field == "resolves" and set(item.entities) != set(
-                        target.entities
-                    ):
-                        raise InvalidReference(key, field, "entity_mismatch")
-        # Kahn's algorithm avoids recursion limits on large valid batches.
-        incoming = dict.fromkeys(edges, 0)
-        for linked in edges.values():
-            for target_id in linked:
-                incoming[target_id] += 1
-        ready = [key for key, count in incoming.items() if count == 0]
-        visited = 0
-        while ready:
-            key = ready.pop()
-            visited += 1
-            for target_id in edges[key]:
-                incoming[target_id] -= 1
-                if incoming[target_id] == 0:
-                    ready.append(target_id)
-        if visited != len(edges):
-            raise InvalidReference(
-                next(k for k, n in incoming.items() if n), "references", "cycle"
-            )
+                    seq = db.execute("INSERT INTO threads(thread_id, payload) VALUES (?, ?)", (key, payload)).lastrowid
+                result[key] = Thread.model_validate({**item.model_dump(), "seq": seq})
+            db.commit()
+        return [result[t.thread_id] for t in threads]
 
     def entries(self, query: ThreadQuery) -> list[Thread]:
-        """Return facts with AND filters and a stable, total UTC ordering."""
-        # Validate copies constructed without Pydantic validation before SQL.
+        """Read immutable facts in occurrence, recording, sequence order."""
         query = ThreadQuery.model_validate(query.model_dump())
-        clauses, params = [], []
-        for field in ("kind", "source_id"):
-            value = getattr(query, field)
-            if value is not None:
-                clauses.append(f"e.{field} = ?")
-                params.append(value)
-        if query.entity_id is not None:
-            clauses.append(
-                "EXISTS (SELECT 1 FROM entry_entities t "
-                "WHERE t.entry_id=e.entry_id AND t.entity_id=?)"
-            )
-            params.append(query.entity_id)
-        for bound, operator in ((query.since, ">="), (query.until, "<")):
-            if bound is not None:
-                clauses.append(f"e.{query.order_by} {operator} ?")
-                params.append(_time(bound))
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        fields = ["occurred_at", "recorded_at", "entry_id"]
-        if query.order_by == "recorded_at":
-            fields = fields[1:]
-        direction = " DESC" if query.descending else " ASC"
-        order = ", ".join("e." + field + direction for field in fields)
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT e.entry_json FROM entries e" + where + " ORDER BY " + order,
-                params,
-            ).fetchall()
-        return [Thread.model_validate_json(row[0]) for row in rows]
-
-    def state(self, entity_id: str) -> EntityState:
-        """Replay one entity snapshot using UTC occurrence/recording/ID order."""
-        from .state import fold_state
-
-        query = ThreadQuery(entity_id=entity_id)
-        return fold_state(entity_id, self.entries(query))
+            rows = db.execute("SELECT seq, payload FROM threads WHERE seq > ?", (query.after_seq,)).fetchall()
+        result = [Thread.model_validate({**json.loads(payload), "seq": seq}) for seq, payload in rows]
+        result = [t for t in result if (query.kind is None or t.kind == query.kind) and (query.since is None or t.occurred_at >= query.since) and (query.until is None or t.occurred_at < query.until) and (query.tag is None or query.tag in t.tags)]
+        return sorted(result, key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
