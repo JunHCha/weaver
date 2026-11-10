@@ -1,6 +1,6 @@
 package io.github.junhcha.weaver.review
 
-import io.github.junhcha.weaver.schema.v2.Stage
+import io.github.junhcha.weaver.schema.Stage
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

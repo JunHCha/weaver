@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from weaver.schema.v2 import ReviewPackage
+from weaver.schema import ReviewPackage
 
 
 class SummaryState:

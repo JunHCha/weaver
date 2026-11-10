@@ -24,12 +24,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Weaver"
         tools:targetApi="36">
-        <receiver android:name=".widget.ProposalWidgetReceiver" android:exported="false"
-            android:label="@string/proposal_widget_name">
+        <receiver android:name=".widget.ReviewWidgetReceiver" android:exported="false"
+            android:label="@string/review_widget_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/proposal_widget_info" />
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/review_widget_info" />
         </receiver>
         <activity android:name=".widget.WidgetReviewActivity" android:exported="false" />
         <activity android:name=".shepherd.ShareActivity" android:exported="true">

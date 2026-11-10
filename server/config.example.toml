@@ -53,15 +53,19 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Change this for conversations exported in another timezone.
 timezone = "Asia/Seoul"
 
-# Optional: sentence context before/after each Refiner signal (integers 0..5).
-# Defaults are one sentence on either side; zero selects the triggered sentence.
-# [refiner]
-# before = 1
-# after = 1
-
 # Spinner retries only explicit SpinnerTransientError, never LlmError.
 # Synchronous parser calls have no forced timeout.
 [spinner]
 max_attempts = 3
 backoff_seconds = 0.25
 max_backoff_seconds = 4
+
+# Optional: periodic wiki compilation into the vault (disabled by default).
+# Keep the state directory outside the wiki vault.
+# [wiki]
+# enabled = true
+# vault_root = "data/vault"  # defaults to the top-level vault_root
+# folder = "Weaver"
+# timezone = "Asia/Seoul"
+# settle_seconds = 1800      # a human-edited page waits this long before rewrite
+# interval_seconds = 60

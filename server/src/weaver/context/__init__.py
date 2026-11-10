@@ -30,7 +30,7 @@ class Page:
 
 
 @dataclass(frozen=True)
-class Entry:
+class ContextEntry:
     """A prompt candidate, with its active Wiki and learned contributions."""
 
     name: str
@@ -160,8 +160,9 @@ class ContextDictionary:
         """Return the exact canonical name's kind, preferring its wiki entry."""
         with self._connect() as db:
             row = db.execute(
-                "SELECT kind FROM wiki WHERE name=? UNION ALL "
-                "SELECT kind FROM learned WHERE name=? LIMIT 1",
+                "SELECT kind FROM (SELECT kind, 0 AS priority FROM wiki WHERE name=? "
+                "UNION ALL SELECT kind, 1 AS priority FROM learned WHERE name=?) "
+                "ORDER BY priority LIMIT 1",
                 (name, name),
             ).fetchone()
         if row is None:
@@ -171,7 +172,7 @@ class ContextDictionary:
 
     def candidates(
         self, text: str, contact_name: str | None = None, limit: int = 10
-    ) -> list[Entry]:
+    ) -> list[ContextEntry]:
         """Select similar token matches, ordered by distance, with contact first."""
         if limit < 0:
             raise ValueError("limit must be nonnegative")
@@ -197,11 +198,11 @@ class ContextDictionary:
                 "SELECT observed, name FROM corrections ORDER BY observed"
             ):
                 corrections.setdefault(name, []).append(observed)
-        ranked: list[tuple[int, int, str, Entry]] = []
+        ranked: list[tuple[int, int, str, ContextEntry]] = []
         names = wiki.keys() | learned.keys()
         for name in names:
             kind, summary = wiki.get(name, (learned.get(name, "person"), ""))
-            entry = Entry(
+            entry = ContextEntry(
                 name,
                 kind,
                 tuple(aliases.get(name, ())),
@@ -238,7 +239,7 @@ class ContextDictionary:
                 kind, summary = wiki.get(
                     contact_name, (learned.get(contact_name, "person"), "")
                 )
-                contact = Entry(
+                contact = ContextEntry(
                     contact_name,
                     kind,
                     tuple(aliases.get(contact_name, ())),
@@ -247,7 +248,7 @@ class ContextDictionary:
                     "wiki" if contact_name in wiki else "learn",
                 )
             result = [
-                contact or Entry(contact_name, "person", source="contact"),
+                contact or ContextEntry(contact_name, "person", source="contact"),
                 *(entry for entry in result if entry.name != contact_name),
             ]
         return result[:limit]

@@ -8,16 +8,16 @@ import kotlinx.serialization.Serializable
 data class Alert(
     @SerialName("schema_version") val schemaVersion: Int,
     @SerialName("alert_id") val alertId: String,
-    @SerialName("proposal_id") val proposalId: String,
-    @SerialName("schedule_ref") val scheduleRef: String,
+    @SerialName("package_id") val packageId: String,
+    @SerialName("thread_id") val threadId: String,
     val message: String,
     @SerialName("created_at") val createdAt: String,
 ) {
     init {
-        Rules.schemaVersion(schemaVersion)
+        Rules.schemaVersion(schemaVersion, REVIEW_SCHEMA_VERSION)
         Rules.prefixedId("alt", alertId, "alert_id")
-        Rules.prefixedId("prp", proposalId, "proposal_id")
-        Rules.ref(scheduleRef, "schedule_ref")
+        Rules.nonEmpty(packageId, "package_id")
+        Rules.nonEmpty(threadId, "thread_id")
         Rules.nonEmpty(message, "message")
         Rules.timestamp(createdAt, "created_at")
     }

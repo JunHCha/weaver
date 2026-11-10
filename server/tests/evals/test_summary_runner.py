@@ -23,10 +23,10 @@ def test_summary_replay_scores_draft_questions_and_threads(tmp_path: Path) -> No
 
 
 def test_summary_replay_reports_mismatch(tmp_path: Path) -> None:
-    from weaver.evals.runner import ReplayClient
-    from weaver.evals.summary_runner import evaluate_summary
+    from weaver.evals.client import ReplayClient
+    from weaver.evals.summary_runner import SUMMARY_CASES, evaluate_summary
 
-    case = json.loads(Path("server/evals/summary_cases.json").read_text())["cases"][0]
+    case = json.loads(SUMMARY_CASES.read_text())["cases"][0]
     case["expected"]["body"] = "다른 요약"
     row = evaluate_summary(case, ReplayClient(case["responses"]))
     assert not row["metrics"]["draft.exact"]

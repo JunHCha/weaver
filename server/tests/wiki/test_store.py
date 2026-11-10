@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from weaver.publish.notes import embedded_hash
-from weaver.wiki.store import HumanEditPending, WikiStore
+from weaver.wiki.store import HASH_KEY, HumanEditPending, WikiStore
 
 
 def test_write_guards_and_race(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -13,7 +12,7 @@ def test_write_guards_and_race(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     store = WikiStore(tmp_path / "vault", tmp_path / "state", clock=lambda: now[0])
     rev = store.write("page.md", {"title": "hello"}, "one", None)
     path = store.root / "page.md"
-    assert embedded_hash(path.read_bytes()) is not None
+    assert f"{HASH_KEY}:" in path.read_text()
     with pytest.raises(HumanEditPending):
         store.write("page.md", {}, "two", "wrong")
     with pytest.raises(HumanEditPending):

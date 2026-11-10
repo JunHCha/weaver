@@ -5,11 +5,12 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -17,7 +18,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * Contract between the Kotlin models and the repository-root schema/ v1 files.
+ * Contract between the Kotlin models and the repository-root schema/ files.
  * The JSON Schema validator is the referee: Kotlin must accept what the schema accepts in
  * the shared examples, reject the invalid fixtures the schema rejects, and every JSON the
  * Kotlin models write must validate against the same schema.
@@ -46,7 +47,8 @@ class SchemaContractTest {
         SharedSchema.models.forEach { (model, serializer) ->
             SharedSchema.examples(model).forEach { file ->
                 val example = Json.parseToJsonElement(file.readText())
-                objectKeyPaths(example).forEach { path ->
+                val required = SharedSchema.schemaJson(model)["required"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet()
+                objectKeyPaths(example).filter { it.size > 1 || it.single() in required }.forEach { path ->
                     val mutated = removeAt(example, path).toString()
                     val where = "${file.name} without ${path.joinToString("/")}"
                     assertFalse("$where must fail the schema", SharedSchema.errors(model, mutated).isEmpty())
@@ -60,11 +62,12 @@ class SchemaContractTest {
     fun unknownVersionsAreSkippedWithDiagnostic() {
         SharedSchema.models.forEach { (model, serializer) ->
             val example = Json.parseToJsonElement(SharedSchema.examples(model).first().readText()).jsonObject
-            listOf(0L, 2L, 99L).forEach { version ->
+            val expected = SharedSchema.version(model)
+            listOf(0L, 99L, 3 - expected).forEach { version ->
                 val text = JsonObject(example + ("schema_version" to JsonPrimitive(version))).toString()
                 assertFalse("$model v$version must fail the schema", SharedSchema.errors(model, text).isEmpty())
                 val result = WeaverCodec.decode(serializer, text)
-                assertEquals("$model v$version", DecodeResult.UnsupportedVersion(model, version), result)
+                assertEquals("$model v$version", DecodeResult.UnsupportedVersion(model, version, expected), result)
                 assertTrue((result as DecodeResult.UnsupportedVersion).diagnostic.contains("schema_version $version"))
             }
         }
@@ -75,12 +78,12 @@ class SchemaContractTest {
         // JSON Schema treats 1.0 and 1e0 as integers; the README makes this lexical rule the
         // consumer's job, so only the Kotlin side is asserted for those tokens.
         listOf(
-            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": 1.0"),
-            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": 1e0"),
-            Triple("Proposal", "\"rev\": 1", "\"rev\": 1.0"),
-            Triple("Proposal", "\"rev\": 1", "\"rev\": 1e0"),
-            Triple("Verdict", "\"rev\": 1", "\"rev\": 1e0"),
-            Triple("Verdict", "\"rev\": 1", "\"rev\": 1E+0"),
+            Triple("ReviewPackage", "\"schema_version\": 2", "\"schema_version\": 2.0"),
+            Triple("ReviewPackage", "\"schema_version\": 2", "\"schema_version\": 2e0"),
+            Triple("ReviewPackage", "\"revision\": 1", "\"revision\": 1.0"),
+            Triple("Verdict", "\"revision\": 1", "\"revision\": 1e0"),
+            Triple("Verdict", "\"revision\": 1", "\"revision\": 1E+0"),
+            Triple("ApprovedSchedule", "\"revision\": 1", "\"revision\": 1.0"),
             Triple("Manifest", "\"size\": 45", "\"size\": 45.0"),
             Triple("Manifest", "\"size\": 45", "\"size\": 4.5e1"),
         ).forEach { (model, from, to) -> assertKotlinInvalid(model, from, to) }
@@ -89,11 +92,10 @@ class SchemaContractTest {
     @Test
     fun quotedNumbersFailSchemaAndKotlin() {
         listOf(
-            Triple("Proposal", "\"schema_version\": 1", "\"schema_version\": \"1\""),
-            Triple("Proposal", "\"rev\": 1", "\"rev\": \"1\""),
-            Triple("Verdict", "\"rev\": 1", "\"rev\": \"1\""),
+            Triple("ReviewPackage", "\"schema_version\": 2", "\"schema_version\": \"2\""),
+            Triple("ReviewPackage", "\"revision\": 1", "\"revision\": \"1\""),
+            Triple("Verdict", "\"revision\": 1", "\"revision\": \"1\""),
             Triple("Manifest", "\"size\": 45", "\"size\": \"45\""),
-            Triple("Proposal", "\"confidence\": 0.92", "\"confidence\": \"0.92\""),
         ).forEach { (model, from, to) ->
             val text = assertKotlinInvalid(model, from, to)
             assertFalse("$model $to must fail the schema", SharedSchema.errors(model, text).isEmpty())
@@ -102,18 +104,18 @@ class SchemaContractTest {
 
     @Test
     fun largeRevisionsAreAccepted() {
-        // rev is unbounded in the schema; Kotlin keeps it as Long.
+        // revision is unbounded in the schema; Kotlin keeps it as Long.
         val verdict = SharedSchema.examples("Verdict").first().readText()
-            .replaceFirst("\"rev\": 1", "\"rev\": 2147483648")
+            .replaceFirst("\"revision\": 1", "\"revision\": 2147483648")
         assertEquals(emptyList<String>(), SharedSchema.errors("Verdict", verdict))
         val result = WeaverCodec.decode<Verdict>(verdict)
-        assertEquals(2_147_483_648L, (result as DecodeResult.Ok).value.rev)
+        assertEquals(2_147_483_648L, (result as DecodeResult.Ok).value.revision)
     }
 
     @Test
     fun appIsStricterThanSchemaForUnrealisticTimestamps() {
         // Documented in Primitives.kt: java.time rejects offsets beyond ±18:00 and more than
-        // nine fraction digits, which no v1 producer writes. Pinned so the gap stays known.
+        // nine fraction digits, which no producer writes. Pinned so the gap stays known.
         val receipt = SharedSchema.examples("Receipt").first().readText()
         listOf("+19:00", ".1234567890+09:00").forEach { suffix ->
             val text = receipt.replace("15:32:00+09:00", "15:32:00$suffix")
@@ -126,7 +128,7 @@ class SchemaContractTest {
     @Test
     fun lineBreaksAreRejectedLikeEcmaRegex() {
         val alert = SharedSchema.examples("Alert").first().readText()
-        val text = alert.replace("\"schedule_ref\": \"s1\"", "\"schedule_ref\": \"s1\\n\"")
+        val text = alert.replace("\"alert_id\": \"alt_01ARZ3NDEKTSV4RRFFQ69G5FA0\"", "\"alert_id\": \"alt_01ARZ3NDEKTSV4RRFFQ69G5FA0\\n\"")
         assertTrue("fixture was not mutated", text != alert)
         assertFalse(SharedSchema.errors("Alert", text).isEmpty())
         assertTrue(WeaverCodec.decode<Alert>(text) is DecodeResult.Invalid)
@@ -192,39 +194,28 @@ class SchemaContractTest {
         )
         assertEquals(emptyList<String>(), SharedSchema.errors("Manifest", WeaverCodec.encode(manifest)))
 
-        val base = Verdict(
-            schemaVersion = SCHEMA_VERSION,
-            proposalId = "prp_01JC3V8Z9X2N4P6Q8R0S2T4V6W",
-            rev = 2,
-            verdict = Verdict.Kind.APPROVE,
-            edits = emptyList(),
-            rejectReason = null,
-            instruction = null,
-            reviewedAt = "2026-11-07T15:32:00.123+09:00",
-        )
+        val base = Verdict(REVIEW_SCHEMA_VERSION, "pkg_0123456789abcdef", 2, Verdict.Action.APPROVE, listOf("가"), null, null)
         listOf(
             base,
-            base.copy(verdict = Verdict.Kind.EDIT, edits = listOf(Verdict.Edit("/schedules/0/title", JsonNull))),
-            base.copy(verdict = Verdict.Kind.REVISE, instruction = "다시 정리"),
-            base.copy(verdict = Verdict.Kind.REJECT, rejectReason = Verdict.RejectReason.DUPLICATE),
+            base.copy(action = Verdict.Action.EDIT, editedBody = "수정"),
+            base.copy(action = Verdict.Action.FEEDBACK, feedback = "다시 정리"),
+            base.copy(action = Verdict.Action.REJECT),
         ).forEach {
-            assertEquals(it.verdict.name, emptyList<String>(), SharedSchema.errors("Verdict", WeaverCodec.encode(it)))
+            assertEquals(it.action.name, emptyList<String>(), SharedSchema.errors("Verdict", WeaverCodec.encode(it)))
         }
     }
 
     @Test
     fun kotlinRefusesToBuildMismatchedVerdictBranches() {
-        val approve = Verdict(
-            SCHEMA_VERSION, "prp_01JC3V8Z9X2N4P6Q8R0S2T4V6W", 1, Verdict.Kind.APPROVE,
-            emptyList(), null, null, "2026-11-07T15:32:00+09:00",
-        )
+        val approve = Verdict(REVIEW_SCHEMA_VERSION, "pkg_0123456789abcdef", 1, Verdict.Action.APPROVE, emptyList(), null, null)
         listOf(
-            { approve.copy(instruction = "x") },
-            { approve.copy(verdict = Verdict.Kind.EDIT) },
-            { approve.copy(verdict = Verdict.Kind.REVISE) },
-            { approve.copy(verdict = Verdict.Kind.REJECT) },
-            { approve.copy(rev = 0) },
-            { approve.copy(reviewedAt = "2026-11-07 15:32:00") },
+            { approve.copy(feedback = "x") },
+            { approve.copy(editedBody = "x") },
+            { approve.copy(action = Verdict.Action.EDIT) },
+            { approve.copy(action = Verdict.Action.FEEDBACK) },
+            { approve.copy(revision = 0) },
+            { approve.copy(schemaVersion = 1) },
+            { approve.copy(packageId = " ") },
         ).forEach { build ->
             try {
                 build()
@@ -248,22 +239,25 @@ class SchemaContractTest {
         assertFalse("$where must not decode", result is DecodeResult.Ok)
     }
 
-    /** Paths to every key of every object, skipping free-form JSON values (`value`). */
+    /** Keys whose values are free-form JSON or a map with data-defined keys. */
+    private val FREE_FORM = setOf("value", "stage_times")
+
+    /** Paths to every key of every object, skipping the [FREE_FORM] values. */
     private fun objectKeyPaths(element: JsonElement, prefix: List<String> = emptyList()): List<List<String>> =
         when (element) {
             is JsonObject -> element.flatMap { (key, child) ->
                 val path = prefix + key
-                listOf(path) + if (key == "value") emptyList() else objectKeyPaths(child, path)
+                listOf(path) + if (key in FREE_FORM) emptyList() else objectKeyPaths(child, path)
             }
             is JsonArray -> element.flatMapIndexed { i, child -> objectKeyPaths(child, prefix + "$i") }
             else -> emptyList()
         }
 
-    /** Paths to every object (the root included), skipping free-form JSON values. */
+    /** Paths to every object (the root included), skipping the [FREE_FORM] values. */
     private fun objectPaths(element: JsonElement, prefix: List<String> = emptyList()): List<List<String>> =
         when (element) {
             is JsonObject -> listOf(prefix) + element.flatMap { (key, child) ->
-                if (key == "value") emptyList() else objectPaths(child, prefix + key)
+                if (key in FREE_FORM) emptyList() else objectPaths(child, prefix + key)
             }
             is JsonArray -> element.flatMapIndexed { i, child -> objectPaths(child, prefix + "$i") }
             else -> emptyList()

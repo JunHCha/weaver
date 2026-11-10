@@ -1,0 +1,56 @@
+package io.github.junhcha.weaver.courier
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import io.github.junhcha.weaver.schema.WeaverCodec
+import io.github.junhcha.weaver.schema.ApprovedSchedule
+import io.github.junhcha.weaver.schema.ReviewPackage
+import io.github.junhcha.weaver.schema.Stage
+import io.github.junhcha.weaver.schema.Verdict
+import io.github.junhcha.weaver.review.ReviewStore
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.rules.TemporaryFolder
+import org.junit.Rule
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
+class ReviewCourierTest {
+    @get:Rule val temporary = TemporaryFolder()
+    private val id = "pkg_0123456789abcdef"
+    private val pkg = ReviewPackage(2, id, "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, "요약", emptyList(), Stage.REVIEW, emptyMap())
+
+    @Test fun scansSchedulesWithoutTreatingDirectoryAsPackage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val folder = MemoryFolder()
+        val schedule = ApprovedSchedule(
+            2, id, "thread", "회의", "2026-01-01T09:00:00+09:00", null,
+            "Asia/Seoul", null, "a".repeat(64), 1, false)
+        folder.put("proposals/schedules", "thread.json", WeaverCodec.encode(schedule))
+        CourierDatabase(context).use { db ->
+            val scan = CourierClient(folder, db).scan()
+            assertEquals(listOf(schedule), scan.schedules)
+            assertTrue(scan.unreadable.isEmpty())
+        }
+    }
+
+    @Test fun scansAndQueuesReviewPackagesAndVerdicts() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val folder = MemoryFolder()
+        val name = "$id.r1.json"
+        folder.put("proposals", name, WeaverCodec.encode(pkg))
+        CourierDatabase(context).use { db ->
+            val scan = CourierClient(folder, db).scan()
+            assertEquals(listOf(pkg), scan.packages)
+            assertTrue(scan.unreadable.isEmpty())
+        }
+        val verdict = Verdict(2, id, 1, Verdict.Action.APPROVE, emptyList(), null, null)
+        val store = ReviewStore(temporary.newFolder())
+        store.queue(folder, pkg, verdict)
+        assertTrue(store.synchronize(folder))
+        assertEquals(WeaverCodec.encode(verdict), folder.files.getValue("decisions/$name").decodeToString())
+    }
+}

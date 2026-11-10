@@ -1,140 +1,85 @@
 {
   "$defs": {
-    "Edit": {
-      "additionalProperties": false,
-      "description": "RFC 6901 pointer and replacement value, not array-dot syntax.\n\nEmpty pointer is valid RFC 6901 (whole document). VerdictHandler must restrict\neditable fields, resolve pointers and revalidate the complete Proposal.",
-      "properties": {
-        "path": {
-          "$ref": "#/$defs/Pointer"
-        },
-        "value": {
-          "$ref": "#/$defs/JsonValue"
-        }
-      },
-      "required": [
-        "path",
-        "value"
-      ],
-      "title": "Edit",
-      "type": "object"
-    },
-    "JsonValue": {},
     "NonEmpty": {
       "pattern": "\\S",
-      "type": "string"
-    },
-    "Pointer": {
-      "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
-      "type": "string"
-    },
-    "ProposalId": {
-      "maxLength": 30,
-      "minLength": 30,
-      "pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-      "type": "string"
-    },
-    "RejectReason": {
-      "enum": [
-        "wrong_person",
-        "wrong_content",
-        "duplicate",
-        "not_useful",
-        "other"
-      ],
       "type": "string"
     },
     "Revision": {
       "minimum": 1,
       "type": "integer"
-    },
-    "Timestamp": {
-      "format": "date-time",
-      "not": {
-        "pattern": "[\\r\\n]"
-      },
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
-      "type": "string"
     }
   },
-  "$id": "urn:weaver:schema:v1:Verdict",
+  "$id": "urn:weaver:schema:Verdict",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "approve/edit record facts; they never resolve requests or authorize actions.",
-  "oneOf": [
+  "allOf": [
     {
-      "properties": {
-        "edits": {
-          "maxItems": 0
-        },
-        "instruction": {
-          "type": "null"
-        },
-        "reject_reason": {
-          "type": "null"
-        },
-        "verdict": {
-          "const": "approve"
+      "else": {
+        "properties": {
+          "edited_body": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "action": {
+            "const": "edit"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "edited_body": {
+            "type": "string"
+          }
         }
       }
     },
     {
-      "properties": {
-        "edits": {
-          "minItems": 1
-        },
-        "instruction": {
-          "type": "null"
-        },
-        "reject_reason": {
-          "type": "null"
-        },
-        "verdict": {
-          "const": "edit"
+      "else": {
+        "properties": {
+          "feedback": {
+            "type": "null"
+          }
         }
-      }
-    },
-    {
-      "properties": {
-        "edits": {
-          "maxItems": 0
-        },
-        "instruction": {
-          "type": "string"
-        },
-        "reject_reason": {
-          "type": "null"
-        },
-        "verdict": {
-          "const": "revise"
+      },
+      "if": {
+        "properties": {
+          "action": {
+            "const": "feedback"
+          }
         }
-      }
-    },
-    {
-      "properties": {
-        "edits": {
-          "maxItems": 0
-        },
-        "instruction": {
-          "type": "null"
-        },
-        "reject_reason": {
-          "type": "string"
-        },
-        "verdict": {
-          "const": "reject"
+      },
+      "then": {
+        "properties": {
+          "feedback": {
+            "type": "string"
+          }
         }
       }
     }
   ],
+  "description": "A user's action on one exact review package revision.",
   "properties": {
-    "edits": {
+    "action": {
+      "enum": [
+        "approve",
+        "edit",
+        "feedback",
+        "reject"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "answers": {
       "items": {
-        "$ref": "#/$defs/Edit"
+        "$ref": "#/$defs/NonEmpty"
       },
-      "title": "Edits",
+      "title": "Answers",
       "type": "array"
     },
-    "instruction": {
+    "edited_body": {
       "anyOf": [
         {
           "$ref": "#/$defs/NonEmpty"
@@ -144,50 +89,36 @@
         }
       ]
     },
-    "proposal_id": {
-      "$ref": "#/$defs/ProposalId"
-    },
-    "reject_reason": {
+    "feedback": {
       "anyOf": [
         {
-          "$ref": "#/$defs/RejectReason"
+          "$ref": "#/$defs/NonEmpty"
         },
         {
           "type": "null"
         }
       ]
     },
-    "rev": {
+    "package_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "revision": {
       "$ref": "#/$defs/Revision"
     },
-    "reviewed_at": {
-      "$ref": "#/$defs/Timestamp"
-    },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "title": "Schema Version",
       "type": "integer"
-    },
-    "verdict": {
-      "enum": [
-        "approve",
-        "edit",
-        "revise",
-        "reject"
-      ],
-      "title": "Verdict",
-      "type": "string"
     }
   },
   "required": [
     "schema_version",
-    "proposal_id",
-    "rev",
-    "verdict",
-    "edits",
-    "reject_reason",
-    "instruction",
-    "reviewed_at"
+    "package_id",
+    "revision",
+    "action",
+    "answers",
+    "edited_body",
+    "feedback"
   ],
   "title": "Verdict",
   "type": "object"

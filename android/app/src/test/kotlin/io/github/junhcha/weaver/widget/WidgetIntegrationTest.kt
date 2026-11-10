@@ -17,6 +17,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import io.github.junhcha.weaver.courier.MemoryFolder
 import io.github.junhcha.weaver.inbox.InboxDatabase
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.review.ReviewDraft
 import io.github.junhcha.weaver.review.ReviewStore
 import io.github.junhcha.weaver.schema.*
 import io.github.junhcha.weaver.storage.AppStorage
@@ -35,7 +36,7 @@ import java.io.File
 @Config(sdk = [36])
 class WidgetIntegrationTest {
     private lateinit var context: Context
-    private val p = WeaverCodec.json.decodeFromString<Proposal>(File(SharedSchema.dir, "examples/Proposal.json").readText())
+    private val p = WeaverCodec.json.decodeFromString<ReviewPackage>(File(SharedSchema.dir, "examples/ReviewPackage.json").readText())
     private val alert = WeaverCodec.json.decodeFromString<Alert>(File(SharedSchema.dir, "examples/Alert.json").readText())
     private val folder = MemoryFolder()
     private val snapshots = mutableMapOf<Int, WidgetModel>()
@@ -47,7 +48,7 @@ class WidgetIntegrationTest {
         File(AppStorage.exchangeDir(context), "reviews").deleteRecursively()
         context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("widget-sync", Context.MODE_PRIVATE).edit().clear().commit()
-        val component = ComponentName(context, ProposalWidgetReceiver::class.java)
+        val component = ComponentName(context, ReviewWidgetReceiver::class.java)
         val info = AppWidgetProviderInfo().apply { provider = component }
         val manager = shadowOf(AppWidgetManager.getInstance(context))
         manager.addInstalledProvider(info)
@@ -71,23 +72,23 @@ class WidgetIntegrationTest {
             .setWorkerFactory(factory).setExecutor(SynchronousExecutor()).build())
     }
     @After fun cleanup() { WorkManagerTestInitHelper.closeWorkDatabase() }
-    private fun reconcile(items: List<Proposal>, alerts: List<Alert> = emptyList(), time: Long = now) {
+    private fun reconcile(items: List<ReviewPackage>, alerts: List<Alert> = emptyList(), time: Long = now) {
         InboxDatabase(context).use { it.reconcile(items, alerts, emptySet(), time, folder.identity, false) }
         InboxRuntime.refresh(context, time)
-        WorkManager.getInstance(context).getWorkInfosForUniqueWork("proposal-widget-refresh").get()
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork("review-widget-refresh").get()
     }
     @Test fun updatesDeletionAlertsAndQueuedVerdictsReachBothInstances() {
-        reconcile(listOf(p, p.copy(rev = 2)))
+        reconcile(listOf(p, p.copy(revision = 2)))
         assertEquals(setOf(101, 202), snapshots.keys)
-        assertTrue(snapshots.values.all { it.pendingCount == 1 && it.rows.single().rev == 2L })
-        reconcile(listOf(p.copy(rev = 3)), listOf(alert), now + 1000)
-        assertTrue(snapshots.values.all { it.rows.single().rev == 3L && it.warning(false) != null })
-        val newest = p.copy(rev = 3)
-        folder.put("proposals", "${p.proposalId}.r3.json", WeaverCodec.encode(newest))
-        val verdict = Verdict(1, p.proposalId, 3, Verdict.Kind.APPROVE, emptyList(), null, null, "2026-11-08T00:00:00Z")
+        assertTrue(snapshots.values.all { it.pendingCount == 1 && it.rows.single().revision == 2L })
+        reconcile(listOf(p.copy(revision = 3)), listOf(alert), now + 1000)
+        assertTrue(snapshots.values.all { it.rows.single().revision == 3L && it.warning(false) != null })
+        val newest = p.copy(revision = 3)
+        folder.put("proposals", "${p.packageId}.r3.json", WeaverCodec.encode(newest))
+        val verdict = ReviewDraft.verdict(newest, listOf("홍길동"), Verdict.Action.APPROVE, "", "")
         ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).queue(folder, newest, verdict)
         InboxRuntime.refresh(context)
-        WorkManager.getInstance(context).getWorkInfosForUniqueWork("proposal-widget-refresh").get()
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork("review-widget-refresh").get()
         assertTrue(snapshots.values.all { it.pendingCount == 0 && it.rows.single().submitted })
         reconcile(emptyList())
         assertTrue(snapshots.values.all { it.rows.isEmpty() && it.alertMessages.isEmpty() })
@@ -96,12 +97,12 @@ class WidgetIntegrationTest {
     }
     @Test fun revisionArrivalSortAndFreshWaitingDelayedErrorStates() {
         assertTrue(WidgetModel.load(context, now).status.contains("동기화 대기"))
-        val other = p.copy(proposalId = "prp_01ARZ3NDEKTSV4RRFFQ69G5FA1")
+        val other = p.copy(packageId = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA1")
         reconcile(listOf(p), time = now - 5000)
         reconcile(listOf(p, other), time = now - 3000)
-        assertEquals(other.proposalId, WidgetModel.load(context, now).rows.first().id)
-        reconcile(listOf(p.copy(rev = 2), other), time = now - 1000)
-        assertEquals(p.proposalId, WidgetModel.load(context, now).rows.first().id)
+        assertEquals(other.packageId, WidgetModel.load(context, now).rows.first().id)
+        reconcile(listOf(p.copy(revision = 2), other), time = now - 1000)
+        assertEquals(p.packageId, WidgetModel.load(context, now).rows.first().id)
         assertTrue(WidgetModel.load(context, now).status.contains("최근 검사 완료"))
         assertTrue(WidgetModel.load(context, now + 31 * 60_000).status.contains("동기화 지연"))
         WidgetUpdates.scanFinished(context, false)
@@ -114,28 +115,28 @@ class WidgetIntegrationTest {
     }
     @Test fun clickRechecksTheRealReviewStoreAfterRevisionChangeAndRemoval() {
         val store = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
-        folder.put("proposals", "${p.proposalId}.r1.json", WeaverCodec.encode(p))
-        folder.put("proposals", "${p.proposalId}.r4.json", WeaverCodec.encode(p.copy(rev = 4)))
-        val target = WidgetReviewTarget.resolve(p.proposalId, 1) { store.latest(folder, it).rev }
-        assertEquals(WidgetReviewTarget.Ready(p.proposalId, 1, 4), target)
+        folder.put("proposals", "${p.packageId}.r1.json", WeaverCodec.encode(p))
+        folder.put("proposals", "${p.packageId}.r4.json", WeaverCodec.encode(p.copy(revision = 4)))
+        val target = WidgetReviewTarget.resolve(p.packageId, 1) { store.latest(folder, it).revision }
+        assertEquals(WidgetReviewTarget.Ready(p.packageId, 1, 4), target)
         folder.files.clear()
-        val gone = WidgetReviewTarget.resolve(p.proposalId, 1) { store.latest(folder, it).rev }
+        val gone = WidgetReviewTarget.resolve(p.packageId, 1) { store.latest(folder, it).revision }
         assertTrue((gone as WidgetReviewTarget.Unavailable).message.contains("사라졌습니다"))
     }
     @Test fun verdictFromAnotherTreeDoesNotRemovePendingCount() {
         reconcile(listOf(p))
-        folder.put("proposals", "${p.proposalId}.r1.json", WeaverCodec.encode(p))
+        folder.put("proposals", "${p.packageId}.r1.json", WeaverCodec.encode(p))
         folder.root = "memory://another-tree"
-        val verdict = Verdict(1, p.proposalId, 1, Verdict.Kind.APPROVE, emptyList(), null, null, "2026-11-08T00:00:00Z")
+        val verdict = ReviewDraft.verdict(p, listOf("홍길동"), Verdict.Action.APPROVE, "", "")
         ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).queue(folder, p, verdict)
         assertEquals(1, WidgetModel.load(context).pendingCount)
     }
     @Test fun widgetClickIntentsAreIsolatedByIdAndRevision() {
-        val first = WidgetReviewActivity.intent(context, p.proposalId, 1)
-        val newer = WidgetReviewActivity.intent(context, p.proposalId, 2)
+        val first = WidgetReviewActivity.intent(context, p.packageId, 1)
+        val newer = WidgetReviewActivity.intent(context, p.packageId, 2)
         assertFalse(first.filterEquals(newer))
-        assertEquals(p.proposalId, first.getStringExtra(WidgetReviewActivity.PROPOSAL_ID))
-        assertEquals(1L, first.getLongExtra(WidgetReviewActivity.REV, 0))
-        assertEquals(2L, newer.getLongExtra(WidgetReviewActivity.REV, 0))
+        assertEquals(p.packageId, first.getStringExtra(WidgetReviewActivity.PACKAGE_ID))
+        assertEquals(1L, first.getLongExtra(WidgetReviewActivity.REVISION, 0))
+        assertEquals(2L, newer.getLongExtra(WidgetReviewActivity.REVISION, 0))
     }
 }

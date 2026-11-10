@@ -12,11 +12,11 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, JsonValue
 
-from weaver.context import ContextDictionary, Entry, Kind, Page
-from weaver.fabric.v2.state import project
-from weaver.fabric.v2.store import Fabric, ThreadQuery
+from weaver.context import ContextDictionary, ContextEntry, Kind, Page
+from weaver.fabric.state import project
+from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
-from weaver.schema.v2 import TagCorrection, ThreadDraft
+from weaver.schema import TagCorrection, ThreadDraft
 from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore
 
 
@@ -190,7 +190,7 @@ class Compiler:
             entries = [
                 e for e in self.context.candidates(tag, limit=100) if e.name == tag
             ]
-            entry = entries[0] if entries else Entry(tag, "topic")
+            entry = entries[0] if entries else ContextEntry(tag, "topic")
             path = f"pages/{tag}.md"
             try:
                 props, body, base = self.store.read(path)

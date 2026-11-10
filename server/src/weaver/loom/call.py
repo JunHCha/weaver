@@ -9,8 +9,7 @@ from collections import Counter
 from datetime import timedelta
 
 from weaver.loom.kakao import Diagnostic, ParseResult
-from weaver.schema import Script, Source
-from weaver.schema.models import Segment
+from weaver.schema import Script, Segment, Source
 
 _NOTICE = "AI로 생성된 콘텐츠입니다"
 _LOG = logging.getLogger(__name__)

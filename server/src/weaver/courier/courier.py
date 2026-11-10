@@ -1,4 +1,4 @@
-"""Courier file protocol v1 on the server side.
+"""Courier file protocol on the server side.
 
 Every scan re-reads the four folders from scratch, so files that arrived while
 the server was down, or that synced in a different order, are picked up on the
@@ -9,6 +9,7 @@ every scan. Logs carry only the folder, file name and an error code.
 import hashlib
 import logging
 import os
+import re
 import stat
 import threading
 import time
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weaver.config import CourierPaths
-from weaver.schema import Alert, Manifest, Proposal, Verdict
+from weaver.schema import Alert, Manifest, ReviewPackage, Verdict
 
 from .atomic import write_json_atomic
 from .files import (
@@ -30,13 +31,12 @@ from .files import (
     load_versioned,
     open_regular,
     parse_revision_name,
-    revision_file_name,
 )
 from .ports import (
     CaptureConflict,
     CaptureStore,
     DecisionStore,
-    ProposalRevisions,
+    PackageRevisions,
     VerifiedCapture,
 )
 
@@ -46,6 +46,7 @@ SCAN_INTERVAL_SECONDS = 5.0
 # Own atomic-write temporaries older than this are crash leftovers.
 STALE_TEMPORARY_SECONDS = 600.0
 _HASH_CHUNK = 1 << 20
+SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Codes for conditions that normally resolve on their own (late sync arrival).
 _PENDING = {
@@ -69,16 +70,12 @@ _WARNING = {
     "unknown_version",
     "stale_rev",
     "unknown_rev",
-    "unknown_proposal",
+    "unknown_package",
     "sync_conflict",
     "unreadable",
     "capture_conflict",
     "verdict_conflict",
 }
-
-
-class RevisionError(ValueError):
-    """Refused to publish a rev that is not the durably recorded latest rev."""
 
 
 def _ask[**P, T](query: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
@@ -90,7 +87,7 @@ def _ask[**P, T](query: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
         safe_args = tuple(
             a
             for a in args
-            if isinstance(a, int) or (isinstance(a, str) and a.startswith("prp_"))
+            if isinstance(a, int) or (isinstance(a, str) and SAFE_ID.fullmatch(a))
         )
         logger.warning("courier query failed: %s %s", type(exc).__name__, safe_args)
         raise CourierFileError("store_failed") from None
@@ -112,7 +109,7 @@ class Courier:
         self,
         paths: CourierPaths,
         captures: CaptureStore,
-        revisions: ProposalRevisions,
+        revisions: PackageRevisions,
         decisions: DecisionStore,
     ) -> None:
         self.paths = paths
@@ -122,32 +119,6 @@ class Courier:
         self._reported: dict[tuple[str, str], str] = {}
 
     # ---- publishing (PC -> phone) -------------------------------------------
-
-    def publish_proposal(
-        self, proposal: Proposal, *, revisions: ProposalRevisions | None = None
-    ) -> Path:
-        """Write ``<proposal_id>.r<rev>.json`` atomically, then drop older revs.
-
-        Loom must record ``proposal.rev`` durably before calling this.
-        """
-        latest = (revisions or self._revisions).latest_rev(proposal.proposal_id)
-        if latest is None or proposal.rev != latest:
-            raise RevisionError("proposal rev is not the recorded latest rev")
-        final = self.paths.proposals / revision_file_name(
-            proposal.proposal_id, proposal.rev
-        )
-        write_json_atomic(final, proposal)
-        self._remove_revisions(proposal.proposal_id, below=proposal.rev)
-        return final
-
-    def clean_review(self, proposal_id: str, rev: int) -> None:
-        """Clean an APPLIED review; caller owns durable application confirmation."""
-        self._clean_decision(
-            self.paths.decisions / revision_file_name(proposal_id, rev),
-            proposal_id,
-            rev,
-            ScanReport(),
-        )
 
     def publish_alert(self, alert: Alert) -> Path:
         final = self.paths.proposals / f"alert_{alert.alert_id}.json"
@@ -161,7 +132,7 @@ class Courier:
         current: dict[tuple[str, str], str] = {}
         for folder, scan in (
             ("outbox", self._scan_outbox),
-            ("proposals", self._scan_proposals),
+            ("proposals", self._scan_packages),
             ("decisions", self._scan_decisions),
             ("receipts", self._sweep_receipts),
         ):
@@ -208,7 +179,7 @@ class Courier:
             if match is None:
                 continue  # Payload bodies and foreign files are not manifests.
             try:
-                manifest = load_versioned(path, Manifest)
+                manifest = load_versioned(path, Manifest, version=1)
                 if manifest.capture_id != match.group(1):
                     raise CourierFileError("id_mismatch")
                 # Before touching the body: a completed capture is never
@@ -293,7 +264,7 @@ class Courier:
             raise CourierFileError("sha256_mismatch")
         return VerifiedCapture(manifest, path, root / name)
 
-    def _scan_proposals(
+    def _scan_packages(
         self, report: ScanReport, current: dict[tuple[str, str], str]
     ) -> None:
         """Drop superseded or already-decided revs that reappear after resync."""
@@ -305,15 +276,15 @@ class Courier:
             if name is None:
                 continue
             try:
-                proposal = load_versioned(path, Proposal)
-                if proposal.proposal_id != name.proposal_id:
+                package = load_versioned(path, ReviewPackage, version=2)
+                if package.package_id != name.package_id:
                     raise CourierFileError("id_mismatch")
-                if proposal.rev != name.rev:
+                if package.revision != name.rev:
                     raise CourierFileError("rev_mismatch")
-                pid, rev = name.proposal_id, name.rev
+                pid, rev = name.package_id, name.rev
                 latest = _ask(self._revisions.latest_rev, pid)
                 if latest is None:
-                    raise CourierFileError("unknown_proposal")
+                    raise CourierFileError("unknown_package")
                 if rev > latest:
                     raise CourierFileError("unknown_rev")
                 if rev < latest or _ask(self._decisions.is_applied, pid, rev):
@@ -332,14 +303,14 @@ class Courier:
             if name is None:
                 continue
             try:
-                verdict = load_versioned(path, Verdict)
-                if verdict.proposal_id != name.proposal_id:
+                verdict = load_versioned(path, Verdict, version=2)
+                if verdict.package_id != name.package_id:
                     raise CourierFileError("id_mismatch")
-                if verdict.rev != name.rev:
+                if verdict.revision != name.rev:
                     raise CourierFileError("rev_mismatch")
-                pid, rev = name.proposal_id, name.rev
+                pid, rev = name.package_id, name.rev
                 # Loom's optional guard checks conflicting resynced decisions
-                # before the legacy applied-file cleanup shortcut.
+                # before the applied-file cleanup shortcut.
                 validate = getattr(self._decisions, "validate_verdict", None)
                 if validate is not None:
                     try:
@@ -359,7 +330,7 @@ class Courier:
                     continue
                 latest = _ask(self._revisions.latest_rev, pid)
                 if latest is None:
-                    raise CourierFileError("unknown_proposal")
+                    raise CourierFileError("unknown_package")
                 if rev < latest:
                     raise CourierFileError("stale_rev")
                 if rev > latest:
@@ -413,18 +384,18 @@ class Courier:
                 self._report(current, folder, path.name, "io_error", report)
 
     def _clean_decision(
-        self, path: Path, proposal_id: str, rev: int, report: ScanReport
+        self, path: Path, package_id: str, rev: int, report: ScanReport
     ) -> None:
-        # Proposal first: if we stop in between, the remaining decision makes
+        # Package first: if we stop in between, the remaining decision makes
         # the next scan repeat this idempotent cleanup.
-        self._remove_revisions(proposal_id, below=rev + 1)
+        self._remove_revisions(package_id, below=rev + 1)
         path.unlink(missing_ok=True)
         report.cleaned.append(path.name)
 
-    def _remove_revisions(self, proposal_id: str, below: int) -> None:
+    def _remove_revisions(self, package_id: str, below: int) -> None:
         for path in self.paths.proposals.iterdir():
             name = parse_revision_name(path.name)
-            if name is not None and name.proposal_id == proposal_id:
+            if name is not None and name.package_id == package_id:
                 if name.rev < below:
                     path.unlink(missing_ok=True)
 

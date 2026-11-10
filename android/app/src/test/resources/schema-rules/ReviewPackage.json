@@ -1,0 +1,56 @@
+{
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Question/additionalProperties": false,
+    "/$defs/Question/properties/choices/maxItems": 3,
+    "/$defs/Question/properties/choices/minItems": 3,
+    "/$defs/Question/properties/choices/type": "array",
+    "/$defs/Question/required": [
+        "question",
+        "rationale",
+        "choices"
+    ],
+    "/$defs/Question/type": "object",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/$defs/SourceId/maxLength": 30,
+    "/$defs/SourceId/minLength": 30,
+    "/$defs/SourceId/pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/SourceId/type": "string",
+    "/$defs/Stage/enum": [
+        "수집",
+        "전송",
+        "정리",
+        "질문",
+        "검토",
+        "반영",
+        "wiki갱신"
+    ],
+    "/$defs/Stage/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/properties/questions/maxItems": 3,
+    "/properties/questions/type": "array",
+    "/properties/schema_version/const": 2,
+    "/properties/schema_version/type": "integer",
+    "/properties/stage_times/additionalProperties": {
+        "$ref": "#/$defs/Timestamp"
+    },
+    "/properties/stage_times/type": "object",
+    "/required": [
+        "schema_version",
+        "package_id",
+        "source_id",
+        "revision",
+        "draft_body",
+        "questions",
+        "stage",
+        "stage_times"
+    ],
+    "/type": "object"
+}

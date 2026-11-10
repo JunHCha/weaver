@@ -30,7 +30,6 @@ from weaver.runtime import (
     Runtime,
     RuntimeLedger,
 )
-from weaver.runtime.gate import ExtractionInvalid
 from weaver.runtime.loop import LLM_RECHECK_SECONDS
 
 
@@ -295,9 +294,7 @@ def test_failures_are_classified_and_backed_off(tmp_path, caplog):
     assert status["failed"] == [{"source_id": "src_bad", "error_class": "ValueError"}]
 
 
-@pytest.mark.parametrize(
-    "error", [InvalidJson(), SchemaMismatch(), Refusal(), ExtractionInvalid("x")]
-)
+@pytest.mark.parametrize("error", [InvalidJson(), SchemaMismatch(), Refusal()])
 def test_contract_violation_fails_after_three(tmp_path, error):
     processor = FakeProcessor({"src_a": error})
     runtime, stop, _, clock = make(

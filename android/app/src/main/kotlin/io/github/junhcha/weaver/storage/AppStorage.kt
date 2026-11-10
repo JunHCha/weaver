@@ -12,7 +12,7 @@ object AppStorage {
     /** Originals (audio, shared text) staged before they are written to the sync outbox. */
     const val ORIGINALS_DIR = "originals"
 
-    /** Courier protocol files (manifests, receipts, proposals, verdicts) kept by the app. */
+    /** Courier protocol files (manifests, receipts, review packages, verdicts) kept by the app. */
     const val EXCHANGE_DIR = "exchange"
 
     fun originalsDir(context: Context): File = File(context.filesDir, ORIGINALS_DIR)

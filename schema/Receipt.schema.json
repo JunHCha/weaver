@@ -27,7 +27,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:weaver:schema:v1:Receipt",
+  "$id": "urn:weaver:schema:Receipt",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

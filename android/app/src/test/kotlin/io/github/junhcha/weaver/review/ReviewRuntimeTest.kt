@@ -19,8 +19,8 @@ class ReviewRuntimeTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         File(AppStorage.exchangeDir(context), "reviews").deleteRecursively()
         File(context.filesDir, "inbox.sqlite3").delete()
-        val p = CourierClient.decoded<Proposal>(File(System.getProperty("weaver.schemaDir"), "examples/Proposal.json").readText())
-        val files = mutableMapOf("proposals/${p.proposalId}.r${p.rev}.json" to WeaverCodec.encode(p))
+        val p = CourierClient.decoded<ReviewPackage>(File(System.getProperty("weaver.schemaDir"), "examples/ReviewPackage.json").readText())
+        val files = mutableMapOf("proposals/${p.packageId}.r${p.revision}.json" to WeaverCodec.encode(p))
         var denied = false
         var publishes = 0
         val folder = object : CourierFolder {
@@ -37,11 +37,10 @@ class ReviewRuntimeTest {
             }
             override fun delete(folder: String, name: String): Unit = error("unexpected remote deletion")
         }
-        val verdict = Verdict(1, p.proposalId, p.rev, Verdict.Kind.REVISE, emptyList(), null,
-            "Synthetic instruction", "2026-11-08T00:00:00Z")
+        val verdict = ReviewDraft.verdict(p, listOf("홍길동"), Verdict.Action.FEEDBACK, "", "Synthetic instruction")
         val store = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
         store.queue(folder, p, verdict)
-        assertEquals(p, ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).records().single().proposal)
+        assertEquals(verdict, ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).records().single().verdict)
         CourierDatabase(context).use { db -> assertTrue(CourierWorker.synchronize(context, folder, db)) }
         assertEquals(ReviewStatus.SENT, ReviewRuntime.records(context).single().status)
         assertEquals(1, publishes)
@@ -49,10 +48,10 @@ class ReviewRuntimeTest {
         assertFalse(ReviewRuntime.synchronize(context, folder))
         assertTrue(ReviewRuntime.records(context).single().published)
         denied = false
-        files.remove("decisions/${p.proposalId}.r${p.rev}.json")
+        files.remove("decisions/${p.packageId}.r${p.revision}.json")
         assertTrue(ReviewRuntime.synchronize(context, folder))
         assertEquals(ReviewStatus.INFERRED, ReviewRuntime.records(context).single().status)
         assertEquals(1, publishes)
-        assertTrue(files.containsKey("proposals/${p.proposalId}.r${p.rev}.json"))
+        assertTrue(files.containsKey("proposals/${p.packageId}.r${p.revision}.json"))
     }
 }

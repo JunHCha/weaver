@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
-  "proposal_id": "prp_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-  "rev": 1,
-  "verdict": "approve",
-  "edits": [],
-  "reject_reason": null,
-  "instruction": null,
-  "reviewed_at": "2026-11-07T15:32:00+09:00"
+  "schema_version": 2,
+  "package_id": "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "revision": 1,
+  "action": "approve",
+  "answers": [
+    "홍길동"
+  ],
+  "edited_body": null,
+  "feedback": null
 }

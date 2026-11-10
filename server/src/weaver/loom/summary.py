@@ -13,7 +13,7 @@ from weaver.context import ContextDictionary
 from weaver.courier.atomic import write_json_atomic
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_state import SummaryState
-from weaver.schema.v2 import Question, ReviewPackage
+from weaver.schema import Question, ReviewPackage
 
 
 class DraftResponse(BaseModel):
@@ -25,7 +25,7 @@ class DraftResponse(BaseModel):
 
 
 class SummaryDrafts:
-    """Generate and publish a v2 review package from a complete Script."""
+    """Generate and publish a review package from a complete Script."""
 
     def __init__(
         self,

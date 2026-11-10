@@ -1,22 +1,16 @@
-"""Per-source runtime progress and the extraction cache; never source text.
+"""Per-source runtime progress; never source text.
 
 ``state_root/runtime.sqlite3`` (0600, WAL, synchronous FULL, fullfsync) records
 which archived Sources the resident loop finished (``done``), which wait for an
 LLM (``waiting_llm``), which failed permanently (``failed``) and which retry
 after a backoff (``retry``). Spinner, Loom and Courier keep their own durable
 completion state; this ledger only avoids re-handing finished work to them.
-
-The ``extractions`` table keeps each successful (paid) LLM extraction keyed by
-``(source_id, extractor versions)`` before Proposer journals it, so a restart
-after SIGKILL or a failed publication reuses it instead of calling again. It
-holds model output derived from the source and is private like the journals.
 """
 
 import contextlib
-import json
 import os
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,13 +28,6 @@ _SCHEMA = (
         next_attempt_at REAL,
         updated_at TEXT NOT NULL
     )""",
-    """CREATE TABLE IF NOT EXISTS extractions (
-        source_id TEXT NOT NULL,
-        versions TEXT NOT NULL,
-        extraction TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (source_id, versions)
-    )""",
 )
 
 
@@ -50,10 +37,6 @@ class Progress:
     attempts: int
     contract_failures: int
     next_attempt_at: float | None
-
-
-def versions_key(versions: Mapping[str, str] | None) -> str:
-    return json.dumps(dict(versions or {}), sort_keys=True, separators=(",", ":"))
 
 
 class RuntimeLedger:
@@ -146,31 +129,3 @@ class RuntimeLedger:
                 (limit,),
             ).fetchall()
         return [{"source_id": sid, "error_class": error} for sid, error in rows]
-
-    # ---- extraction cache --------------------------------------------------------
-
-    def cached_extraction(
-        self, source_id: str, versions: Mapping[str, str] | None
-    ) -> str | None:
-        """Serialized Extraction, ``"null"`` for "no extraction", None if absent."""
-        with self._connect() as db:
-            row = db.execute(
-                "SELECT extraction FROM extractions"
-                " WHERE source_id = ? AND versions = ?",
-                (source_id, versions_key(versions)),
-            ).fetchone()
-        return None if row is None else str(row[0])
-
-    def cache_extraction(
-        self, source_id: str, versions: Mapping[str, str] | None, extraction: str
-    ) -> None:
-        with self._connect() as db:
-            db.execute(
-                "INSERT OR IGNORE INTO extractions VALUES (?, ?, ?, ?)",
-                (
-                    source_id,
-                    versions_key(versions),
-                    extraction,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )

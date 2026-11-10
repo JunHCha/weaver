@@ -1,103 +1,66 @@
 {
-    "/$defs/Edit/additionalProperties": false,
-    "/$defs/Edit/required": [
-        "path",
-        "value"
-    ],
-    "/$defs/Edit/type": "object",
     "/$defs/NonEmpty/pattern": "\\S",
     "/$defs/NonEmpty/type": "string",
-    "/$defs/Pointer/pattern": "^(?:/(?:[^~/]|~[01])*)*$",
-    "/$defs/Pointer/type": "string",
-    "/$defs/ProposalId/maxLength": 30,
-    "/$defs/ProposalId/minLength": 30,
-    "/$defs/ProposalId/pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-    "/$defs/ProposalId/type": "string",
-    "/$defs/RejectReason/enum": [
-        "wrong_person",
-        "wrong_content",
-        "duplicate",
-        "not_useful",
-        "other"
-    ],
-    "/$defs/RejectReason/type": "string",
     "/$defs/Revision/minimum": 1,
     "/$defs/Revision/type": "integer",
-    "/$defs/Timestamp/format": "date-time",
-    "/$defs/Timestamp/not": {
-        "pattern": "[\\r\\n]"
-    },
-    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
-    "/$defs/Timestamp/type": "string",
     "/additionalProperties": false,
-    "/oneOf": [
+    "/allOf": [
         {
-            "properties": {
-                "edits": {
-                    "maxItems": 0
-                },
-                "instruction": {
-                    "type": "null"
-                },
-                "reject_reason": {
-                    "type": "null"
-                },
-                "verdict": {
-                    "const": "approve"
+            "else": {
+                "properties": {
+                    "edited_body": {
+                        "type": "null"
+                    }
+                }
+            },
+            "if": {
+                "properties": {
+                    "action": {
+                        "const": "edit"
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "edited_body": {
+                        "type": "string"
+                    }
                 }
             }
         },
         {
-            "properties": {
-                "edits": {
-                    "minItems": 1
-                },
-                "instruction": {
-                    "type": "null"
-                },
-                "reject_reason": {
-                    "type": "null"
-                },
-                "verdict": {
-                    "const": "edit"
+            "else": {
+                "properties": {
+                    "feedback": {
+                        "type": "null"
+                    }
                 }
-            }
-        },
-        {
-            "properties": {
-                "edits": {
-                    "maxItems": 0
-                },
-                "instruction": {
-                    "type": "string"
-                },
-                "reject_reason": {
-                    "type": "null"
-                },
-                "verdict": {
-                    "const": "revise"
+            },
+            "if": {
+                "properties": {
+                    "action": {
+                        "const": "feedback"
+                    }
                 }
-            }
-        },
-        {
-            "properties": {
-                "edits": {
-                    "maxItems": 0
-                },
-                "instruction": {
-                    "type": "null"
-                },
-                "reject_reason": {
-                    "type": "string"
-                },
-                "verdict": {
-                    "const": "reject"
+            },
+            "then": {
+                "properties": {
+                    "feedback": {
+                        "type": "string"
+                    }
                 }
             }
         }
     ],
-    "/properties/edits/type": "array",
-    "/properties/instruction/anyOf": [
+    "/properties/action/enum": [
+        "approve",
+        "edit",
+        "feedback",
+        "reject"
+    ],
+    "/properties/action/type": "string",
+    "/properties/answers/type": "array",
+    "/properties/edited_body/anyOf": [
         {
             "$ref": "#/$defs/NonEmpty"
         },
@@ -105,32 +68,24 @@
             "type": "null"
         }
     ],
-    "/properties/reject_reason/anyOf": [
+    "/properties/feedback/anyOf": [
         {
-            "$ref": "#/$defs/RejectReason"
+            "$ref": "#/$defs/NonEmpty"
         },
         {
             "type": "null"
         }
     ],
-    "/properties/schema_version/const": 1,
+    "/properties/schema_version/const": 2,
     "/properties/schema_version/type": "integer",
-    "/properties/verdict/enum": [
-        "approve",
-        "edit",
-        "revise",
-        "reject"
-    ],
-    "/properties/verdict/type": "string",
     "/required": [
         "schema_version",
-        "proposal_id",
-        "rev",
-        "verdict",
-        "edits",
-        "reject_reason",
-        "instruction",
-        "reviewed_at"
+        "package_id",
+        "revision",
+        "action",
+        "answers",
+        "edited_body",
+        "feedback"
     ],
     "/type": "object"
 }

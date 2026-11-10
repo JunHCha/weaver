@@ -1,9 +1,10 @@
-"""Runtime integration of v2 review and summary lookup."""
+"""Runtime integration of review, summary lookup, schedules and alerts."""
 
 import threading
+from pathlib import Path
 
 from weaver.config import load_config
-from weaver.courier.courier_v2 import CourierV2
+from weaver.courier import Courier
 from weaver.runtime.assemble import Plugins, build_runtime
 
 
@@ -25,7 +26,7 @@ class FakeLlm:
         raise AssertionError(task)
 
 
-def test_runtime_uses_v2_transport(tmp_path):
+def test_runtime_uses_courier_review_transport(tmp_path):
     config_file = tmp_path / "server.toml"
     config_file.write_text(
         "\n".join(
@@ -35,7 +36,7 @@ def test_runtime_uses_v2_transport(tmp_path):
     )
     config = load_config(config_file, init_directories=True)
     runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
-    assert isinstance(runtime.scanner, CourierV2)
+    assert isinstance(runtime.scanner, Courier)
     assert runtime._tick(threading.Event()) == runtime.interval
 
 
@@ -43,8 +44,8 @@ def test_capture_approval_and_restart(tmp_path):
     import hashlib
     import json
 
-    from weaver.fabric.v2 import FabricStore, ThreadQuery
-    from weaver.schema.v2 import ReviewPackage
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.schema import ReviewPackage
 
     config_file = tmp_path / "server.toml"
     config_file.write_text(
@@ -152,7 +153,7 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
     import json
 
     import weaver.loom.summary_review as review_module
-    from weaver.schema.v2 import EventSummary, ReviewPackage
+    from weaver.schema import EventSummary, ReviewPackage
 
     config_file = tmp_path / "server.toml"
     config_file.write_text(
@@ -255,8 +256,8 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
     import time
     from datetime import UTC, datetime
 
-    from weaver.fabric.v2 import FabricStore, ThreadQuery
-    from weaver.schema.v2 import ReviewPackage
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.schema import ReviewPackage
 
     now = [time.time()]
 
@@ -411,3 +412,246 @@ def test_wiki_config_rejects_invalid_values(tmp_path):
         config_file.write_text(roots + "\n[wiki]\n" + value)
         with pytest.raises(ConfigError):
             load_config(config_file, init_directories=True)
+
+
+def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
+    import json
+    from datetime import UTC, datetime
+
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.schema import ApprovedSchedule, ThreadDraft
+
+    class ScheduleLlm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            if task == "loom.approve":
+                assert json.loads(user)["timezone"] == "America/New_York"
+                base = {
+                    "occurred_at": "2026-01-01T00:00:00Z",
+                    "tags": [],
+                    "resolves": None,
+                    "retracts": None,
+                }
+                return schema.model_validate(
+                    {
+                        "body": "요약",
+                        "corrections": [],
+                        "threads": [
+                            base
+                            | {
+                                "kind": "요청",
+                                "content": "준비",
+                                "field": None,
+                                "value": None,
+                                "direction": "받음",
+                            },
+                            base
+                            | {
+                                "kind": "일정",
+                                "content": "회의",
+                                "field": "schedule",
+                                "value": {
+                                    "start": "2026-01-02T09:00:00",
+                                    "end": None,
+                                    "timezone": None,
+                                },
+                                "direction": None,
+                                "blocked_by_index": 0,
+                            },
+                        ],
+                    }
+                )
+            return super().generate_json(task, system, user, schema)
+
+    config_file = tmp_path / "server.toml"
+    config_file.write_text(
+        "\n".join(
+            f'{key}_root = "{key}"'
+            for key in ("sync", "archive", "vault", "state", "log")
+        )
+        + '\n[time]\ntimezone = "America/New_York"\n'
+    )
+    config = load_config(config_file, init_directories=True)
+    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    package, _ = runtime.processor.drafts.create(
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문"
+    )
+    (config.courier.decisions / f"{package.package_id}.r1.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "package_id": package.package_id,
+                "revision": 1,
+                "action": "approve",
+                "answers": [],
+                "edited_body": None,
+                "feedback": None,
+            }
+        )
+    )
+    runtime._tick(threading.Event())
+    fabric = FabricStore.from_config(config)
+    request, schedule = fabric.entries(ThreadQuery())
+    path = config.courier.proposals / "schedules" / f"{schedule.thread_id}.json"
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert (result.package_id, result.blocked_by, result.timezone, result.revision) == (
+        package.package_id,
+        request.thread_id,
+        "America/New_York",
+        1,
+    )
+    assert (
+        config.archive_root
+        / "summaries"
+        / result.summary_id[:2]
+        / f"{result.summary_id}.json"
+    ).exists()
+    runtime._tick(threading.Event())
+    assert ApprovedSchedule.model_validate_json(path.read_text()).revision == 1
+    now = datetime.now(UTC)
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="decision",
+                kind="결정",
+                content="완료",
+                occurred_at=now,
+                recorded_at=now,
+                tags=[],
+                field=None,
+                value=None,
+                source_id=package.source_id,
+                actor="human",
+                direction=None,
+                resolves=request.thread_id,
+                retracts=None,
+                correction=None,
+            )
+        ]
+    )
+    runtime._tick(threading.Event())
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert result.blocked_by is None and result.revision == 2
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="withdrawal",
+                kind="기록",
+                content="취소",
+                occurred_at=now,
+                recorded_at=now,
+                tags=[],
+                field=None,
+                value=None,
+                source_id=package.source_id,
+                actor="human",
+                direction=None,
+                resolves=None,
+                retracts=schedule.thread_id,
+                correction=None,
+            )
+        ]
+    )
+    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    runtime._tick(threading.Event())
+    result = ApprovedSchedule.model_validate_json(path.read_text())
+    assert result.retracted and result.revision == 3
+
+
+def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from jsonschema import Draft202012Validator, FormatChecker
+
+    from weaver.alert import AlertHistory, ScheduleAlertDetector
+    from weaver.schema import Alert
+
+    class MovingLlm(FakeLlm):
+        start = "2026-01-02T09:00:00"
+
+        def generate_json(self, task, system, user, schema):
+            if task != "loom.approve":
+                return super().generate_json(task, system, user, schema)
+            return schema.model_validate(
+                {
+                    "body": "요약",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "일정",
+                            "content": "주간 회의",
+                            "occurred_at": "2026-01-01T00:00:00Z",
+                            "tags": ["홍길동"],
+                            "field": "schedule",
+                            "value": {
+                                "start": self.start,
+                                "end": None,
+                                "timezone": "Asia/Seoul",
+                            },
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                        }
+                    ],
+                }
+            )
+
+    config_file = tmp_path / "server.toml"
+    config_file.write_text(
+        "\n".join(
+            f'{key}_root = "{key}"'
+            for key in ("sync", "archive", "vault", "state", "log")
+        )
+    )
+    config = load_config(config_file, init_directories=True)
+    llm = MovingLlm()
+    runtime = build_runtime(config, plugins=Plugins(client=llm))
+    zone = ZoneInfo("Asia/Seoul")
+    detector = ScheduleAlertDetector(
+        AlertHistory(config.state_root / "alerts.sqlite3"),
+        timezone=zone,
+        clock=lambda: datetime(2026, 1, 1, 12, 0, tzinfo=zone),
+    )
+    runtime.publisher.alerts = (detector, runtime.publisher.alerts[1])
+
+    def approve(source, start):
+        llm.start = start
+        package, _ = runtime.processor.drafts.create(source, "원문")
+        (config.courier.decisions / f"{package.package_id}.r1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "package_id": package.package_id,
+                    "revision": 1,
+                    "action": "approve",
+                    "answers": [],
+                    "edited_body": None,
+                    "feedback": None,
+                }
+            )
+        )
+        runtime._tick(threading.Event())
+        return package
+
+    def alerts():
+        return sorted(config.courier.proposals.glob("alert_*.json"))
+
+    approve("src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "2026-01-02T09:00:00")
+    assert alerts() == []
+    package = approve("src_01ARZ3NDEKTSV4RRFFQ69G5FAW", "2026-01-02T11:00:00")
+    [path] = alerts()
+    payload = json.loads(path.read_text())
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[2] / "schema" / "Alert.schema.json"
+        ).read_text()
+    )
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
+    assert Alert.model_validate(payload).package_id == package.package_id
+    assert path.name == f"alert_{payload['alert_id']}.json"
+    assert "주간 회의" not in payload["message"] and "홍길동" not in payload["message"]
+    # The phone dismissed it: later ticks do not recreate the file.
+    path.unlink()
+    runtime._tick(threading.Event())
+    assert alerts() == []

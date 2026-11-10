@@ -17,7 +17,7 @@ from pydantic import Field, StrictStr, ValidationError, field_validator, model_v
 
 from weaver.llm import AnthropicClient, LlmClient, SchemaMismatch
 from weaver.llm.client import MODEL
-from weaver.schema.models import Contract, EntityId, NonEmpty, Ref, Script, Segment
+from weaver.schema import Contract, NonEmpty, Ref, Script, Segment
 
 PROMPT_VERSION: Literal["spinner.revise.v2"] = "spinner.revise.v2"
 FORMAT_VERSION: Literal[2] = 2
@@ -46,16 +46,7 @@ class ContextLimitError(RevisionError):
         super().__init__("request_bytes_exceeded")
 
 
-class ReviseEntity(Contract):
-    """Only identity/name/alias candidates, never full notes or conversations."""
-
-    entity_id: EntityId
-    name: NonEmpty
-    aliases: list[NonEmpty]
-
-
 class ReviseHints(Contract):
-    entities: list[ReviseEntity] = Field(default_factory=list)
     counterpart: NonEmpty | None = None
 
 

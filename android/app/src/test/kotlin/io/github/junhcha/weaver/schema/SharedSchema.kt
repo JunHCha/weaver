@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
- * Access to the repository-root schema/ v1 files. Gradle passes the directory as
+ * Access to the repository-root schema/ files. Gradle passes the directory as
  * `weaver.schemaDir`, so these tests always read the files the server exported.
  */
 object SharedSchema {
@@ -25,14 +25,18 @@ object SharedSchema {
     }
     private val validators = mutableMapOf<String, Schema>()
 
-    /** The five shared wire models of issue #28 and their Kotlin serializers. */
+    /** The wire models the phone reads or writes and their Kotlin serializers. */
     val models: Map<String, KSerializer<*>> = linkedMapOf(
         "Manifest" to Manifest.serializer(),
         "Receipt" to Receipt.serializer(),
-        "Proposal" to Proposal.serializer(),
+        "ReviewPackage" to ReviewPackage.serializer(),
         "Verdict" to Verdict.serializer(),
+        "ApprovedSchedule" to ApprovedSchedule.serializer(),
         "Alert" to Alert.serializer(),
     )
+
+    /** Capture files carry schema_version 1; review, schedule and alert files carry 2. */
+    fun version(model: String): Long = if (model in setOf("Manifest", "Receipt")) 1L else 2L
 
     fun schemaText(model: String): String = File(dir, "$model.schema.json").readText()
 

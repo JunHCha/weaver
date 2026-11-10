@@ -1,12 +1,12 @@
-"""Neutral fixtures built from schema/examples, plus #18/#26 test doubles.
+"""Neutral fixtures built from schema/examples, plus capture and review doubles.
 
 Nothing here touches Syncthing, a vault, an LLM or a speech model: every test
 runs in pytest's temporary directory.
 """
 
-import copy
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,14 +14,14 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from weaver.config import CourierPaths
 from weaver.courier import Courier
-from weaver.schema import Proposal, Verdict
+from weaver.schema import ReviewPackage, Verdict
 
 ROOT = Path(__file__).resolve().parents[3]
 
 CAP = "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0"
 CAP2 = "cap_01ARZ3NDEKTSV4RRFFQ69G5FA1"
-PRP = "prp_01ARZ3NDEKTSV4RRFFQ69G5FA0"
-PRP2 = "prp_01ARZ3NDEKTSV4RRFFQ69G5FA1"
+PKG = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0"
+PKG2 = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA1"
 BODY = "합성 공유 텍스트: 내일 점검 회의를 요청합니다.".encode()
 
 
@@ -46,15 +46,29 @@ def manifest_for(capture_id=CAP, body=BODY, ext="txt", **overrides):
     return payload
 
 
-def proposal_for(proposal_id=PRP, rev=1):
-    payload = example("Proposal") | {"proposal_id": proposal_id, "rev": rev}
-    assert_schema_valid("Proposal", payload)
-    return Proposal.model_validate(payload)
+def package_for(package_id=PKG, revision=1):
+    return ReviewPackage(
+        schema_version=2,
+        package_id=package_id,
+        source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        revision=revision,
+        draft_body="합성 요약",
+        questions=[],
+        stage="검토",
+        stage_times={"검토": datetime(2026, 11, 7, 6, 32, tzinfo=UTC)},
+    )
 
 
-def verdict_for(proposal_id=PRP, rev=1, kind="approve"):
-    name = "Verdict" if kind == "approve" else f"Verdict-{kind}"
-    return copy.deepcopy(example(name)) | {"proposal_id": proposal_id, "rev": rev}
+def verdict_for(package_id=PKG, revision=1, action="approve"):
+    return Verdict(
+        schema_version=2,
+        package_id=package_id,
+        revision=revision,
+        action=action,
+        answers=[],
+        edited_body="수정 본문" if action == "edit" else None,
+        feedback="이름을 고쳐 주세요" if action == "feedback" else None,
+    ).model_dump(mode="json")
 
 
 def write_json(path, payload):
@@ -96,12 +110,12 @@ class FakeRevisions:
     def __init__(self):
         self.latest = {}
 
-    def latest_rev(self, proposal_id):
-        return self.latest.get(proposal_id)
+    def latest_rev(self, package_id):
+        return self.latest.get(package_id)
 
 
 class FakeDecisions:
-    """VerdictHandler double; ``on_apply`` lets a test emulate a revise."""
+    """Review double; ``on_apply`` lets a test emulate a feedback revision."""
 
     def __init__(self):
         self.applied = set()
@@ -110,19 +124,19 @@ class FakeDecisions:
         self.confirm = True
         self.on_apply = None
 
-    def is_applied(self, proposal_id, rev):
-        return (proposal_id, rev) in self.applied
+    def is_applied(self, package_id, rev):
+        return (package_id, rev) in self.applied
 
     def apply(self, verdict):
         assert isinstance(verdict, Verdict)
-        self.calls.append((verdict.proposal_id, verdict.rev, verdict.verdict))
+        self.calls.append((verdict.package_id, verdict.revision, verdict.action))
         if self.failures:
             self.failures -= 1
             raise RuntimeError("apply failed")
         if self.on_apply is not None:
             self.on_apply(verdict)
         if self.confirm:
-            self.applied.add((verdict.proposal_id, verdict.rev))
+            self.applied.add((verdict.package_id, verdict.revision))
 
 
 @pytest.fixture
@@ -153,3 +167,10 @@ def decisions():
 @pytest.fixture
 def courier(paths, captures, revisions, decisions):
     return Courier(paths, captures, revisions, decisions)
+
+
+def place_package(paths, package):
+    """Write a review package as the server's drafting stage does."""
+    path = paths.proposals / f"{package.package_id}.r{package.revision}.json"
+    write_json(path, package.model_dump(mode="json"))
+    return path

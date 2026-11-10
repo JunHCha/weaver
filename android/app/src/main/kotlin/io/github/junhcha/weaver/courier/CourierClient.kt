@@ -1,10 +1,6 @@
 package io.github.junhcha.weaver.courier
 
 import io.github.junhcha.weaver.schema.*
-import io.github.junhcha.weaver.schema.v2.ReviewPackage
-import io.github.junhcha.weaver.schema.v2.ApprovedSchedule
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.io.InputStream
 import java.nio.charset.CodingErrorAction
@@ -19,18 +15,16 @@ class CourierClient(
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     /**
-     * [unreadable] lists final-looking names in proposals/ that were present but rejected. Consumers must treat
+     * [unreadable] lists final-looking names in proposals/ (the review folder) that were present but rejected. Consumers must treat
      * them as "still there, state unknown" rather than deleted, so a partial or invalid file never clears state.
      */
     data class Inbox(
-        val receipts: List<Receipt>, val proposals: List<Proposal>, val alerts: List<Alert>,
-        val unreadable: Set<String> = emptySet(), val packages: List<ReviewPackage> = emptyList(),
-        val schedules: List<ApprovedSchedule> = emptyList(),
+        val receipts: List<Receipt>, val packages: List<ReviewPackage>, val alerts: List<Alert>,
+        val unreadable: Set<String> = emptySet(), val schedules: List<ApprovedSchedule> = emptyList(),
     )
 
     fun scan(): Inbox {
         val receipts = mutableListOf<Receipt>()
-        val proposals = mutableListOf<Proposal>()
         val alerts = mutableListOf<Alert>()
         val packages = mutableListOf<ReviewPackage>()
         val unreadable = mutableSetOf<String>()
@@ -67,16 +61,9 @@ class CourierClient(
                             receipts.add(receipt)
                         }
                         directory == "proposals" && CourierRules.revision.matches(name) -> {
-                            val version = WeaverCodec.json.parseToJsonElement(text).jsonObject["schema_version"]?.jsonPrimitive
-                            if (version != null && !version.isString && version.content == "2") {
-                                val pkg = decoded<ReviewPackage>(text)
-                                check(name == "${pkg.packageId}.r${pkg.revision}.json") { "id_mismatch" }
-                                packages.add(pkg)
-                            } else {
-                                val proposal = decoded<Proposal>(text)
-                                check(name == "${proposal.proposalId}.r${proposal.rev}.json") { "id_mismatch" }
-                                proposals.add(proposal)
-                            }
+                            val pkg = decoded<ReviewPackage>(text)
+                            check(name == "${pkg.packageId}.r${pkg.revision}.json") { "id_mismatch" }
+                            packages.add(pkg)
                         }
                         directory == "proposals" && CourierRules.alert.matches(name) -> {
                             val alert = decoded<Alert>(text)
@@ -89,9 +76,8 @@ class CourierClient(
                 if (!read && directory == "proposals") unreadable.add(name)
             }
         }
-        return Inbox(receipts, proposals.groupBy { it.proposalId }.values.map { versions ->
-            versions.maxBy { it.rev }
-        }, alerts, unreadable, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } }, schedules)
+        return Inbox(receipts, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } },
+            alerts, unreadable, schedules)
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */
@@ -180,7 +166,7 @@ class CourierClient(
     }
 
     fun publishVerdict(verdict: Verdict) {
-        val name = "${verdict.proposalId}.r${verdict.rev}.json"
+        val name = "${verdict.packageId}.r${verdict.revision}.json"
         val bytes = WeaverCodec.encode(verdict).toByteArray()
         check(bytes.size <= CourierRules.maxJson) { "too_large" }
         if (folder.list("decisions").any { it.name == name }) {

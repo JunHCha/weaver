@@ -4,29 +4,25 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
 
 /**
- * Value constraints of schema/ v1 `$defs`, copied verbatim. RuleConstantsTest compares every
+ * Value constraints of the schema/ `$defs`, copied verbatim. RuleConstantsTest compares every
  * constant with the exported schema, so a schema change that is not mirrored here fails.
  */
 internal object SchemaRules {
     const val TIMESTAMP = """^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"""
-    const val REF = "^[a-z][1-9][0-9]*$"
     const val DIGEST = "^[0-9a-f]{64}$"
     const val DIGEST_LENGTH = 64
     const val PAYLOAD_REF = "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$"
     const val NON_EMPTY = "\\S"
-    const val POINTER = "^(?:/(?:[^~/]|~[01])*)*$"
 
-    /** `not: {pattern}` on Timestamp, Ref and PayloadRef. */
+    /** `not: {pattern}` on Timestamp and PayloadRef. */
     const val LINE_BREAK = "[\\r\\n]"
 
     const val ID_LENGTH = 30
-    const val CONFIDENCE_MIN = 0
-    const val CONFIDENCE_MAX = 1
     const val REVISION_MIN = 1
     const val OFFSET_MIN = 0
     const val DATE_TIME_FORMAT = "date-time"
 
-    /** Prefixes of ID `$defs`: CaptureId=cap, SourceId=src, ProposalId=prp, AlertId=alt, EntityId=ent, ThreadId=evt. */
+    /** Prefixes of ID `$defs`: CaptureId=cap, SourceId=src, AlertId=alt. */
     fun idPattern(prefix: String): String = "^${prefix}_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 }
 
@@ -34,19 +30,17 @@ internal object SchemaRules {
  * Checks the [SchemaRules] in model `init`, so a decoded or newly built object already
  * satisfies the constraints the JSON Schema validates.
  *
- * The app is deliberately stricter than the schema in two places, both values a v1 producer
+ * The app is deliberately stricter than the schema in two places, both values a producer
  * never writes: timestamps must also parse with java.time (offsets within ±18:00, at most
  * nine fraction digits), and integers must fit in a Kotlin Long.
  */
 internal object Rules {
     private val timestamp = Regex(SchemaRules.TIMESTAMP)
-    private val ref = Regex(SchemaRules.REF)
     private val digest = Regex(SchemaRules.DIGEST)
     private val payloadRef = Regex(SchemaRules.PAYLOAD_REF)
     private val nonEmpty = Regex(SchemaRules.NON_EMPTY)
     private val lineBreak = Regex(SchemaRules.LINE_BREAK)
     private val ids = mutableMapOf<String, Regex>()
-    private val entityId = id("ent")
 
     // ECMA-262 `$` (JSON Schema) only matches at the very end; java.util.regex `$` also
     // matches before a final line break. Line breaks are therefore rejected explicitly.
@@ -66,16 +60,6 @@ internal object Rules {
         }
     }
 
-    fun ref(value: String, field: String) {
-        require(ref.schemaMatches(value)) { "$field must be a local ref like e1" }
-    }
-
-    fun entityRef(value: String, field: String) {
-        require(ref.schemaMatches(value) || entityId.schemaMatches(value)) {
-            "$field must be a local ref or ent_ ID"
-        }
-    }
-
     fun digest(value: String, field: String) {
         require(digest.schemaMatches(value)) { "$field must be 64 lowercase hex characters" }
     }
@@ -88,22 +72,16 @@ internal object Rules {
         require(nonEmpty.containsMatchIn(value)) { "$field must contain a non-space character" }
     }
 
-    fun confidence(value: Double) {
-        require(value.isFinite() && value >= SchemaRules.CONFIDENCE_MIN && value <= SchemaRules.CONFIDENCE_MAX) {
-            "confidence must be within [${SchemaRules.CONFIDENCE_MIN}, ${SchemaRules.CONFIDENCE_MAX}]"
-        }
-    }
-
     fun revision(value: Long) {
-        require(value >= SchemaRules.REVISION_MIN) { "rev must be >= ${SchemaRules.REVISION_MIN}" }
+        require(value >= SchemaRules.REVISION_MIN) { "revision must be >= ${SchemaRules.REVISION_MIN}" }
     }
 
     fun offset(value: Long, field: String) {
         require(value >= SchemaRules.OFFSET_MIN) { "$field must be nonnegative" }
     }
 
-    fun schemaVersion(value: Int) {
-        require(value == SCHEMA_VERSION) { "schema_version must be $SCHEMA_VERSION" }
+    fun schemaVersion(value: Int, expected: Int = SCHEMA_VERSION) {
+        require(value == expected) { "schema_version must be $expected" }
     }
 
     private fun parses(value: String): Boolean = try {
@@ -114,5 +92,8 @@ internal object Rules {
     }
 }
 
-/** The only wire version this app reads or writes. */
+/** Wire version of capture files (Manifest, Receipt). */
 const val SCHEMA_VERSION: Int = 1
+
+/** Wire version of review, schedule and alert files. */
+const val REVIEW_SCHEMA_VERSION: Int = 2

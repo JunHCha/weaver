@@ -1,19 +1,39 @@
 """Consumer contract tests: fixture files are also the Android minimum examples."""
 
-import copy
 import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from weaver.schema import SHARED_MODELS, Proposal, Script, Verdict
+from weaver.schema import (
+    SHARED_MODELS,
+    ApprovedSchedule,
+    EventSummary,
+    Question,
+    ReviewPackage,
+    Script,
+    Source,
+    Thread,
+    ThreadDraft,
+    Verdict,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
+VERSIONED = [m for m in SHARED_MODELS if "schema_version" in m.model_fields]
+CAPTURE = {"Manifest", "Receipt", "Source", "Script"}
 
 
 def example(name):
     return json.loads((ROOT / "schema" / "examples" / f"{name}.json").read_text())
+
+
+def model_named(name):
+    return next(m for m in SHARED_MODELS if m.__name__ == name)
+
+
+def expected_version(model):
+    return 1 if model.__name__ in CAPTURE else 2
 
 
 @pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
@@ -23,18 +43,43 @@ def test_examples_round_trip(model):
     assert model.model_validate_json(parsed.model_dump_json()) == parsed
 
 
-@pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
-@pytest.mark.parametrize("mutation", ["version", "missing", "extra"])
-def test_file_contract_rejects_invalid_envelopes(model, mutation):
-    payload = example(model.__name__)
-    if mutation == "version":
-        payload["schema_version"] = 2
-    elif mutation == "missing":
-        del payload[next(k for k in payload if k != "schema_version")]
+@pytest.mark.parametrize("model", VERSIONED, ids=lambda m: m.__name__)
+@pytest.mark.parametrize("version", [0, 1, 2, 3, True, 2.0, "2"])
+def test_only_the_models_own_integer_version_is_accepted(model, version):
+    payload = example(model.__name__) | {"schema_version": version}
+    if type(version) is int and version == expected_version(model):
+        assert model.model_validate(payload)
     else:
-        payload["unknown"] = 1
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+
+@pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
+def test_unknown_keys_are_rejected(model):
     with pytest.raises(ValidationError):
-        model.model_validate(payload)
+        model.model_validate(example(model.__name__) | {"unknown": 1})
+
+
+@pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
+def test_all_top_level_keys_are_required_even_if_nullable(model):
+    payload = example(model.__name__)
+    defaults = (
+        {"blocked_by", "revision", "retracted"}
+        if model
+        in (
+            ApprovedSchedule,
+            Thread,
+            ThreadDraft,
+        )
+        else set()
+    )
+    for key in payload:
+        if key in defaults:
+            continue
+        broken = dict(payload)
+        del broken[key]
+        with pytest.raises(ValidationError):
+            model.model_validate(broken)
 
 
 @pytest.mark.parametrize(
@@ -42,88 +87,41 @@ def test_file_contract_rejects_invalid_envelopes(model, mutation):
     [
         ("Manifest", "capture_id", "cap_20261107_1"),
         ("Receipt", "source_id", "ent_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-        ("Proposal", "rev", 0),
-        ("Proposal", "rev", True),
-        ("Verdict", "rev", 0),
-        ("Verdict", "verdict", "decision"),
         ("Alert", "alert_id", "alt_Z1ARZ3NDEKTSV4RRFFQ69G5FAV"),
-        ("Entity", "type", "decision"),
-        ("Relation", "type", "결정됨"),
-        ("Thread", "kind", "자동실행"),
         ("Source", "channel", "photo"),
         ("Script", "source_id", "src_bad"),
         ("Manifest", "captured_at", "2026-11-07T12:00:00"),
+        ("Receipt", "received_at", "2026-11-07T12:00:00"),
+        ("Alert", "created_at", "2026-11-07T12:00:00"),
+        ("Thread", "occurred_at", "2026-11-07T12:00:00"),
         ("Thread", "recorded_at", "2026-11-07"),
         ("Script", "occurred_at", 1794030000),
         ("Source", "payload_ref", "/Users/private/audio.m4a"),
         ("Source", "payload_ref", "../secret"),
-        ("Manifest", "schema_version", True),
+        ("Verdict", "revision", 0),
+        ("Verdict", "action", "revise"),
+        ("ReviewPackage", "revision", True),
+        ("Thread", "kind", "자동실행"),
+        ("EventSummary", "summary_id", "wrong"),
+        ("ApprovedSchedule", "summary_id", "bad"),
     ],
 )
 def test_invalid_values(model_name, field, bad):
-    model = next(m for m in SHARED_MODELS if m.__name__ == model_name)
     payload = example(model_name)
     payload[field] = bad
     with pytest.raises(ValidationError):
-        model.model_validate(payload)
-
-
-@pytest.mark.parametrize(
-    ("verdict", "edits", "reason", "instruction"),
-    [
-        ("approve", [], None, None),
-        ("edit", [{"path": "/summary", "value": "수정"}], None, None),
-        ("revise", [], None, "이름을 다시 확인"),
-        ("reject", [], "wrong_person", None),
-    ],
-)
-def test_verdict_branches(verdict, edits, reason, instruction):
-    payload = example("Verdict") | dict(
-        verdict=verdict, edits=edits, reject_reason=reason, instruction=instruction
-    )
-    assert Verdict.model_validate(payload).verdict == verdict
-    broken = copy.deepcopy(payload)
-    if verdict == "edit":
-        broken["edits"] = []
-    elif verdict == "revise":
-        broken["instruction"] = "   "
-    elif verdict == "reject":
-        broken["reject_reason"] = None
-    else:
-        broken["instruction"] = "do something"
-    with pytest.raises(ValidationError):
-        Verdict.model_validate(broken)
-
-
-@pytest.mark.parametrize("path", ["schedules[0].start", "/bad~2escape"])
-def test_pointer_syntax(path):
-    payload = example("Verdict") | dict(
-        verdict="edit", edits=[{"path": path, "value": 1}]
-    )
-    with pytest.raises(ValidationError):
-        Verdict.model_validate(payload)
-
-
-def test_proposal_rejects_dangling_reference_and_unblocked_request():
-    payload = example("Proposal")
-    payload["entry_drafts"][0]["entities"] = ["missing"]
-    with pytest.raises(ValidationError):
-        Proposal.model_validate(payload)
-    payload = example("Proposal")
-    payload["schedules"][0]["blocked_by_request"] = None
-    with pytest.raises(ValidationError):
-        Proposal.model_validate(payload)
+        model_named(model_name).model_validate(payload)
 
 
 @pytest.mark.parametrize("name", ["Script-text", "Script-kakao", "Script-audio"])
-def test_thread_ranges_preserve_text(name):
-    thread = Script.model_validate(example(name))
-    for segment in thread.segments:
-        assert thread.text[segment.start_char : segment.end_char]
-    assert thread.source_id == example("Source")["source_id"]
+def test_script_ranges_preserve_text(name):
+    script = Script.model_validate(example(name))
+    for segment in script.segments:
+        assert script.text[segment.start_char : segment.end_char]
+    assert script.source_id == example("Source")["source_id"]
 
 
-def test_thread_invalid_range_and_audio_pair():
+def test_script_invalid_range_and_audio_pair():
     payload = example("Script")
     payload["segments"][0]["end_char"] = len(payload["text"]) + 1
     with pytest.raises(ValidationError):
@@ -134,124 +132,163 @@ def test_thread_invalid_range_and_audio_pair():
         Script.model_validate(payload)
 
 
-@pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
-def test_all_top_level_keys_are_required_even_if_nullable(model):
-    payload = example(model.__name__)
-    for key in payload:
-        broken = dict(payload)
-        del broken[key]
-        with pytest.raises(ValidationError):
-            model.model_validate(broken)
-
-
-@pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
-def test_every_core_model_rejects_bad_identifiers(model):
-    payload = example(model.__name__)
-    key = next(k for k in payload if k.endswith("_id") or k == "from")
-    payload[key] = "invalid_id"
-    with pytest.raises(ValidationError):
-        model.model_validate(payload)
-
-
-@pytest.mark.parametrize(
-    "model_name,field",
-    [
-        ("Manifest", "captured_at"),
-        ("Receipt", "received_at"),
-        ("Verdict", "reviewed_at"),
-        ("Alert", "created_at"),
-        ("Thread", "occurred_at"),
-        ("Source", "captured_at"),
-        ("Script", "occurred_at"),
-    ],
-)
-def test_all_dated_models_require_explicit_timezone(model_name, field):
-    model = next(m for m in SHARED_MODELS if m.__name__ == model_name)
-    payload = example(model_name)
-    payload[field] = "2026-11-07T12:00:00"
-    with pytest.raises(ValidationError):
-        model.model_validate(payload)
-
-
-def test_request_fields_are_kind_dependent_and_resolution_is_human_only():
-    from weaver.schema import Thread
-
-    request = example("Thread")
-    decision = example("Thread-decision")
-    for broken in [
-        request | {"request": None},
-        request | {"resolves": decision["entry_id"]},
-        decision | {"actor": "ai_approved"},
-        decision | {"request": request["request"]},
-    ]:
-        with pytest.raises(ValidationError):
-            Thread.model_validate(broken)
-
-
-@pytest.mark.parametrize("kind", ["Entity", "Proposal", "Thread"])
-def test_confidence_and_nullability(kind):
-    model = next(m for m in SHARED_MODELS if m.__name__ == kind)
-    payload = example(kind)
-    if kind == "Entity":
-        payload["confidence"] = 1.01
-    elif kind == "Proposal":
-        payload["entry_drafts"][0]["occurred_at"] = "2026-11-07T00:00:00"
-    else:
-        payload["request"]["due_at"] = "2026-11-07T00:00:00"
-    with pytest.raises(ValidationError):
-        model.model_validate(payload)
-
-
-@pytest.mark.parametrize("verdict", ["approve", "edit", "revise", "reject"])
-@pytest.mark.parametrize("edits", [[], [{"path": "/summary", "value": "수정"}]])
-@pytest.mark.parametrize("reason", [None, "wrong_content"])
-@pytest.mark.parametrize("instruction", [None, "다시 작성"])
-def test_all_verdict_input_combinations(verdict, edits, reason, instruction):
-    payload = example("Verdict") | dict(
-        verdict=verdict, edits=edits, reject_reason=reason, instruction=instruction
-    )
-    valid = (
-        bool(edits) == (verdict == "edit")
-        and (reason is not None) == (verdict == "reject")
-        and (instruction is not None) == (verdict == "revise")
-    )
-    if valid:
-        Verdict.model_validate(payload)
-    else:
-        with pytest.raises(ValidationError):
-            Verdict.model_validate(payload)
-
-
-@pytest.mark.parametrize("path", ["", "/summary", "/schedules/0/start", "/a~1b/m~0n"])
-def test_valid_json_pointers(path):
-    payload = example("Verdict") | dict(
-        verdict="edit", edits=[{"path": path, "value": None}]
-    )
-    assert Verdict.model_validate(payload).edits[0].path == path
-
-
 @pytest.mark.parametrize("kind", ["text", "kakao", "audio"])
-def test_source_thread_pair_preserves_metadata(kind):
-    from weaver.schema import Source
-
+def test_source_script_pair_preserves_metadata(kind):
     source = Source.model_validate(example(f"Source-{kind}"))
-    thread = Script.model_validate(example(f"Script-{kind}"))
+    script = Script.model_validate(example(f"Script-{kind}"))
     assert (source.source_id, source.channel, source.occurred_at) == (
-        thread.source_id,
-        thread.channel,
-        thread.occurred_at,
+        script.source_id,
+        script.channel,
+        script.occurred_at,
     )
     if kind == "kakao":
-        assert all(
-            segment.speaker and segment.occurred_at for segment in thread.segments
-        )
+        assert all(s.speaker and s.occurred_at for s in script.segments)
     elif kind == "audio":
         assert all(
-            segment.start_ms is not None and segment.end_ms is not None
-            for segment in thread.segments
+            s.start_ms is not None and s.end_ms is not None for s in script.segments
         )
     else:
-        assert all(
-            segment.start_ms is None and segment.end_ms is None
-            for segment in thread.segments
-        )
+        assert all(s.start_ms is None and s.end_ms is None for s in script.segments)
+
+
+@pytest.fixture
+def draft():
+    return {
+        "thread_id": "thread-1",
+        "kind": "기록",
+        "content": "메모",
+        "occurred_at": "2026-01-01T00:00:00Z",
+        "recorded_at": "2026-01-01T00:00:00Z",
+        "tags": [],
+        "field": None,
+        "value": None,
+        "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "actor": "human",
+        "direction": None,
+        "resolves": None,
+        "retracts": None,
+        "correction": None,
+    }
+
+
+def test_direction_is_required_only_for_requests(draft):
+    assert ThreadDraft.model_validate(draft | {"kind": "요청", "direction": "받음"})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"kind": "요청"})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"direction": "보냄"})
+
+
+def test_correction_only_for_tag_correction(draft):
+    correction = {"target": "thread-2", "remove": ["옛태그"], "add": ["새태그"]}
+    assert ThreadDraft.model_validate(
+        draft | {"kind": "태그정정", "correction": correction}
+    )
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"kind": "태그정정"})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"correction": correction})
+
+
+def test_resolves_only_on_decision(draft):
+    assert ThreadDraft.model_validate(draft | {"kind": "결정", "resolves": "thread-2"})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"resolves": "thread-2"})
+
+
+def test_rejection_has_no_content(draft):
+    assert ThreadDraft.model_validate(draft | {"kind": "거절", "content": None})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"kind": "거절"})
+
+
+def test_sequence_is_assigned_by_sink(draft):
+    assert Thread.model_validate(draft | {"seq": 1}).seq == 1
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"seq": 1})
+    with pytest.raises(ValidationError):
+        Thread.model_validate(draft | {"seq": 0})
+
+
+def test_question_has_exactly_three_choices():
+    data = {
+        "question": "어느 쪽인가요?",
+        "rationale": "모호함",
+        "choices": ["가", "나", "다"],
+    }
+    assert Question.model_validate(data)
+    for choices in ([], ["가", "나"], ["가", "나", "다", "라"]):
+        with pytest.raises(ValidationError):
+            Question.model_validate(data | {"choices": choices})
+
+
+def test_review_package_question_limit():
+    data = example("ReviewPackage")
+    question = data["questions"][0]
+    assert ReviewPackage.model_validate(data | {"questions": [question] * 3})
+    with pytest.raises(ValidationError):
+        ReviewPackage.model_validate(data | {"questions": [question] * 4})
+
+
+def test_verdict_action_requires_appropriate_input():
+    data = example("Verdict")
+    assert Verdict.model_validate(data)
+    assert Verdict.model_validate(data | {"action": "edit", "edited_body": "수정"})
+    assert Verdict.model_validate(
+        data | {"action": "feedback", "feedback": "더 자세히"}
+    )
+    assert Verdict.model_validate(data | {"action": "reject"})
+    for invalid in (
+        {"action": "edit"},
+        {"action": "feedback"},
+        {"feedback": "더 자세히"},
+        {"action": "reject", "edited_body": "수정"},
+    ):
+        with pytest.raises(ValidationError):
+            Verdict.model_validate(data | invalid)
+
+
+def test_event_summary_is_content_addressed():
+    data = example("EventSummary")
+    for invalid in ({"summary_id": "wrong"}, {"replaces": "wrong"}):
+        with pytest.raises(ValidationError):
+            EventSummary.model_validate(data | invalid)
+
+
+def test_schedule_value_and_block_reference(draft):
+    schedule = {
+        "start": "2026-01-01T09:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    assert ThreadDraft.model_validate(
+        draft
+        | {
+            "kind": "일정",
+            "field": "schedule",
+            "value": schedule,
+            "blocked_by": "request-1",
+        }
+    )
+    for invalid in (
+        "2026-01-01",
+        {},
+        schedule | {"timezone": "No/Such_Zone"},
+        schedule | {"start": "2026-01-01T09:00:00"},
+        schedule | {"end": "2025-01-01T00:00:00Z"},
+    ):
+        with pytest.raises(ValidationError):
+            ThreadDraft.model_validate(draft | {"field": "schedule", "value": invalid})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"blocked_by": "request-1"})
+
+
+def test_approved_schedule_contract():
+    data = example("ApprovedSchedule")
+    for invalid in (
+        {"end": "2025-01-01T00:00:00Z"},
+        {"title": " "},
+        {"timezone": "x/y"},
+    ):
+        with pytest.raises(ValidationError):
+            ApprovedSchedule.model_validate(data | invalid)

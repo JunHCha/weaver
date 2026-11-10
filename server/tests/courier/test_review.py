@@ -1,4 +1,4 @@
-"""Regression tests for PR #42 review findings."""
+"""Courier scan, cleanup and publication regressions."""
 
 import os
 import shutil
@@ -9,17 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from weaver.courier import Courier, RevisionError, write_json_atomic
+from weaver.courier import Courier, write_json_atomic
 from weaver.courier.atomic import temporary_name
 from weaver.schema import Receipt
 
 from .conftest import (
     BODY,
     CAP,
-    PRP,
+    PKG,
     example,
     manifest_for,
-    proposal_for,
+    package_for,
+    place_package,
     verdict_for,
     write_json,
 )
@@ -79,48 +80,48 @@ def test_query_port_failure_is_reported_per_file(
     courier, paths, captures, revisions, decisions, monkeypatch, port, method, folder
 ):
     publish_capture(paths.outbox)
-    revisions.latest[PRP] = 1
-    courier.publish_proposal(proposal_for(rev=1))
-    write_json(paths.decisions / f"{PRP}.r1.json", verdict_for())
+    revisions.latest[PKG] = 1
+    place_package(paths, package_for(revision=1))
+    write_json(paths.decisions / f"{PKG}.r1.json", verdict_for())
     if method == "confirm":  # confirm is only asked for stored captures
         captures.stored[CAP] = manifest_for()["sha256"]
     doubles = {"captures": captures, "revisions": revisions, "decisions": decisions}
     monkeypatch.setattr(doubles[port], method, boom)
     report = courier.scan_once()
-    failed = f"{folder}/{CAP if folder == 'outbox' else PRP + '.r1'}.json"
+    failed = f"{folder}/{CAP if folder == 'outbox' else PKG + '.r1'}.json"
     assert report.problems[failed] == "store_failed"
     # Other folders in the same pass still ran and the file is preserved.
     if folder == "outbox":
-        assert report.applied == [(PRP, 1)]
+        assert report.applied == [(PKG, 1)]
         assert report.duplicates == []
         assert (paths.outbox / f"{CAP}.json").exists()
     else:
         assert report.accepted == [CAP]
-        assert (paths.decisions / f"{PRP}.r1.json").exists()
+        assert (paths.decisions / f"{PKG}.r1.json").exists()
 
 
-def test_proposal_scan_port_failure_is_reported(courier, paths, revisions):
-    revisions.latest[PRP] = 1
-    courier.publish_proposal(proposal_for(rev=1))
+def test_package_scan_port_failure_is_reported(courier, paths, revisions):
+    revisions.latest[PKG] = 1
+    place_package(paths, package_for(revision=1))
     revisions.latest_rev = boom
     report = courier.scan_once()
-    assert report.problems == {f"proposals/{PRP}.r1.json": "store_failed"}
+    assert report.problems == {f"proposals/{PKG}.r1.json": "store_failed"}
 
 
-# ---- P3-1: resurrected proposal whose verdict was already applied -----------
+# ---- P3-1: resurrected package whose verdict was already applied -----------
 
 
-def test_resurrected_applied_latest_proposal_is_pruned(
+def test_resurrected_applied_latest_package_is_pruned(
     courier, paths, revisions, decisions
 ):
-    revisions.latest[PRP] = 1
-    courier.publish_proposal(proposal_for(rev=1))
-    write_json(paths.decisions / f"{PRP}.r1.json", verdict_for())
-    assert courier.scan_once().applied == [(PRP, 1)]
-    payload = proposal_for(rev=1).model_dump(mode="json", by_alias=True)
-    write_json(paths.proposals / f"{PRP}.r1.json", payload)  # resync revives it
+    revisions.latest[PKG] = 1
+    place_package(paths, package_for(revision=1))
+    write_json(paths.decisions / f"{PKG}.r1.json", verdict_for())
+    assert courier.scan_once().applied == [(PKG, 1)]
+    payload = package_for(revision=1).model_dump(mode="json", by_alias=True)
+    write_json(paths.proposals / f"{PKG}.r1.json", payload)  # resync revives it
     report = courier.scan_once()
-    assert report.pruned == [f"{PRP}.r1.json"]
+    assert report.pruned == [f"{PKG}.r1.json"]
     assert names(paths.proposals) == []
 
 
@@ -135,19 +136,19 @@ def old(path, seconds=3600):
 
 def test_stale_own_temporaries_are_removed(courier, paths, revisions):
     receipt = temporary_name(paths.receipts / f"{CAP}.json")
-    proposal = temporary_name(paths.proposals / f"{PRP}.r1.json")
+    package = temporary_name(paths.proposals / f"{PKG}.r1.json")
     alert = temporary_name(
         paths.proposals / f"alert_{example('Alert')['alert_id']}.json"
     )
-    fresh = temporary_name(paths.proposals / f"{PRP}.r2.json")
-    for path in (receipt, proposal, alert, fresh):
+    fresh = temporary_name(paths.proposals / f"{PKG}.r2.json")
+    for path in (receipt, package, alert, fresh):
         path.write_text("{")
-    for path in (receipt, proposal, alert):
+    for path in (receipt, package, alert):
         old(path)
     foreign = paths.proposals / ".stfolder-like.tmp"
     foreign.write_text("")
     old(foreign)
-    syncthing = paths.proposals / f".syncthing.{PRP}.r1.json.tmp"
+    syncthing = paths.proposals / f".syncthing.{PKG}.r1.json.tmp"
     syncthing.write_text("")
     old(syncthing)
     courier.scan_once()
@@ -245,18 +246,6 @@ def test_manifest_swapped_to_symlink_is_not_followed(
     assert report.problems[f"outbox/{CAP}.json"] == "symlink"
 
 
-# ---- P3-4: publish only the durably recorded latest rev ---------------------
-
-
-@pytest.mark.parametrize(("latest", "rev"), [(None, 1), (1, 2), (2, 1)])
-def test_publish_requires_recorded_latest_rev(courier, paths, revisions, latest, rev):
-    if latest is not None:
-        revisions.latest[PRP] = latest
-    with pytest.raises(RevisionError):
-        courier.publish_proposal(proposal_for(rev=rev))
-    assert names(paths.proposals) == []
-
-
 # ---- P3-5: folder/io failures and interrupted cleanup -----------------------
 
 
@@ -271,13 +260,13 @@ def test_missing_folder_is_reported_and_others_continue(courier, paths, captures
 def test_cleanup_io_error_is_reported_and_retried(
     courier, paths, revisions, decisions, monkeypatch
 ):
-    revisions.latest[PRP] = 1
-    courier.publish_proposal(proposal_for(rev=1))
-    decision = write_json(paths.decisions / f"{PRP}.r1.json", verdict_for())
+    revisions.latest[PKG] = 1
+    place_package(paths, package_for(revision=1))
+    decision = write_json(paths.decisions / f"{PKG}.r1.json", verdict_for())
     real_unlink = Path.unlink
 
     def failing_unlink(self, missing_ok=False):
-        if self == decision:  # crash after proposal removal, before decision
+        if self == decision:  # crash after package removal, before decision
             raise PermissionError("denied")
         real_unlink(self, missing_ok=missing_ok)
 
@@ -290,7 +279,7 @@ def test_cleanup_io_error_is_reported_and_retried(
     restarted = Courier(paths, courier._captures, revisions, decisions)
     report = restarted.scan_once()
     assert report.cleaned == [decision.name] and report.problems == {}
-    assert decisions.calls == [(PRP, 1, "approve")]  # applied exactly once
+    assert decisions.calls == [(PKG, 1, "approve")]  # applied exactly once
     assert names(paths.decisions) == []
 
 

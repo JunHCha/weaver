@@ -1,19 +1,26 @@
-"""Runtime adapters for the durable v2 summary workflow."""
+"""Runtime adapters for the durable summary review workflow."""
 
+import logging
 import threading
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Protocol
 
 from weaver.archive import ArchiveStore
 from weaver.courier.atomic import write_json_atomic
+from weaver.fabric import Fabric, ThreadQuery
+from weaver.loom.schedules import approved_schedules, write_approved_schedules
 from weaver.loom.summary import SummaryDrafts
-from weaver.loom.summary_review import SummaryReview
-from weaver.schema import Source
-from weaver.schema.v2 import EventSummary, ReviewPackage, Verdict
+from weaver.loom.summary_review import Prepared, SummaryReview
+from weaver.loom.summary_state import SummaryState
+from weaver.schema import Alert, EventSummary, ReviewPackage, Source, Thread, Verdict
 from weaver.spinner import Spinner
 from weaver.wiki.compiler import Summary
 
 from .gate import Interrupted, LlmGate
 from .loop import Outcome
+
+logger = logging.getLogger(__name__)
 
 
 class SummaryLookup:
@@ -49,7 +56,7 @@ class SummaryLookup:
 
 
 class ReviewAdapter:
-    """Expose the summary journal through Courier's v2 ports."""
+    """Expose the summary journal through Courier ports."""
 
     def __init__(self, review: SummaryReview, lookup: SummaryLookup) -> None:
         self.review = review
@@ -122,3 +129,72 @@ class SummaryProcessor:
             raise Interrupted()
         self.drafts.create(source.source_id, script.text, source.hints.counterpart)
         return "done"
+
+
+class AlertSink(Protocol):
+    def publish_alert(self, alert: Alert) -> object: ...
+
+
+class AlertDetector(Protocol):
+    """Alerts for newly approved schedules; ``published`` follows a durable write."""
+
+    def detect(
+        self, package_id: str, selected: Sequence[Thread], snapshot: Sequence[Thread]
+    ) -> list[Alert]: ...
+
+    def published(self, alert: Alert) -> None: ...
+
+
+class SchedulePublisher:
+    """Reproject approved schedules and change alerts from the full log each tick."""
+
+    def __init__(
+        self,
+        root: Path,
+        fabric: Fabric,
+        state: SummaryState,
+        alerts: tuple[AlertDetector, AlertSink] | None = None,
+    ) -> None:
+        self.root, self.fabric, self.state, self.alerts = root, fabric, state, alerts
+
+    def publish(self) -> None:
+        with self.state.connect() as db:
+            rows = db.execute(
+                "SELECT id, prepared FROM reviews WHERE stage='APPLIED'"
+            ).fetchall()
+        snapshot = self.fabric.entries(ThreadQuery())
+        by_id = {thread.thread_id: thread for thread in snapshot}
+        schedules = []
+        approvals = []
+        for package_id, raw in rows:
+            prepared = Prepared.model_validate_json(raw)
+            if prepared.summary is None:
+                continue
+            selected = [
+                by_id[t.thread_id] for t in prepared.threads if t.thread_id in by_id
+            ]
+            approvals.append((package_id, selected))
+            schedules.extend(
+                approved_schedules(
+                    package_id, prepared.summary.summary_id, selected, snapshot
+                )
+            )
+        write_approved_schedules(self.root, schedules)
+        if self.alerts is not None:
+            self._alert(approvals, snapshot)
+
+    def _alert(
+        self, approvals: list[tuple[str, list[Thread]]], snapshot: list[Thread]
+    ) -> None:
+        """Auxiliary: a failure is logged by type only and never blocks schedules."""
+        assert self.alerts is not None
+        detector, sink = self.alerts
+        for package_id, selected in approvals:
+            try:
+                for alert in detector.detect(package_id, selected, snapshot):
+                    sink.publish_alert(alert)
+                    detector.published(alert)
+            except Exception as error:
+                logger.warning(
+                    "alert publication failed: %s %s", type(error).__name__, package_id
+                )

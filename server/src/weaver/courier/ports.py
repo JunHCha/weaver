@@ -1,8 +1,8 @@
 """Injected boundaries that Courier queries but does not implement.
 
 The durable stores behind these protocols live elsewhere: SourceStore
-persistence and receipts publication in ``weaver.archive`` (#18), Loom revision
-state and VerdictHandler persistence in #26. Courier only moves and validates
+persistence and receipts publication in ``weaver.archive`` (#18), Loom review
+state in ``weaver.loom``. Courier only moves and validates
 files; every "already done?" answer comes from these ports so a file that
 reappears after restart or resync is not reapplied.
 """
@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from weaver.schema import Manifest, Verdict
-from weaver.schema.v2 import Verdict as V2Verdict
 
 
 @dataclass(frozen=True)
@@ -67,33 +66,17 @@ class CaptureStore(Protocol):
         ...
 
 
-class ProposalRevisions(Protocol):
-    def latest_rev(self, proposal_id: str) -> int | None:
-        """Durably recorded latest rev, or None for an unknown proposal."""
+class PackageRevisions(Protocol):
+    def latest_rev(self, package_id: str) -> int | None:
+        """Return the latest durably recorded package revision, or None if unknown."""
         ...
 
 
 class DecisionStore(Protocol):
-    def is_applied(self, proposal_id: str, rev: int) -> bool:
-        """True only after the verdict for this rev was durably applied."""
+    def is_applied(self, package_id: str, rev: int) -> bool:
+        """Return whether the verdict for this revision was durably applied."""
         ...
 
     def apply(self, verdict: Verdict) -> None:
-        """Apply one verdict; revise publishes the next rev. Raise on failure."""
-        ...
-
-
-class PackageRevisions(Protocol):
-    def latest_rev(self, package_id: str) -> int | None:
-        """Return the latest durably recorded package revision."""
-        ...
-
-
-class DecisionStoreV2(Protocol):
-    def is_applied(self, package_id: str, rev: int) -> bool:
-        """Return whether the verdict was durably applied."""
-        ...
-
-    def apply(self, verdict: "V2Verdict") -> None:
-        """Apply a validated v2 verdict."""
+        """Apply one validated verdict; raise on failure."""
         ...

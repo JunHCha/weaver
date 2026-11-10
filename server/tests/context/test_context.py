@@ -101,3 +101,15 @@ def test_learned_correction_precedes_colliding_wiki_alias(tmp_path: Path) -> Non
     store.sync_from_pages([Page("김철수", "person", ("홍길돈",))])
     store.learn("홍길돈", "홍길동", "person")
     assert store.candidates("홍길돈")[0].name == "홍길동"
+
+
+def test_kind_of_prefers_wiki_and_falls_back_to_learned(tmp_path: Path) -> None:
+    store = ContextDictionary(tmp_path)
+    store.learn("별칭", "홍길동", "person")
+    assert store.kind_of("홍길동") == "person"
+    store.sync_from_pages([Page("홍길동", "project")])
+    assert store.kind_of("홍길동") == "project"
+    assert store.kind_of("별칭") is None
+    store.sync_from_pages([])
+    assert store.kind_of("홍길동") == "person"
+    assert store.kind_of("없음") is None

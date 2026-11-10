@@ -1,0 +1,97 @@
+{
+  "$defs": {
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:ApprovedSchedule",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A published schedule from an approved summary and a Fabric thread.",
+  "properties": {
+    "blocked_by": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "end": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "package_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "retracted": {
+      "default": false,
+      "title": "Retracted",
+      "type": "boolean"
+    },
+    "revision": {
+      "$ref": "#/$defs/Revision",
+      "default": 1
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "start": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "summary_id": {
+      "$ref": "#/$defs/Digest"
+    },
+    "thread_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "timezone": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "title": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "start",
+    "end",
+    "timezone",
+    "schema_version",
+    "package_id",
+    "thread_id",
+    "title",
+    "blocked_by",
+    "summary_id"
+  ],
+  "title": "ApprovedSchedule",
+  "type": "object"
+}

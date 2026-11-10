@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 import pytest
 
 from weaver.context import ContextDictionary, Page
-from weaver.fabric.v2.store import FabricStore, ThreadQuery
-from weaver.schema.v2 import ThreadDraft
+from weaver.fabric.store import FabricStore, ThreadQuery
+from weaver.schema import ThreadDraft
 from weaver.wiki.compiler import Compiler, EditResult, Summary
 from weaver.wiki.store import WikiStore
 
@@ -93,7 +93,7 @@ def test_human_edit_retry_and_fields(tmp_path):
 
     class Edits(FakeLLM):
         def generate_json(self, task, system, user, schema):
-            from weaver.schema.v2 import TagCorrection
+            from weaver.schema import TagCorrection
 
             return EditResult(
                 changes=[

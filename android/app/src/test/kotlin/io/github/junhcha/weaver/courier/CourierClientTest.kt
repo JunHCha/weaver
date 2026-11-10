@@ -48,10 +48,10 @@ class CourierClientTest {
         io.github.junhcha.weaver.shepherd.PendingCalls.repository = {
             error("synthetic_reconcile_failure")
         }
-        val verdict = Verdict(1, "prp_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, Verdict.Kind.APPROVE,
-            emptyList(), null, null, "2026-11-07T00:00:00Z")
+        val verdict = Verdict(2, "pkg_0123456789abcdef", 1, Verdict.Action.APPROVE,
+            emptyList(), null, null)
         val queued = File(context.filesDir, "courier-verdicts").apply { mkdirs() }
-        val name = "${verdict.proposalId}.r1.json"
+        val name = "${verdict.packageId}.r1.json"
         File(queued, name).writeText(WeaverCodec.encode(verdict))
         try {
             assertFalse(CourierWorker.synchronize(context, folder, db))
@@ -162,20 +162,32 @@ class CourierClientTest {
         assertTrue(folder.deleted.isEmpty())
     }
 
-    @Test fun proposalsKeepHighestRevisionAndAlertsUseTheirOwnFilenameContract() {
-        val proposal = WeaverCodec.json.decodeFromString<Proposal>(
-            File(io.github.junhcha.weaver.schema.SharedSchema.dir, "examples/Proposal.json").readText(),
+    @Test fun packagesKeepHighestRevisionAndAlertsUseTheirOwnFilenameContract() {
+        val first = WeaverCodec.json.decodeFromString<ReviewPackage>(
+            File(io.github.junhcha.weaver.schema.SharedSchema.dir, "examples/ReviewPackage.json").readText(),
         )
-        val latest = proposal.copy(rev = proposal.rev + 1)
+        val latest = first.copy(revision = first.revision + 1)
         val alert = WeaverCodec.json.decodeFromString<Alert>(
             File(io.github.junhcha.weaver.schema.SharedSchema.dir, "examples/Alert.json").readText(),
         )
-        folder.put("proposals", "${latest.proposalId}.r${latest.rev}.json", WeaverCodec.encode(latest))
-        folder.put("proposals", "${proposal.proposalId}.r${proposal.rev}.json", WeaverCodec.encode(proposal))
+        folder.put("proposals", "${latest.packageId}.r${latest.revision}.json", WeaverCodec.encode(latest))
+        folder.put("proposals", "${first.packageId}.r${first.revision}.json", WeaverCodec.encode(first))
         folder.put("proposals", "alert_${alert.alertId}.json", WeaverCodec.encode(alert))
         val inbox = CourierClient(folder, db).scan()
-        assertEquals(listOf(latest), inbox.proposals)
+        assertEquals(listOf(latest), inbox.packages)
         assertEquals(listOf(alert), inbox.alerts)
+    }
+
+    @Test fun packagesOfTheOlderContractAreReportedNotInterpreted() {
+        val first = WeaverCodec.json.decodeFromString<ReviewPackage>(
+            File(io.github.junhcha.weaver.schema.SharedSchema.dir, "examples/ReviewPackage.json").readText(),
+        )
+        val name = "${first.packageId}.r1.json"
+        folder.put("proposals", name, WeaverCodec.encode(first).replace("\"schema_version\":2", "\"schema_version\":1"))
+        val inbox = CourierClient(folder, db).scan()
+        assertTrue(inbox.packages.isEmpty())
+        assertEquals(setOf(name), inbox.unreadable)
+        assertTrue(db.diagnostics().any { "unknown_version" in it })
     }
 
     @Test fun filenameAndBodyIdMustAgree() {
@@ -206,13 +218,12 @@ class CourierClientTest {
     @Test fun unsafePayloadAndVerdictCollisionAreRejected() {
         prepare(manifest.copy(payload = "elsewhere/body.txt"))
         assertFalse(CourierClient(folder, db).synchronize())
-        val verdict = Verdict(1, "prp_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1,
-            Verdict.Kind.APPROVE, emptyList(), null, null, "2026-11-07T00:00:00Z")
+        val verdict = Verdict(2, "pkg_0123456789abcdef", 1, Verdict.Action.APPROVE, emptyList(), null, null)
         val client = CourierClient(folder, db)
         client.publishVerdict(verdict)
         client.publishVerdict(verdict)
         assertThrows(IllegalStateException::class.java) {
-            client.publishVerdict(verdict.copy(reviewedAt = "2026-11-07T01:00:00Z"))
+            client.publishVerdict(verdict.copy(action = Verdict.Action.REJECT))
         }
     }
 

@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from weaver.config import ServerConfig, SpinnerSettings
 from weaver.llm import LlmError
 from weaver.loom.call import GalaxyCallParser
-from weaver.schema.models import Script, Source
+from weaver.schema import Script, Source
 from weaver.spinner.reviser import (
     FORMAT_VERSION,
     PROMPT_VERSION,

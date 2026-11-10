@@ -1,11 +1,5 @@
 {
   "$defs": {
-    "EntityId": {
-      "maxLength": 30,
-      "minLength": 30,
-      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-      "type": "string"
-    },
     "JsonValue": {},
     "NonEmpty": {
       "pattern": "\\S",
@@ -17,74 +11,35 @@
       "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
-    "StoredRequest": {
+    "TagCorrection": {
       "additionalProperties": false,
+      "description": "Changes to the effective tags of an existing thread.",
       "properties": {
-        "content": {
-          "$ref": "#/$defs/NonEmpty"
-        },
-        "due_at": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Timestamp"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "requester": {
-          "$ref": "#/$defs/EntityId"
-        },
-        "targets": {
+        "add": {
           "items": {
-            "$ref": "#/$defs/EntityId"
+            "$ref": "#/$defs/NonEmpty"
           },
-          "minItems": 1,
-          "title": "Targets",
+          "title": "Add",
           "type": "array"
+        },
+        "remove": {
+          "items": {
+            "$ref": "#/$defs/NonEmpty"
+          },
+          "title": "Remove",
+          "type": "array"
+        },
+        "target": {
+          "$ref": "#/$defs/NonEmpty"
         }
       },
       "required": [
-        "requester",
-        "targets",
-        "due_at",
-        "content"
+        "target",
+        "remove",
+        "add"
       ],
-      "title": "StoredRequest",
+      "title": "TagCorrection",
       "type": "object"
-    },
-    "ThreadId": {
-      "maxLength": 30,
-      "minLength": 30,
-      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-      "type": "string"
-    },
-    "ThreadKind": {
-      "enum": [
-        "요청",
-        "논의",
-        "결정",
-        "폐기",
-        "약속",
-        "일정",
-        "변경"
-      ],
-      "type": "string"
-    },
-    "ThreadSource": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/SourceId"
-        },
-        {
-          "not": {
-            "pattern": "[\\r\\n]"
-          },
-          "pattern": "^output:\\S+$",
-          "type": "string"
-        }
-      ]
     },
     "Timestamp": {
       "format": "date-time",
@@ -95,14 +50,14 @@
       "type": "string"
     }
   },
-  "$id": "urn:weaver:schema:v1:Thread",
+  "$id": "urn:weaver:schema:Thread",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "allOf": [
     {
       "else": {
         "properties": {
-          "request": {
+          "direction": {
             "type": "null"
           }
         }
@@ -116,7 +71,30 @@
       },
       "then": {
         "properties": {
-          "request": {
+          "direction": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "properties": {
+          "correction": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "태그정정"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "correction": {
             "type": "object"
           }
         }
@@ -125,17 +103,22 @@
     {
       "else": {
         "properties": {
-          "resolves": {
-            "type": "null"
+          "content": {
+            "type": "string"
           }
         }
       },
       "if": {
         "properties": {
           "kind": {
-            "enum": [
-              "결정"
-            ]
+            "const": "거절"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "content": {
+            "type": "null"
           }
         }
       }
@@ -143,51 +126,44 @@
     {
       "if": {
         "properties": {
-          "resolves": {
-            "type": "string"
+          "kind": {
+            "not": {
+              "const": "결정"
+            }
           }
         }
       },
       "then": {
         "properties": {
-          "actor": {
-            "const": "human"
+          "resolves": {
+            "type": "null"
           }
         }
       }
     }
   ],
-  "description": "Append-only fact, not action permission. A request is open until a human\ndecision Thread has resolves=request.entry_id. Fabric defines state folding,\nreplacement/retraction ordering and checks the target of resolves.",
+  "description": "A stored thread with the sequence assigned by its sink.",
   "properties": {
     "actor": {
       "enum": [
-        "human",
-        "ai_approved"
+        "ai_approved",
+        "human"
       ],
       "title": "Actor",
       "type": "string"
     },
-    "blocked_by_request": {
+    "blocked_by": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ThreadId"
+          "$ref": "#/$defs/NonEmpty"
         },
         {
           "type": "null"
         }
-      ]
+      ],
+      "default": null
     },
-    "entities": {
-      "items": {
-        "$ref": "#/$defs/EntityId"
-      },
-      "title": "Entities",
-      "type": "array"
-    },
-    "entry_id": {
-      "$ref": "#/$defs/ThreadId"
-    },
-    "field": {
+    "content": {
       "anyOf": [
         {
           "$ref": "#/$defs/NonEmpty"
@@ -197,8 +173,59 @@
         }
       ]
     },
+    "correction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TagCorrection"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "받음",
+            "보냄"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Direction"
+    },
+    "field": {
+      "anyOf": [
+        {
+          "enum": [
+            "deadline",
+            "schedule",
+            "assignees",
+            "status"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Field"
+    },
     "kind": {
-      "$ref": "#/$defs/ThreadKind"
+      "enum": [
+        "요청",
+        "결정",
+        "일정",
+        "기록",
+        "태그정정",
+        "거절"
+      ],
+      "title": "Kind",
+      "type": "string"
     },
     "occurred_at": {
       "$ref": "#/$defs/Timestamp"
@@ -206,20 +233,10 @@
     "recorded_at": {
       "$ref": "#/$defs/Timestamp"
     },
-    "request": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/StoredRequest"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "resolves": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ThreadId"
+          "$ref": "#/$defs/NonEmpty"
         },
         {
           "type": "null"
@@ -229,51 +246,51 @@
     "retracts": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ThreadId"
+          "$ref": "#/$defs/NonEmpty"
         },
         {
           "type": "null"
         }
       ]
     },
-    "schema_version": {
-      "const": 1,
-      "title": "Schema Version",
+    "seq": {
+      "minimum": 1,
+      "title": "Seq",
       "type": "integer"
     },
     "source_id": {
-      "$ref": "#/$defs/ThreadSource"
+      "$ref": "#/$defs/SourceId"
     },
-    "supersedes": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/ThreadId"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "tags": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "thread_id": {
+      "$ref": "#/$defs/NonEmpty"
     },
     "value": {
       "$ref": "#/$defs/JsonValue"
     }
   },
   "required": [
-    "schema_version",
-    "entry_id",
-    "entities",
+    "thread_id",
     "kind",
-    "field",
-    "value",
+    "content",
     "occurred_at",
     "recorded_at",
+    "tags",
+    "field",
+    "value",
     "source_id",
     "actor",
-    "supersedes",
-    "retracts",
-    "request",
+    "direction",
     "resolves",
-    "blocked_by_request"
+    "retracts",
+    "correction",
+    "seq"
   ],
   "title": "Thread",
   "type": "object"

@@ -1,13 +1,12 @@
-# Weaver JSON contracts v1
+# Weaver JSON contracts
 
-These ten standalone JSON Schema Draft 2020-12 files are the Android/Courier
-contracts. Each document contains its own `$defs`; every `$ref` is document-local.
-`$id` is an identifier (URN), not a URL to fetch. Consumers should enable `format`
-checking for `date-time`. Schemas are generated in **validation** mode with aliases
-(`from`, not the Python attribute `from_ref`). JSON Schema is for validation;
-write/generate Kotlin models from each file's top-level `properties` and follow
-its referenced nested definitions. Do not treat `$defs` or oneOf/if/then branches
-as additional wire envelopes.
+These standalone JSON Schema Draft 2020-12 files are the phone/server contracts.
+Each document contains its own `$defs`; every `$ref` is document-local. `$id` is
+an identifier (`urn:weaver:schema:<Model>`), not a URL to fetch. Consumers should
+enable `format` checking for `date-time`. Schemas are generated in **validation**
+mode with aliases. JSON Schema is for validation; write Kotlin models from each
+file's top-level `properties` and follow its referenced nested definitions. Do
+not treat `$defs` or `if/then` branches as additional wire envelopes.
 
 Regenerate from the repository root:
 
@@ -16,146 +15,70 @@ uv run --project server python -m weaver.schema.export --output schema
 uv run --project server pytest server/tests/schema -q
 ```
 
-`examples/<Model>.json` provides the minimum complete shape for each core model.
-Additional examples cover four Verdict branches, human request resolution, output
-provenance and Source→Script for text, Kakao and audio. All data is synthetic.
-The examples deliberately include a request and a blocked schedule; approval of
-that proposal is not calendar execution permission.
+`examples/<Model>.json` is the minimum complete shape of each model. All data is
+synthetic.
+
+## Models
+
+| File | Direction | Version | Purpose |
+| --- | --- | --- | --- |
+| `Manifest` | phone → server | 1 | One capture's metadata; the body is a sibling file. |
+| `Receipt` | server → phone | 1 | Acknowledges a stored capture. |
+| `Source` | server | 1 | Archived capture metadata. |
+| `Script` | server | 1 | Parsed text and original segment provenance. |
+| `ReviewPackage` | server → phone | 2 | One source's summary draft and up to three questions, one file per revision. |
+| `Question` | in `ReviewPackage` | - | A question with exactly three choices. |
+| `Verdict` | phone → server | 2 | `approve`, `edit`, `feedback` or `reject` for one exact package revision. |
+| `EventSummary` | server | 2 | The approved, content-addressed summary document. |
+| `ThreadDraft`, `Thread` | server | - | A Fabric row before and after `seq` is assigned. |
+| `ApprovedSchedule` | server → phone | 2 | A schedule projected from Fabric for calendar registration. |
+| `Alert` | server → phone | 2 | A notice that a newly approved schedule moved an approved one. |
 
 ## Common rules
 
-- Every core object has a required integer `schema_version: 1`. Consumers reject
-  unknown versions with a diagnostic. Nested value objects inherit their enclosing
-  file version: nested entities/relations/schedules/drafts have no schema_version.
-  Standalone Entity and Relation files retain their top-level version key.
+- Capture files (`Manifest`, `Receipt`, `Source`, `Script`) carry integer
+  `schema_version: 1`; review, summary, schedule and alert files carry `2`.
+  Consumers reject any other version, and the server rejects versions older than
+  the current ones without migrating data. Fabric rows carry no version key; the
+  Fabric database itself is versioned.
 - Unknown keys are forbidden. Every declared key is required, including nullable
-  keys. `null` means unknown/not applicable; omit nothing. Empty collections are `[]`.
-- IDs are prefix + canonical uppercase ULID: `cap_`, `src_`, `prp_`, `alt_`, `ent_`,
-  `evt_`. ULIDs have 26 Crockford characters and first digit 0–7. Local refs are
-  one lowercase letter followed by a positive integer (`e1`, `s1`, `d1`, `t1`).
-- Timestamps use RFC 3339 with explicit timezone (e.g. `2026-11-07T15:32:00+09:00`);
-  nullable occurrence times preserve uncertainty. Numeric epochs are not wire dates.
-- `sha256` is 64 lowercase hexadecimal characters; sizes/offsets are nonnegative
-  integers; rev ≥ 1; confidence is finite and in [0,1]. Integer fields require JSON
-  integer tokens (`1`); `1.0` and `1e0` are forbidden even when mathematically
-  integral. JSON Schema treats these as integers, so consumers must enforce this
-  token rule during decoding in addition to schema validation. Regression tests
-  explicitly document this remaining lexical boundary for schema_version/rev.
-- `payload`/`payload_ref` are safe logical relative keys: alphanumeric, `_`, `-`,
-  slash-separated directories, optional final extension. No absolute path, colon,
-  backslash or `..`. Only internal `ArchivedSource.payload_path` holds a local Path.
+  keys. `null` means unknown or not applicable. Empty collections are `[]`.
+- IDs: `cap_`, `src_` and `alt_` plus a canonical uppercase ULID (26 Crockford
+  characters, first digit 0-7). Package, thread and summary IDs are opaque
+  strings; a summary ID is the SHA-256 of its content.
+- Timestamps use RFC 3339 with an explicit timezone. Numeric epochs are not wire
+  dates. `sha256` is 64 lowercase hexadecimal characters; integer fields require
+  JSON integer tokens (`1`, not `1.0`). JSON Schema cannot express that token
+  rule, so consumers enforce it while decoding.
+- `payload` / `payload_ref` are safe logical relative keys, never local paths.
 
-## Confirmed ontology (issue #22)
+## Review files
 
-Entity types: `person`, `org`, `project`, `topic`, `meeting`.
-Relation types: `원인`, `후속조치`, `같은논의`, `참석`, `소속`.
-`결정됨` is excluded: decisions are Thread facts, not a duplicate relation kind.
-Old `events`, `decision`, and array-dot edit paths are not v1 wire fields.
+`ReviewPackage` files are `<package_id>.r<revision>.json` in the `proposals/`
+Courier folder; the phone answers with `<package_id>.r<revision>.json` in
+`decisions/`. A verdict is valid for one revision only: `edit` requires
+`edited_body`, `feedback` requires `feedback`, `approve` answers each question
+with one of its choices. `stage` and `stage_times` show the processing steps
+(수집, 전송, 정리, 질문, 검토, 반영, wiki갱신).
 
-Entity `ref` addresses a proposal-local item and nullable `entity_id` links a known
-entity. Standalone entities need at least one identity; proposals need unique refs.
-Aliases are names, not automatic identity merges. `confidence` covers the proposed
-item including its match; `ask: {question, choices: [{entity_id, label}]}` or `null`
-asks for confirmation. Choices may be empty; a free-text answer is allowed.
-Entity, relation, schedule and draft include `thread_excerpt` evidence.
-Relation `from`/`to` use declared refs or known entity IDs; `this` means the source.
+## Threads
 
-Proposal `source` is a path-free summary of Source. Local refs are unique across
-entities, schedules and drafts. `schedules[].entry_ref` points to an `일정` draft.
-Proposal validation rejects duplicate/dangling references and mismatched blocks.
+Kinds are `요청`, `결정`, `일정`, `기록` plus two system rows, `태그정정` (a tag
+correction naming its target Thread) and `거절` (no content). Only requests carry
+`direction` (`받음`, `보냄`). `field` is one of `deadline`, `schedule`,
+`assignees`, `status`, and `value` is arbitrary JSON, except that `schedule`
+requires `{start, end, timezone}` with an IANA timezone and `end` after `start`.
+`actor` is `ai_approved` or `human`. A request stays open until a `결정` Thread
+names it in `resolves`; a schedule may name the request that blocks it in
+`blocked_by`. Approval records these facts and never authorizes executing a
+request.
 
-## Draft → Thread and requests
+## Script
 
-`entry_drafts` holds proposed facts, not execution commands. Kind is one of
-`요청`, `논의`, `결정`, `폐기`, `약속`, `일정`, `변경`. `field` is nullable;
-`value` is arbitrary JSON, never a Python object. `supersedes` and `retracts` can
-express existing Thread links; ordering and state folding belong to Fabric.
+Segment `[start_char, end_char)` indexes Unicode code points of `Script.text`, not
+bytes or UTF-16 units (Android must convert). Segment IDs are unique within a
+Script. A known `start_ms` permits a null `end_ms`; a non-null `end_ms` requires
+`start_ms` and must be greater. Cross-value checks beyond JSON Schema are
+repeated by the Python models and the Kotlin classes.
 
-Exactly `kind=요청` requires non-null `request` with `requester`, nonempty `targets`,
-nullable `due_at`, and `content`. Other kinds require `request: null`. A request
-remains open until a user-authored `kind=결정`, `actor=human` Thread links to its
-`evt_` ID through `resolves`; otherwise `resolves` is null. A decision extracted
-from source material and approved as a fact is not an explicit user decision to
-execute a request: use `ai_approved` and do not set `resolves` for that approval.
-Fabric verifies that an external `resolves` target actually is a request.
-
-Producers **must** mark all request-derived drafts with `blocked_by_request: dN`
-and propagate it to the corresponding schedule. A schedule cannot remove its
-draft's block. `Verdict approve/edit` records the existence of requests and other
-facts; it does not resolve requests or permit derived actions. Execution must wait
-for an explicit human decision Thread. The block persists in stored Thread as the
-request's `evt_` ID, so it survives proposal removal. There is no executable
-`actions` collection in v1.
-
-`weaver.schema.internal.materialize_entries` implements the mapping: the caller
-allocates one `ent_` per new entity ref (preserving existing matches), one distinct
-`evt_` per draft, and supplies recorded_at. Newly allocated entity IDs must be
-unique and disjoint from all existing matches; intentional existing matches may
-share an ID. It replaces entity refs in tags/request fields and draft refs in
-blocks, injects source_id, and validates each final Thread. Every resulting Thread
-has actor=ai_approved and resolves=null; there is no actor override. ThreadDraft
-resolves accepts only null, including in the JSON Schema. A source-derived decision
-can be recorded as a fact but cannot resolve a request through Proposal approval.
-
-`internal.create_request_decision` is a separate creation path for an explicit
-human decision on an existing request Thread. It sets actor=human and
-resolves=request.entry_id and rejects non-request targets. Call it only for an
-actual user decision, never from Proposal approval. Both paths return facts and
-perform no execution or storage.
-Thread `source_id` also permits nonempty `output:<logical-output-reference>`.
-
-## Verdict branches
-
-All four branches require proposal_id, rev and reviewed_at. Other inputs are:
-
-| verdict | edits | reject_reason | instruction |
-|---|---|---|---|
-| approve | `[]` | null | null |
-| edit | nonempty list | null | null |
-| revise | `[]` | null | nonblank string |
-| reject | `[]` | required enum | null |
-
-Reject reasons: `wrong_person`, `wrong_content`, `duplicate`, `not_useful`, `other`.
-Each edit is `{path, value}`; path uses RFC 6901 (`/schedules/0/start`, `~0` for
-`~`, `~1` for `/`). The empty pointer denotes the whole document. The handler
-must resolve pointers, restrict editable fields, and revalidate the complete
-Proposal after edits, including execution blocks. Edits to blocked_by_request,
-request, and resolves paths are forbidden, including descendants and replacements
-of ancestors (arrays/objects/the whole document) that could overwrite those fields.
-The handler must decode pointer escapes before enforcing this rule and preserve
-the protected structure when validating a replacement. Request corrections use
-revise rather than editing these protected fields. VerdictHandler implementation
-and enforcement are a follow-up issue; syntax validation alone is not permission
-to apply an edit.
-
-## Script and server boundaries
-
-Script segments retain source_id through their parent and use unique segment IDs.
-`[start_char,end_char)` indexes Unicode code points in Script.text, not bytes or
-UTF-16 indices (Android must convert indices accordingly). Kakao retains speaker,
-message occurred_at and text position; call/audio use start_ms/end_ms offsets
-from call start/audio payload start. Both may be null; a known start_ms permits
-a null end_ms (unknown end), while a non-null end_ms requires start_ms and
-end_ms > start_ms. Cross-value ordering is checked by Python, and consumers must
-enforce it too. Text segments can have null times/speaker. Python additionally
-checks nonempty ordered ranges and bounds, time ordering, local reference integrity
-and block propagation, which JSON Schema cannot express across values. Clients
-should retain these fields without inferring missing times or speakers.
-
-`Candidate`, `EntityIndex`, `Extraction`, `ArchivedSource` are server-only and not
-exported. `Extraction` is the generate_json boundary: it has no proposal ID, rev,
-source metadata or server version. Its `to_proposal` injects server context and
-runs the same Proposal validation used for Courier files. Subordinate value shapes
-are reused; LLM output cannot bypass the final wire validation.
-
-The full Extraction JSON Schema reuses structural allOf/if/then and regex (`\S`)
-constraints. Some LLM structured-output providers do not accept this schema dialect.
-The follow-up Extractor implementation must supply a provider-compatible simplified
-schema, then validate/convert its output through Extraction and Proposal. This PR
-does not claim the full schema can be passed unchanged to every provider.
-
-The dev dependency `jsonschema[format-nongpl]` installs the optional date-time
-checker as well as JSON Schema validation. Tests compare Pydantic with
-Draft202012Validator(FormatChecker) for Verdict branches, Thread kind/request/
-resolves/actor, entity identity, proposal refs, segment ms pairs and timestamp/ID
-constraints; exported schemas and all examples are also validated independently.
+`ArchivedSource` (server-only, with the local payload path) is not exported.
