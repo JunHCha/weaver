@@ -152,6 +152,17 @@
       "title": "Actor",
       "type": "string"
     },
+    "blocked_by": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "content": {
       "anyOf": [
         {

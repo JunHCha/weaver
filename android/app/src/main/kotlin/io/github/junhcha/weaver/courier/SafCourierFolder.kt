@@ -44,17 +44,19 @@ class SafCourierFolder(private val resolver: ContentResolver, val tree: Uri) : C
     }
 
     private fun directory(folder: String): Uri {
-        require(folder in CourierRules.folders)
-        val found = children(root()).filter { it.name == folder }
+        require(folder in CourierRules.folders || folder == "proposals/schedules")
+        val parent = if (folder == "proposals/schedules") directory("proposals") else root()
+        val leaf = folder.substringAfterLast('/')
+        val found = children(parent).filter { it.name == leaf }
         check(found.size <= 1) { "duplicate_directory" }
         found.singleOrNull()?.let {
             check(it.safe && it.mime == DC.Document.MIME_TYPE_DIR) { "not_directory" }
             return it.uri
         }
-        val created = DC.createDocument(resolver, root(), DC.Document.MIME_TYPE_DIR, folder)
+        val created = DC.createDocument(resolver, parent, DC.Document.MIME_TYPE_DIR, leaf)
             ?: error("Cannot create Courier directory")
         try {
-            check(displayName(created) == folder) { "directory_name_changed" }
+            check(displayName(created) == leaf) { "directory_name_changed" }
             createdDirectories.add(folder)
             return created
         } catch (error: Exception) {

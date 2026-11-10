@@ -170,20 +170,30 @@ def test_sqlite_rows_are_append_only(tmp_path):
 @pytest.mark.parametrize("field", ["deadline", "schedule", "status"])
 def test_fields_follow_occurrence_order_and_ignore_retractions(tmp_path, field):
     store = FabricStore(tmp_path / "db")
+    earlier = (
+        {"start": "2025-01-01T00:00:00Z", "end": None, "timezone": "UTC"}
+        if field == "schedule"
+        else "earlier"
+    )
+    later = (
+        {"start": "2025-01-03T00:00:00Z", "end": None, "timezone": "UTC"}
+        if field == "schedule"
+        else "later"
+    )
     store.append(
         [
             draft(
                 "later",
                 field=field,
-                value="later",
+                value=later,
                 occurred_at=datetime(2025, 1, 3, tzinfo=UTC),
             ),
-            draft("earlier", field=field, value="earlier"),
+            draft("earlier", field=field, value=earlier),
         ]
     )
     assert store.state("홍길동").fields[field].thread_id == "later"
     store.append([draft("retract", retracts="later")])
-    assert store.state("홍길동").fields[field].value == "earlier"
+    assert store.state("홍길동").fields[field].value == earlier
 
 
 def test_query_filters_use_effective_tags_and_time_bounds(tmp_path):
@@ -217,3 +227,21 @@ def test_config_uses_separate_v2_database(tmp_path):
 
     config = SimpleNamespace(state_root=tmp_path)
     assert FabricStore.from_config(config).path.name == "fabric-v2.sqlite3"
+
+
+def test_schedule_block_reference_must_name_request(tmp_path):
+    from weaver.fabric.v2 import InvalidReference
+
+    store = FabricStore(tmp_path / "db")
+    schedule = draft("s", kind="일정", blocked_by="q")
+    with pytest.raises(InvalidReference):
+        store.append([schedule])
+    store.append([draft("q")])
+    with pytest.raises(InvalidReference):
+        store.append([schedule])
+    store.append(
+        [
+            draft("request", kind="요청", direction="받음"),
+            draft("ok", kind="일정", blocked_by="request"),
+        ]
+    )

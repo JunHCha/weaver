@@ -80,6 +80,36 @@ class CalendarRegistration(private val journal: CalendarJournal, private val pro
         }
     }
 
+    /** A thread is registered at most once, independent of later revisions. */
+    fun registerV2(schedule: io.github.junhcha.weaver.schema.v2.ApprovedSchedule, target: CalendarTarget): String {
+        if (schedule.retracted) return "${schedule.title}: 철회됨 · 캘린더에서 직접 등록 해제하세요"
+        if (schedule.blockedBy != null) return "${schedule.title}: 요청 ${schedule.blockedBy} 미해소 · 등록 차단"
+        return try {
+            val old = journal.mappings().firstOrNull { it.proposalId == "v2" && it.ref == schedule.threadId }
+            if (old?.uri != null) return "${schedule.title}: 등록됨"
+            val selected = provider.calendars().firstOrNull { it.sameIdentity(target) }
+                ?: return "캘린더를 다시 선택하세요"
+            val start = OffsetDateTime.parse(schedule.start).toInstant().toEpochMilli()
+            val event = CalendarEvent(schedule.title, start,
+                schedule.end?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() } ?: start + 3_600_000,
+                schedule.timezone)
+            val pending = old ?: CalendarMapping("v2", 1, schedule.threadId, selected, event = event)
+            journal.put(pending)
+            val rows = provider.find(pending.marker)
+            val found = matching(pending, rows)
+            if (found != null) {
+                journal.put(pending.copy(uri = found.uri, rowId = found.id))
+            } else {
+                if (rows.isNotEmpty() || pending.manualReview || pending.event == null ||
+                    provider.calendars().none { it.sameIdentity(pending.calendar) })
+                    return "${schedule.title}: 수동 확인 필요 · 기존 일정 확인"
+                val row = provider.insert(pending.calendar, pending.marker, pending.event)
+                journal.put(pending.copy(uri = row.first, rowId = row.second))
+            }
+            "${schedule.title}: 등록됨"
+        } catch (_: Exception) { "${schedule.title}: 등록 실패 · 권한과 캘린더를 확인하고 수동 재시도" }
+    }
+
     /** On reopening, reconcile committed rows only. Recovery never inserts automatically. */
     fun recover(record: ReviewRecord) {
         val proposal = candidate(record) ?: return

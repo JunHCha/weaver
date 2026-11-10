@@ -113,11 +113,27 @@ def test_human_edits_and_failed_write_retry(tmp_path):
 def test_schedule_updates_future_day_and_superseded_value_is_removed(tmp_path):
     fabric, wiki, _, builder = setup(tmp_path)
     at = datetime(2025, 1, 1, tzinfo=UTC)
-    fabric.append([draft("old", at, field="schedule", value="2025-01-03")])
+    fabric.append(
+        [
+            draft(
+                "old",
+                at,
+                field="schedule",
+                value={"start": "2025-01-03T00:00:00Z", "end": None, "timezone": "UTC"},
+            )
+        ]
+    )
     builder.update()
     assert "old" in wiki.read("Digest/2025/01/2025-01-03.md")[1]
     fabric.append(
-        [draft("new", at.replace(day=2), field="schedule", value="2025-01-04")]
+        [
+            draft(
+                "new",
+                at.replace(day=2),
+                field="schedule",
+                value={"start": "2025-01-04T00:00:00Z", "end": None, "timezone": "UTC"},
+            )
+        ]
     )
     builder.update()
     assert "old" not in wiki.read("Digest/2025/01/2025-01-03.md")[1]

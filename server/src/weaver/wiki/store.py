@@ -84,7 +84,15 @@ def _properties(data: bytes) -> dict[str, JsonValue]:
         current = key
         sequence_allowed = not value.strip() or value.lstrip().startswith("#")
         sequence_indent = None
-        result[key] = _scalar(value)
+        if key == "schedule" and value.strip().startswith("{"):
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict) or any(
+                isinstance(v, (dict, list)) for v in parsed.values()
+            ):
+                raise ValueError("invalid schedule frontmatter")
+            result[key] = parsed
+        else:
+            result[key] = _scalar(value)
     raise ValueError("unclosed frontmatter")
 
 
@@ -95,7 +103,7 @@ def _render(properties: dict[str, JsonValue], body: str) -> bytes:
             continue
         if not re.fullmatch(r"[A-Za-z_][\w-]*", key):
             raise ValueError("invalid frontmatter key")
-        if isinstance(value, dict) or (
+        if (isinstance(value, dict) and key != "schedule") or (
             isinstance(value, list) and any(isinstance(v, (list, dict)) for v in value)
         ):
             raise ValueError("frontmatter must be flat")

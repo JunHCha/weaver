@@ -239,8 +239,9 @@ internal class MemoryFolder : CourierFolder {
     override fun list(folder: String): List<CourierEntry> {
         if (deny) throw SecurityException("revoked")
         return files.keys.filter { it.startsWith("$folder/") }.map {
-            CourierEntry(it.removePrefix("$folder/"), modified[it] ?: 0)
-        }
+            val relative = it.removePrefix("$folder/")
+            CourierEntry(relative.substringBefore('/'), modified[it] ?: 0, '/' !in relative)
+        }.distinctBy { it.name }
     }
     override fun read(folder: String, name: String): InputStream = files.getValue("$folder/$name").inputStream()
     override fun publish(folder: String, name: String, write: (OutputStream) -> Unit) {

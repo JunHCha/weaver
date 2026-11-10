@@ -6,6 +6,9 @@ import android.content.Context
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import io.github.junhcha.weaver.review.ReviewRuntime
+import io.github.junhcha.weaver.courier.CourierRuntime
+import io.github.junhcha.weaver.courier.CourierClient
+import io.github.junhcha.weaver.courier.CourierDatabase
 import io.github.junhcha.weaver.storage.AppStorage
 import java.io.File
 import java.util.TimeZone
@@ -14,6 +17,16 @@ import java.util.TimeZone
 object CalendarRuntime {
     val lock = Any()
     private fun journal(context: Context) = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
+    fun schedules(context: Context, packageId: String) = synchronized(CourierRuntime.lock) {
+        CourierDatabase(context).use { db ->
+            CourierClient(CourierRuntime.folder(context), db).scan().schedules.filter { it.packageId == packageId }
+        }
+    }
+    fun registerV2(context: Context, packageId: String, threadId: String, target: CalendarTarget): String = synchronized(CourierRuntime.lock) {
+        val schedule = schedules(context, packageId).singleOrNull { it.threadId == threadId }
+            ?: return@synchronized "일정을 다시 읽을 수 없습니다 · 등록 차단"
+        synchronized(lock) { CalendarRegistration(journal(context), DeviceCalendarProvider(context)).registerV2(schedule, target) }
+    }
     fun status(context: Context, id: String, rev: Long): List<String> = synchronized(lock) {
         journal(context).mappings().filter { it.proposalId == id && it.rev == rev }.map {
             "${it.ref}: " + (if (it.uri != null) "등록됨" else when {

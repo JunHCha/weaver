@@ -97,7 +97,13 @@ def test_calendar_timezone_and_invalid_values(tmp_path):
     fabric = FabricStore(tmp_path / "fabric.db")
     context = ContextDictionary(tmp_path / "context")
     now = datetime(2026, 11, 15, 23, 30, tzinfo=timezone(timedelta(hours=9)))
-    add(fabric, 1, field="schedule", value="2026-11-15T16:00:00Z", tags=["가"])
+    add(
+        fabric,
+        1,
+        field="schedule",
+        value={"start": "2026-11-15T16:00:00Z", "end": None, "timezone": "UTC"},
+        tags=["가"],
+    )
     add(fabric, 2, field="deadline", value="invalid", tags=["나"])
     page = render_pages(fabric, context, now=now)["다가오는 마감.md"]
     assert "2026-11-16 가" in page.split("## 다음 주")[1]
