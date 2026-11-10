@@ -11,7 +11,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, JsonValue
 
-from weaver.context import ContextDictionary, Kind, Page
+from weaver.context import ContextDictionary, Entry, Kind, Page
 from weaver.fabric.v2.state import project
 from weaver.fabric.v2.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
@@ -172,13 +172,18 @@ class Compiler:
         for t in new:
             if t.correction:
                 tags.update(t.correction.remove + t.correction.add)
+            if t.retracts:
+                tags.update(
+                    tag
+                    for target in all_threads
+                    if target.thread_id == t.retracts
+                    for tag in target.tags
+                )
         for tag in sorted(tags):
             entries = [
                 e for e in self.context.candidates(tag, limit=100) if e.name == tag
             ]
-            if not entries:
-                raise ValueError(f"tag missing from context dictionary: {tag}")
-            entry = entries[0]
+            entry = entries[0] if entries else Entry(tag, "topic")
             path = f"pages/{tag}.md"
             try:
                 props, body, base = self.store.read(path)
@@ -186,10 +191,14 @@ class Compiler:
                     raise HumanEditPending(path)
             except FileNotFoundError:
                 props, body, base = {}, "", None
+            retracted = {t.retracts for t in all_threads if t.retracts}
             related = [
                 t
                 for t in all_threads
-                if tag in t.tags and t.kind not in ("태그정정", "거절")
+                if tag in t.tags
+                and t.kind not in ("태그정정", "거절")
+                and t.thread_id not in retracted
+                and t.retracts is None
             ]
             links = []
             for t in related:
