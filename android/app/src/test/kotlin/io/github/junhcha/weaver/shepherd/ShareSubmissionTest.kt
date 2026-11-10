@@ -93,7 +93,7 @@ class ShareSubmissionTest {
         }
         CourierDatabase(context).use { assertEquals(1, it.captures().size) }
     }
-    @Test fun queuedCallCannotReceiveSecondDifferentScript() {
+    @Test fun queuedCallCannotReceiveSecondDifferentThread() {
         ShareSubmission.submit(context, text("first script"), Channel.CALL, call.id)
         assertThrows(IllegalArgumentException::class.java) {
             ShareSubmission.submit(context, text("another script"), Channel.CALL, call.id)

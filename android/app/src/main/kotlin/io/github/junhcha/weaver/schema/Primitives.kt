@@ -26,7 +26,7 @@ internal object SchemaRules {
     const val OFFSET_MIN = 0
     const val DATE_TIME_FORMAT = "date-time"
 
-    /** Prefixes of ID `$defs`: CaptureId=cap, SourceId=src, ProposalId=prp, AlertId=alt, EntityId=ent, EntryId=evt. */
+    /** Prefixes of ID `$defs`: CaptureId=cap, SourceId=src, ProposalId=prp, AlertId=alt, EntityId=ent, ThreadId=evt. */
     fun idPattern(prefix: String): String = "^${prefix}_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 }
 

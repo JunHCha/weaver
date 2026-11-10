@@ -1,54 +1,29 @@
 {
   "$defs": {
-    "Channel": {
-      "enum": [
-        "call",
-        "voice_memo",
-        "kakao",
-        "share_text"
-      ],
+    "EntityId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^ent_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
+    "JsonValue": {},
     "NonEmpty": {
       "pattern": "\\S",
       "type": "string"
     },
-    "Offset": {
-      "minimum": 0,
-      "type": "integer"
-    },
-    "Ref": {
-      "not": {
-        "pattern": "[\\r\\n]"
-      },
-      "pattern": "^[a-z][1-9][0-9]*$",
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
     },
-    "Segment": {
+    "StoredRequest": {
       "additionalProperties": false,
-      "description": "Text range [start_char,end_char) uses Unicode code points, not UTF-16.\n\nSegment IDs are unique within a Thread. Audio offsets are integer milliseconds\nfrom payload start. A known start permits an unknown (null) end; a known\nend requires a strictly earlier start. occurred_at and speaker preserve\nmessage/call provenance.",
-      "if": {
-        "properties": {
-          "start_ms": {
-            "type": "null"
-          }
-        }
-      },
       "properties": {
-        "end_char": {
-          "$ref": "#/$defs/Offset"
+        "content": {
+          "$ref": "#/$defs/NonEmpty"
         },
-        "end_ms": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Offset"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "occurred_at": {
+        "due_at": {
           "anyOf": [
             {
               "$ref": "#/$defs/Timestamp"
@@ -58,57 +33,58 @@
             }
           ]
         },
-        "segment_id": {
-          "$ref": "#/$defs/Ref"
+        "requester": {
+          "$ref": "#/$defs/EntityId"
         },
-        "speaker": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/NonEmpty"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "start_char": {
-          "$ref": "#/$defs/Offset"
-        },
-        "start_ms": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Offset"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/EntityId"
+          },
+          "minItems": 1,
+          "title": "Targets",
+          "type": "array"
         }
       },
       "required": [
-        "segment_id",
-        "start_char",
-        "end_char",
-        "start_ms",
-        "end_ms",
-        "speaker",
-        "occurred_at"
+        "requester",
+        "targets",
+        "due_at",
+        "content"
       ],
-      "then": {
-        "properties": {
-          "end_ms": {
-            "type": "null"
-          }
-        }
-      },
-      "title": "Segment",
+      "title": "StoredRequest",
       "type": "object"
     },
-    "SourceId": {
+    "ThreadId": {
       "maxLength": 30,
       "minLength": 30,
-      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "type": "string"
+    },
+    "ThreadKind": {
+      "enum": [
+        "요청",
+        "논의",
+        "결정",
+        "폐기",
+        "약속",
+        "일정",
+        "변경"
+      ],
+      "type": "string"
+    },
+    "ThreadSource": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceId"
+        },
+        {
+          "not": {
+            "pattern": "[\\r\\n]"
+          },
+          "pattern": "^output:\\S+$",
+          "type": "string"
+        }
+      ]
     },
     "Timestamp": {
       "format": "date-time",
@@ -122,15 +98,138 @@
   "$id": "urn:weaver:schema:v1:Thread",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Spinner text and original segment provenance, without archive local paths.",
-  "properties": {
-    "channel": {
-      "$ref": "#/$defs/Channel"
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "request": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "요청"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "request": {
+            "type": "object"
+          }
+        }
+      }
     },
-    "occurred_at": {
+    {
+      "else": {
+        "properties": {
+          "resolves": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "결정"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resolves": {
+            "type": "string"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "const": "human"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Append-only fact, not action permission. A request is open until a human\ndecision Thread has resolves=request.entry_id. Fabric defines state folding,\nreplacement/retraction ordering and checks the target of resolves.",
+  "properties": {
+    "actor": {
+      "enum": [
+        "human",
+        "ai_approved"
+      ],
+      "title": "Actor",
+      "type": "string"
+    },
+    "blocked_by_request": {
       "anyOf": [
         {
-          "$ref": "#/$defs/Timestamp"
+          "$ref": "#/$defs/ThreadId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/EntityId"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "entry_id": {
+      "$ref": "#/$defs/ThreadId"
+    },
+    "field": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "$ref": "#/$defs/ThreadKind"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "recorded_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "request": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StoredRequest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resolves": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ThreadId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retracts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ThreadId"
         },
         {
           "type": "null"
@@ -142,27 +241,39 @@
       "title": "Schema Version",
       "type": "integer"
     },
-    "segments": {
-      "items": {
-        "$ref": "#/$defs/Segment"
-      },
-      "title": "Segments",
-      "type": "array"
-    },
     "source_id": {
-      "$ref": "#/$defs/SourceId"
+      "$ref": "#/$defs/ThreadSource"
     },
-    "text": {
-      "$ref": "#/$defs/NonEmpty"
+    "supersedes": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ThreadId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "value": {
+      "$ref": "#/$defs/JsonValue"
     }
   },
   "required": [
     "schema_version",
-    "source_id",
-    "channel",
+    "entry_id",
+    "entities",
+    "kind",
+    "field",
+    "value",
     "occurred_at",
-    "text",
-    "segments"
+    "recorded_at",
+    "source_id",
+    "actor",
+    "supersedes",
+    "retracts",
+    "request",
+    "resolves",
+    "blocked_by_request"
   ],
   "title": "Thread",
   "type": "object"

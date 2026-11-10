@@ -29,7 +29,7 @@ on import.
 The private `state_root/loom.sqlite3` journal is mode 0600, outside sync/vault.
 An advisory process lock serializes reviews. SQLite commits use FULL/fullfsync.
 Proposal snapshots determine the latest revision. Each review records the
-validated Verdict, fixed Entry IDs/timestamps or complete revised Proposal,
+validated Verdict, fixed Thread IDs/timestamps or complete revised Proposal,
 and PREPARED/APPLIED stage. Approval also fixes the edited Proposal with resolved
 entity_id fields and the complete `{ref: entity_id}` mapping, including entities
 unused by any draft. FeedbackEvent.proposal carries this approved snapshot and

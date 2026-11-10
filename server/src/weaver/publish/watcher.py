@@ -1,8 +1,8 @@
 """Daily read-only output scan with durable, explicitly acknowledged delivery.
 
 The state database belongs outside the vault. A scan transaction records pending
-immutable Entry payloads before returning them; acknowledge advances a whole
-output snapshot only after every Entry for it has been appended. Pending payloads
+immutable Thread payloads before returning them; acknowledge advances a whole
+output snapshot only after every Thread for it has been appended. Pending payloads
 are replayed unchanged across days/restarts. SQLite serializes concurrent scans.
 """
 
@@ -23,8 +23,8 @@ from pydantic import JsonValue, TypeAdapter
 
 from weaver.archive.ulid import UlidGenerator
 from weaver.fabric import Fabric
-from weaver.schema import Entry
-from weaver.schema.models import EntityId, EntryId, EntrySource
+from weaver.schema import Thread
+from weaver.schema.models import EntityId, ThreadId, ThreadSource
 
 from .fields import OUTPUT_FIELDS, normalize_field
 from .frontmatter import read_properties
@@ -34,12 +34,12 @@ from .publisher import AiFolder, PublishState
 logger = logging.getLogger(__name__)
 _ids = UlidGenerator()
 _entities = TypeAdapter(list[EntityId])
-_entries = TypeAdapter(list[EntryId])
-_sources = TypeAdapter(list[EntrySource])
+_entries = TypeAdapter(list[ThreadId])
+_sources = TypeAdapter(list[ThreadSource])
 
 
 class OutputWatcher(Protocol):
-    def scan(self) -> list[Entry]: ...
+    def scan(self) -> list[Thread]: ...
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def _snapshot(path: Path) -> Snapshot | None:
     note = props.get("weaver_note_id")
     if not isinstance(note, str):
         raise ValueError("missing note ID")
-    TypeAdapter(EntityId | EntryId).validate_python(note)
+    TypeAdapter(EntityId | ThreadId).validate_python(note)
     _sources.validate_python(props["weaver_source_ids"])
     entities = sorted(set(_entities.validate_python(props.get("weaver_entity_ids"))))
     if not entities:
@@ -183,7 +183,7 @@ class SqliteOutputWatcher:
                     logger.warning("output skipped: %s", type(error).__name__)
         return found, present
 
-    def scan(self) -> list[Entry]:
+    def scan(self) -> list[Thread]:
         now = self.clock()
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("watcher clock must be timezone-aware")
@@ -196,7 +196,7 @@ class SqliteOutputWatcher:
                 db.execute("DELETE FROM meta")
                 db.execute("INSERT INTO meta VALUES (?)", (day,))
             return [
-                Entry.model_validate_json(row[0])
+                Thread.model_validate_json(row[0])
                 for row in db.execute(
                     "SELECT payload FROM pending WHERE acknowledged=0 ORDER BY rowid"
                 )
@@ -243,7 +243,7 @@ class SqliteOutputWatcher:
             if not changed:
                 continue
             for field in changed:
-                entry = Entry(
+                entry = Thread(
                     schema_version=1,
                     entry_id=_event_id(
                         row["id"], field, old[field], snap.values[field], row["rev"]

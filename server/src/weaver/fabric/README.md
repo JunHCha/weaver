@@ -43,7 +43,7 @@ All original entries remain accessible through `entries`, including inactive one
 | A: request; B: decision resolves A; C: request supersedes A | C remains open; B does not resolve C |
 | Q2 supersedes request Q1; Q3 supersedes Q2 | Only Q3 open; Q1 does not revive |
 | D2 supersedes decision D1; D3 supersedes D2, all resolve Q1 | D3 is sole active decision and representative, regardless of earlier event times |
-| Same-time assignees add a; remove a in a different Entry | Larger entry_id wins the timestamp tie |
+| Same-time assignees add a; remove a in a different Thread | Larger entry_id wins the timestamp tie |
 | A: request; B: AI-approved decision without resolves | A remains open |
 | No matching entity records | EntityState with empty fields, accumulated, sets, open_requests, decisions |
 
@@ -60,10 +60,10 @@ append preserves the original fact without interpreting field-specific values.
 `fields` values and `sets` members contain `value`, `entry_id`, `source_id`.
 Each `SetState` also records the last operation's `entry_id` and `source_id`,
 including clears/removals. `accumulated`, `open_requests`, and `decisions` retain
-full Entry models, with evidence, timestamps, kind and request content.
+full Thread models, with evidence, timestamps, kind and request content.
 `decisions` maps directly resolved request IDs to latest active human decisions,
 including decisions on now-inactive requests. An open request is an active
-kind=요청 Entry without such a direct active decision. `blocked_by_request` does
+kind=요청 Thread without such a direct active decision. `blocked_by_request` does
 not alter state or grant permission.
 
 There is no state cache. Each call reads one entity snapshot in one SQLite SELECT

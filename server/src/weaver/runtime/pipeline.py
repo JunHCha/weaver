@@ -2,7 +2,7 @@
 
 FeedbackSink and EntityIndex come from #27's SqliteFeedbackStore (wired in
 ``assemble``). Change alerts (#9) run in AlertingPublisher, after every proposal
-publication (r1 and revised revs), not on the raw Thread. LLM availability is a
+publication (r1 and revised revs), not on the raw Script. LLM availability is a
 runtime gate: without a usable key the processor still archives, parses and
 refines, and Sources needing the LLM (call revision, extraction with
 candidates) are reported as ``waiting_llm``. The gate is re-probed while off.

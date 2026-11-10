@@ -53,7 +53,7 @@ type EntityId = Annotated[
         strict=True, pattern=rf"^ent_{ULID}$", min_length=30, max_length=30
     ),
 ]
-type EntryId = Annotated[
+type ThreadId = Annotated[
     str,
     StringConstraints(
         strict=True, pattern=rf"^evt_{ULID}$", min_length=30, max_length=30
@@ -79,7 +79,7 @@ type Channel = Literal["call", "voice_memo", "kakao", "share_text"]
 type Kind = Literal["fleece", "text"]
 type EntityType = Literal["person", "org", "project", "topic", "meeting"]
 type RelationType = Literal["원인", "후속조치", "같은논의", "참석", "소속"]
-type EntryKind = Literal["요청", "논의", "결정", "폐기", "약속", "일정", "변경"]
+type ThreadKind = Literal["요청", "논의", "결정", "폐기", "약속", "일정", "변경"]
 type RejectReason = Literal[
     "wrong_person", "wrong_content", "duplicate", "not_useful", "other"
 ]
@@ -125,7 +125,7 @@ type PayloadRef = Annotated[
 type Pointer = Annotated[
     str, StringConstraints(strict=True, pattern=r"^(?:/(?:[^~/]|~[01])*)*$")
 ]
-type EntrySource = (
+type ThreadSource = (
     SourceId
     | Annotated[
         str,
@@ -192,7 +192,7 @@ class Source(Versioned):
 class Segment(Contract):
     """Text range [start_char,end_char) uses Unicode code points, not UTF-16.
 
-    Segment IDs are unique within a Thread. Audio offsets are integer milliseconds
+    Segment IDs are unique within a Script. Audio offsets are integer milliseconds
     from payload start. A known start permits an unknown (null) end; a known
     end requires a strictly earlier start. occurred_at and speaker preserve
     message/call provenance.
@@ -224,7 +224,7 @@ class Segment(Contract):
         return self
 
 
-class Thread(Versioned):
+class Script(Versioned):
     """Spinner text and original segment provenance, without archive local paths."""
 
     source_id: SourceId
@@ -240,7 +240,7 @@ class Thread(Versioned):
             raise ValueError("duplicate segment_id")
         for segment in self.segments:
             if segment.end_char > len(self.text):
-                raise ValueError("segment exceeds Thread text")
+                raise ValueError("segment exceeds Script text")
         return self
 
 
@@ -350,21 +350,21 @@ ENTRY_RULES: list[JsonValue] = [
 ENTRY_CONDITIONS: dict[str, JsonValue] = {"allOf": ENTRY_RULES}
 
 
-class EntryDraft(Evidence):
+class ThreadDraft(Evidence):
     """Approval records facts only. blocked_by_request forbids derived execution
-    until a user-authored decision Entry resolves the referenced request Entry.
+    until a user-authored decision Thread resolves the referenced request Thread.
     resolves is always null: AI-generated drafts cannot resolve requests.
     """
 
     model_config = ConfigDict(json_schema_extra=ENTRY_CONDITIONS)
     ref: Ref
     entities: list[EntityRef]
-    kind: EntryKind
+    kind: ThreadKind
     field: NonEmpty | None
     value: JsonValue
     occurred_at: Timestamp
-    supersedes: EntryId | None
-    retracts: EntryId | None
+    supersedes: ThreadId | None
+    retracts: ThreadId | None
     request: Request | None
     resolves: None
     blocked_by_request: Ref | None
@@ -375,9 +375,9 @@ class EntryDraft(Evidence):
         return self
 
 
-class Entry(Versioned):
+class Thread(Versioned):
     """Append-only fact, not action permission. A request is open until a human
-    decision Entry has resolves=request.entry_id. Fabric defines state folding,
+    decision Thread has resolves=request.entry_id. Fabric defines state folding,
     replacement/retraction ordering and checks the target of resolves.
     """
 
@@ -392,20 +392,20 @@ class Entry(Versioned):
             ]
         }
     )
-    entry_id: EntryId
+    entry_id: ThreadId
     entities: list[EntityId]
-    kind: EntryKind
+    kind: ThreadKind
     field: NonEmpty | None
     value: JsonValue
     occurred_at: Timestamp
     recorded_at: Timestamp
-    source_id: EntrySource
+    source_id: ThreadSource
     actor: Literal["human", "ai_approved"]
-    supersedes: EntryId | None
-    retracts: EntryId | None
+    supersedes: ThreadId | None
+    retracts: ThreadId | None
     request: StoredRequest | None
-    resolves: EntryId | None
-    blocked_by_request: EntryId | None
+    resolves: ThreadId | None
+    blocked_by_request: ThreadId | None
 
     @model_validator(mode="after")
     def kind_fields(self) -> Self:
@@ -424,7 +424,7 @@ def validate_entry_kind(kind: str, request: object, resolves: str | None) -> Non
 
 class Schedule(Evidence):
     """Calendar creation is forbidden while blocked_by_request is non-null,
-    until a human decision Entry resolves it. Verdict approve only records facts.
+    until a human decision Thread resolves it. Verdict approve only records facts.
     """
 
     ref: Ref
@@ -455,7 +455,7 @@ class Proposal(Versioned):
     entities: list[ProposalEntity]
     schedules: list[Schedule]
     relations: list[RelationData]
-    entry_drafts: list[EntryDraft]
+    entry_drafts: list[ThreadDraft]
 
     @model_validator(mode="after")
     def reference_integrity(self) -> Self:
@@ -469,7 +469,7 @@ def validate_proposal_references(
     entities: list[ProposalEntity],
     schedules: list[Schedule],
     relations: list[RelationData],
-    entry_drafts: list[EntryDraft],
+    entry_drafts: list[ThreadDraft],
 ) -> None:
     """Shared integrity check for extraction and wire Proposal boundaries."""
     entity_refs: set[str] = set()
@@ -573,7 +573,7 @@ SHARED_MODELS = (
     Alert,
     Entity,
     Relation,
-    Entry,
-    Source,
     Thread,
+    Source,
+    Script,
 )

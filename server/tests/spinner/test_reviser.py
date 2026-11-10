@@ -1,4 +1,4 @@
-"""Synthetic Galaxy-script Threads; no speech engine, vault or live API."""
+"""Synthetic Galaxy-script Scripts; no speech engine, vault or live API."""
 
 import json
 from datetime import datetime
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from weaver.llm import LlmError, SchemaMismatch
 from weaver.loom.call import parse_call
-from weaver.schema.models import Segment, Source, Thread
+from weaver.schema.models import Script, Segment, Source
 from weaver.spinner.reviser import (
     FORMAT_VERSION,
     PROMPT_VERSION,
@@ -31,7 +31,7 @@ SOURCE_ID = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 ENTITY_ID = "ent_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
-def make_thread(texts: list[str], *, timed: bool = False) -> Thread:
+def make_thread(texts: list[str], *, timed: bool = False) -> Script:
     """Speech-only fixture: every Segment has a speaker and reaches the LLM."""
     segments = []
     offset = 0
@@ -48,7 +48,7 @@ def make_thread(texts: list[str], *, timed: bool = False) -> Thread:
             )
         )
         offset += len(text) + 1
-    return Thread(
+    return Script(
         schema_version=1,
         source_id=SOURCE_ID,
         channel="call",
@@ -416,7 +416,7 @@ def test_uncovered_content_fails_before_llm(position: str) -> None:
         thread.segments[1].end_char = len(thread.text)
     else:
         thread.text += "비밀 꼬리말"
-    thread = Thread.model_validate(thread.model_dump())
+    thread = Script.model_validate(thread.model_dump())
     fake = FakeLlm(["앞", "뒤"])
     with pytest.raises(RevisionError, match="^uncovered_text$") as caught:
         LlmReviser(fake).revise(thread, ReviseHints())
@@ -431,7 +431,7 @@ def test_invalid_character_order_fails_before_llm(ordering: str) -> None:
         thread.segments[1].start_char = 2
     else:
         thread.segments.reverse()
-    thread = Thread.model_validate(thread.model_dump())
+    thread = Script.model_validate(thread.model_dump())
     fake = FakeLlm(["앞 문장", "뒤 문장"])
     with pytest.raises(RevisionError, match="^segment_char_order$"):
         LlmReviser(fake).revise(thread, ReviseHints())
@@ -449,7 +449,7 @@ def test_whitespace_separators_need_no_duplicate_full_text() -> None:
     thread.text = " \n앞\t\n뒤\n "
     thread.segments[0].start_char, thread.segments[0].end_char = 2, 3
     thread.segments[1].start_char, thread.segments[1].end_char = 5, 6
-    thread = Thread.model_validate(thread.model_dump())
+    thread = Script.model_validate(thread.model_dump())
     fake = FakeLlm(["앞", "뒤"])
     wire = LlmReviser(fake).revise(thread, ReviseHints())
     # v2: original separators are restored verbatim instead of joined by "\n".
@@ -555,7 +555,7 @@ def test_parsed_call_end_to_end_with_real_reviser(newline: str) -> None:
 def test_open_ended_time_round_trips() -> None:
     thread = make_thread(["마지막 발화"], timed=True)
     thread.segments[0].end_ms = None
-    thread = Thread.model_validate(thread.model_dump())
+    thread = Script.model_validate(thread.model_dump())
     wire = LlmReviser(FakeLlm(["마지막 발화."])).revise(thread, ReviseHints())
     parsed = parse_revision(wire)
     assert (parsed.segments[0].start, parsed.segments[0].end) == (1.001, None)
@@ -576,7 +576,7 @@ def test_structure_only_thread_skips_llm() -> None:
 def test_speakerless_and_blank_segments_pass_through() -> None:
     thread = make_thread(["머리말", "본문", " \t"])
     thread.segments[0].speaker = None
-    thread = Thread.model_validate(thread.model_dump())
+    thread = Script.model_validate(thread.model_dump())
     fake = EchoLlm()
     wire = LlmReviser(fake).revise(thread, ReviseHints())
     assert [s["segment_id"] for s in json.loads(fake.calls[0][2])["segments"]] == ["s2"]
@@ -594,7 +594,7 @@ def test_structural_segment_must_not_change() -> None:
 def test_unrepresentable_segment_error_is_content_free() -> None:
     secret = "PRIVATE_CONVERSATION_비밀"
     thread = make_thread([secret], timed=True)
-    # Bypass Thread validation, as an injected adapter could.
+    # Bypass Script validation, as an injected adapter could.
     thread.segments[0].end_ms = 0
     with pytest.raises(RevisionError, match="^unrepresentable_segment$") as caught:
         LlmReviser(FakeLlm([secret])).revise(thread, ReviseHints())

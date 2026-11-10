@@ -3,7 +3,7 @@
 One JSON file per case under `server/evals/cases/<case_id>.json`. A case is
 self-contained fake data: the raw source text, a fixed reference time/zone,
 known entities with stable keys, and per-stage expectations. The loader turns a
-case into domain models (Source, Thread, Candidate, EntityIndex, Extraction) so
+case into domain models (Source, Script, Candidate, EntityIndex, Extraction) so
 a runner (#11) feeds each stage gold inputs and compares against expectations.
 Format rules live in `server/evals/README.md`; this module enforces them.
 """
@@ -23,7 +23,7 @@ from weaver.loom.call import CallParseError, parse_call
 from weaver.loom.extract import normalize_name
 from weaver.loom.kakao import KakaoParseError
 from weaver.loom.refine import RuleRefiner
-from weaver.schema import Source, Thread
+from weaver.schema import Script, Source
 from weaver.schema.internal import Candidate, EntityIndex, Extraction, IndexedEntity
 from weaver.schema.models import (
     Contract,
@@ -201,12 +201,12 @@ class EvalCase(Contract):
 
 @dataclass(frozen=True)
 class LoadedCase:
-    """A validated case as domain models; `thread` is the gold (revised) Thread."""
+    """A validated case as domain models; `thread` is the gold (revised) Script."""
 
     case: EvalCase
     source: Source
-    raw_thread: Thread
-    thread: Thread
+    raw_thread: Script
+    thread: Script
     candidates: list[Candidate]
     reject_spans: list[tuple[int, int]]
     known: EntityIndex
@@ -303,7 +303,7 @@ def _source(case: EvalCase) -> Source:
     )
 
 
-def _parse(case: EvalCase, source: Source, zone: ZoneInfo) -> Thread:
+def _parse(case: EvalCase, source: Source, zone: ZoneInfo) -> Script:
     try:
         if case.channel == "call":
             return parse_call(source, case.input.text).thread
@@ -312,7 +312,7 @@ def _parse(case: EvalCase, source: Source, zone: ZoneInfo) -> Thread:
         raise DatasetError(f"input does not parse: {error}") from None
 
 
-def _revise(case: EvalCase, raw: Thread) -> Thread:
+def _revise(case: EvalCase, raw: Script) -> Script:
     revise = case.expected.revise
     if not isinstance(revise, ReviseCall):
         return raw
@@ -336,7 +336,7 @@ def _revise(case: EvalCase, raw: Thread) -> Thread:
     return gold
 
 
-def _rebuild(raw: Thread, texts: dict[str, str], replaced: dict[str, str]) -> Thread:
+def _rebuild(raw: Script, texts: dict[str, str], replaced: dict[str, str]) -> Script:
     revision = Revision(
         segments=[
             RevisionSegment(
@@ -375,7 +375,7 @@ def _span(text: str, quote: Quote) -> tuple[int, int]:
 
 
 def _candidates(
-    case: EvalCase, thread: Thread
+    case: EvalCase, thread: Script
 ) -> tuple[list[Candidate], list[tuple[int, int]]]:
     spans = sorted(_span(thread.text, q) for q in case.expected.refine.select)
     for (_, end), (start, _) in zip(spans, spans[1:], strict=False):
@@ -386,7 +386,7 @@ def _candidates(
         if any(r_start < end and start < r_end for start, end in spans):
             raise DatasetError("reject span overlaps a select span")
     # Real RuleRefiner triggers inside each gold span carry reference_at (first
-    # overlapping Segment occurred_at, else Thread's), so gold inputs keep the
+    # overlapping Segment occurred_at, else Script's), so gold inputs keep the
     # per-message reference time. The span is one legacy sentence range 0..1.
     triggers = [t for c in RuleRefiner().select(thread) for t in c.triggers]
     candidates = [

@@ -21,7 +21,7 @@ from weaver.llm.types import LlmClient
 from weaver.loom import extract, refine
 from weaver.loom.extract import LlmExtractor
 from weaver.loom.refine import RuleRefiner
-from weaver.schema import Thread
+from weaver.schema import Script
 from weaver.schema.internal import ArchivedSource, Candidate, Extraction
 from weaver.spinner import Spinner, pipeline, reviser
 from weaver.spinner.reviser import LlmReviser
@@ -180,7 +180,7 @@ def score_refiner(loaded: LoadedCase, candidates: list[Candidate]) -> dict[str, 
     }
 
 
-def _revision_metrics(loaded: LoadedCase, thread: Thread | None) -> dict[str, Metric]:
+def _revision_metrics(loaded: LoadedCase, thread: Script | None) -> dict[str, Metric]:
     expected = loaded.case.expected.revise
     edits = (
         {e.from_text: e.to for e in expected.edits}
@@ -209,7 +209,7 @@ def evaluate_case(loaded: LoadedCase, client: LlmClient) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
 
     def extraction_stage(
-        name: str, thread: Thread | None, candidates: list[Candidate]
+        name: str, thread: Script | None, candidates: list[Candidate]
     ) -> None:
         prediction: Extraction | None = None
         failed = thread is None
@@ -245,7 +245,7 @@ def evaluate_case(loaded: LoadedCase, client: LlmClient) -> dict[str, Any]:
         metrics.update(score_refiner(loaded, selected))
         stages["refine"] = [c.model_dump(mode="json") for c in selected]
     if loaded.case.input.stage == "spin":
-        thread: Thread | None = loaded.raw_thread
+        thread: Script | None = loaded.raw_thread
         try:
             with TemporaryDirectory(prefix="weaver-eval-") as temporary:
                 root = Path(temporary)

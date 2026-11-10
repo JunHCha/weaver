@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonElement
  * propagation) is enforced by the server and rechecked by ReviewDraft before approval/edit.
  * Inbox decoding keeps the fields as given.
  *
- * A non-null `blockedByRequest` forbids calendar registration until a human decision Entry
+ * A non-null `blockedByRequest` forbids calendar registration until a human decision Thread
  * resolves the request. Approving the proposal does not lift it.
  */
 @Serializable
@@ -24,7 +24,7 @@ data class Proposal(
     val entities: List<ProposalEntity>,
     val schedules: List<Schedule>,
     val relations: List<RelationData>,
-    @SerialName("entry_drafts") val entryDrafts: List<EntryDraft>,
+    @SerialName("entry_drafts") val entryDrafts: List<ThreadDraft>,
 ) {
     init {
         Rules.schemaVersion(schemaVersion)
@@ -154,7 +154,7 @@ data class Proposal(
     }
 
     @Serializable
-    enum class EntryKind {
+    enum class ThreadKind {
         @SerialName("요청") REQUEST,
         @SerialName("논의") DISCUSSION,
         @SerialName("결정") DECISION,
@@ -166,13 +166,13 @@ data class Proposal(
 
     /** A proposed fact, never an execution command. `resolves` is always null in v1. */
     @Serializable
-    data class EntryDraft(
+    data class ThreadDraft(
         val confidence: Double,
         val ask: Ask?,
         @SerialName("thread_excerpt") val threadExcerpt: String,
         val ref: String,
         val entities: List<String>,
-        val kind: EntryKind,
+        val kind: ThreadKind,
         val field: String?,
         val value: JsonElement,
         @SerialName("occurred_at") val occurredAt: String,
@@ -191,7 +191,7 @@ data class Proposal(
             Rules.timestamp(occurredAt, "entry_draft.occurred_at")
             supersedes?.let { Rules.prefixedId("evt", it, "entry_draft.supersedes") }
             retracts?.let { Rules.prefixedId("evt", it, "entry_draft.retracts") }
-            require((kind == EntryKind.REQUEST) == (request != null)) {
+            require((kind == ThreadKind.REQUEST) == (request != null)) {
                 "request must be non-null exactly when kind is 요청"
             }
             blockedByRequest?.let { Rules.ref(it, "entry_draft.blocked_by_request") }

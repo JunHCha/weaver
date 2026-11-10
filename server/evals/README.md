@@ -12,7 +12,7 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 
 - `cases/<case_id>.json` 한 파일이 한 사례다. 파일 이름은 `case_id`와 같아야 한다. 사례별 파일이라 리뷰 diff가 작고, 피드백 승격 파일(`feedback-<hash>.json`)도 같은 디렉터리에 그대로 들어간다.
 - 모든 사례는 `schema_version: 1`(정수)을 가진다. 형식이 호환되지 않게 바뀌면 버전을 올리고 로더가 이전 버전을 거부하거나 변환한다.
-- 로더는 `weaver.evals`(`server/src/weaver/evals/dataset.py`)다. `load_dataset()`은 `LoadedCase` 목록을 돌려주며, 각 사례를 도메인 모델(`Source`, `Thread`, `Candidate`, `EntityIndex`, `ReviseHints`, `Extraction`)로 만든다.
+- 로더는 `weaver.evals`(`server/src/weaver/evals/dataset.py`)다. `load_dataset()`은 `LoadedCase` 목록을 돌려주며, 각 사례를 도메인 모델(`Source`, `Script`, `Candidate`, `EntityIndex`, `ReviseHints`, `Extraction`)로 만든다.
 
 ## 사례 형식
 
@@ -46,18 +46,18 @@ uv run python -m weaver.evals               # 채널·태그·정답 유형별 �
 ### `expected.revise`
 
 - `{"policy": "keep"}`: 텍스트 원본(`kakao`, `share_text`)은 퇴고하지 않는다. 퇴고 결과가 원문과 같아야 한다.
-- `{"policy": "revise", "edits": [{"from": "…", "to": ["…", …]}]}`: `call`만. `from`은 화자가 있는 발화 줄 하나와 정확히 같아야 하고, `to` 중 하나면 정답이다. `to`의 모든 대안은 한 줄이어야 하며 로더가 각각 `revision_to_thread`로 Thread를 만들 수 있는지 확인한다. `edits`에 없는 발화 줄과 헤더·안내문·제목은 바뀌지 않아야 한다. `edits: []`는 "고칠 것이 없다"는 정답이다.
-- `to[0]`이 정답 대표값이다. 로더는 `GalaxyCallParser`가 만든 원본 Thread에 `to[0]`을 적용해 `LoadedCase.thread`(퇴고 후 정답 Thread)를 만든다.
+- `{"policy": "revise", "edits": [{"from": "…", "to": ["…", …]}]}`: `call`만. `from`은 화자가 있는 발화 줄 하나와 정확히 같아야 하고, `to` 중 하나면 정답이다. `to`의 모든 대안은 한 줄이어야 하며 로더가 각각 `revision_to_thread`로 Script를 만들 수 있는지 확인한다. `edits`에 없는 발화 줄과 헤더·안내문·제목은 바뀌지 않아야 한다. `edits: []`는 "고칠 것이 없다"는 정답이다.
+- `to[0]`이 정답 대표값이다. 로더는 `GalaxyCallParser`가 만든 원본 Script에 `to[0]`을 적용해 `LoadedCase.thread`(퇴고 후 정답 Script)를 만든다.
 
 ### 좌표계와 근거 범위
 
 - 오프셋은 Unicode 코드 포인트 기준 반열린 구간 `[start, end)`다(`Segment`, `Candidate`와 같다).
-- `call`의 정제·추출 근거는 **퇴고 후 정답 Thread**(`thread`) 좌표다. 원본 스크립트 좌표는 `raw_thread`에 있다. 텍스트 원본은 두 Thread가 같다.
-- 근거는 오프셋 대신 인용문으로 쓴다. 문자열이면 Thread 텍스트에 정확히 한 번 나와야 하고, 여러 번 나오면 `{"text": "…", "occurrence": n}`(1부터)으로 고른다. 로더가 오프셋으로 바꾼다.
+- `call`의 정제·추출 근거는 **퇴고 후 정답 Script**(`thread`) 좌표다. 원본 스크립트 좌표는 `raw_thread`에 있다. 텍스트 원본은 두 Script가 같다.
+- 근거는 오프셋 대신 인용문으로 쓴다. 문자열이면 Script 텍스트에 정확히 한 번 나와야 하고, 여러 번 나오면 `{"text": "…", "occurrence": n}`(1부터)으로 고른다. 로더가 오프셋으로 바꾼다.
 
 ### `expected.refine`
 
-- `select`: 정제가 반드시 덮어야 할 범위 목록. 서로 겹칠 수 없다. 로더는 각 범위로 정답 `Candidate`(문장 경계 기본값 0..1)를 만들어 추출 단계 입력으로 준다. 범위 안에 있는 RuleRefiner 트리거를 그대로 붙이므로 `reference_at`(겹치는 첫 Segment의 `occurred_at`, 없으면 Thread의 값)이 보존된다. 카톡처럼 메시지 시각과 저장 시각이 다른 사례도 정답 입력만으로 상대 날짜를 풀 수 있다. 신호가 없는 범위는 트리거가 없고 Thread·Segment 시각을 쓴다.
+- `select`: 정제가 반드시 덮어야 할 범위 목록. 서로 겹칠 수 없다. 로더는 각 범위로 정답 `Candidate`(문장 경계 기본값 0..1)를 만들어 추출 단계 입력으로 준다. 범위 안에 있는 RuleRefiner 트리거를 그대로 붙이므로 `reference_at`(겹치는 첫 Segment의 `occurred_at`, 없으면 Script의 값)이 보존된다. 카톡처럼 메시지 시각과 저장 시각이 다른 사례도 정답 입력만으로 상대 날짜를 풀 수 있다. 신호가 없는 범위는 트리거가 없고 Script·Segment 시각을 쓴다.
 - `reject`: 후보에 들어가면 안 되는 범위(잡담 등). `select`와 겹칠 수 없다. 생략하면 빈 목록이다.
 - `select: []`는 "후보가 하나도 없어야 한다"는 정답이다.
 - RuleRefiner는 날짜·시각·기간·호칭 신호만 고르므로, 신호 없이 사실이 있는 경계 사례는 `input.stage: "extract"`로 두어 정제 채점에서 뺀다(정답 후보는 여전히 `select`).
@@ -126,12 +126,12 @@ uv run --project server python -m weaver.evals run --live \
 `LlmExtractor`, `LlmReviser`, `Spinner.spin(Source)`를 호출한다. Spinner의 입력 파일과
 SQLite 체크포인트는 사례별 임시 디렉터리에 만들고 지운다. 사용자 볼트는 읽지 않는다.
 STT는 호출하지 않는다(ADR-028). `input.stage=extract`는 정제·퇴고를 채점하지 않고,
-`refine`은 정답 Thread에서 정제·추출을, `spin`은 다음 경로를 추가로 실행한다.
+`refine`은 정답 Script에서 정제·추출을, `spin`은 다음 경로를 추가로 실행한다.
 
-- `extract`: 정답 Thread + 정답 Candidate의 독립 추출·연결 평가.
-- `refine`: 정답 Thread에서 실제 RuleRefiner의 선택 범위·트리거 평가.
-- `pipeline`: 실제 Spinner가 만든 Thread → RuleRefiner → LlmExtractor.
-- `raw_pipeline`: call만, 퇴고 전 Thread → RuleRefiner → LlmExtractor.
+- `extract`: 정답 Script + 정답 Candidate의 독립 추출·연결 평가.
+- `refine`: 정답 Script에서 실제 RuleRefiner의 선택 범위·트리거 평가.
+- `pipeline`: 실제 Spinner가 만든 Script → RuleRefiner → LlmExtractor.
+- `raw_pipeline`: call만, 퇴고 전 Script → RuleRefiner → LlmExtractor.
   `pipeline`과의 사례별·범주별 차이로 퇴고의 후속 영향을 확인한다.
 
 `fixtures.json`은 최초 정답에서 작성한 **합성 공급자 응답**의 독립 스냅샷이다.
@@ -156,7 +156,7 @@ SHA-256으로 구분한다. 입력이 바뀌면 없는 fixture 오류가 나므�
   문맥 창으로만 포함된 사실과 직접 신호가 있는 사실을 구분한다. 분모는 select 수다.
 - `refine.reject_clear`: 실제 Candidate와 양의 길이로 겹치지 않은 reject 수 / reject 수.
   `empty_correct`는 select가 빈 사례에서 후보도 비었는지 센다.
-  `selected_characters`는 전송 문맥 문자 수 / Thread 문자 수이며 진단용이다.
+  `selected_characters`는 전송 문맥 문자 수 / Script 문자 수이며 진단용이다.
 - `entities`, `entry_drafts`, `schedules`, `relations` 각각 정규화된 항목 전체의
   일대일 정확 일치를 TP로 센다. precision=TP/예측 수, recall=TP/정답 수.
   `missing`=(정답 수−TP)/정답 수, `extra`=(예측 수−TP)/예측 수를 별도로 남긴다.

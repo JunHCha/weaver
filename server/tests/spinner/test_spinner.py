@@ -515,7 +515,7 @@ def test_existing_instance_recovers_dead_owners_at_spin(tmp_path):
 def test_adapter_validation_errors_are_private(tmp_path, caplog, stage):
     import traceback
 
-    from weaver.schema.models import Thread
+    from weaver.schema.models import Script
 
     counterpart = "합성 비공개 상대"
     secret = TEXT + counterpart
@@ -523,7 +523,7 @@ def test_adapter_validation_errors_are_private(tmp_path, caplog, stage):
     class InvalidParser(Parser):
         def parse(self, src, text):
             if stage == "parse":
-                return Thread.model_validate({"text": secret})
+                return Script.model_validate({"text": secret})
             result = super().parse(src, text)
             if stage == "revalidate":
                 return result.model_copy(update={"schema_version": secret})
@@ -531,7 +531,7 @@ def test_adapter_validation_errors_are_private(tmp_path, caplog, stage):
 
     class InvalidReviser(Reviser):
         def revise(self, thread, hints):
-            return Thread.model_validate({"text": secret})
+            return Script.model_validate({"text": secret})
 
     spin, _, src = pipeline(
         tmp_path,

@@ -25,7 +25,7 @@ from weaver.publish import (
     embedded_hash,
 )
 from weaver.runtime.assemble import vault_publisher
-from weaver.schema import Entry
+from weaver.schema import Thread
 from weaver.schema.internal import EntityIndex, IndexedEntity
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -39,7 +39,7 @@ def eid(n: int) -> str:
     return f"evt_{n:026d}"
 
 
-def entry(n: int, **changes: object) -> Entry:
+def entry(n: int, **changes: object) -> Thread:
     base: dict[str, object] = dict(
         schema_version=1,
         entry_id=eid(n),
@@ -57,10 +57,10 @@ def entry(n: int, **changes: object) -> Entry:
         resolves=None,
         blocked_by_request=None,
     )
-    return Entry.model_validate(base | changes)
+    return Thread.model_validate(base | changes)
 
 
-def project_a() -> list[Entry]:
+def project_a() -> list[Thread]:
     """Fake project A: a request, its human decision, a replaced deadline."""
     return [
         entry(

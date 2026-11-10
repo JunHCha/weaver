@@ -42,8 +42,8 @@
         "meeting"
     ],
     "/$defs/EntityType/type": "string",
-    "/$defs/EntryDraft/additionalProperties": false,
-    "/$defs/EntryDraft/allOf": [
+    "/$defs/ThreadDraft/additionalProperties": false,
+    "/$defs/ThreadDraft/allOf": [
         {
             "else": {
                 "properties": {
@@ -86,7 +86,7 @@
             }
         }
     ],
-    "/$defs/EntryDraft/properties/ask/anyOf": [
+    "/$defs/ThreadDraft/properties/ask/anyOf": [
         {
             "$ref": "#/$defs/Ask"
         },
@@ -94,7 +94,7 @@
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/properties/blocked_by_request/anyOf": [
+    "/$defs/ThreadDraft/properties/blocked_by_request/anyOf": [
         {
             "$ref": "#/$defs/Ref"
         },
@@ -102,8 +102,8 @@
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/properties/entities/type": "array",
-    "/$defs/EntryDraft/properties/field/anyOf": [
+    "/$defs/ThreadDraft/properties/entities/type": "array",
+    "/$defs/ThreadDraft/properties/field/anyOf": [
         {
             "$ref": "#/$defs/NonEmpty"
         },
@@ -111,7 +111,7 @@
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/properties/request/anyOf": [
+    "/$defs/ThreadDraft/properties/request/anyOf": [
         {
             "$ref": "#/$defs/Request"
         },
@@ -119,24 +119,24 @@
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/properties/resolves/type": "null",
-    "/$defs/EntryDraft/properties/retracts/anyOf": [
+    "/$defs/ThreadDraft/properties/resolves/type": "null",
+    "/$defs/ThreadDraft/properties/retracts/anyOf": [
         {
-            "$ref": "#/$defs/EntryId"
+            "$ref": "#/$defs/ThreadId"
         },
         {
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/properties/supersedes/anyOf": [
+    "/$defs/ThreadDraft/properties/supersedes/anyOf": [
         {
-            "$ref": "#/$defs/EntryId"
+            "$ref": "#/$defs/ThreadId"
         },
         {
             "type": "null"
         }
     ],
-    "/$defs/EntryDraft/required": [
+    "/$defs/ThreadDraft/required": [
         "confidence",
         "ask",
         "thread_excerpt",
@@ -152,12 +152,12 @@
         "resolves",
         "blocked_by_request"
     ],
-    "/$defs/EntryDraft/type": "object",
-    "/$defs/EntryId/maxLength": 30,
-    "/$defs/EntryId/minLength": 30,
-    "/$defs/EntryId/pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-    "/$defs/EntryId/type": "string",
-    "/$defs/EntryKind/enum": [
+    "/$defs/ThreadDraft/type": "object",
+    "/$defs/ThreadId/maxLength": 30,
+    "/$defs/ThreadId/minLength": 30,
+    "/$defs/ThreadId/pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/ThreadId/type": "string",
+    "/$defs/ThreadKind/enum": [
         "요청",
         "논의",
         "결정",
@@ -166,7 +166,7 @@
         "일정",
         "변경"
     ],
-    "/$defs/EntryKind/type": "string",
+    "/$defs/ThreadKind/type": "string",
     "/$defs/NonEmpty/pattern": "\\S",
     "/$defs/NonEmpty/type": "string",
     "/$defs/ProposalEntity/additionalProperties": false,

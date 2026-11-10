@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from pydantic import Field
 
 from weaver.llm.types import LlmClient
-from weaver.schema import Thread
+from weaver.schema import Script
 from weaver.schema.internal import (
     Candidate,
     EntityIndex,
@@ -27,12 +27,12 @@ from weaver.schema.models import (
     Ask,
     Choice,
     Contract,
-    EntryDraft,
     Evidence,
     NonEmpty,
     ProposalEntity,
     RelationData,
     Schedule,
+    ThreadDraft,
     validate_proposal_references,
 )
 
@@ -109,7 +109,7 @@ def _confirmation_question(item: Evidence, extraction: Extraction) -> str:
         kind, values = "대상", [item.name, item.type]
     elif isinstance(item, ExtractedRelation):
         kind, values = "관계", [name(item.from_ref), item.type, name(item.to)]
-    elif isinstance(item, EntryDraft):
+    elif isinstance(item, ThreadDraft):
         kind, values = (
             "기록",
             [item.kind, item.field, item.value, item.occurred_at.isoformat()],
@@ -134,7 +134,7 @@ def matching_entities(text: str, known: EntityIndex) -> list[IndexedEntity]:
     ]
 
 
-class OutputEntryDraft(EntryDraft):
+class OutputThreadDraft(ThreadDraft):
     # Arbitrary object keys are incompatible with the provider's closed objects.
     # JSON encoding preserves all JsonValue variants without narrowing v1.
     value: str = Field(
@@ -154,7 +154,7 @@ class ExtractionOutput(Contract):
     entities: list[ExtractedEntity]
     schedules: list[Schedule]
     relations: list[ExtractedRelation]
-    entry_drafts: list[OutputEntryDraft]
+    entry_drafts: list[OutputThreadDraft]
 
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -181,7 +181,7 @@ class Extractor(Protocol):
     """Return None without an LLM call when no candidate was selected."""
 
     def extract(
-        self, thread: Thread, candidates: list[Candidate], known: EntityIndex
+        self, thread: Script, candidates: list[Candidate], known: EntityIndex
     ) -> Extraction | None: ...
 
 
@@ -241,7 +241,7 @@ class LlmExtractor:
         return result
 
     def extract(
-        self, thread: Thread, candidates: list[Candidate], known: EntityIndex
+        self, thread: Script, candidates: list[Candidate], known: EntityIndex
     ) -> Extraction | None:
         for candidate in candidates:
             candidate.validate_thread(thread)

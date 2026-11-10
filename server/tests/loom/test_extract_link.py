@@ -12,7 +12,7 @@ from weaver.config import RefinerConfig
 from weaver.llm.errors import InvalidJson
 from weaver.loom.extract import ExtractionOutput, LlmExtractor, matching_entities
 from weaver.loom.refine import RuleRefiner
-from weaver.schema import Source, Thread
+from weaver.schema import Script, Source
 from weaver.schema.internal import EntityIndex
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -69,7 +69,7 @@ class FakeLlm:
 
 
 def run(data=None, known=None, text=TEXT):
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
         channel="kakao",
@@ -88,7 +88,7 @@ def run(data=None, known=None, text=TEXT):
 
 def test_empty_candidates_never_call_llm():
     fake = FakeLlm()
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
         channel="kakao",
@@ -278,7 +278,7 @@ def test_invalid_output_rejects_whole_extraction(mutation):
 
 def test_invalid_json_error_is_propagated_without_retry():
     fake = FakeLlm(error=InvalidJson())
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
         channel="kakao",
@@ -308,7 +308,7 @@ def test_simplified_schema_is_provider_portable_and_full_validation_survives():
 
 
 def test_bad_candidate_is_rejected_before_call():
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
         channel="kakao",
@@ -387,7 +387,7 @@ def test_extractor_works_through_real_client_with_fake_transport(tmp_path):
         transport=transport,
         environ={"FAKE_TEST_KEY": "fake"},
     )
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
         channel="kakao",

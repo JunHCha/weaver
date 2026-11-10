@@ -185,7 +185,7 @@ object InboxRuntime {
 
     /**
      * Lock screen and the public version show only the count title. Unlocked: up to three lines.
-     * setLocalOnly keeps summaries off bridged wearables. Thread excerpts never enter a notification.
+     * setLocalOnly keeps summaries off bridged wearables. Script excerpts never enter a notification.
      */
     @Suppress("MissingPermission") // allowed() checks permission and channel immediately before notify.
     private fun post(context: Context, manager: NotificationManager, id: Int, channel: String, title: String,

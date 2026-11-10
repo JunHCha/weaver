@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import JsonValue
 
-from weaver.schema import EntityState, Entry
+from weaver.schema import EntityState, Thread
 from weaver.schema.internal import IndexedEntity
 
 from .fields import OUTPUT_FIELDS, normalize_field
@@ -102,7 +102,7 @@ def local_date(moment: datetime, zone: ZoneInfo) -> str:
     return moment.astimezone(zone).date().isoformat()
 
 
-def summary(item: Entry) -> str:
+def summary(item: Thread) -> str:
     if item.request is not None:
         return plain(item.request.content)
     if item.field is not None:
@@ -110,7 +110,7 @@ def summary(item: Entry) -> str:
     return value_text(item.value)
 
 
-def entry_status(item: Entry, retracted: set[str], superseded: set[str]) -> str:
+def entry_status(item: Thread, retracted: set[str], superseded: set[str]) -> str:
     if item.retracts is not None:
         return "철회 기록"
     if item.entry_id in retracted:
@@ -120,7 +120,7 @@ def entry_status(item: Entry, retracted: set[str], superseded: set[str]) -> str:
     return "유효"
 
 
-def statuses(entries: Sequence[Entry]) -> tuple[set[str], set[str]]:
+def statuses(entries: Sequence[Thread]) -> tuple[set[str], set[str]]:
     """Same activity rule as Fabric's fold_state over one entity's snapshot."""
     retracted = {e.retracts for e in entries if e.retracts is not None}
     superseded = {
@@ -236,7 +236,7 @@ def editable_properties(
 def render_entity(
     entity_id: str,
     state: EntityState,
-    entries: Sequence[Entry],
+    entries: Sequence[Thread],
     relations: Sequence[RelationLink],
     names: Mapping[str, IndexedEntity],
     zone: ZoneInfo,
@@ -341,7 +341,7 @@ def render_entity(
 
 
 def render_entry(
-    item: Entry,
+    item: Thread,
     status: str,
     names: Mapping[str, IndexedEntity],
     zone: ZoneInfo,

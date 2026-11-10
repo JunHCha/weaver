@@ -1,6 +1,6 @@
 """Editable output properties shared by Publisher and OutputWatcher.
 
-Flat properties use the same names as Entry.field. Missing and YAML null mean
+Flat properties use the same names as Thread.field. Missing and YAML null mean
 an explicit cleared value. Only these properties carry editable facts; generated
 metadata (entry status, timestamps) and Markdown prose are never interpreted.
 """

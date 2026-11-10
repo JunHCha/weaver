@@ -6,13 +6,13 @@ import pytest
 
 from weaver.config import RefinerConfig
 from weaver.loom.refine import RuleRefiner
-from weaver.schema import Thread
+from weaver.schema import Script
 from weaver.schema.models import Segment
 
 STAMP = datetime.fromisoformat("2026-11-07T23:30:00+09:00")
 
 
-def thread(text: str, *, parts: list[str] | None = None) -> Thread:
+def thread(text: str, *, parts: list[str] | None = None) -> Script:
     segments = []
     offset = 0
     for i, part in enumerate(parts or [], start=1):
@@ -29,7 +29,7 @@ def thread(text: str, *, parts: list[str] | None = None) -> Thread:
             )
         )
         offset = start + len(part)
-    return Thread(
+    return Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         channel="kakao",

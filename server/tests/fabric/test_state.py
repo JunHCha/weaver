@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.schema import EntityState
 
 from .test_store import entry
@@ -24,7 +24,7 @@ def test_single_value_and_null_keep_evidence(tmp_path: Path, field: str) -> None
     assert state.fields[field].value is None
     assert state.fields[field].entry_id == new.entry_id
     assert state.fields[field].source_id == new.source_id
-    assert len(store.entries(EntryQuery())) == 2
+    assert len(store.entries(ThreadQuery())) == 2
 
 
 def test_accumulation_keeps_distinct_ids_and_kind_precedence(tmp_path: Path) -> None:
@@ -171,7 +171,7 @@ def test_replacing_request_does_not_inherit_decision(tmp_path: Path) -> None:
 def test_replay_restart_ordering_entity_scope_and_no_cached_mutation(
     tmp_path: Path,
 ) -> None:
-    from weaver.fabric import EntryQuery
+    from weaver.fabric import ThreadQuery
 
     store = FabricStore(tmp_path / "facts.db")
     items = [
@@ -196,7 +196,7 @@ def test_replay_restart_ordering_entity_scope_and_no_cached_mutation(
     assert store.state(f"ent_{4:026d}") == EntityState(entity_id=f"ent_{4:026d}")
     assert store.state(ENTITY) == FabricStore(store.path).state(ENTITY)
     replay = FabricStore(tmp_path / "replay.db")
-    replay.append(list(reversed(store.entries(EntryQuery()))))
+    replay.append(list(reversed(store.entries(ThreadQuery()))))
     assert replay.state(ENTITY).model_dump_json() == expected.model_dump_json()
     expected.fields.clear()
     assert store.state(ENTITY).fields
@@ -356,7 +356,7 @@ def test_decision_replacement_chain_and_representative(tmp_path: Path) -> None:
     assert store.state(ENTITY).decisions == {q.entry_id: b}
     store.append([entry(6, field=None, retracts=b.entry_id)])
     assert store.state(ENTITY).decisions == {q.entry_id: a}
-    assert len(store.entries(EntryQuery())) == 6
+    assert len(store.entries(ThreadQuery())) == 6
 
 
 @pytest.mark.parametrize("add_first", [True, False])
@@ -396,5 +396,5 @@ def test_superseding_retraction_is_rejected_atomically(
     assert error.value.entry_id == replacement.entry_id
     assert error.value.field == "supersedes"
     assert error.value.reason == "supersede_of_retraction"
-    assert store.entries(EntryQuery()) == ([] if same_batch else [a, r])
+    assert store.entries(ThreadQuery()) == ([] if same_batch else [a, r])
     assert store.state(ENTITY).fields == {}

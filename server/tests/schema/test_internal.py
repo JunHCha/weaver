@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from weaver.schema import Proposal, Source, Thread
+from weaver.schema import Proposal, Script, Source
 from weaver.schema.internal import (
     Candidate,
     Extraction,
@@ -144,7 +144,7 @@ def test_explicit_existing_matches_can_share_an_id():
 
 
 def test_candidate_keeps_thread_and_segment_provenance():
-    thread = Thread.model_validate(example("Thread"))
+    thread = Script.model_validate(example("Script"))
     candidate = Candidate(
         source_id=thread.source_id,
         segment_ids=["t1"],

@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from weaver.loom.call import CallParseError, GalaxyCallParser, parse_call
-from weaver.schema import Thread
+from weaver.schema import Script
 from weaver.spinner import TextParser
 
 from .test_kakao_parser import source
@@ -42,7 +42,7 @@ def assert_coverage(result, text):
         assert "\n" not in text[segment.start_char : segment.end_char]
         previous = segment.end_char
     assert not text[previous:].strip("\r\n")
-    assert Thread.model_validate_json(thread.model_dump_json()) == thread
+    assert Script.model_validate_json(thread.model_dump_json()) == thread
     for diagnostic in result.diagnostics:
         assert 0 <= diagnostic.start_char < diagnostic.end_char <= len(text)
 
@@ -175,7 +175,7 @@ def test_nonnull_end_still_requires_later_time():
     payload = parse_call(call_source(), "나  (00:01)\n가짜\n").thread.model_dump()
     payload["segments"][0]["end_ms"] = 1000
     with pytest.raises(ValidationError):
-        Thread.model_validate(payload)
+        Script.model_validate(payload)
 
 
 def test_missing_preamble_and_block_separator_are_diagnosed():

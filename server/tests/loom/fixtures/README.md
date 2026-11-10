@@ -23,7 +23,7 @@ Other system-like lines inside a message remain continuation text; without
 an active message they are raw segments with `unrecognized_line` diagnostics.
 Date/header/system patterns appearing literally inside a body also form boundaries.
 
-`Thread.text` is the exact UTF-8 decoded payload, including BOM, line endings,
+`Script.text` is the exact UTF-8 decoded payload, including BOM, line endings,
 headers and prefixes. Ordered `s1`, `s2`, … segments partition every code point
 without gaps. A message segment starts at its entire prefix line and extends
 through continuation lines up to the next recognized boundary. Header/date/system
@@ -44,7 +44,7 @@ and captured_at is never used as a fallback. `[time].timezone` from ServerConfig
 (default Asia/Seoul) is explicitly injected; DST folds/gaps yield null and a
 safe diagnostic rather than an invented instant.
 
-Empty/whitespace-only input raises `empty_input` (v1 Thread.text is nonempty).
+Empty/whitespace-only input raises `empty_input` (v1 Script.text is nonempty).
 No recognized structure raises `unsupported_format`; header-only input is retained
 with `no_messages`. English and other unsupported formats are rejected when no
 supported structure is present; mixed unknown lines are retained and diagnosed.
@@ -52,7 +52,7 @@ CP949/UTF-16 are rejected by TextSpinner with `unsupported_encoding` rather than
 lossy decoding. The archive remains unchanged on every error.
 
 Integration: `parse_kakao(source, text, timezone=...) -> ParseResult` exposes full
-diagnostics; `weaver.spinner.text.text_to_thread` returns Thread and logs only
+diagnostics; `weaver.spinner.text.text_to_thread` returns Script and logs only
 one count summary per diagnostic code. `TextSpinner.from_config(store, settings).spin(source)`
 reads through ArchiveStore.locate and verifies the original byte SHA-256 against
 Source.sha256, raising `payload_mismatch` on corruption before decoding. The general Spinner (#4) can delegate its text
@@ -70,7 +70,7 @@ Optional Unicode BOM, LF/CRLF and trailing whitespace are retained exactly.
 nonempty line's content, excluding its LF/CRLF, is exactly one Segment. The
 `AI로 생성된 콘텐츠입니다` line, the following nonblank title, whitespace-only
 lines and each header `<speaker>  (MM:SS)` are un-timed, un-speakered structural
-Segments. Thread has no separate title field; adding one would unnecessarily
+Segments. Script has no separate title field; adding one would unnecessarily
 change v1. The single nonblank body line after a header is the speech Segment
 and alone carries speaker, start_ms, end_ms and occurred_at. A body line is any
 line that is not a header, even if it contains `  (`.
@@ -81,7 +81,7 @@ quotation from a real header. A missing blank separator is diagnosed.
 Line endings and empty lines lie between Segments: the schema forbids empty
 Segments, and absorbing terminators into some Segments but not speech bodies
 would make ranges inconsistent. The gaps are whitespace only and the Reviser
-restores them verbatim, so Thread.text and every range stay exact. Speakers
+restores them verbatim, so Script.text and every range stay exact. Speakers
 are unchanged, including `나 & 상대` (`overlap_speakers`). start_ms is elapsed
 call time; end_ms is the next recognized block's start only when strictly later.
 Equal/reversed starts diagnose `non_increasing_time` and leave that end null;
@@ -95,7 +95,7 @@ or `invalid_header`; extra body lines are not silently accepted as normal speech
 Missing preamble/title and no blocks are diagnosed. Entirely unrecognized,
 empty or NUL-containing inputs fail with safe codes. Diagnostic fields are code,
 1-based line and code-point range only. GalaxyCallParser implements Spinner's
-`TextParser.parse(Source, str) -> Thread`, logs code/count only and advertises
+`TextParser.parse(Source, str) -> Script`, logs code/count only and advertises
 `galaxy.call.v1`; Spinner installs it by default and still requires a Reviser.
 No regex is used; fixed string splits and bounded integer conversion avoid
 backtracking and huge-int parsing. Tests include megabyte adversarial lines.

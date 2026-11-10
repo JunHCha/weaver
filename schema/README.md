@@ -18,7 +18,7 @@ uv run --project server pytest server/tests/schema -q
 
 `examples/<Model>.json` provides the minimum complete shape for each core model.
 Additional examples cover four Verdict branches, human request resolution, output
-provenance and Source→Thread for text, Kakao and audio. All data is synthetic.
+provenance and Source→Script for text, Kakao and audio. All data is synthetic.
 The examples deliberately include a request and a blocked schedule; approval of
 that proposal is not calendar execution permission.
 
@@ -49,7 +49,7 @@ that proposal is not calendar execution permission.
 
 Entity types: `person`, `org`, `project`, `topic`, `meeting`.
 Relation types: `원인`, `후속조치`, `같은논의`, `참석`, `소속`.
-`결정됨` is excluded: decisions are Entry facts, not a duplicate relation kind.
+`결정됨` is excluded: decisions are Thread facts, not a duplicate relation kind.
 Old `events`, `decision`, and array-dot edit paths are not v1 wire fields.
 
 Entity `ref` addresses a proposal-local item and nullable `entity_id` links a known
@@ -64,16 +64,16 @@ Proposal `source` is a path-free summary of Source. Local refs are unique across
 entities, schedules and drafts. `schedules[].entry_ref` points to an `일정` draft.
 Proposal validation rejects duplicate/dangling references and mismatched blocks.
 
-## Draft → Entry and requests
+## Draft → Thread and requests
 
 `entry_drafts` holds proposed facts, not execution commands. Kind is one of
 `요청`, `논의`, `결정`, `폐기`, `약속`, `일정`, `변경`. `field` is nullable;
 `value` is arbitrary JSON, never a Python object. `supersedes` and `retracts` can
-express existing Entry links; ordering and state folding belong to Fabric.
+express existing Thread links; ordering and state folding belong to Fabric.
 
 Exactly `kind=요청` requires non-null `request` with `requester`, nonempty `targets`,
 nullable `due_at`, and `content`. Other kinds require `request: null`. A request
-remains open until a user-authored `kind=결정`, `actor=human` Entry links to its
+remains open until a user-authored `kind=결정`, `actor=human` Thread links to its
 `evt_` ID through `resolves`; otherwise `resolves` is null. A decision extracted
 from source material and approved as a fact is not an explicit user decision to
 execute a request: use `ai_approved` and do not set `resolves` for that approval.
@@ -83,7 +83,7 @@ Producers **must** mark all request-derived drafts with `blocked_by_request: dN`
 and propagate it to the corresponding schedule. A schedule cannot remove its
 draft's block. `Verdict approve/edit` records the existence of requests and other
 facts; it does not resolve requests or permit derived actions. Execution must wait
-for an explicit human decision Entry. The block persists in stored Entry as the
+for an explicit human decision Thread. The block persists in stored Thread as the
 request's `evt_` ID, so it survives proposal removal. There is no executable
 `actions` collection in v1.
 
@@ -92,17 +92,17 @@ allocates one `ent_` per new entity ref (preserving existing matches), one disti
 `evt_` per draft, and supplies recorded_at. Newly allocated entity IDs must be
 unique and disjoint from all existing matches; intentional existing matches may
 share an ID. It replaces entity refs in tags/request fields and draft refs in
-blocks, injects source_id, and validates each final Entry. Every resulting Entry
-has actor=ai_approved and resolves=null; there is no actor override. EntryDraft
+blocks, injects source_id, and validates each final Thread. Every resulting Thread
+has actor=ai_approved and resolves=null; there is no actor override. ThreadDraft
 resolves accepts only null, including in the JSON Schema. A source-derived decision
 can be recorded as a fact but cannot resolve a request through Proposal approval.
 
 `internal.create_request_decision` is a separate creation path for an explicit
-human decision on an existing request Entry. It sets actor=human and
+human decision on an existing request Thread. It sets actor=human and
 resolves=request.entry_id and rejects non-request targets. Call it only for an
 actual user decision, never from Proposal approval. Both paths return facts and
 perform no execution or storage.
-Entry `source_id` also permits nonempty `output:<logical-output-reference>`.
+Thread `source_id` also permits nonempty `output:<logical-output-reference>`.
 
 ## Verdict branches
 
@@ -128,10 +128,10 @@ revise rather than editing these protected fields. VerdictHandler implementation
 and enforcement are a follow-up issue; syntax validation alone is not permission
 to apply an edit.
 
-## Thread and server boundaries
+## Script and server boundaries
 
-Thread segments retain source_id through their parent and use unique segment IDs.
-`[start_char,end_char)` indexes Unicode code points in Thread.text, not bytes or
+Script segments retain source_id through their parent and use unique segment IDs.
+`[start_char,end_char)` indexes Unicode code points in Script.text, not bytes or
 UTF-16 indices (Android must convert indices accordingly). Kakao retains speaker,
 message occurred_at and text position; call/audio use start_ms/end_ms offsets
 from call start/audio payload start. Both may be null; a known start_ms permits
@@ -156,6 +156,6 @@ does not claim the full schema can be passed unchanged to every provider.
 
 The dev dependency `jsonschema[format-nongpl]` installs the optional date-time
 checker as well as JSON Schema validation. Tests compare Pydantic with
-Draft202012Validator(FormatChecker) for Verdict branches, Entry kind/request/
+Draft202012Validator(FormatChecker) for Verdict branches, Thread kind/request/
 resolves/actor, entity identity, proposal refs, segment ms pairs and timestamp/ID
 constraints; exported schemas and all examples are also validated independently.

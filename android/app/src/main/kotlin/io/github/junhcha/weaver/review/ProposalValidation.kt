@@ -12,7 +12,7 @@ internal object ProposalValidation {
         val allRefs = entityRefs + p.entryDrafts.map { it.ref } + p.schedules.map { it.ref }
         require(allRefs.distinct().size == allRefs.size) { "local refs must be unique across proposal items" }
         val drafts = p.entryDrafts.associateBy { it.ref }
-        val requests = p.entryDrafts.filter { it.kind == Proposal.EntryKind.REQUEST }.map { it.ref }.toSet()
+        val requests = p.entryDrafts.filter { it.kind == Proposal.ThreadKind.REQUEST }.map { it.ref }.toSet()
         fun entities(refs: List<String>) {
             require(refs.all { it in known }) { "dangling entity reference" }
         }
@@ -32,7 +32,7 @@ internal object ProposalValidation {
             }
             entities(schedule.entities)
             val draft = drafts[schedule.entryRef]
-            require(draft != null && draft.kind == Proposal.EntryKind.SCHEDULE) {
+            require(draft != null && draft.kind == Proposal.ThreadKind.SCHEDULE) {
                 "schedule entry_ref must reference an 일정 draft"
             }
             require(schedule.blockedByRequest == draft.blockedByRequest) {

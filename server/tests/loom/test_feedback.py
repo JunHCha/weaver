@@ -15,7 +15,7 @@ import pytest
 from weaver.config import CourierPaths, FeedbackSettings
 from weaver.courier import Courier
 from weaver.evals import load_dataset
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.loom import (
     CourierPublisher,
     CourierReviewAdapter,
@@ -28,7 +28,7 @@ from weaver.loom import (
 from weaver.loom import eval_candidates as ec
 from weaver.loom.extract import LlmExtractor
 from weaver.loom.propose import REVISE_PROMPT_VERSION, FeedbackEvent
-from weaver.schema import Proposal, Source, Thread, Verdict
+from weaver.schema import Proposal, Script, Source, Verdict
 from weaver.schema.internal import Extraction
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -193,13 +193,13 @@ def test_restart_recovers_feedback_without_duplicate_entries(env, failure):
     with pytest.raises(RuntimeError):
         env.handler.apply(decision)
     assert not env.store.is_applied(decision.proposal_id, 1)
-    entries = env.fabric.entries(EntryQuery())
+    entries = env.fabric.entries(ThreadQuery())
     # Fresh journal and feedback handles: deduplication is durable, not in memory.
     env.handler.store = ReviewStore(env.store.path)
     env.sink.store = SqliteFeedbackStore(env.feedback.path, env.handler.store)
     assert not env.courier.scan_once().problems
     assert env.store.is_applied(decision.proposal_id, 1)
-    assert env.fabric.entries(EntryQuery()) == entries and len(entries) == 2
+    assert env.fabric.entries(ThreadQuery()) == entries and len(entries) == 2
     assert env.sink.store.events() == [(decision.proposal_id, 1)]
     assert [e.entity_id for e in env.sink.store.index().entities] == sorted(
         [KIM, PROJECT]
@@ -275,7 +275,7 @@ def test_explicit_choice_adds_alias_and_feeds_extractor(env):
             return schema.model_validate(reply)
 
     fake = Fake()
-    thread = Thread(
+    thread = Script(
         schema_version=1,
         source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA9",
         channel="share_text",
@@ -463,7 +463,7 @@ def test_extractor_adds_corrections_only_for_selected_entities(env):
         ("김민수님이 내일 회의를 요청했다.", True),
         ("박영희님이 내일 회의를 요청했다.", False),
     ):
-        thread = Thread(
+        thread = Script(
             schema_version=1,
             source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FA9",
             channel="share_text",

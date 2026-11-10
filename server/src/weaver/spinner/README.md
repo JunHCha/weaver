@@ -1,6 +1,6 @@
 # Spinner
 
-`Spinner.spin(source, reprocess=False)` is the one-shot Source → Thread API.
+`Spinner.spin(source, reprocess=False)` is the one-shot Source → Script API.
 It reads payloads only through `SourceLocator.locate`, checks the archived Source
 and SHA-256, and decodes UTF-8 without newline conversion.
 
@@ -27,7 +27,7 @@ spinner = Spinner.from_config(
 thread = spinner.spin(source)
 ```
 
-`TextParser.parse(source, text) -> Thread` is the replacement boundary for each
+`TextParser.parse(source, text) -> Script` is the replacement boundary for each
 channel; `parsers={"call": custom_parser}` overrides the built-in Galaxy parser.
 No live LLM client is constructed implicitly. Callers
 supply `configuration_version` for engine settings not advertised by adapters.
@@ -43,8 +43,8 @@ own `version`. Bump the built-in parser constant when parsing rules change and a
 adapter's version when its behavior changes. Unversioned adapters remain supported
 and require a caller version bump. Versions retain independent results in `state_root/spinner.sqlite3`; a Source identity mismatch is an error.
 
-SQLite stores original Source metadata, parsed Thread checkpoints, complete
-Threads and stage attempts. Completed results become visible in one SQLite
+SQLite stores original Source metadata, parsed Script checkpoints, complete
+Scripts and stage attempts. Completed results become visible in one SQLite
 commit with the successful revision attempt. A crash after that commit reuses the
 result without another LLM request; a crash before commit leaves neither success
 nor a complete result. A response lost before commit can still require another

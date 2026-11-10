@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
-from weaver.schema.models import Segment, Source, Thread
+from weaver.schema.models import Script, Segment, Source
 
 _DATE = r"(?P<year>[0-9]{4})(?:년\s+|\.\s*)(?P<month>[0-9]{1,2})(?:월\s+|\.\s*)(?P<day>[0-9]{1,2})(?:일|\.)"
 _CLOCK = r"(?P<period>오전|오후) (?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})"
@@ -50,7 +50,7 @@ class Diagnostic:
 
 @dataclass(frozen=True)
 class ParseResult:
-    thread: Thread
+    thread: Script
     diagnostics: tuple[Diagnostic, ...]
 
 
@@ -75,7 +75,7 @@ def _timestamp(day: date, match: re.Match[str], zone: ZoneInfo) -> datetime | No
 
 
 def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult:
-    """Parse supported Korean text into a v1 Thread plus content-free diagnostics.
+    """Parse supported Korean text into a v1 Script plus content-free diagnostics.
 
     timezone must come from ServerConfig.time.zone; capture time is never used
     to fill missing message dates. Header-only input is preserved with a warning;
@@ -223,7 +223,7 @@ def parse_kakao(source: Source, text: str, *, timezone: ZoneInfo) -> ParseResult
     if not message_count:
         diagnostic("no_messages", 1, 0, len(text))
     return ParseResult(
-        Thread(
+        Script(
             schema_version=1,
             source_id=source.source_id,
             channel=source.channel,

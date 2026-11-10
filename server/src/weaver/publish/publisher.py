@@ -4,7 +4,7 @@ Layout under ``vault_root/<publish.folder>`` (default ``Weaver``)::
 
     Projects/ent_<ULID>.md              project object note = MOC
     Entities/{People,Orgs,Topics,Meetings,Unknown}/ent_<ULID>.md
-    Records/<YYYY-MM>/evt_<ULID>.md     one record note per Entry
+    Records/<YYYY-MM>/evt_<ULID>.md     one record note per Thread
 
 Invariant first: a file Weaver did not write, or wrote but someone changed, is
 never overwritten or deleted. Ownership is the embedded content hash (see
@@ -28,7 +28,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from weaver.courier.atomic import fsync_directory, write_bytes_atomic
-from weaver.fabric import EntryQuery, Fabric
+from weaver.fabric import Fabric, ThreadQuery
 from weaver.schema.internal import EntityIndex, IndexedEntity
 from weaver.schema.models import ULID
 
@@ -272,7 +272,7 @@ class Publisher:
         done: set[str] = set()
         try:
             for entity_id in ids:
-                entries = self.fabric.entries(EntryQuery(entity_id=entity_id))
+                entries = self.fabric.entries(ThreadQuery(entity_id=entity_id))
                 mine = [r for r in relations if entity_id in (*r.from_ids, *r.to_ids)]
                 note = render_entity(
                     entity_id,

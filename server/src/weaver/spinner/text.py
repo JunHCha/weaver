@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from weaver.config import ServerConfig
 from weaver.loom.kakao import KakaoParseError, parse_kakao
 from weaver.schema.internal import ArchivedSource
-from weaver.schema.models import Segment, Source, Thread
+from weaver.schema.models import Script, Segment, Source
 
 PARSER_VERSION = "spinner.text.v1"
 
@@ -20,7 +20,7 @@ class SourceLocator(Protocol):
     def locate(self, source_id: str) -> ArchivedSource: ...
 
 
-def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
+def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Script:
     """No LLM or STT. Share text bypasses all Kakao recognition."""
     if source.kind != "text":
         raise ValueError("expected text Source")
@@ -34,7 +34,7 @@ def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
         for code, count in Counter(d.code for d in result.diagnostics).items():
             _LOG.warning("kakao:%s count=%d", code, count)
         return result.thread
-    return Thread(
+    return Script(
         schema_version=1,
         source_id=source.source_id,
         channel=source.channel,
@@ -55,7 +55,7 @@ def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Thread:
 
 
 class TextSpinner:
-    """Implements spin(Source)->Thread for text without changing Spinner's port."""
+    """Implements spin(Source)->Script for text without changing Spinner's port."""
 
     def __init__(self, store: SourceLocator, *, timezone: ZoneInfo) -> None:
         self._store = store
@@ -65,7 +65,7 @@ class TextSpinner:
     def from_config(cls, store: SourceLocator, config: ServerConfig) -> "TextSpinner":
         return cls(store, timezone=config.time.zone)
 
-    def spin(self, source: Source) -> Thread:
+    def spin(self, source: Source) -> Script:
         if source.kind != "text":
             raise ValueError("expected text Source")
         archived = self._store.locate(source.source_id)

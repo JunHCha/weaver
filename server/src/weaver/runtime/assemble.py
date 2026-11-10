@@ -48,7 +48,7 @@ from .pipeline import (
     llm_status,
 )
 
-# Part of Spinner's cache key: bump when runtime wiring changes Thread output.
+# Part of Spinner's cache key: bump when runtime wiring changes Script output.
 CONFIGURATION_VERSION = "weaver.runtime.v1"
 # Raw-fragment retention is counted in days; a few runs a day are plenty.
 FEEDBACK_PURGE_INTERVAL_SECONDS = 6 * 3600.0

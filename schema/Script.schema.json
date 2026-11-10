@@ -1,0 +1,169 @@
+{
+  "$defs": {
+    "Channel": {
+      "enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+      ],
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Offset": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "Ref": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^[a-z][1-9][0-9]*$",
+      "type": "string"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "Text range [start_char,end_char) uses Unicode code points, not UTF-16.\n\nSegment IDs are unique within a Script. Audio offsets are integer milliseconds\nfrom payload start. A known start permits an unknown (null) end; a known\nend requires a strictly earlier start. occurred_at and speaker preserve\nmessage/call provenance.",
+      "if": {
+        "properties": {
+          "start_ms": {
+            "type": "null"
+          }
+        }
+      },
+      "properties": {
+        "end_char": {
+          "$ref": "#/$defs/Offset"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Offset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segment_id": {
+          "$ref": "#/$defs/Ref"
+        },
+        "speaker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start_char": {
+          "$ref": "#/$defs/Offset"
+        },
+        "start_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Offset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "segment_id",
+        "start_char",
+        "end_char",
+        "start_ms",
+        "end_ms",
+        "speaker",
+        "occurred_at"
+      ],
+      "then": {
+        "properties": {
+          "end_ms": {
+            "type": "null"
+          }
+        }
+      },
+      "title": "Segment",
+      "type": "object"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v1:Script",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Spinner text and original segment provenance, without archive local paths.",
+  "properties": {
+    "channel": {
+      "$ref": "#/$defs/Channel"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/Segment"
+      },
+      "title": "Segments",
+      "type": "array"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    },
+    "text": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_id",
+    "channel",
+    "occurred_at",
+    "text",
+    "segments"
+  ],
+  "title": "Script",
+  "type": "object"
+}
