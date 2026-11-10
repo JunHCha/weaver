@@ -38,11 +38,20 @@ class AutoShareMachineTest {
         assertEquals(fullFlow, device.clicks)
     }
 
-    @Test fun foldedLayoutGoesBackBeforePressingARowThatAnotherDetailCovers() {
-        // The covered row beneath the detail still reports visible; pressing it does nothing on a device.
+    @Test fun foldedLayoutGoesBackWhenARowThatAnotherDetailCoversDoesNotRespond() {
+        // The covered row beneath the detail still reports visible; pressing it does nothing on a device,
+        // so after one unanswered row press the machine goes back and presses the now-visible row.
         val device = FakeDevice(expanded = false, detail = "통화 김철수_261109_090000", coveredListStaysVisible = true)
         assertEquals(Progress.Succeeded, run(device, machine(device)))
         assertEquals(1, device.backs)
+        assertEquals(listOf("COVERED-ROW:$STEM") + fullFlow, device.clicks)
+    }
+
+    @Test fun twoPaneLayoutPressesTheRowBesideAnotherDetailWithoutGoingBack() {
+        // Unfolded: Back would leave the app, while the list beside the other detail is clickable.
+        val device = FakeDevice(expanded = true, detail = "통화 김철수_261109_090000")
+        assertEquals(Progress.Succeeded, run(device, machine(device)))
+        assertEquals(0, device.backs)
         assertEquals(fullFlow, device.clicks)
     }
 
