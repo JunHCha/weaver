@@ -66,6 +66,30 @@ class InboxTest {
         .singleOrNull { shadowOf(manager).getNotification(id) === it }
     private fun silent(n: Notification) = n.group != null && n.groupAlertBehavior == Notification.GROUP_ALERT_SUMMARY
 
+    @Test fun mixedVersionsPersistStageAndDoNotReviveSubmittedV2() {
+        val pkg = io.github.junhcha.weaver.schema.v2.ReviewPackage(2,
+            "prp_01ARZ3NDEKTSV4RRFFQ69G5FA2", "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1,
+            "문서 요약", emptyList(), io.github.junhcha.weaver.schema.v2.Stage.REVIEW, emptyMap())
+        put(proposal)
+        val name = "${pkg.packageId}.r${pkg.revision}.json"
+        folder.put("proposals", name, WeaverCodec.encode(pkg))
+        assertTrue(scan())
+        val items = InboxRuntime.proposals(app)
+        assertEquals(2, items.size)
+        assertFalse(items.single { it.proposalId == proposal.proposalId }.isV2)
+        assertEquals("REVIEW", items.single { it.proposalId == pkg.packageId }.stage)
+        assertTrue(items.single { it.proposalId == pkg.packageId }.isV2)
+        folder.put("proposals", name, WeaverCodec.encode(pkg.copy(stage = io.github.junhcha.weaver.schema.v2.Stage.APPLY)))
+        scan()
+        assertEquals("APPLY", InboxRuntime.proposals(app).single { it.isV2 }.stage)
+        InboxRuntime.submitted(app, pkg.packageId, 1)
+        remove(name)
+        scan()
+        folder.put("proposals", name, WeaverCodec.encode(pkg))
+        scan()
+        assertTrue(InboxRuntime.proposals(app).none { it.isV2 })
+    }
+
     @Test fun repeatedScansAndRestartDoNotRepeatNotification() {
         grant()
         put(proposal)

@@ -57,6 +57,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             proposals = p; alerts = a; lastScan = scan
             questionCounts = withContext(Dispatchers.IO) {
                 p.associate { item -> item.proposalId to runCatching {
+                    if (item.isV2) return@runCatching ReviewRuntime.openPackage(context, item.proposalId).questions.size
                     val proposal = ReviewRuntime.open(context, item.proposalId)
                     check(proposal.rev == item.rev)
                     ReviewDraft.questions(proposal).size
@@ -72,11 +73,12 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             proposals.forEach { item ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("출처: ${channelLabel(item.channel)} · 시각: ${capturedAtLabel(item.capturedAt)}")
+                        if (item.isV2) Text("v2 · 단계: ${stageLabel(item.stage)}")
+                        else Text("출처: ${channelLabel(item.channel)} · 시각: ${capturedAtLabel(item.capturedAt)}")
                         Text("rev ${item.rev} · 미해결 질문 ${questionCounts[item.proposalId]?.let { "${it}개" } ?: if (item.proposalId in questionCounts) "확인 불가" else "확인 중"}" +
                             if (item.revised) " · 다시 짠 제안" else "")
                         Text(item.summary.replace('\n', ' '), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
+                        if (!item.isV2) OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
                     }
                 }
             }
@@ -122,3 +124,14 @@ internal fun capturedAtLabel(value: String, zone: ZoneId = ZoneId.systemDefault(
     runCatching {
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(Instant.parse(value).atZone(zone))
     }.getOrDefault(value)
+
+private fun stageLabel(stage: String?): String = when (stage) {
+    "COLLECT" -> "수집"
+    "SEND" -> "전송"
+    "ORGANIZE" -> "정리"
+    "QUESTION" -> "질문"
+    "REVIEW" -> "검토"
+    "APPLY" -> "반영"
+    "UPDATE_WIKI" -> "wiki갱신"
+    else -> stage ?: "알 수 없음"
+}

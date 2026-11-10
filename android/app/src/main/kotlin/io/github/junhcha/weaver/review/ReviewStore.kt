@@ -7,6 +7,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import io.github.junhcha.weaver.schema.v2.ReviewPackage
+import io.github.junhcha.weaver.schema.v2.Verdict as VerdictV2
 
 @Serializable
 enum class ReviewStatus(val label: String) {
@@ -22,6 +24,10 @@ data class ReviewRecord(
     val published: Boolean = false,
     val proposal: Proposal? = null,
 )
+
+@Serializable
+data class ReviewRecordV2(val verdict: VerdictV2, val tree: String, val status: ReviewStatus,
+                          val published: Boolean = false)
 
 /** Durable immutable intent plus delivery observations, all inside the backup-excluded exchange dir.
  * Callers hold CourierRuntime.lock. No phone deletion of proposals or decisions, even on rejection.
@@ -74,6 +80,68 @@ class ReviewStore(private val directory: File) {
         }
         save(ReviewRecord(verdict, folder.identity, ReviewStatus.PENDING, proposal = p))
     }
+    fun latestPackage(folder: CourierFolder, id: String): ReviewPackage {
+        require(Regex("prp_${CourierRules.ulid}").matches(id))
+        val candidates = folder.list("proposals").mapNotNull { entry ->
+            CourierRules.revision.matchEntire(entry.name)?.takeIf { it.groupValues[1] == id }
+                ?.groupValues?.get(2)?.toLongOrNull()?.let { it to entry }
+        }
+        val newest = candidates.maxByOrNull { it.first } ?: throw ProposalMissingException()
+        check(newest.second.regular)
+        val watermark = File(directory, "$id.latest")
+        check(newest.first >= (watermark.takeIf { it.exists() }?.readText()?.toLong() ?: 0L))
+        observeRevision(id, newest.first)
+        val p = folder.read("proposals", newest.second.name).use { CourierClient.decoded<ReviewPackage>(CourierClient.boundedJson(it)) }
+        check(p.packageId == id && p.revision == newest.first) { "id_mismatch" }
+        return p
+    }
+    private fun v2File(id: String, rev: Long) = File(directory, "$id.r$rev.v2")
+    fun recordsV2(): List<ReviewRecordV2> = directory.listFiles().orEmpty().filter { it.extension == "v2" }
+        .map { json.decodeFromString<ReviewRecordV2>(it.readText()) }
+    fun queue(folder: CourierFolder, p: ReviewPackage, verdict: VerdictV2) {
+        check(p.packageId == verdict.packageId && p.revision == verdict.revision)
+        check(latestPackage(folder, p.packageId) == p) { "새 rev가 도착했습니다. 최신 제안을 다시 확인하세요" }
+        check(WeaverCodec.encode(verdict).toByteArray().size <= CourierRules.maxJson) { "too_large" }
+        val file = v2File(p.packageId, p.revision)
+        if (file.exists()) {
+            val existing = json.decodeFromString<ReviewRecordV2>(file.readText())
+            check(existing.verdict == verdict && existing.tree == folder.identity)
+        } else atomic(file, json.encodeToString(ReviewRecordV2(verdict, folder.identity, ReviewStatus.PENDING)))
+    }
+    private fun synchronizeV2(folder: CourierFolder): Boolean {
+        var success = true
+        for (record in recordsV2().filter { it.tree == folder.identity }) {
+            if (record.status in setOf(ReviewStatus.STALE, ReviewStatus.CONFLICT, ReviewStatus.INFERRED)) continue
+            val v = record.verdict
+            val name = "${v.packageId}.r${v.revision}.json"
+            val status = try {
+                val decision = folder.list("decisions").firstOrNull { it.name == name }
+                if (decision != null) {
+                    val same = decision.regular && folder.read("decisions", name).use {
+                        CourierClient.readBounded(it).contentEquals(WeaverCodec.encode(v).toByteArray())
+                    }
+                    if (!same) ReviewStatus.CONFLICT
+                    else if (record.published && !folder.created("proposals") && folder.list("proposals").none { it.name == name }) ReviewStatus.INFERRED
+                    else ReviewStatus.SENT
+                } else if (record.published) {
+                    if (folder.created("decisions")) ReviewStatus.SENT else ReviewStatus.INFERRED
+                } else {
+                    val latest = latestPackage(folder, v.packageId)
+                    if (latest.revision != v.revision) ReviewStatus.STALE else {
+                        folder.publish("decisions", name) { it.write(WeaverCodec.encode(v).toByteArray()) }
+                        ReviewStatus.SENT
+                    }
+                }
+            } catch (_: SecurityException) {
+                atomic(v2File(v.packageId, v.revision), json.encodeToString(record.copy(status = ReviewStatus.ERROR)))
+                throw SecurityException("Courier access lost")
+            } catch (_: Exception) { ReviewStatus.ERROR }
+            atomic(v2File(v.packageId, v.revision), json.encodeToString(record.copy(status = status,
+                published = record.published || status in setOf(ReviewStatus.SENT, ReviewStatus.INFERRED))))
+            if (status in setOf(ReviewStatus.ERROR, ReviewStatus.CONFLICT, ReviewStatus.STALE)) success = false
+        }
+        return success
+    }
     fun synchronize(folder: CourierFolder): Boolean {
         var success = true
         for (record in records().filter { it.tree == folder.identity }) {
@@ -105,6 +173,6 @@ class ReviewStore(private val directory: File) {
                 published = record.published || status in setOf(ReviewStatus.SENT, ReviewStatus.INFERRED)))
             if (status in setOf(ReviewStatus.ERROR, ReviewStatus.CONFLICT, ReviewStatus.STALE)) success = false
         }
-        return success
+        return synchronizeV2(folder) && success
     }
 }

@@ -26,6 +26,20 @@ object ReviewRuntime {
         CourierRuntime.kick(context)
         InboxRuntime.refresh(context)
     }
+    fun openPackage(context: Context, id: String): io.github.junhcha.weaver.schema.v2.ReviewPackage = synchronized(CourierRuntime.lock) {
+        val p = store(context).latestPackage(CourierRuntime.folder(context), id)
+        val known = InboxRuntime.proposals(context).firstOrNull { it.proposalId == id }
+        check(known == null || p.revision >= known.rev)
+        p
+    }
+    fun submit(context: Context, p: io.github.junhcha.weaver.schema.v2.ReviewPackage,
+               verdict: io.github.junhcha.weaver.schema.v2.Verdict) = synchronized(CourierRuntime.lock) {
+        check(openPackage(context, p.packageId) == p)
+        store(context).queue(CourierRuntime.folder(context), p, verdict)
+        InboxRuntime.submitted(context, p.packageId, p.revision)
+        CourierRuntime.kick(context)
+        InboxRuntime.refresh(context)
+    }
     fun synchronize(context: Context, folder: CourierFolder): Boolean = synchronized(CourierRuntime.lock) {
         val store = store(context)
         InboxRuntime.proposals(context).forEach { store.observeRevision(it.proposalId, it.rev) }

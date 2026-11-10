@@ -1,6 +1,9 @@
 package io.github.junhcha.weaver.courier
 
 import io.github.junhcha.weaver.schema.*
+import io.github.junhcha.weaver.schema.v2.ReviewPackage
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.io.InputStream
 import java.nio.charset.CodingErrorAction
@@ -20,13 +23,14 @@ class CourierClient(
      */
     data class Inbox(
         val receipts: List<Receipt>, val proposals: List<Proposal>, val alerts: List<Alert>,
-        val unreadable: Set<String> = emptySet(),
+        val unreadable: Set<String> = emptySet(), val packages: List<ReviewPackage> = emptyList(),
     )
 
     fun scan(): Inbox {
         val receipts = mutableListOf<Receipt>()
         val proposals = mutableListOf<Proposal>()
         val alerts = mutableListOf<Alert>()
+        val packages = mutableListOf<ReviewPackage>()
         val unreadable = mutableSetOf<String>()
         CourierRules.folders.forEach { directory ->
             folder.list(directory).forEach { entry ->
@@ -54,9 +58,16 @@ class CourierClient(
                             receipts.add(receipt)
                         }
                         directory == "proposals" && CourierRules.revision.matches(name) -> {
-                            val proposal = decoded<Proposal>(text)
-                            check(name == "${proposal.proposalId}.r${proposal.rev}.json") { "id_mismatch" }
-                            proposals.add(proposal)
+                            val version = WeaverCodec.json.parseToJsonElement(text).jsonObject["schema_version"]?.jsonPrimitive
+                            if (version != null && !version.isString && version.content == "2") {
+                                val pkg = decoded<ReviewPackage>(text)
+                                check(name == "${pkg.packageId}.r${pkg.revision}.json") { "id_mismatch" }
+                                packages.add(pkg)
+                            } else {
+                                val proposal = decoded<Proposal>(text)
+                                check(name == "${proposal.proposalId}.r${proposal.rev}.json") { "id_mismatch" }
+                                proposals.add(proposal)
+                            }
                         }
                         directory == "proposals" && CourierRules.alert.matches(name) -> {
                             val alert = decoded<Alert>(text)
@@ -71,7 +82,7 @@ class CourierClient(
         }
         return Inbox(receipts, proposals.groupBy { it.proposalId }.values.map { versions ->
             versions.maxBy { it.rev }
-        }, alerts, unreadable)
+        }, alerts, unreadable, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } })
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */
