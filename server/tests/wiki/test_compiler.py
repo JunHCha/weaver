@@ -212,3 +212,47 @@ def test_settled_human_edit_is_used_without_feedback_loop(tmp_path):
     assert "사람의 변경" in path.read_text()
     assert len(fabric.entries(ThreadQuery())) == 2
     assert store.scan(datetime.now(UTC).timestamp()) == []
+
+
+def test_frontmatter_follows_projected_fields_and_context(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=0)
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages([Page("홍길동", "person", ("별명",))])
+    changes = [
+        ("deadline", "2025-01-02"),
+        ("schedule", "오후"),
+        ("assignees", {"add": ["김철수"], "remove": []}),
+        ("status", "완료"),
+    ]
+    fabric.append(
+        [
+            draft().model_copy(
+                update={"thread_id": str(index), "field": field, "value": value}
+            )
+            for index, (field, value) in enumerate(changes)
+        ]
+    )
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        FakeLLM(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("2025-01-01 홍길동 call", "요약"),
+    )
+    compiler.run()
+    props, _, _ = store.read("pages/홍길동.md")
+    assert {
+        key: props[key]
+        for key in ("deadline", "schedule", "assignees", "status", "kind", "aliases")
+    } == {
+        "deadline": "2025-01-02",
+        "schedule": "오후",
+        "assignees": ["김철수"],
+        "status": "완료",
+        "kind": "person",
+        "aliases": ["별명"],
+    }
