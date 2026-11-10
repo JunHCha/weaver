@@ -13,12 +13,12 @@ from .conftest import CAP, CAP2, TEXT, manifest
 
 
 class NoRevisions:
-    def latest_rev(self, proposal_id):
+    def latest_rev(self, package_id):
         return None
 
 
 class NoDecisions:
-    def is_applied(self, proposal_id, rev):
+    def is_applied(self, package_id, rev):
         return False
 
     def apply(self, verdict):  # pragma: no cover - no decisions in these tests

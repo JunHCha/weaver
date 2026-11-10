@@ -254,11 +254,11 @@ def test_old_version_database_is_rejected(tmp_path):
 
     path = tmp_path / "fabric.sqlite3"
     with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE entries (entry_id TEXT)")
+        db.execute("CREATE TABLE old_rows (id TEXT)")
         db.execute("PRAGMA user_version=1")
     with pytest.raises(SchemaVersionError):
         FabricStore(path)
     with sqlite3.connect(tmp_path / "unversioned.sqlite3") as db:
-        db.execute("CREATE TABLE entries (entry_id TEXT)")
+        db.execute("CREATE TABLE old_rows (id TEXT)")
     with pytest.raises(SchemaVersionError):
         FabricStore(tmp_path / "unversioned.sqlite3")
