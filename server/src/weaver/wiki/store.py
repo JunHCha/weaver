@@ -277,6 +277,15 @@ class WikiStore:
         body = text.split("\n---\n", 1)[1] if text.startswith("---\n") else text
         return properties, body, _hash(data)
 
+    def is_tracked_version(self, path: str, digest: str) -> bool:
+        """Whether the hash matches the latest recorded version of this page."""
+        self._path(path)
+        with self._db() as db:
+            row = db.execute(
+                "SELECT content FROM pages WHERE path=?", (path,)
+            ).fetchone()
+        return row is not None and _hash(row[0]) == digest
+
     def write(
         self,
         path: str,
