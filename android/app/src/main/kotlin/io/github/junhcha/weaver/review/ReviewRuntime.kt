@@ -13,6 +13,7 @@ import java.io.File
 object ReviewRuntime {
     private fun store(context: Context) = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
     fun records(context: Context): List<ReviewRecord> = synchronized(CourierRuntime.lock) { store(context).records() }
+    fun recordsV2(context: Context): List<ReviewRecordV2> = synchronized(CourierRuntime.lock) { store(context).recordsV2() }
     fun open(context: Context, id: String): Proposal = synchronized(CourierRuntime.lock) {
         val p = store(context).latest(CourierRuntime.folder(context), id)
         val known = InboxRuntime.proposals(context).firstOrNull { it.proposalId == id }
@@ -23,6 +24,20 @@ object ReviewRuntime {
         check(open(context, proposal.proposalId).rev == proposal.rev) { "새 rev가 도착했습니다. 다시 확인하세요" }
         store(context).queue(CourierRuntime.folder(context), proposal, verdict)
         InboxRuntime.submitted(context, proposal.proposalId, proposal.rev)
+        CourierRuntime.kick(context)
+        InboxRuntime.refresh(context)
+    }
+    fun openPackage(context: Context, id: String): io.github.junhcha.weaver.schema.v2.ReviewPackage = synchronized(CourierRuntime.lock) {
+        val p = store(context).latestPackage(CourierRuntime.folder(context), id)
+        val known = InboxRuntime.proposals(context).firstOrNull { it.proposalId == id }
+        check(known == null || p.revision >= known.rev)
+        p
+    }
+    fun submit(context: Context, p: io.github.junhcha.weaver.schema.v2.ReviewPackage,
+               verdict: io.github.junhcha.weaver.schema.v2.Verdict) = synchronized(CourierRuntime.lock) {
+        check(openPackage(context, p.packageId) == p)
+        store(context).queue(CourierRuntime.folder(context), p, verdict)
+        InboxRuntime.submitted(context, p.packageId, p.revision)
         CourierRuntime.kick(context)
         InboxRuntime.refresh(context)
     }

@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import io.github.junhcha.weaver.courier.CourierRules
 import io.github.junhcha.weaver.schema.Alert
 import io.github.junhcha.weaver.schema.Proposal
+import io.github.junhcha.weaver.schema.v2.ReviewPackage
 import java.io.File
 
 /**
@@ -19,7 +20,7 @@ import java.io.File
  * DISMISSED alerts and for alerts RESOLVED in this very run, and only on a trusted listing.
  */
 class InboxDatabase(context: Context) : SQLiteOpenHelper(
-    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 1,
+    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 2,
 ), java.io.Closeable {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -27,7 +28,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, summary TEXT NOT NULL,
             channel TEXT NOT NULL, captured_at TEXT NOT NULL, revised INTEGER NOT NULL,
             state TEXT NOT NULL, first_seen INTEGER NOT NULL, changed_at INTEGER NOT NULL,
-            notified_rev INTEGER NOT NULL DEFAULT 0, absent_scans INTEGER NOT NULL DEFAULT 0)""")
+            notified_rev INTEGER NOT NULL DEFAULT 0, absent_scans INTEGER NOT NULL DEFAULT 0, schema_version INTEGER NOT NULL DEFAULT 1, stage TEXT)""")
         // Verdicts this app queued; such a proposal rev is never revived by a resynced copy.
         db.execSQL("CREATE TABLE submitted (proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL)")
         db.execSQL("""CREATE TABLE alerts (
@@ -36,12 +37,17 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             delete_pending INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL,
             changed_at INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0)""")
     }
-    // Before the next schema version, add a migration and a test that opens a v1 database.
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE proposals ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE proposals ADD COLUMN stage TEXT")
+        }
+    }
 
     data class ProposalItem(
         val proposalId: String, val rev: Long, val summary: String, val channel: String,
         val capturedAt: String, val revised: Boolean, val notifiedRev: Long,
+        val isV2: Boolean = false, val stage: String? = null,
     )
     data class AlertItem(
         val alertId: String, val proposalId: String, val scheduleRef: String,
@@ -70,33 +76,37 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
      * reappearing returns silently unless this app submitted a verdict for that rev.
      */
     fun reconcile(proposals: List<Proposal>, alerts: List<Alert>, unreadable: Set<String>, now: Long,
-                  source: String, rebuilt: Boolean): List<String> {
+                  source: String, rebuilt: Boolean, packages: List<ReviewPackage> = emptyList()): List<String> {
         val db = writableDatabase
         db.beginTransaction()
         try {
             val trusted = setting("tree") == source && !rebuilt
             val heldProposals = unreadable.mapNotNull { CourierRules.revision.matchEntire(it)?.groupValues?.get(1) }.toSet()
             val heldAlerts = unreadable.mapNotNull { CourierRules.alert.matchEntire(it)?.groupValues?.get(1) }.toSet()
-            for (p in proposals) {
-                val old = db.rawQuery("SELECT rev, state FROM proposals WHERE proposal_id=?", arrayOf(p.proposalId))
+            data class Entry(val id: String, val rev: Long, val summary: String, val channel: String,
+                             val capturedAt: String, val version: Int, val stage: String?)
+            val entries = proposals.map { Entry(it.proposalId, it.rev, it.summary, it.source.channel.name, it.source.capturedAt, 1, null) } +
+                packages.map { Entry(it.packageId, it.revision, it.draftBody.lineSequence().first().take(80), "", "", 2, it.stage.name) }
+            for (p in entries) {
+                val old = db.rawQuery("SELECT rev, state FROM proposals WHERE proposal_id=?", arrayOf(p.id))
                     .use { if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null }
-                val submitted = db.rawQuery("SELECT rev FROM submitted WHERE proposal_id=?", arrayOf(p.proposalId))
+                val submitted = db.rawQuery("SELECT rev FROM submitted WHERE proposal_id=?", arrayOf(p.id))
                     .use { if (it.moveToFirst()) it.getLong(0) else 0L }
                 val values = ContentValues().apply {
-                    put("rev", p.rev); put("summary", p.summary); put("channel", p.source.channel.name)
-                    put("captured_at", p.source.capturedAt); put("state", ACTIVE); put("changed_at", now)
-                    put("absent_scans", 0)
+                    put("rev", p.rev); put("summary", p.summary); put("channel", p.channel)
+                    put("captured_at", p.capturedAt); put("state", ACTIVE); put("changed_at", now)
+                    put("absent_scans", 0); put("schema_version", p.version); put("stage", p.stage)
                 }
                 when {
                     old == null -> db.insertOrThrow("proposals", null, values.apply {
-                        put("proposal_id", p.proposalId); put("revised", 0); put("first_seen", now)
+                        put("proposal_id", p.id); put("revised", 0); put("first_seen", now)
                     })
                     p.rev > old.first -> db.update("proposals", values.apply { put("revised", 1) },
-                        "proposal_id=?", arrayOf(p.proposalId))
+                        "proposal_id=?", arrayOf(p.id))
                     p.rev == old.first && (old.second == ACTIVE || submitted < p.rev) ->
                         db.update("proposals", ContentValues().apply {
-                            put("state", ACTIVE); put("absent_scans", 0)
-                        }, "proposal_id=?", arrayOf(p.proposalId))
+                            put("state", ACTIVE); put("absent_scans", 0); put("stage", p.stage)
+                        }, "proposal_id=?", arrayOf(p.id))
                     // Older rev resynced, or a rev this app already decided: keep the row as is.
                 }
             }
@@ -114,7 +124,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             }
             var delete = emptyList<String>()
             if (trusted) {
-                val present = proposals.map { it.proposalId }.toSet() + heldProposals
+                val present = entries.map { it.id }.toSet() + heldProposals
                 db.execSQL("UPDATE proposals SET absent_scans=0 WHERE proposal_id IN (${marks(present)})", present.toTypedArray())
                 val missing = ids(db, "SELECT proposal_id FROM proposals").filter { it !in present }
                 missing.forEach {
@@ -173,11 +183,11 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         "alert_id=? AND state='$ACTIVE'", arrayOf(alertId)) == 1
 
     fun proposals(newestRevisionFirst: Boolean = false): List<ProposalItem> = readableDatabase.rawQuery(
-        """SELECT proposal_id, rev, summary, channel, captured_at, revised, notified_rev FROM proposals
+        """SELECT proposal_id, rev, summary, channel, captured_at, revised, notified_rev, schema_version, stage FROM proposals
             WHERE state='$ACTIVE' ORDER BY ${if (newestRevisionFirst) "changed_at" else "first_seen"} DESC, proposal_id DESC""", null,
     ).use { c -> buildList {
         while (c.moveToNext()) add(ProposalItem(c.getString(0), c.getLong(1), c.getString(2), c.getString(3),
-            c.getString(4), c.getInt(5) == 1, c.getLong(6)))
+            c.getString(4), c.getInt(5) == 1, c.getLong(6), c.getInt(7) == 2, c.getString(8)))
     } }
 
     fun alerts(): List<AlertItem> = readableDatabase.rawQuery(

@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.courier.CourierRules
 import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.ui.ReviewPanel
+import io.github.junhcha.weaver.ui.ReviewV2Panel
+import io.github.junhcha.weaver.inbox.InboxRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -44,11 +46,17 @@ class WidgetReviewActivity : ComponentActivity() {
         val id = intent.getStringExtra(PROPOSAL_ID)
         val rev = intent.getLongExtra(REV, 0)
         setContent {
+            var isV2 by remember { mutableStateOf(false) }
             var target by remember { mutableStateOf<WidgetReviewTarget?>(null) }
             LaunchedEffect(id, rev) {
-                target = withContext(Dispatchers.IO) {
-                    WidgetReviewTarget.resolve(id, rev) { ReviewRuntime.open(applicationContext, it).rev }
+                val (version, resolved) = withContext(Dispatchers.IO) {
+                    val v2 = InboxRuntime.proposals(applicationContext).firstOrNull { it.proposalId == id }?.isV2 == true
+                    v2 to WidgetReviewTarget.resolve(id, rev) {
+                        if (v2) ReviewRuntime.openPackage(applicationContext, it).revision
+                        else ReviewRuntime.open(applicationContext, it).rev
+                    }
                 }
+                isV2 = version; target = resolved
             }
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
@@ -59,7 +67,8 @@ class WidgetReviewActivity : ComponentActivity() {
                             is WidgetReviewTarget.Ready -> {
                                 if (result.latestRev != result.clickedRev)
                                     Text("위젯의 r${result.clickedRev} 대신 최신 r${result.latestRev}를 엽니다")
-                                ReviewPanel(result.id, onClose = { finish() })
+                                if (isV2) ReviewV2Panel(result.id, onClose = { finish() })
+                                else ReviewPanel(result.id, onClose = { finish() })
                             }
                         }
                         OutlinedButton(onClick = { finish() }) { Text("닫기") }

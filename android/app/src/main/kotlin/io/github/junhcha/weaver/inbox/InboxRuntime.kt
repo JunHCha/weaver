@@ -48,7 +48,7 @@ object InboxRuntime {
               now: Long = System.currentTimeMillis()): Boolean {
         val delete = synchronized(lock) {
             InboxDatabase(context).use {
-                it.reconcile(inbox.proposals, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"))
+                it.reconcile(inbox.proposals, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"), inbox.packages)
             }
         }
         var successful = true

@@ -27,6 +27,7 @@ import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxDatabase
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.ReviewRecord
+import io.github.junhcha.weaver.review.ReviewRecordV2
 import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.review.ReviewStatus
 import io.github.junhcha.weaver.schema.Verdict
@@ -46,17 +47,22 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
     var proposals by remember { mutableStateOf(emptyList<InboxDatabase.ProposalItem>()) }
     var questionCounts by remember { mutableStateOf(emptyMap<String, Int?>()) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var recordsV2 by remember { mutableStateOf(emptyList<ReviewRecordV2>()) }
+    var selectedV2 by rememberSaveable { mutableStateOf(false) }
     var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     var alerts by remember { mutableStateOf(emptyList<InboxDatabase.AlertItem>()) }
     var lastScan by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(changes) {
-        records = withContext(Dispatchers.IO) { ReviewRuntime.records(context) }
+        withContext(Dispatchers.IO) { ReviewRuntime.records(context) to ReviewRuntime.recordsV2(context) }.let { (v1, v2) ->
+            records = v1; recordsV2 = v2
+        }
         withContext(Dispatchers.IO) {
             Triple(InboxRuntime.proposals(context), InboxRuntime.alerts(context), InboxRuntime.lastScanAt(context))
         }.let { (p, a, scan) ->
             proposals = p; alerts = a; lastScan = scan
             questionCounts = withContext(Dispatchers.IO) {
                 p.associate { item -> item.proposalId to runCatching {
+                    if (item.isV2) return@runCatching ReviewRuntime.openPackage(context, item.proposalId).questions.size
                     val proposal = ReviewRuntime.open(context, item.proposalId)
                     check(proposal.rev == item.rev)
                     ReviewDraft.questions(proposal).size
@@ -72,11 +78,12 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             proposals.forEach { item ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("출처: ${channelLabel(item.channel)} · 시각: ${capturedAtLabel(item.capturedAt)}")
+                        if (item.isV2) Text("v2 · 단계: ${stageLabel(item.stage)}")
+                        else Text("출처: ${channelLabel(item.channel)} · 시각: ${capturedAtLabel(item.capturedAt)}")
                         Text("rev ${item.rev} · 미해결 질문 ${questionCounts[item.proposalId]?.let { "${it}개" } ?: if (item.proposalId in questionCounts) "확인 불가" else "확인 중"}" +
                             if (item.revised) " · 다시 짠 제안" else "")
                         Text(item.summary.replace('\n', ' '), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        OutlinedButton(onClick = { selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
+                        OutlinedButton(onClick = { selectedV2 = item.isV2; selected = item.proposalId }) { Text("제안 r${item.rev} 검토") }
                     }
                 }
             }
@@ -92,7 +99,15 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
                     OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
                 }
             }
-            selected?.let { id -> ReviewPanel(id, onClose = { selected = null }) }
+            recordsV2.forEach { record ->
+                Text("${record.verdict.packageId} r${record.verdict.revision}: ${record.status.label}")
+                if (record.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
+                    OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
+            }
+            selected?.let { id ->
+                if (selectedV2) ReviewV2Panel(id, onClose = { selected = null })
+                else ReviewPanel(id, onClose = { selected = null })
+            }
             Text("통화 정리는 갤럭시 스크립트 텍스트를 공유해 시작하세요. 홈의 Shepherd 통화 목록에서 확인할 수 있습니다.")
             Text("변경 경고 ${alerts.size}건")
             alerts.forEach { alert ->
@@ -122,3 +137,14 @@ internal fun capturedAtLabel(value: String, zone: ZoneId = ZoneId.systemDefault(
     runCatching {
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(Instant.parse(value).atZone(zone))
     }.getOrDefault(value)
+
+private fun stageLabel(stage: String?): String = when (stage) {
+    "COLLECT" -> "수집"
+    "SEND" -> "전송"
+    "ORGANIZE" -> "정리"
+    "QUESTION" -> "질문"
+    "REVIEW" -> "검토"
+    "APPLY" -> "반영"
+    "UPDATE_WIKI" -> "wiki갱신"
+    else -> stage ?: "알 수 없음"
+}

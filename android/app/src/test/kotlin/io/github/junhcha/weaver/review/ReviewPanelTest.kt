@@ -99,6 +99,33 @@ class ReviewPanelTest {
         }
         compose.onNodeWithText("승인").assertIsNotEnabled()
     }
+    @Test fun inboxOpensV2SummaryQuestionsAndQueuesAnswer() {
+        val (context, old) = prepare()
+        val p = io.github.junhcha.weaver.schema.v2.ReviewPackage(2, old.proposalId, old.source.sourceId,
+            old.rev + 1, "요약 문장\n숨겨진 본문", listOf(io.github.junhcha.weaver.schema.v2.Question(
+                "선택 질문", "선택 이유", listOf("선택 하나", "선택 둘", "선택 셋"))),
+            io.github.junhcha.weaver.schema.v2.Stage.REVIEW, emptyMap())
+        val tree = android.net.Uri.parse(context.getSharedPreferences("courier", Context.MODE_PRIVATE).getString("tree", null))
+        SafCourierFolder(context.contentResolver, tree).publish("proposals", "${p.packageId}.r${p.revision}.json") {
+            it.write(WeaverCodec.encode(p).toByteArray())
+        }
+        InboxDatabase(context).use { it.reconcile(emptyList(), emptyList(), emptySet(), 2L, tree.toString(), false, listOf(p)) }
+        InboxRuntime.refresh(context)
+        compose.runOnUiThread { compose.activity.setContent { MaterialTheme {
+            Column(Modifier.verticalScroll(rememberScrollState())) { InboxPanel() }
+        } } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("제안 r${p.revision} 검토").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("제안 r${p.revision} 검토").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("선택 질문").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(compose.onAllNodesWithText("요약 문장", substring = true).fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithText("숨겨진 본문", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("최종 검토").assertIsNotEnabled()
+        compose.onNodeWithText("선택 둘").performScrollTo().performClick()
+        compose.onNodeWithText("최종 검토").performScrollTo().performClick()
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.recordsV2(context).isNotEmpty() }
+        assertEquals(listOf("선택 둘"), ReviewRuntime.recordsV2(context).single().verdict.answers)
+    }
     @After fun stopWork() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit().clear().commit()
