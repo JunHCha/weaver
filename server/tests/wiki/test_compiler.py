@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from weaver.context import ContextDictionary, Page
-from weaver.fabric.v2.store import FabricStore
+from weaver.fabric.v2.store import FabricStore, ThreadQuery
 from weaver.schema.v2 import ThreadDraft
 from weaver.wiki.compiler import Compiler, EditResult, Summary
 from weaver.wiki.store import WikiStore
@@ -61,16 +61,12 @@ def test_compile_and_bookmark_failure(tmp_path):
     assert props["kind"] == "person"
     assert "본문" in body and "summaries/" in body
     assert compiler.bookmark() == 1
-    assert (
-        len(
-            fabric.entries(
-                __import__(
-                    "weaver.fabric.v2.store", fromlist=["ThreadQuery"]
-                ).ThreadQuery()
-            )
-        )
-        == 1
-    )
+    assert len(fabric.entries(ThreadQuery())) == 1
+    summary_path = next((store.root / "summaries").glob("*.md"))
+    original = summary_path.read_text()
+    summary_path.write_text("변경")
+    compiler.run()
+    assert summary_path.read_text() == original
 
     fabric.append([draft().model_copy(update={"thread_id": "two"})])
 
@@ -85,7 +81,6 @@ def test_compile_and_bookmark_failure(tmp_path):
 
 
 def test_human_edit_retry_and_fields(tmp_path):
-    from weaver.fabric.v2.store import ThreadQuery
     from weaver.wiki.compiler import EditChange
     from weaver.wiki.store import HumanEdit
 
@@ -122,14 +117,35 @@ def test_human_edit_retry_and_fields(tmp_path):
         lambda _: Summary("요약", "본문"),
     )
     edit = HumanEdit(
-        "pages/홍길동.md", "old", "new", "diff", {"status": "진행"}, {"status": "완료"}
+        "pages/홍길동.md",
+        "old",
+        "new",
+        "diff",
+        {"status": "진행", "assignees": ["홍길동"]},
+        {
+            "status": "완료",
+            "deadline": "2025-01-02",
+            "schedule": "오후",
+            "assignees": ["김철수"],
+        },
     )
+    store.acknowledge = lambda edit: None
     compiler._edit(edit)
     compiler._edit(edit)
     threads = fabric.entries(ThreadQuery())
     human = [t for t in threads if t.actor == "human"]
-    assert len(human) == 3
+    assert len(human) == 6
     assert any(t.field == "status" and t.value == "완료" for t in human)
+    assert {t.field for t in human if t.field} == {
+        "status",
+        "deadline",
+        "schedule",
+        "assignees",
+    }
+    assert next(t.value for t in human if t.field == "assignees") == {
+        "add": ["김철수"],
+        "remove": ["홍길동"],
+    }
     assert any(t.correction is not None for t in human)
     assert next(t for t in threads if t.thread_id == "one").tags == ["김철수"]
 
@@ -168,7 +184,6 @@ def test_unsettled_human_edit_is_never_overwritten(tmp_path):
 
 
 def test_settled_human_edit_is_used_without_feedback_loop(tmp_path):
-    from weaver.fabric.v2.store import ThreadQuery
 
     vault = tmp_path / "vault"
     vault.mkdir()
