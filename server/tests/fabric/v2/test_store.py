@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from weaver.fabric import FabricStore, ThreadConflict, ThreadQuery
+from weaver.fabric.v2 import FabricStore, ThreadConflict, ThreadQuery
 from weaver.schema.v2 import ThreadDraft
 
 
@@ -63,7 +63,7 @@ def test_late_arrival_is_sorted_by_occurrence_but_found_by_sequence(tmp_path):
 
 
 def test_invalid_references_rollback_and_valid_batch(tmp_path):
-    from weaver.fabric import InvalidReference
+    from weaver.fabric.v2 import InvalidReference
 
     store = FabricStore(tmp_path / "db")
     with pytest.raises(InvalidReference):
@@ -139,7 +139,7 @@ def test_state_fields_assignees_and_open_requests(tmp_path):
 def test_contact_statistics_and_old_version(tmp_path):
     import sqlite3
 
-    from weaver.fabric import SchemaVersionError
+    from weaver.fabric.v2 import SchemaVersionError
 
     path = tmp_path / "old"
     with sqlite3.connect(path) as db:
