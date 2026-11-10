@@ -117,6 +117,7 @@ class FabricStore:
             batch[item.thread_id] = (item, payload)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._validate_references(db, batch)
             result: dict[str, Thread] = {}
             for key, (item, payload) in batch.items():
                 row = db.execute("SELECT seq, payload FROM threads WHERE thread_id=?", (key,)).fetchone()
@@ -129,6 +130,37 @@ class FabricStore:
                 result[key] = Thread.model_validate({**item.model_dump(), "seq": seq})
             db.commit()
         return [result[t.thread_id] for t in threads]
+
+    @staticmethod
+    def _validate_references(db: sqlite3.Connection, batch: dict[str, tuple[ThreadDraft, str]]) -> None:
+        targets = {key: item for key, (item, _) in batch.items()}
+        edges: dict[str, set[str]] = {key: set() for key in batch}
+        for key, (item, _) in batch.items():
+            refs = [("resolves", item.resolves), ("retracts", item.retracts),
+                    ("correction", item.correction.target if item.correction else None)]
+            for field, target_id in refs:
+                if target_id is None:
+                    continue
+                if target_id == key:
+                    raise InvalidReference(f"{field}: self reference")
+                if target_id not in targets:
+                    row = db.execute("SELECT payload FROM threads WHERE thread_id=?", (target_id,)).fetchone()
+                    if row is None:
+                        raise InvalidReference(f"{field}: missing target")
+                    targets[target_id] = ThreadDraft.model_validate_json(row[0])
+                if target_id in batch:
+                    edges[key].add(target_id)
+                target = targets[target_id]
+                if field == "resolves" and target.kind != "요청":
+                    raise InvalidReference("resolves: target is not a request")
+                if field == "retracts" and (target.kind == "거절" or target.retracts is not None):
+                    raise InvalidReference("retracts: invalid target")
+        remaining = {key: set(value) for key, value in edges.items()}
+        while remaining:
+            ready = {key for key, value in remaining.items() if not value}
+            if not ready:
+                raise InvalidReference("reference cycle")
+            remaining = {key: value - ready for key, value in remaining.items() if key not in ready}
 
     def entries(self, query: ThreadQuery) -> list[Thread]:
         """Read immutable facts in occurrence, recording, sequence order."""

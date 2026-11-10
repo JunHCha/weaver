@@ -60,3 +60,19 @@ def test_late_arrival_is_sorted_by_occurrence_but_found_by_sequence(tmp_path):
     store.append([draft("old", occurred_at=now - timedelta(days=1))])
     assert [t.thread_id for t in store.entries(ThreadQuery())] == ["old", "new"]
     assert [t.thread_id for t in store.entries(ThreadQuery(after_seq=1))] == ["old"]
+
+
+def test_invalid_references_rollback_and_valid_batch(tmp_path):
+    from weaver.fabric import InvalidReference
+
+    store = FabricStore(tmp_path / "db")
+    with pytest.raises(InvalidReference):
+        store.append([draft("a"), draft("b", retracts="missing")])
+    assert store.entries(ThreadQuery()) == []
+    store.append([draft("q", kind="요청", direction="받음"), draft("d", kind="결정", resolves="q")])
+    for bad in [draft("x", kind="결정", resolves="d"), draft("x", retracts="missing"), draft("x", kind="태그정정", correction={"target": "missing", "add": [], "remove": []})]:
+        with pytest.raises(InvalidReference):
+            store.append([bad])
+    store.append([draft("r", retracts="d")])
+    with pytest.raises(InvalidReference):
+        store.append([draft("rr", retracts="r")])
