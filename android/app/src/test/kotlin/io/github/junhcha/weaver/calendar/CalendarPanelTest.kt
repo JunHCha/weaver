@@ -123,7 +123,8 @@ class CalendarPanelTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithText(action).fetchSemanticsNodes().isNotEmpty() }
         assertEquals(1, provider.inserts.size) // Fixture only: recovery is read-only.
         compose.onNodeWithText("승인 일정 등록 / 등록만 재시도").performScrollTo().performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("수동 확인 필요 · 확인 후 새로 등록", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        val title = ReviewRuntime.records(app).single().proposal!!.schedules.single().title
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("$title: 수동 확인 필요 · 확인 후 새로 등록").fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
         assertEquals(1, provider.inserts.size)
         compose.onNodeWithText(action).performScrollTo().performClick()

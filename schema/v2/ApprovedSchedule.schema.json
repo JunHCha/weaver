@@ -10,6 +10,10 @@
       "pattern": "\\S",
       "type": "string"
     },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
     "Timestamp": {
       "format": "date-time",
       "not": {
@@ -46,6 +50,15 @@
     },
     "package_id": {
       "$ref": "#/$defs/NonEmpty"
+    },
+    "retracted": {
+      "default": false,
+      "title": "Retracted",
+      "type": "boolean"
+    },
+    "revision": {
+      "$ref": "#/$defs/Revision",
+      "default": 1
     },
     "schema_version": {
       "const": 2,

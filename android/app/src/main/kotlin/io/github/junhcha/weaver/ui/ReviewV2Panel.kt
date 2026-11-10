@@ -73,7 +73,7 @@ fun ReviewV2Panel(id: String, onClose: () -> Unit) {
             OutlinedButton(onClick = { details = !details }) { Text(if (details) "본문 접기" else "본문 보기") }
             if (details) {
                 WikiText(p.draftBody, vault)
-                Text("일정의 캘린더 연동 준비 중")
+                CalendarV2Panel(p.packageId)
             }
             OutlinedTextField(value = vault, onValueChange = {
                 vault = it

@@ -53,6 +53,21 @@ class CalendarRegistrationTest {
     private fun journal() = CalendarJournal(File(temporary.root, "registrations.json"))
     private fun registration(provider: Provider) = CalendarRegistration(journal(), provider)
 
+    @Test fun v2RegistrationIsIdempotentAcrossRevisionsAndHonorsBlocksAndRetraction() {
+        val provider = Provider()
+        val service = registration(provider)
+        val schedule = io.github.junhcha.weaver.schema.v2.ApprovedSchedule(
+            2, "package", "thread", "회의", "2026-01-01T09:00:00+09:00", null,
+            "Asia/Seoul", "request", "a".repeat(64), 1, false)
+        assertTrue(service.registerV2(schedule, target).contains("request"))
+        assertEquals(0, provider.inserts)
+        assertTrue(service.registerV2(schedule.copy(blockedBy = null), target).contains("등록됨"))
+        assertTrue(service.registerV2(schedule.copy(blockedBy = null, revision = 2), target).contains("등록됨"))
+        assertEquals(1, provider.inserts)
+        assertTrue(service.registerV2(schedule.copy(blockedBy = null, retracted = true), target).contains("등록 해제"))
+        assertEquals(1, provider.inserts)
+    }
+
     @Test fun unpublishedRejectReviseAndBlockedSchedulesNeverWrite() {
         val provider = Provider()
         val service = registration(provider)

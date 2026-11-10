@@ -1,5 +1,9 @@
 """Project approved schedule files from a complete Fabric snapshot."""
 
+import os
+import tempfile
+from pathlib import Path
+
 from weaver.schema.v2 import ApprovedSchedule, ScheduleValue, Thread
 
 
@@ -21,12 +25,13 @@ def approved_schedules(
     for thread in selected:
         if thread.kind != "일정" or thread.field != "schedule" or thread.value is None:
             continue
-        if thread.thread_id in retracted or thread.retracts is not None:
+        if thread.retracts is not None:
             continue
         value = ScheduleValue.model_validate(thread.value)
         result.append(
             ApprovedSchedule(
                 schema_version=2,
+                retracted=thread.thread_id in retracted,
                 package_id=package_id,
                 summary_id=summary_id,
                 thread_id=thread.thread_id,
@@ -40,3 +45,45 @@ def approved_schedules(
             )
         )
     return result
+
+
+def write_approved_schedules(root: Path, schedules: list[ApprovedSchedule]) -> None:
+    """Atomically replace each schedule file under the Courier root.
+
+    Revisions increase when the content changes; retractions remain as tombstones.
+    """
+    directory = root / "proposals" / "schedules"
+    directory.mkdir(parents=True, exist_ok=True)
+    for schedule in schedules:
+        name = schedule.thread_id
+        if (
+            name in {".", ".."}
+            or any(c in name for c in "/\\")
+            or any(ord(c) < 32 for c in name)
+        ):
+            raise ValueError("unsafe thread_id")
+        target = directory / f"{name}.json"
+        if target.exists():
+            previous = ApprovedSchedule.model_validate_json(
+                target.read_text(encoding="utf-8")
+            )
+            if previous.thread_id != name:
+                raise ValueError("schedule thread_id mismatch")
+            if previous.model_dump(exclude={"revision"}) == schedule.model_dump(
+                exclude={"revision"}
+            ):
+                continue
+            schedule = schedule.model_copy(update={"revision": previous.revision + 1})
+        else:
+            schedule = schedule.model_copy(update={"revision": 1})
+        fd, temporary = tempfile.mkstemp(
+            prefix=".schedule-", suffix=".tmp", dir=directory
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(schedule.model_dump_json())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        finally:
+            Path(temporary).unlink(missing_ok=True)

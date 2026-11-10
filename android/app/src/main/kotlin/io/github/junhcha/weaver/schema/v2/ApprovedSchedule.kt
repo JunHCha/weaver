@@ -18,9 +18,12 @@ data class ApprovedSchedule(
     val timezone: String,
     @SerialName("blocked_by") val blockedBy: String?,
     @SerialName("summary_id") val summaryId: String,
+    val revision: Long = 1,
+    val retracted: Boolean = false,
 ) {
     init {
         require(schemaVersion == 2)
+        Rules.revision(revision)
         Rules.nonEmpty(packageId, "package_id")
         Rules.nonEmpty(threadId, "thread_id")
         Rules.nonEmpty(title, "title")

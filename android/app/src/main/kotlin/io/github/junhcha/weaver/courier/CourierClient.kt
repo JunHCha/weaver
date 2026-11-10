@@ -2,6 +2,7 @@ package io.github.junhcha.weaver.courier
 
 import io.github.junhcha.weaver.schema.*
 import io.github.junhcha.weaver.schema.v2.ReviewPackage
+import io.github.junhcha.weaver.schema.v2.ApprovedSchedule
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -24,6 +25,7 @@ class CourierClient(
     data class Inbox(
         val receipts: List<Receipt>, val proposals: List<Proposal>, val alerts: List<Alert>,
         val unreadable: Set<String> = emptySet(), val packages: List<ReviewPackage> = emptyList(),
+        val schedules: List<ApprovedSchedule> = emptyList(),
     )
 
     fun scan(): Inbox {
@@ -32,9 +34,11 @@ class CourierClient(
         val alerts = mutableListOf<Alert>()
         val packages = mutableListOf<ReviewPackage>()
         val unreadable = mutableSetOf<String>()
-        CourierRules.folders.forEach { directory ->
+        val schedules = mutableListOf<ApprovedSchedule>()
+        (CourierRules.folders + "proposals/schedules").forEach { directory ->
             folder.list(directory).forEach { entry ->
                 val name = entry.name
+                if (directory == "proposals" && name == "schedules" && !entry.regular) return@forEach
                 if (CourierRules.conflict(name)) {
                     db.diagnostic(directory, name, "sync_conflict")
                     return@forEach
@@ -47,11 +51,16 @@ class CourierClient(
                     return@forEach
                 }
                 // Only PC-owned JSON is consumed; outbox payloads are never interpreted as JSON.
-                if (directory !in listOf("receipts", "proposals")) return@forEach
+                if (directory !in listOf("receipts", "proposals", "proposals/schedules")) return@forEach
                 val read = attempt(directory, name) {
                     check(entry.regular && CourierRules.safeName(name)) { "not_regular_file" }
                     val text = folder.read(directory, name).use(::boundedJson)
                     when {
+                        directory == "proposals/schedules" -> {
+                            val schedule = decoded<ApprovedSchedule>(text)
+                            check(name == "${schedule.threadId}.json") { "id_mismatch" }
+                            schedules.add(schedule)
+                        }
                         directory == "receipts" && CourierRules.capture.matches(name) -> {
                             val receipt = decoded<Receipt>(text)
                             check(name == "${receipt.captureId}.json") { "id_mismatch" }
@@ -82,7 +91,7 @@ class CourierClient(
         }
         return Inbox(receipts, proposals.groupBy { it.proposalId }.values.map { versions ->
             versions.maxBy { it.rev }
-        }, alerts, unreadable, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } })
+        }, alerts, unreadable, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } }, schedules)
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */

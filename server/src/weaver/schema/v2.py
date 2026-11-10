@@ -148,6 +148,8 @@ class EventSummary(Version2):
 class ApprovedSchedule(Version2, ScheduleValue):
     """A published schedule from an approved summary and a Fabric thread."""
 
+    revision: Revision = 1
+    retracted: bool = False
     package_id: NonEmpty
     thread_id: NonEmpty
     title: NonEmpty
