@@ -18,6 +18,7 @@ import java.util.concurrent.Executors
  * touches only [Selectors.allowedPackages], and never logs or stores screen text.
  */
 class WeaverAutoShareService : AccessibilityService() {
+    private val allowedPackages by lazy { Selectors.allowedPackages(packageName) }
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var running: Running? = null
@@ -65,10 +66,10 @@ class WeaverAutoShareService : AccessibilityService() {
     }
 
     private fun launch(job: AutoShareRuntime.ActiveJob): Boolean {
-        val machine = AutoShareMachine(job.job, SystemClock.elapsedRealtime(), { job.submitted })
+        val machine = AutoShareMachine(job.job, SystemClock.elapsedRealtime(), { job.submitted }, packageName)
         val state = Running(job, machine)
         val intent = packageManager.getLaunchIntentForPackage(Selectors.VOICE_NOTE)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         running = state
         val started = intent != null && runCatching { startActivity(intent) }.isSuccess
         if (!started) { finish(state, machine.interrupt(AutoError.LAUNCH_FAILED)); return true }
@@ -78,7 +79,8 @@ class WeaverAutoShareService : AccessibilityService() {
 
     private fun step() {
         val current = running ?: return
-        val progress = current.machine.advance(snapshot(), SystemClock.elapsedRealtime())
+        val shot = snapshot()
+        val progress = current.machine.advance(shot, SystemClock.elapsedRealtime())
         if (progress == Progress.Working) handler.postDelayed(tick, TICK_MS) else finish(current, progress)
     }
 
@@ -113,9 +115,12 @@ class WeaverAutoShareService : AccessibilityService() {
         override val visible get() = node.isVisibleToUser
         override val children get() = (0 until node.childCount).mapNotNull { node.getChild(it) }.map { NodeAdapter(it, service) }
         override val parent get() = node.parent?.let { NodeAdapter(it, service) }
-        private fun permitted() = service.running != null && packageName in Selectors.allowedPackages
+        private fun permitted() = service.running != null && packageName in service.allowedPackages
         override fun click() = permitted() && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         override fun scroll() = permitted() && node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        // Each parent/child access wraps a fresh AccessibilityNodeInfo; equality must follow the real node.
+        override fun equals(other: Any?) = other is NodeAdapter && other.node == node
+        override fun hashCode() = node.hashCode()
     }
 
     override fun onDestroy() {

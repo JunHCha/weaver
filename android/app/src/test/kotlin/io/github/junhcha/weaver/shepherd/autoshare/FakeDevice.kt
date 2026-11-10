@@ -2,10 +2,15 @@ package io.github.junhcha.weaver.shepherd.autoshare
 
 import io.github.junhcha.weaver.shepherd.autoshare.Selectors.CHOOSER
 import io.github.junhcha.weaver.shepherd.autoshare.Selectors.VOICE_NOTE
-import io.github.junhcha.weaver.shepherd.autoshare.Selectors.WEAVER
 
 /** Pseudonymous recording used in all tests. */
 const val STEM = "통화 홍길동_261110_111103"
+
+/** Weaver's package in release builds; debug builds append `.debug`. */
+const val WEAVER = "io.github.junhcha.weaver"
+const val WEAVER_DEBUG = "$WEAVER.debug"
+
+private var nextNodeId = 0
 
 class FakeNode(
     private val pkg: String,
@@ -24,6 +29,7 @@ class FakeNode(
 ) : UiNode {
     private val kidList = kids
     private var parentNode: FakeNode? = null
+    val nodeId = nextNodeId++
     var clicks: MutableList<String>? = null
     init { kidList.forEach { it.parentNode = this } }
     override val packageName get() = pkg
@@ -44,6 +50,27 @@ class FakeNode(
     override fun scroll() = onScroll()
 }
 
+/**
+ * What the real service hands out: every `parent` and `children` access returns a brand-new wrapper,
+ * so identity (`===`) never holds and equality has to follow the underlying node, as
+ * `AccessibilityNodeInfo.equals` does on a device.
+ */
+class FreshNode(private val real: FakeNode) : UiNode {
+    override val packageName get() = real.packageName
+    override val id get() = real.id
+    override val text get() = real.text
+    override val contentDescription get() = real.contentDescription
+    override val clickable get() = real.clickable
+    override val scrollable get() = real.scrollable
+    override val visible get() = real.visible
+    override val children get() = real.children.map { FreshNode(it) }
+    override val parent get() = real.parent?.let { FreshNode(it) }
+    override fun click() = real.click()
+    override fun scroll() = real.scroll()
+    override fun equals(other: Any?) = other is FreshNode && other.real.nodeId == real.nodeId
+    override fun hashCode() = real.nodeId
+}
+
 /** A tiny simulation of the Voice Recorder, the share sheet and Weaver, expanded or folded. */
 class FakeDevice(
     val expanded: Boolean,
@@ -55,6 +82,12 @@ class FakeDevice(
     val sheetApps: List<String> = listOf("Gmail", "Weaver", "Drive"),
     val sheetPageSize: Int = 10,
     var autoSubmit: Boolean = true,
+    /** The package Weaver runs as (debug builds have a suffix). */
+    val weaverPackage: String = WEAVER,
+    /** Folded Voice Recorder: rows covered by a detail screen still report visible but cannot be pressed. */
+    val coveredListStaysVisible: Boolean = false,
+    /** Share sheet shows an extra direct-share row without a badge for another app. */
+    val extraDirectRow: Boolean = true,
 ) {
     var now = 0L
     val clicks = mutableListOf<String>()
@@ -85,15 +118,17 @@ class FakeDevice(
 
     private fun listPane(): FakeNode {
         val visibleRows = recordings.drop(listStart).take(pageSize)
+        val covered = !expanded && detail != null
         val rows = visibleRows.map { stem ->
-            n(id = "listRow_content", clickable = true, name = "row:$stem", onClick = { detail = stem; assistMenu = false; optionsMenu = false },
+            n(id = "listRow_content", clickable = true, name = if (covered) "COVERED-ROW:$stem" else "row:$stem",
+                onClick = { if (!covered) { detail = stem; assistMenu = false; optionsMenu = false } },
                 kids = arrayOf(
                     n(id = "listRow_title", text = stem),
                     n(id = "listRow_play_icon", desc = "재생 $stem.m4a", clickable = true, name = "PLAY"),
                     n(id = "listRow_play_pause_icon", clickable = true, name = "PAUSE"),
                 ))
         }
-        val visible = expanded || detail == null
+        val visible = expanded || detail == null || coveredListStaysVisible
         return n(id = "list_pane", visible = visible, kids = arrayOf(
             n(id = "list_toolbar", kids = arrayOf(n(id = "more_options", desc = "옵션 더보기", clickable = true, name = "more_options:list"))),
             n(scrollable = true, onScroll = {
@@ -124,7 +159,7 @@ class FakeDevice(
             n(desc = "검색", clickable = true, name = "SEARCH"),
             n(id = "more_options", desc = "옵션 더보기", clickable = true, name = "more_options:detail", onClick = { optionsMenu = true }),
         ))
-        return n(id = "detail_pane", kids = arrayOf(toolbar, body))
+        return n(id = "detail_pane", kids = arrayOf(toolbar, n(id = "main_control_root_view"), body))
     }
 
     private fun voiceRoots(): List<FakeNode> {
@@ -153,13 +188,20 @@ class FakeDevice(
 
     private fun sheetRoot(): FakeNode {
         val apps = sheetApps.drop(sheetStart).take(sheetPageSize).map { app ->
-            n(CHOOSER, clickable = true, name = "app:$app", onClick = {
-                if (app == "Weaver") { sheet = false; foreground = WEAVER; if (autoSubmit) submitted = true }
+            // App rows are `item` too; unlike direct-share rows they carry no badge.
+            n(CHOOSER, id = "item", clickable = true, name = "app:$app", onClick = {
+                if (app == "Weaver") { sheet = false; foreground = weaverPackage; if (autoSubmit) submitted = true }
             }, kids = arrayOf(n(CHOOSER, id = "text1", text = app)))
         }
-        return n(CHOOSER, id = "chooser", kids = arrayOf(
+        val directRows = listOfNotNull(
             // A direct-share row that must never be used, even though it names the app.
-            n(CHOOSER, id = "item", clickable = true, name = "DIRECT", kids = arrayOf(n(CHOOSER, id = "text1", text = "Weaver"))),
+            n(CHOOSER, id = "item", clickable = true, name = "DIRECT", kids = arrayOf(
+                n(CHOOSER, id = "text1", text = "Weaver"), n(CHOOSER, id = "sem_target_badge"))),
+            if (extraDirectRow) n(CHOOSER, id = "item", clickable = true, name = "DIRECT-OTHER",
+                kids = arrayOf(n(CHOOSER, id = "text1", text = "Gmail"))) else null,
+        )
+        return n(CHOOSER, id = "chooser", kids = arrayOf(
+            *directRows.toTypedArray(),
             n(CHOOSER, scrollable = true, onScroll = {
                 scrolls++
                 if (sheetStart + sheetPageSize >= sheetApps.size) false else { sheetStart += sheetPageSize; true }
@@ -168,13 +210,13 @@ class FakeDevice(
 
     fun screen(): Screen {
         val roots: List<FakeNode> = when (foreground) {
-            WEAVER -> listOf(n(WEAVER, kids = arrayOf(n(WEAVER, text = "스크립트 미리보기 비밀", secret = true))))
+            weaverPackage -> listOf(n(weaverPackage, kids = arrayOf(n(weaverPackage, text = "스크립트 미리보기 비밀", secret = true))))
             CHOOSER -> listOf(sheetRoot())
             VOICE_NOTE -> voiceRoots()
             else -> listOf(n(foreground, kids = arrayOf(n(foreground, text = "공유", clickable = true, name = "FOREIGN-SHARE"))))
         }
         roots.forEach { it.clicks = clicks }
-        return Screen(roots, foreground) {
+        return Screen(roots.map { FreshNode(it) }, foreground) {
             backs++
             detail = null
             true

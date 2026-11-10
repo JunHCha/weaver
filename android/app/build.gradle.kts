@@ -25,6 +25,12 @@ val releaseSigningProblem: String? = when {
     else -> null
 }
 
+// Packages the auto-share service observes: Voice Recorder, system share sheet and Weaver itself.
+// Weaver's package differs per build type (debug adds a suffix), so the list is generated per build
+// type into auto_share_service.xml; the Kotlin side uses the runtime packageName.
+fun autoSharePackages(weaverPackage: String) =
+    "com.sec.android.app.voicenote,com.android.intentresolver,$weaverPackage"
+
 android {
     namespace = "io.github.junhcha.weaver"
     compileSdk = 36
@@ -35,6 +41,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        resValue("string", "auto_share_package_names", autoSharePackages("io.github.junhcha.weaver"))
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -53,6 +60,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            resValue("string", "auto_share_package_names", autoSharePackages("io.github.junhcha.weaver.debug"))
             versionNameSuffix = "-debug"
         }
         release {
@@ -69,6 +77,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        resValues = true
     }
 
     lint {

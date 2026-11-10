@@ -6,7 +6,7 @@ import org.junit.Test
 
 class AutoShareMachineTest {
     private fun machine(device: FakeDevice, size: Long = 0, timing: AutoShareTiming = AutoShareTiming()) =
-        AutoShareMachine(AutoShareJob("call-1", STEM, size), device.now, { device.submitted }, timing = timing)
+        AutoShareMachine(AutoShareJob("call-1", STEM, size), device.now, { device.submitted }, device.weaverPackage, timing = timing)
 
     private fun assertOnlyWhitelisted(device: FakeDevice) {
         val outside = device.clicks.filter { it !in FakeDevice.whitelist }
@@ -36,6 +36,56 @@ class AutoShareMachineTest {
         assertEquals(Progress.Succeeded, run(device, machine(device)))
         assertEquals(1, device.backs)
         assertEquals(fullFlow, device.clicks)
+    }
+
+    @Test fun foldedLayoutGoesBackWhenARowThatAnotherDetailCoversDoesNotRespond() {
+        // The covered row beneath the detail still reports visible; pressing it does nothing on a device,
+        // so after one unanswered row press the machine goes back and presses the now-visible row.
+        val device = FakeDevice(expanded = false, detail = "통화 김철수_261109_090000", coveredListStaysVisible = true)
+        assertEquals(Progress.Succeeded, run(device, machine(device)))
+        assertEquals(1, device.backs)
+        assertEquals(listOf("COVERED-ROW:$STEM") + fullFlow, device.clicks)
+    }
+
+    @Test fun twoPaneLayoutPressesTheRowBesideAnotherDetailWithoutGoingBack() {
+        // Unfolded: Back would leave the app, while the list beside the other detail is clickable.
+        val device = FakeDevice(expanded = true, detail = "통화 김철수_261109_090000")
+        assertEquals(Progress.Succeeded, run(device, machine(device)))
+        assertEquals(0, device.backs)
+        assertEquals(fullFlow, device.clicks)
+    }
+
+    @Test fun nodeEqualityFollowsTheUnderlyingNodeNotTheWrapper() {
+        // Every parent/children access returns a new wrapper; the toolbar title must still be found under its toolbar.
+        val device = FakeDevice(expanded = false, detail = STEM)
+        val nodes = Selectors.nodes(device.screen())
+        assertEquals(Selectors.Detail.MATCH, Selectors.detail(nodes, STEM))
+        assertEquals(Selectors.Detail.OTHER, Selectors.detail(nodes, "통화 김철수_261109_090000"))
+        val toolbar = nodes.first { it.idName() == "fragment_toolbar" }
+        val viaChild = nodes.first { it.idName() == "more_options" && it.ancestors().any { a -> a == toolbar } }
+        assertTrue(viaChild.parent !== viaChild.parent)
+        assertEquals(viaChild.parent, viaChild.parent)
+        assertTrue(Selectors.moreOptions(nodes) != null)
+    }
+
+    @Test fun shareSheetPicksTheAppRowEvenThoughDirectShareRowsAreAlsoItems() {
+        val device = FakeDevice(expanded = true)
+        val result = run(device, machine(device))
+        assertEquals(Progress.Succeeded, result)
+        assertTrue("DIRECT" !in device.clicks && "DIRECT-OTHER" !in device.clicks)
+        assertEquals("app:Weaver", device.clicks.last())
+    }
+
+    @Test fun debugBuildTreatsItsOwnSuffixedPackageAsWeaver() {
+        // With a mismatched package the screen counts as a foreign app and the job is abandoned.
+        val debug = FakeDevice(expanded = true, weaverPackage = WEAVER_DEBUG, autoSubmit = false)
+        val matching = run(debug, machine(debug))
+        assertEquals(Progress.Failed(AutoError.STEP_TIMEOUT, AutoStep.AWAIT_SUBMIT), matching)
+        val other = FakeDevice(expanded = true, weaverPackage = WEAVER_DEBUG, autoSubmit = false)
+        val mismatched = run(other, AutoShareMachine(AutoShareJob("call-1", STEM, 0), other.now, { other.submitted }, WEAVER))
+        assertEquals(Progress.Failed(AutoError.FOREIGN_APP, AutoStep.AWAIT_SUBMIT), mismatched)
+        assertEquals(setOf(Selectors.VOICE_NOTE, Selectors.CHOOSER, WEAVER_DEBUG), Selectors.allowedPackages(WEAVER_DEBUG))
+        assertTrue(WEAVER_DEBUG !in Selectors.inspectedPackages && WEAVER !in Selectors.inspectedPackages)
     }
 
     @Test fun alreadyTranscribedRecordingSkipsTranscription() {

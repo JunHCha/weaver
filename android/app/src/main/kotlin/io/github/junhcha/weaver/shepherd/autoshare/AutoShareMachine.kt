@@ -57,9 +57,11 @@ class AutoShareMachine(
     private val job: AutoShareJob,
     startedAt: Long,
     private val submitted: () -> Boolean,
+    ownPackage: String,
     private val appLabel: String = "Weaver",
     private val timing: AutoShareTiming = AutoShareTiming(),
 ) {
+    private val allowedPackages = Selectors.allowedPackages(ownPackage)
     var step = AutoStep.LAUNCH
         private set
     private var stepSince = startedAt
@@ -68,6 +70,7 @@ class AutoShareMachine(
     private var listPages = 0
     private var sheetPages = 0
     private var backPresses = 0
+    private var rowClicks = 0
     private var lastListSignature: Int? = null
     private var transcribeClicks = 0
     private var transcribeStartedAt: Long? = null
@@ -124,7 +127,7 @@ class AutoShareMachine(
             if (submitted()) return Progress.Succeeded
         }
         val active = screen.activePackage
-        if (active != null && active !in Selectors.allowedPackages) {
+        if (active != null && active !in allowedPackages) {
             if (step == AutoStep.LAUNCH) return null
             val since = foreignSince ?: now.also { foreignSince = it }
             return if (now - since >= timing.foreignGraceMs) fail(AutoError.FOREIGN_APP) else null
@@ -187,7 +190,18 @@ class AutoShareMachine(
         if (detail == Selectors.Detail.MATCH) { moveTo(AutoStep.PREPARE_TRANSCRIPT, now); return null }
         if (!canAct(now)) return null
         val row = Selectors.row(nodes, job.stem)
-        if (row != null) { press(row, now); return null }
+        // Two-pane (unfolded): the list beside another detail is clickable, so try the row first.
+        if (row != null && rowClicks == 0) { rowClicks++; press(row, now); return null }
+        if (detail == Selectors.Detail.OTHER && Selectors.hasDetailContent(nodes)) {
+            // The row click did not open it: another recording's detail covers the list (folded). Go back.
+            if (backPresses >= timing.maxBackPresses) return fail(AutoError.RECORDING_NOT_FOUND)
+            backPresses++
+            lastAction = now
+            screen.goBack()
+            rowClicks = 0
+            return null
+        }
+        if (row != null) { rowClicks++; press(row, now); return null }
         val titles = Selectors.listTitles(nodes)
         if (titles.isNotEmpty()) {
             val signature = titles.mapNotNull { it.text }.hashCode()

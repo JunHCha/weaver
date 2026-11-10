@@ -8,8 +8,8 @@ package io.github.junhcha.weaver.shepherd.autoshare
 object Selectors {
     const val VOICE_NOTE = "com.sec.android.app.voicenote"
     const val CHOOSER = "com.android.intentresolver"
-    const val WEAVER = "io.github.junhcha.weaver"
-    val allowedPackages = setOf(VOICE_NOTE, CHOOSER, WEAVER)
+    /** Weaver's own package is [android.content.Context.getPackageName]; debug builds add a suffix. */
+    fun allowedPackages(ownPackage: String) = setOf(VOICE_NOTE, CHOOSER, ownPackage)
     /** Packages whose nodes are inspected. Weaver's own screen (which previews the script) is never scanned. */
     val inspectedPackages = setOf(VOICE_NOTE, CHOOSER)
 
@@ -31,6 +31,7 @@ object Selectors {
     const val TEXT_FILE = "텍스트 파일"
     const val CHOOSER_LABEL_ID = "text1"
     const val CHOOSER_DIRECT_ROW = "item"
+    const val DIRECT_SHARE_BADGE = "sem_target_badge"
     private const val DELETE_WORD = "삭제"
 
     /** Script content nodes: never descended into, never read. */
@@ -52,6 +53,8 @@ object Selectors {
         return out
     }
 
+    private fun UiNode.hasDescendant(name: String, depth: Int = 0): Boolean =
+        depth < 6 && children.any { it.idName() == name || it.hasDescendant(name, depth + 1) }
     private fun List<UiNode>.byId(name: String) = filter { it.idName() == name }
     /** Text accessors that refuse to touch script content nodes. */
     private fun UiNode.t(): String? = if (idName() in opaque) null else nfc(text)
@@ -64,13 +67,18 @@ object Selectors {
     fun detail(nodes: List<UiNode>, stem: String): Detail {
         val bars = nodes.byId(TOOLBAR)
         if (bars.isEmpty()) return Detail.NONE
-        val titles = nodes.filter { n -> bars.any { bar -> n === bar || n.ancestors().any { it === bar } } }
+        val titles = nodes.filter { n -> bars.any { bar -> n == bar || n.ancestors().any { it == bar } } }
             .mapNotNull { it.t() }.filter { it.isNotEmpty() }
         return when {
             titles.isEmpty() -> Detail.NONE
             nfc(stem) in titles -> Detail.MATCH
             else -> Detail.OTHER
         }
+    }
+
+    /** A recording detail screen (player controls) is showing, not just the list's own toolbar. */
+    fun hasDetailContent(nodes: List<UiNode>) = nodes.any {
+        it.idName() == "main_control_root_view" || it.idName() == "controlbutton_play_start" || it.idName() == "info_max_text"
     }
 
     fun hasTranscript(nodes: List<UiNode>) = nodes.any { it.idName() == "stt_content" || it.idName() == "main_stt" }
@@ -113,7 +121,7 @@ object Selectors {
         val bars = nodes.byId(TOOLBAR)
         val inBar = nodes.firstOrNull { c ->
             (c.idName() == MORE_OPTIONS || c.d() == MORE_OPTIONS_DESC) &&
-                c.ancestors().any { a -> bars.any { it === a } }
+                c.ancestors().any { a -> bars.any { it == a } }
         } ?: return null
         return inBar.clickableTarget()?.let { Target(ClickTarget.MORE_OPTIONS, inBar, it) }
     }
@@ -132,8 +140,9 @@ object Selectors {
 
     /** App row in the system share sheet. Direct-share rows (`item`) are never used. */
     fun weaver(nodes: List<UiNode>, label: String): Target? {
+        // App rows and direct-share rows are both `item`; only direct-share targets carry a badge.
         val found = nodes.filter { it.packageName == CHOOSER && it.label() == nfc(label) &&
-            it.ancestors().none { a -> a.idName() == CHOOSER_DIRECT_ROW } }
+            it.ancestors().none { a -> a.idName() == CHOOSER_DIRECT_ROW && a.hasDescendant(DIRECT_SHARE_BADGE) } }
         val n = found.firstOrNull { it.idName() == CHOOSER_LABEL_ID } ?: found.firstOrNull() ?: return null
         return n.clickableTarget()?.let { Target(ClickTarget.WEAVER, n, it) }
     }
