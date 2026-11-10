@@ -12,6 +12,7 @@ from pydantic import BaseModel, JsonValue
 from weaver.context import ContextDictionary, Kind
 from weaver.courier.atomic import write_json_atomic
 from weaver.llm.types import LlmClient
+from weaver.loom.summary_state import SummaryState
 from weaver.schema.v2 import (
     EventSummary,
     ReviewPackage,
@@ -51,6 +52,14 @@ class ApprovedResponse(BaseModel):
     threads: list[ExtractedThread]
 
 
+class Prepared(BaseModel):
+    """Stable side-effect payload retained across retries."""
+
+    summary: EventSummary
+    threads: list[ThreadDraft]
+    corrections: list[Correction]
+
+
 class SummaryReview:
     """Approve one package using the model and a ThreadSink boundary."""
 
@@ -60,11 +69,14 @@ class SummaryReview:
         context: ContextDictionary,
         sink: ThreadSink,
         archive: Path,
+        *,
+        state_root: Path,
     ) -> None:
         self.llm = llm
         self.context = context
         self.sink = sink
         self.archive = archive
+        self.state = SummaryState(state_root)
 
     def approve(
         self,
@@ -86,6 +98,68 @@ class SummaryReview:
             for answer, question in zip(verdict.answers, package.questions, strict=True)
         ):
             raise ValueError("answers must select one choice for each question")
+        with self.state.lock():
+            self.state.save_package(package, script)
+            with self.state.connect() as db:
+                row = db.execute(
+                    "SELECT verdict, prepared, stage FROM reviews WHERE id=? AND revision=?",
+                    (package.package_id, package.revision),
+                ).fetchone()
+            verdict_json = verdict.model_dump_json()
+            if row is not None:
+                if Verdict.model_validate_json(row[0]) != verdict:
+                    raise ValueError("conflicting verdict")
+                prepared = Prepared.model_validate_json(row[1])
+                if row[2] == "APPLIED":
+                    return prepared.summary
+            else:
+                prepared = self._prepare(package, script, verdict, now, replaces)
+                with self.state.connect() as db:
+                    db.execute(
+                        "INSERT INTO reviews VALUES (?, ?, ?, ?, 'PREPARED')",
+                        (
+                            package.package_id,
+                            package.revision,
+                            verdict_json,
+                            prepared.model_dump_json(),
+                        ),
+                    )
+            target = (
+                self.archive
+                / prepared.summary.summary_id[:2]
+                / f"{prepared.summary.summary_id}.json"
+            )
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if target.exists():
+                if (
+                    EventSummary.model_validate_json(target.read_bytes())
+                    != prepared.summary
+                ):
+                    raise ValueError("summary archive conflict")
+            else:
+                write_json_atomic(target, prepared.summary)
+            # The sink must deduplicate stable thread IDs, including after an
+            # uncertain response; a local journal cannot atomically commit it.
+            self.sink.append(prepared.threads)
+            for correction in prepared.corrections:
+                self.context.learn(
+                    correction.observed, correction.canonical, correction.kind
+                )
+            with self.state.connect() as db:
+                db.execute(
+                    "UPDATE reviews SET stage='APPLIED' WHERE id=? AND revision=?",
+                    (package.package_id, package.revision),
+                )
+            return prepared.summary
+
+    def _prepare(
+        self,
+        package: ReviewPackage,
+        script: str,
+        verdict: Verdict,
+        now: datetime | None,
+        replaces: str | None,
+    ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
         response = self.llm.generate_json(
             "loom.approve",
@@ -131,16 +205,6 @@ class SummaryReview:
                 or correction.observed not in script
             ):
                 raise ValueError("correction was not selected or observed")
-        target = self.archive / digest[:2] / f"{digest}.json"
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if target.exists():
-            if EventSummary.model_validate_json(target.read_bytes()) != summary:
-                raise ValueError("summary archive conflict")
-        else:
-            write_json_atomic(target, summary)
-        self.sink.append(drafts)
-        for correction in response.corrections:
-            self.context.learn(
-                correction.observed, correction.canonical, correction.kind
-            )
-        return summary
+        return Prepared(
+            summary=summary, threads=drafts, corrections=response.corrections
+        )

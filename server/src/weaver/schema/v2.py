@@ -79,7 +79,12 @@ class Thread(ThreadDraft):
 
 
 class ThreadSink(Protocol):
-    """Append drafts and return stored threads with assigned sequences."""
+    """Append drafts and return stored threads with assigned sequences.
+
+    Replaying an identical batch of thread IDs must return the existing rows
+    without appending duplicates, even if an earlier call lost its response.
+    Conflicting content for an existing ID must be rejected atomically.
+    """
 
     def append(self, threads: list[ThreadDraft]) -> list[Thread]: ...
 

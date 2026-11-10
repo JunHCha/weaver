@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from weaver.context import ContextDictionary
 from weaver.courier.atomic import write_json_atomic
 from weaver.llm.types import LlmClient
+from weaver.loom.summary_state import SummaryState
 from weaver.schema.v2 import Question, ReviewPackage
 
 
@@ -32,6 +33,7 @@ class SummaryDrafts:
         context: ContextDictionary,
         proposals: Path,
         *,
+        state_root: Path,
         revision_threshold: int = 30000,
     ) -> None:
         if revision_threshold < 1:
@@ -40,6 +42,7 @@ class SummaryDrafts:
         self.llm = llm
         self.context = context
         self.proposals = proposals
+        self.state = SummaryState(state_root)
 
     def create(
         self,
@@ -103,6 +106,8 @@ class SummaryDrafts:
         )
         if not response.script.strip():
             raise ValueError("revised script must not be empty")
+        with self.state.lock():
+            self.state.save_package(package, response.script)
         self.proposals.mkdir(parents=True, exist_ok=True)
         write_json_atomic(self.proposals / f"{package_id}.r1.json", package)
         return package, response.script

@@ -74,7 +74,9 @@ def package() -> ReviewPackage:
 def test_approve_archives_extracts_and_learns(tmp_path: Path) -> None:
     sink = FakeSink()
     context = ContextDictionary(tmp_path / "state")
-    review = SummaryReview(FakeLlm(), context, sink, tmp_path / "archive")
+    review = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
     verdict = Verdict(
         schema_version=2,
         package_id="pkg",
@@ -92,3 +94,104 @@ def test_approve_archives_extracts_and_learns(tmp_path: Path) -> None:
     assert (
         tmp_path / "archive" / summary.summary_id[:2] / f"{summary.summary_id}.json"
     ).is_file()
+
+
+def test_approve_restarts_without_duplicate_or_new_llm_call(tmp_path: Path) -> None:
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    first = review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    second = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    assert second.approve(package(), "홍길돈 원문", verdict, now=NOW) == first
+    assert len(sink.drafts) == 1
+    assert second.state.load_package("pkg", 1) == (package(), "홍길돈 원문")
+
+
+def test_sink_failure_replays_prepared_threads(tmp_path: Path) -> None:
+    class RetrySink(FakeSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed = False
+
+        def append(self, threads: list[ThreadDraft]) -> list[Thread]:
+            if not self.failed:
+                self.failed = True
+                self.drafts.extend(threads)
+                raise RuntimeError("lost response")
+            assert self.drafts == threads
+            return [
+                Thread(**draft.model_dump(), seq=i + 1)
+                for i, draft in enumerate(threads)
+            ]
+
+    import pytest
+
+    sink = RetrySink()
+    context = ContextDictionary(tmp_path / "state")
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    with pytest.raises(RuntimeError):
+        review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    review = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    assert len(sink.drafts) == 1
+
+
+def test_conflicting_verdict_and_package_are_rejected(tmp_path: Path) -> None:
+    import pytest
+
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    review = SummaryReview(
+        FakeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    with pytest.raises(ValueError, match="conflicting verdict"):
+        review.approve(
+            package(),
+            "홍길돈 원문",
+            verdict.model_copy(update={"answers": ["김철수"]}),
+            now=NOW,
+        )
+    with pytest.raises(ValueError, match="conflicting package"):
+        review.approve(
+            package().model_copy(update={"draft_body": "다른 문서"}),
+            "홍길돈 원문",
+            verdict,
+            now=NOW,
+        )
+    assert len(sink.drafts) == 1

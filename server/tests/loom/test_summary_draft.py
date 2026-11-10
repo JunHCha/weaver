@@ -40,7 +40,10 @@ class FakeLlm:
 def test_draft_limits_questions_and_publishes(tmp_path: Path) -> None:
     llm = FakeLlm(4)
     service = SummaryDrafts(
-        llm, ContextDictionary(tmp_path / "state"), tmp_path / "proposals"
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        tmp_path / "proposals",
+        state_root=tmp_path / "state",
     )
     package, script = service.create(
         "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -77,8 +80,29 @@ def test_long_script_has_separate_revision_pass(tmp_path: Path) -> None:
         llm,
         ContextDictionary(tmp_path / "state"),
         tmp_path / "proposals",
+        state_root=tmp_path / "state",
         revision_threshold=3,
     )
     service.create("src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "긴 원문", package_id="pkg")
     assert [call[0] for call in llm.calls] == ["loom.polish", "loom.summary"]
     assert "긴 원문의 윤문" in llm.calls[1][1]
+
+
+def test_draft_is_available_after_restart(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    service = SummaryDrafts(
+        FakeLlm(0),
+        ContextDictionary(state_root),
+        tmp_path / "proposals",
+        state_root=state_root,
+    )
+    package, script = service.create(
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원본", package_id="pkg"
+    )
+    restored = SummaryDrafts(
+        FakeLlm(0),
+        ContextDictionary(state_root),
+        tmp_path / "proposals",
+        state_root=state_root,
+    )
+    assert restored.state.load_package("pkg", 1) == (package, script)
