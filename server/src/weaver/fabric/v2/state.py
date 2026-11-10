@@ -67,22 +67,3 @@ def project(tag: str, threads: list[Thread]) -> TagState:
         elif t.field is not None:
             state.fields[t.field] = StateValue(t.value, t.thread_id)
     return state
-
-
-def _equal(left: JsonValue, right: JsonValue) -> bool:
-    """JSON structural equality: booleans differ from numbers, 1 equals 1.0."""
-    if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return left == right
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, list) and isinstance(right, list):
-        return len(left) == len(right) and all(
-            _equal(a, b) for a, b in zip(left, right, strict=True)
-        )
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(
-            _equal(value, right[key]) for key, value in left.items()
-        )
-    return left == right
