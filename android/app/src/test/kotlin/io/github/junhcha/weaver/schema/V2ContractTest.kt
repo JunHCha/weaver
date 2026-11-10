@@ -25,6 +25,15 @@ class V2ContractTest {
     ).validate(text, InputFormat.JSON).isEmpty()
 
     @Test
+    fun courierCodecAcceptsOnlyStrictV2ForV2Models() {
+        val value = VerdictV2(2, "package-1", 1, VerdictV2.Action.APPROVE, listOf("가"), null, null)
+        val text = WeaverCodec.encode(value)
+        assertTrue(WeaverCodec.decode<VerdictV2>(text) is DecodeResult.Ok)
+        assertTrue(WeaverCodec.decode<VerdictV2>(text.replace("\"schema_version\":2", "\"schema_version\":1")) is DecodeResult.UnsupportedVersion)
+        assertTrue(WeaverCodec.decode<VerdictV2>(text.replace("\"revision\":1", "\"revision\":\"1\"")) is DecodeResult.Invalid)
+    }
+
+    @Test
     fun reviewPackageRoundTripAndQuestionBounds() {
         val question = Question("질문", "근거", listOf("가", "나", "다"))
         val value = ReviewPackage(2, "package-1", "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, "요약", listOf(question), Stage.REVIEW, mapOf(Stage.REVIEW to "2026-01-01T00:00:00Z"))

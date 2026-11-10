@@ -23,9 +23,9 @@ sealed interface DecodeResult<out T> {
      * `schema_version` is an integer other than [SCHEMA_VERSION]. The file is not processed;
      * [diagnostic] is meant for the app log or a user-visible error list.
      */
-    data class UnsupportedVersion(val model: String, val found: Long) : DecodeResult<Nothing> {
+    data class UnsupportedVersion(val model: String, val found: Long, val expected: Long = SCHEMA_VERSION.toLong()) : DecodeResult<Nothing> {
         val diagnostic: String
-            get() = "$model schema_version $found is not supported (expected $SCHEMA_VERSION); skipped"
+            get() = "$model schema_version $found is not supported (expected $expected); skipped"
     }
 
     /** Malformed JSON or a violation of the v1 contract. */
@@ -67,7 +67,8 @@ object WeaverCodec {
         }
         val found = version.content.toLongOrNull()
             ?: return DecodeResult.Invalid(model, "schema_version is out of range")
-        if (found != SCHEMA_VERSION.toLong()) return DecodeResult.UnsupportedVersion(model, found)
+        val expected = if (serializer.descriptor.serialName.startsWith("io.github.junhcha.weaver.schema.v2.")) 2L else SCHEMA_VERSION.toLong()
+        if (found != expected) return DecodeResult.UnsupportedVersion(model, found, expected)
         // kotlinx accepts quoted numbers ("1") and exponent integers (1e0); the schema and
         // its README do not. Check JSON token types against the model before decoding.
         tokenViolation("", root, serializer.descriptor)?.let { return DecodeResult.Invalid(model, it) }
