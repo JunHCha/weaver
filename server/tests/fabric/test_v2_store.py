@@ -97,3 +97,19 @@ def test_state_fields_assignees_and_open_requests(tmp_path):
     assert [(t.thread_id, t.direction) for t in state.open_requests] == [("q2", "보냄")]
     store.append([draft("r", retracts="d")])
     assert [t.thread_id for t in store.state("홍길동").open_requests] == ["q1", "q2"]
+
+
+def test_contact_statistics_and_old_version(tmp_path):
+    import sqlite3
+
+    from weaver.fabric import SchemaVersionError
+
+    path = tmp_path / "old"
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA user_version=1")
+    with pytest.raises(SchemaVersionError):
+        FabricStore(path)
+    store = FabricStore(tmp_path / "new")
+    store.append([draft("a"), draft("b", occurred_at=datetime(2025, 1, 3, tzinfo=UTC))])
+    assert store.contact_statistics("홍길동", since=datetime(2025, 1, 2, tzinfo=UTC)).count == 1
+    assert store.contact_statistics("홍길동").latest == datetime(2025, 1, 3, tzinfo=UTC)

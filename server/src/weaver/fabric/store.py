@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -188,3 +189,18 @@ class FabricStore:
         from .state import project
 
         return project(tag, self.entries(ThreadQuery()))
+
+    def contact_statistics(self, tag: str, *, since: datetime | None = None, until: datetime | None = None) -> "ContactStatistics":
+        """Count active events for a tag and find their latest occurrence."""
+        snapshot = self.entries(ThreadQuery())
+        retracted = {t.retracts for t in snapshot if t.retracts is not None}
+        events = [t for t in snapshot if tag in t.tags and t.thread_id not in retracted and t.retracts is None and t.kind not in ("태그정정", "거절") and (since is None or t.occurred_at >= since) and (until is None or t.occurred_at < until)]
+        return ContactStatistics(len(events), max((t.occurred_at for t in events), default=None))
+
+
+@dataclass(frozen=True)
+class ContactStatistics:
+    """Number of active events and latest occurrence in the selected interval."""
+
+    count: int
+    latest: datetime | None
