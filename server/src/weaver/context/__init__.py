@@ -156,6 +156,19 @@ class ContextDictionary:
                     [(page.name, alias) for alias in set(page.aliases)],
                 )
 
+    def kind_of(self, name: str) -> Kind | None:
+        """Return the exact canonical name's kind, preferring its wiki entry."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT kind FROM wiki WHERE name=? UNION ALL "
+                "SELECT kind FROM learned WHERE name=? LIMIT 1",
+                (name, name),
+            ).fetchone()
+        if row is None:
+            return None
+        kind: Kind = row[0]
+        return kind
+
     def candidates(
         self, text: str, contact_name: str | None = None, limit: int = 10
     ) -> list[Entry]:
