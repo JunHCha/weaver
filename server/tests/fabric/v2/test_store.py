@@ -153,3 +153,60 @@ def test_contact_statistics_and_old_version(tmp_path):
         == 1
     )
     assert store.contact_statistics("홍길동").latest == datetime(2025, 1, 3, tzinfo=UTC)
+
+
+def test_sqlite_rows_are_append_only(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "db"
+    store = FabricStore(path)
+    store.append([draft("a")])
+    with sqlite3.connect(path) as db:
+        for sql in ("UPDATE threads SET payload='{}'", "DELETE FROM threads"):
+            with pytest.raises(sqlite3.IntegrityError):
+                db.execute(sql)
+
+
+@pytest.mark.parametrize("field", ["deadline", "schedule", "status"])
+def test_fields_follow_occurrence_order_and_ignore_retractions(tmp_path, field):
+    store = FabricStore(tmp_path / "db")
+    store.append(
+        [
+            draft(
+                "later",
+                field=field,
+                value="later",
+                occurred_at=datetime(2025, 1, 3, tzinfo=UTC),
+            ),
+            draft("earlier", field=field, value="earlier"),
+        ]
+    )
+    assert store.state("홍길동").fields[field].thread_id == "later"
+    store.append([draft("retract", retracts="later")])
+    assert store.state("홍길동").fields[field].value == "earlier"
+
+
+def test_query_filters_use_effective_tags_and_time_bounds(tmp_path):
+    store = FabricStore(tmp_path / "db")
+    store.append(
+        [
+            draft("a", tags=["A"]),
+            draft(
+                "b",
+                kind="태그정정",
+                correction={"target": "a", "remove": ["A"], "add": ["B"]},
+            ),
+        ]
+    )
+    assert [
+        t.thread_id
+        for t in store.entries(
+            ThreadQuery(
+                kind="기록",
+                tag="B",
+                since=datetime(2025, 1, 1, tzinfo=UTC),
+                until=datetime(2025, 1, 2, tzinfo=UTC),
+            )
+        )
+    ] == ["a"]
+    assert store.entries(ThreadQuery(kind="기록", tag="A")) == []
