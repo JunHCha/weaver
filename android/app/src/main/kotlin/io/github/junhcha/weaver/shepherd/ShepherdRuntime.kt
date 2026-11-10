@@ -20,6 +20,7 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.github.junhcha.weaver.MainActivity
 import io.github.junhcha.weaver.R
+import io.github.junhcha.weaver.shepherd.autoshare.AutoShareRuntime
 import io.github.junhcha.weaver.ui.Feature
 import java.time.Instant
 import java.time.ZoneId
@@ -114,7 +115,10 @@ object ShepherdRuntime {
     internal fun notifyPending(context: Context, db: ShepherdDatabase, now: Long) {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "미공유 통화", NotificationManager.IMPORTANCE_DEFAULT))
-        val ids = db.calls().filter { it.status == CallStatus.UNSHARED }.map { it.id }.sorted()
+        val unshared = db.calls().filter { it.status == CallStatus.UNSHARED }.map { it.id }
+        // Calls auto share has handled, or is still trying to handle, are not announced for manual sharing.
+        val silenced = AutoShareRuntime.silenced(context, db, unshared)
+        val ids = unshared.filter { it !in silenced }.sorted()
         if (ids.isEmpty()) {
             manager.cancel(NOTIFICATION_ID)
             db.setting("notified_ids", "")
@@ -153,6 +157,7 @@ class ShepherdWorker(context: Context, params: WorkerParameters) : Worker(contex
         if (ShepherdRuntime.scan(applicationContext)) {
             ShepherdRuntime.scheduleStability(applicationContext)
         }
+        runCatching { AutoShareRuntime.maybeStart(applicationContext) }
         Result.success()
     } catch (_: Exception) { Result.retry() }
 }

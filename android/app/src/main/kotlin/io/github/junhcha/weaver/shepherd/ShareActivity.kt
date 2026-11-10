@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.schema.Channel
+import io.github.junhcha.weaver.shepherd.autoshare.AutoShareRuntime
 import java.io.File
 import java.nio.charset.CharacterCodingException
 import java.util.concurrent.Executors
@@ -25,6 +26,8 @@ class ShareActivity : ComponentActivity() {
     private var callId by mutableStateOf<String?>(null)
     private var busy by mutableStateOf(true)
     private var message by mutableStateOf<String?>(null)
+    /** Set when the accessibility job shared this very recording's script; submits without a tap. */
+    private var autoCallId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,6 +93,13 @@ class ShareActivity : ComponentActivity() {
                     if (savedInstanceState == null) channel = SharedCallSelection.channel(displayName, pending)
                     if (callId !in pending.map { it.id }) callId = SharedCallSelection.call(displayName, pending)
                     busy = false
+                    val auto = if (savedInstanceState == null) AutoShareRuntime.autoSubmitCallId(displayName, pending) else null
+                    if (auto != null) {
+                        autoCallId = auto
+                        channel = Channel.CALL
+                        callId = auto
+                        submit()
+                    }
                 }
             } catch (error: Exception) { showError(error) }
         }
@@ -106,6 +116,7 @@ class ShareActivity : ComponentActivity() {
                 runOnUiThread {
                     file = null
                     busy = false
+                    autoCallId?.let { AutoShareRuntime.onSubmitted(it); finish() }
                     message = if (result.duplicate) "이미 등록된 텍스트입니다."
                         else "Courier 등록 완료: ${result.manifest.captureId}. 전송은 동기화 폴더 연결 후 진행됩니다."
                 }
