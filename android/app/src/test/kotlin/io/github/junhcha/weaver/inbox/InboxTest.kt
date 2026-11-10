@@ -66,6 +66,35 @@ class InboxTest {
         .singleOrNull { shadowOf(manager).getNotification(id) === it }
     private fun silent(n: Notification) = n.group != null && n.groupAlertBehavior == Notification.GROUP_ALERT_SUMMARY
 
+    @Test fun versionOneDatabaseMigratesWithoutLosingHistory() {
+        val path = File(app.filesDir, "inbox.sqlite3")
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
+            db.execSQL("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execSQL("""CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL,
+                summary TEXT NOT NULL, channel TEXT NOT NULL, captured_at TEXT NOT NULL, revised INTEGER NOT NULL,
+                state TEXT NOT NULL, first_seen INTEGER NOT NULL, changed_at INTEGER NOT NULL,
+                notified_rev INTEGER NOT NULL DEFAULT 0, absent_scans INTEGER NOT NULL DEFAULT 0)""")
+            db.execSQL("CREATE TABLE submitted (proposal_id TEXT PRIMARY KEY, rev INTEGER NOT NULL)")
+            db.execSQL("""CREATE TABLE alerts (alert_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL,
+                schedule_ref TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL,
+                delete_pending INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL,
+                changed_at INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0)""")
+            db.execSQL("INSERT INTO proposals VALUES ('old', 3, '요약', 'CALL', 'time', 0, 'ACTIVE', 1, 1, 3, 0)")
+            db.execSQL("INSERT INTO submitted VALUES ('old', 2)")
+            db.version = 1
+        }
+        InboxDatabase(app).use { db ->
+            val row = db.proposals().single()
+            assertEquals(3L, row.rev)
+            assertEquals(3L, row.notifiedRev)
+            assertFalse(row.isV2)
+            assertNull(row.stage)
+            db.readableDatabase.rawQuery("SELECT rev FROM submitted WHERE proposal_id='old'", null).use {
+                assertTrue(it.moveToFirst()); assertEquals(2L, it.getLong(0))
+            }
+        }
+    }
+
     @Test fun mixedVersionsPersistStageAndDoNotReviveSubmittedV2() {
         val pkg = io.github.junhcha.weaver.schema.v2.ReviewPackage(2,
             "prp_01ARZ3NDEKTSV4RRFFQ69G5FA2", "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1,

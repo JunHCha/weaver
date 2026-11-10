@@ -13,6 +13,7 @@ import java.io.File
 object ReviewRuntime {
     private fun store(context: Context) = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
     fun records(context: Context): List<ReviewRecord> = synchronized(CourierRuntime.lock) { store(context).records() }
+    fun recordsV2(context: Context): List<ReviewRecordV2> = synchronized(CourierRuntime.lock) { store(context).recordsV2() }
     fun open(context: Context, id: String): Proposal = synchronized(CourierRuntime.lock) {
         val p = store(context).latest(CourierRuntime.folder(context), id)
         val known = InboxRuntime.proposals(context).firstOrNull { it.proposalId == id }

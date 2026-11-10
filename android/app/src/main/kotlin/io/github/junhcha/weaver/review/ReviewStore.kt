@@ -100,6 +100,7 @@ class ReviewStore(private val directory: File) {
         .map { json.decodeFromString<ReviewRecordV2>(it.readText()) }
     fun queue(folder: CourierFolder, p: ReviewPackage, verdict: VerdictV2) {
         check(p.packageId == verdict.packageId && p.revision == verdict.revision)
+        require(verdict.answers.size == p.questions.size && verdict.answers.zip(p.questions).all { (a, q) -> a in q.choices })
         check(latestPackage(folder, p.packageId) == p) { "새 rev가 도착했습니다. 최신 제안을 다시 확인하세요" }
         check(WeaverCodec.encode(verdict).toByteArray().size <= CourierRules.maxJson) { "too_large" }
         val file = v2File(p.packageId, p.revision)
