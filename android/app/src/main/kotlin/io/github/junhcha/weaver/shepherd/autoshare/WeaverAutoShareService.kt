@@ -68,7 +68,7 @@ class WeaverAutoShareService : AccessibilityService() {
         val machine = AutoShareMachine(job.job, SystemClock.elapsedRealtime(), { job.submitted })
         val state = Running(job, machine)
         val intent = packageManager.getLaunchIntentForPackage(Selectors.VOICE_NOTE)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         running = state
         val started = intent != null && runCatching { startActivity(intent) }.isSuccess
         if (!started) { finish(state, machine.interrupt(AutoError.LAUNCH_FAILED)); return true }
@@ -78,7 +78,8 @@ class WeaverAutoShareService : AccessibilityService() {
 
     private fun step() {
         val current = running ?: return
-        val progress = current.machine.advance(snapshot(), SystemClock.elapsedRealtime())
+        val shot = snapshot()
+        val progress = current.machine.advance(shot, SystemClock.elapsedRealtime())
         if (progress == Progress.Working) handler.postDelayed(tick, TICK_MS) else finish(current, progress)
     }
 
@@ -116,6 +117,9 @@ class WeaverAutoShareService : AccessibilityService() {
         private fun permitted() = service.running != null && packageName in Selectors.allowedPackages
         override fun click() = permitted() && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         override fun scroll() = permitted() && node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        // Each parent/child access wraps a fresh AccessibilityNodeInfo; equality must follow the real node.
+        override fun equals(other: Any?) = other is NodeAdapter && other.node == node
+        override fun hashCode() = node.hashCode()
     }
 
     override fun onDestroy() {

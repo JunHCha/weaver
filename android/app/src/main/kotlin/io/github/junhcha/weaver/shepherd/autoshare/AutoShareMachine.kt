@@ -186,6 +186,14 @@ class AutoShareMachine(
         val detail = Selectors.detail(nodes, job.stem)
         if (detail == Selectors.Detail.MATCH) { moveTo(AutoStep.PREPARE_TRANSCRIPT, now); return null }
         if (!canAct(now)) return null
+        if (detail == Selectors.Detail.OTHER && Selectors.hasDetailContent(nodes)) {
+            // Another recording's detail covers the list (rows beneath still report visible): go back first.
+            if (backPresses >= timing.maxBackPresses) return fail(AutoError.RECORDING_NOT_FOUND)
+            backPresses++
+            lastAction = now
+            screen.goBack()
+            return null
+        }
         val row = Selectors.row(nodes, job.stem)
         if (row != null) { press(row, now); return null }
         val titles = Selectors.listTitles(nodes)

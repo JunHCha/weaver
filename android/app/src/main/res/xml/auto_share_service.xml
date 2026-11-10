@@ -4,7 +4,7 @@
     android:description="@string/auto_share_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeTouchInteractionStart"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="200"
     android:packageNames="com.sec.android.app.voicenote,com.android.intentresolver,io.github.junhcha.weaver" />
