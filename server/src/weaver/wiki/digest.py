@@ -107,11 +107,15 @@ class DigestBuilder:
         except FileNotFoundError:
             props, previous, base = {}, "", None
         payload = {"inputs": inputs, "previous": previous, "evidence": evidence}
-        result = self.llm.generate_json(
-            "wiki.digest",
-            "각 문장에 제공된 출처 ID를 근거로 제시하고 기존 사람 수정을 반영하세요.",
-            json.dumps(payload, ensure_ascii=False),
-            Summary,
+        result = (
+            self.llm.generate_json(
+                "wiki.digest",
+                "각 문장에 제공된 출처 ID를 근거로 제시하고 기존 사람 수정을 반영하세요.",
+                json.dumps(payload, ensure_ascii=False),
+                Summary,
+            )
+            if evidence
+            else Summary(sentences=[])
         )
         lines = []
         for sentence in result.sentences:
@@ -177,6 +181,19 @@ class DigestBuilder:
             if t.field in ("deadline", "schedule"):
                 for tag in t.tags:
                     fields[tag, t.field] = t
+        # Include dates named by fields, including superseded dates that may need clearing.
+        days = sorted(
+            set(days)
+            | {
+                value_day
+                for t in threads
+                if t.field in ("deadline", "schedule")
+                for value_day in [_value_day(t.value, self.timezone)]
+                if value_day is not None
+            }
+        )
+        by_day = {day: by_day.get(day, []) for day in days}
+        day_evidence: dict[date, list[str]] = {}
         for day in days:
             items = by_day[day]
             due = sorted(
@@ -195,6 +212,7 @@ class DigestBuilder:
                 )
             top = "\n".join(top_lines) + "\n\n## 요약\n"
             evidence = sorted({t.source_id for t in [*items, *due]})
+            day_evidence[day] = evidence
             inputs = {"threads": [t.model_dump(mode="json") for t in items], "top": top}
             self._write(_day_path(day), inputs, evidence, top)
         weeks = sorted({day - timedelta(days=day.weekday()) for day in days})
@@ -203,7 +221,7 @@ class DigestBuilder:
             if not members:
                 continue
             pages = {_day_path(d): self.wiki.read(_day_path(d))[1] for d in members}
-            evidence = sorted({t.source_id for d in members for t in by_day[d]})
+            evidence = sorted({source for d in members for source in day_evidence[d]})
             with sqlite3.connect(self.state_path) as db:
                 versions = {
                     p: db.execute(
@@ -238,11 +256,11 @@ class DigestBuilder:
                 }
             evidence = sorted(
                 {
-                    t.source_id
+                    source
                     for w in members
                     for d in days
                     if w <= d < w + timedelta(days=7)
-                    for t in by_day[d]
+                    for source in day_evidence[d]
                 }
             )
             self._write(
