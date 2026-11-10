@@ -31,6 +31,9 @@ internal object SharedCallSelection {
         return Hint(match.groupValues[1], person(counterpart), time)
     }
 
+    /** Recording base name embedded in a shared transcript file name, or null if it is not a call transcript. */
+    fun stem(name: String?): String? = parse(name)?.stem
+
     fun channel(name: String?, calls: List<PendingCall>): Channel =
         if (parse(name) != null && calls.isNotEmpty()) Channel.CALL else Channel.SHARE_TEXT
 

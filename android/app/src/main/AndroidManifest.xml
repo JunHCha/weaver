@@ -15,6 +15,11 @@
     <!-- Originals and review data must never leave the device through backup or transfer:
          allowBackup=false stops cloud backup, fullBackupContent covers Android 8-11 and
          dataExtractionRules also excludes Android 12+ device-to-device transfer. -->
+    <!-- Lets auto share open the Samsung Voice Recorder (package visibility, Android 11+). -->
+    <queries>
+        <package android:name="com.sec.android.app.voicenote" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -32,6 +37,19 @@
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/review_widget_info" />
         </receiver>
         <activity android:name=".widget.WidgetReviewActivity" android:exported="false" />
+        <!-- Off until the user enables it in system accessibility settings; see auto_share_service.xml. -->
+        <service
+            android:name=".shepherd.autoshare.WeaverAutoShareService"
+            android:exported="true"
+            android:label="@string/auto_share_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_share_service" />
+        </service>
         <activity android:name=".shepherd.ShareActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
