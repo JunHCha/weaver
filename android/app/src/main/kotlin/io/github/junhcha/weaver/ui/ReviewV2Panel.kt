@@ -1,5 +1,6 @@
 package io.github.junhcha.weaver.ui
 
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
@@ -8,6 +9,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.*
@@ -33,6 +38,8 @@ fun ReviewV2Panel(id: String, onClose: () -> Unit) {
     var record by remember(id) { mutableStateOf<ReviewRecordV2?>(null) }
     var readError by remember(id) { mutableStateOf<String?>(null) }
     var error by remember(id) { mutableStateOf<String?>(null) }
+    val preferences = remember(context) { context.getSharedPreferences("review-settings", android.content.Context.MODE_PRIVATE) }
+    var vault by remember { mutableStateOf(preferences.getString("vault", "").orEmpty()) }
     var busy by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id, changes) {
         do {
@@ -62,9 +69,17 @@ fun ReviewV2Panel(id: String, onClose: () -> Unit) {
             ReviewProgressDiagram(progress)
             Text("요약", style = MaterialTheme.typography.titleMedium)
             val firstLine = p.draftBody.lineSequence().first()
-            Text(firstLine.take(80) + if (firstLine.length > 80) "…" else "")
+            WikiText(firstLine.take(80) + if (firstLine.length > 80) "…" else "", vault)
             OutlinedButton(onClick = { details = !details }) { Text(if (details) "본문 접기" else "본문 보기") }
-            if (details) Text(p.draftBody)
+            if (details) {
+                WikiText(p.draftBody, vault)
+                Text("일정의 캘린더 연동 준비 중")
+            }
+            OutlinedTextField(value = vault, onValueChange = {
+                vault = it
+                preferences.edit().putString("vault", it).apply()
+            }, label = { Text("Obsidian 볼트 이름") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            if (vault.isBlank()) Text("볼트 이름을 설정하면 wiki 링크를 열 수 있습니다")
             record?.let {
                 progress.response?.let { response -> Text("내 응답: $response") }
                 if (it.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
@@ -143,4 +158,32 @@ private fun ReviewProgressDiagram(progress: ReviewProgress) {
             text = { Text("상태: ${step.status.label}\n시각: ${step.time ?: "기록 없음"}") },
             confirmButton = { TextButton(onClick = { selected = null }) { Text("닫기") } })
     }
+}
+
+@Suppress("DEPRECATION")
+@Composable
+private fun WikiText(text: String, vault: String) {
+    val handler = LocalUriHandler.current
+    val color = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, vault, color) {
+        buildAnnotatedString {
+            var offset = 0
+            wikiLinks(text, vault).forEach { link ->
+                append(text.substring(offset, link.start))
+                val start = length
+                append(link.label)
+                link.uri?.let { uri ->
+                    addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), start, length)
+                    addStringAnnotation("wiki", uri, start, length)
+                }
+                offset = link.end
+            }
+            append(text.substring(offset))
+        }
+    }
+    ClickableText(annotated, style = MaterialTheme.typography.bodyLarge, onClick = { position ->
+        annotated.getStringAnnotations("wiki", position, position).firstOrNull()?.let {
+            runCatching { handler.openUri(it.item) }
+        }
+    })
 }
