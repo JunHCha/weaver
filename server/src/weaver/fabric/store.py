@@ -6,12 +6,15 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from weaver.config import ServerConfig
 from weaver.schema.v2 import Thread, ThreadDraft
+
+if TYPE_CHECKING:
+    from .state import TagState
 
 
 class FabricError(Exception):
@@ -179,3 +182,9 @@ class FabricStore:
         result = [t.model_copy(update={"tags": effective[t.thread_id]}) for t in result]
         result = [t for t in result if t.seq > query.after_seq and (query.kind is None or t.kind == query.kind) and (query.since is None or t.occurred_at >= query.since) and (query.until is None or t.occurred_at < query.until) and (query.tag is None or query.tag in t.tags)]
         return sorted(result, key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
+
+    def state(self, tag: str) -> "TagState":
+        """Return the current deterministic state for one exact tag."""
+        from .state import project
+
+        return project(tag, self.entries(ThreadQuery()))

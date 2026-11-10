@@ -85,3 +85,15 @@ def test_effective_tags_and_retracted_correction(tmp_path):
     store.append([draft("r", retracts="c")])
     assert [t.thread_id for t in store.entries(ThreadQuery(tag="B"))] == ["a"]
     assert store.entries(ThreadQuery(tag="C")) == []
+
+
+def test_state_fields_assignees_and_open_requests(tmp_path):
+    store = FabricStore(tmp_path / "db")
+    store.append([draft("q1", kind="요청", direction="받음"), draft("q2", kind="요청", direction="보냄"), draft("d", kind="결정", resolves="q1"), draft("a", field="status", value="old"), draft("b", field="status", value="new"), draft("s1", field="assignees", value={"add": ["A", "B"], "remove": []}), draft("s2", field="assignees", value={"add": ["C"], "remove": ["A"]})])
+    state = store.state("홍길동")
+    assert state.fields["status"].value == "new"
+    assert state.fields["status"].thread_id == "b"
+    assert state.assignees == {"B", "C"}
+    assert [(t.thread_id, t.direction) for t in state.open_requests] == [("q2", "보냄")]
+    store.append([draft("r", retracts="d")])
+    assert [t.thread_id for t in store.state("홍길동").open_requests] == ["q1", "q2"]
