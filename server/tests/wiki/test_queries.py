@@ -74,3 +74,31 @@ def test_readonly_restore(tmp_path):
     page.write_text("수정")
     store.restore_readonly()
     assert page.read_bytes() == baseline
+
+
+def test_request_order_resolution_and_contact_boundaries(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages([Page("홍길동", "person")])
+    now = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    add(fabric, 1, kind="요청", direction="받음", at=now - timedelta(days=31))
+    add(fabric, 2, kind="요청", direction="받음", at=now - timedelta(days=30))
+    add(fabric, 3, kind="요청", direction="보냄", at=now - timedelta(days=8))
+    add(fabric, 4, kind="결정", resolves="3", at=now - timedelta(days=7))
+    pages = render_pages(fabric, context, now=now, inactive_days=7)
+    assert pages["열린 요청.md"].index("내용 1") < pages["열린 요청.md"].index("내용 2")
+    assert "내용 3" not in pages["열린 요청.md"]
+    assert "7일 1건, 30일 3건 — 연락 없음" in pages["사람별 연락.md"]
+
+
+def test_calendar_timezone_and_invalid_values(tmp_path):
+    from datetime import timezone
+
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    now = datetime(2026, 11, 15, 23, 30, tzinfo=timezone(timedelta(hours=9)))
+    add(fabric, 1, field="schedule", value="2026-11-15T16:00:00Z", tags=["가"])
+    add(fabric, 2, field="deadline", value="invalid", tags=["나"])
+    page = render_pages(fabric, context, now=now)["다가오는 마감.md"]
+    assert "2026-11-16 가" in page.split("## 다음 주")[1]
+    assert "나" not in page

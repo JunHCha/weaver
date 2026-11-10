@@ -114,8 +114,7 @@ def render_pages(
         deadlines.append("")
     contacts = ["# 사람별 연락", ""]
     for tag in tags:
-        matches = context.candidates(tag, limit=1000000)
-        if not any(entry.name == tag and entry.kind == "person" for entry in matches):
+        if context.kind_of(tag) != "person":
             continue
         events = [t for t in active if tag in t.tags]
         latest = max(t.occurred_at for t in events)
