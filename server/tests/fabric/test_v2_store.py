@@ -69,8 +69,21 @@ def test_invalid_references_rollback_and_valid_batch(tmp_path):
     with pytest.raises(InvalidReference):
         store.append([draft("a"), draft("b", retracts="missing")])
     assert store.entries(ThreadQuery()) == []
-    store.append([draft("q", kind="요청", direction="받음"), draft("d", kind="결정", resolves="q")])
-    for bad in [draft("x", kind="결정", resolves="d"), draft("x", retracts="missing"), draft("x", kind="태그정정", correction={"target": "missing", "add": [], "remove": []})]:
+    store.append(
+        [
+            draft("q", kind="요청", direction="받음"),
+            draft("d", kind="결정", resolves="q"),
+        ]
+    )
+    for bad in [
+        draft("x", kind="결정", resolves="d"),
+        draft("x", retracts="missing"),
+        draft(
+            "x",
+            kind="태그정정",
+            correction={"target": "missing", "add": [], "remove": []},
+        ),
+    ]:
         with pytest.raises(InvalidReference):
             store.append([bad])
     store.append([draft("r", retracts="d")])
@@ -80,7 +93,21 @@ def test_invalid_references_rollback_and_valid_batch(tmp_path):
 
 def test_effective_tags_and_retracted_correction(tmp_path):
     store = FabricStore(tmp_path / "db")
-    store.append([draft("a", tags=["A"]), draft("b", kind="태그정정", correction={"target": "a", "remove": ["A"], "add": ["B"]}), draft("c", kind="태그정정", correction={"target": "a", "remove": ["B"], "add": ["C"]})])
+    store.append(
+        [
+            draft("a", tags=["A"]),
+            draft(
+                "b",
+                kind="태그정정",
+                correction={"target": "a", "remove": ["A"], "add": ["B"]},
+            ),
+            draft(
+                "c",
+                kind="태그정정",
+                correction={"target": "a", "remove": ["B"], "add": ["C"]},
+            ),
+        ]
+    )
     assert [t.thread_id for t in store.entries(ThreadQuery(tag="C"))] == ["a"]
     store.append([draft("r", retracts="c")])
     assert [t.thread_id for t in store.entries(ThreadQuery(tag="B"))] == ["a"]
@@ -89,7 +116,17 @@ def test_effective_tags_and_retracted_correction(tmp_path):
 
 def test_state_fields_assignees_and_open_requests(tmp_path):
     store = FabricStore(tmp_path / "db")
-    store.append([draft("q1", kind="요청", direction="받음"), draft("q2", kind="요청", direction="보냄"), draft("d", kind="결정", resolves="q1"), draft("a", field="status", value="old"), draft("b", field="status", value="new"), draft("s1", field="assignees", value={"add": ["A", "B"], "remove": []}), draft("s2", field="assignees", value={"add": ["C"], "remove": ["A"]})])
+    store.append(
+        [
+            draft("q1", kind="요청", direction="받음"),
+            draft("q2", kind="요청", direction="보냄"),
+            draft("d", kind="결정", resolves="q1"),
+            draft("a", field="status", value="old"),
+            draft("b", field="status", value="new"),
+            draft("s1", field="assignees", value={"add": ["A", "B"], "remove": []}),
+            draft("s2", field="assignees", value={"add": ["C"], "remove": ["A"]}),
+        ]
+    )
     state = store.state("홍길동")
     assert state.fields["status"].value == "new"
     assert state.fields["status"].thread_id == "b"
@@ -111,5 +148,8 @@ def test_contact_statistics_and_old_version(tmp_path):
         FabricStore(path)
     store = FabricStore(tmp_path / "new")
     store.append([draft("a"), draft("b", occurred_at=datetime(2025, 1, 3, tzinfo=UTC))])
-    assert store.contact_statistics("홍길동", since=datetime(2025, 1, 2, tzinfo=UTC)).count == 1
+    assert (
+        store.contact_statistics("홍길동", since=datetime(2025, 1, 2, tzinfo=UTC)).count
+        == 1
+    )
     assert store.contact_statistics("홍길동").latest == datetime(2025, 1, 3, tzinfo=UTC)

@@ -2,11 +2,11 @@
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -48,7 +48,9 @@ class ThreadQuery(BaseModel):
     def validate_range(self) -> "ThreadQuery":
         if self.after_seq < 0:
             raise ValueError("after_seq must be nonnegative")
-        if any(t is not None and t.utcoffset() is None for t in (self.since, self.until)):
+        if any(
+            t is not None and t.utcoffset() is None for t in (self.since, self.until)
+        ):
             raise ValueError("timestamps must be timezone-aware")
         if self.since and self.until and self.since > self.until:
             raise ValueError("since must not be after until")
@@ -83,12 +85,20 @@ class FabricStore:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
-                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
+                if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table'"
+                ).fetchone():
                     raise SchemaVersionError("unversioned database is not empty")
-                db.execute("CREATE TABLE threads (seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)")
+                db.execute(
+                    "CREATE TABLE threads (seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)"
+                )
                 for op in ("UPDATE", "DELETE"):
-                    db.execute(f"CREATE TRIGGER threads_no_{op.lower()} BEFORE {op} ON threads BEGIN SELECT RAISE(ABORT, 'append only'); END")
-                db.execute("CREATE TRIGGER threads_no_replace BEFORE INSERT ON threads WHEN EXISTS (SELECT 1 FROM threads WHERE thread_id=NEW.thread_id OR seq=NEW.seq) BEGIN SELECT RAISE(ABORT, 'duplicate'); END")
+                    db.execute(
+                        f"CREATE TRIGGER threads_no_{op.lower()} BEFORE {op} ON threads BEGIN SELECT RAISE(ABORT, 'append only'); END"
+                    )
+                db.execute(
+                    "CREATE TRIGGER threads_no_replace BEFORE INSERT ON threads WHEN EXISTS (SELECT 1 FROM threads WHERE thread_id=NEW.thread_id OR seq=NEW.seq) BEGIN SELECT RAISE(ABORT, 'duplicate'); END"
+                )
                 db.execute("PRAGMA user_version=2")
             elif version != 2:
                 raise SchemaVersionError("unsupported Fabric database version")
@@ -124,31 +134,43 @@ class FabricStore:
             self._validate_references(db, batch)
             result: dict[str, Thread] = {}
             for key, (item, payload) in batch.items():
-                row = db.execute("SELECT seq, payload FROM threads WHERE thread_id=?", (key,)).fetchone()
+                row = db.execute(
+                    "SELECT seq, payload FROM threads WHERE thread_id=?", (key,)
+                ).fetchone()
                 if row is not None:
                     if row[1] != payload:
                         raise ThreadConflict(key)
                     seq = row[0]
                 else:
-                    seq = db.execute("INSERT INTO threads(thread_id, payload) VALUES (?, ?)", (key, payload)).lastrowid
+                    seq = db.execute(
+                        "INSERT INTO threads(thread_id, payload) VALUES (?, ?)",
+                        (key, payload),
+                    ).lastrowid
                 result[key] = Thread.model_validate({**item.model_dump(), "seq": seq})
             db.commit()
         return [result[t.thread_id] for t in threads]
 
     @staticmethod
-    def _validate_references(db: sqlite3.Connection, batch: dict[str, tuple[ThreadDraft, str]]) -> None:
+    def _validate_references(
+        db: sqlite3.Connection, batch: dict[str, tuple[ThreadDraft, str]]
+    ) -> None:
         targets = {key: item for key, (item, _) in batch.items()}
         edges: dict[str, set[str]] = {key: set() for key in batch}
         for key, (item, _) in batch.items():
-            refs = [("resolves", item.resolves), ("retracts", item.retracts),
-                    ("correction", item.correction.target if item.correction else None)]
+            refs = [
+                ("resolves", item.resolves),
+                ("retracts", item.retracts),
+                ("correction", item.correction.target if item.correction else None),
+            ]
             for field, target_id in refs:
                 if target_id is None:
                     continue
                 if target_id == key:
                     raise InvalidReference(f"{field}: self reference")
                 if target_id not in targets:
-                    row = db.execute("SELECT payload FROM threads WHERE thread_id=?", (target_id,)).fetchone()
+                    row = db.execute(
+                        "SELECT payload FROM threads WHERE thread_id=?", (target_id,)
+                    ).fetchone()
                     if row is None:
                         raise InvalidReference(f"{field}: missing target")
                     targets[target_id] = ThreadDraft.model_validate_json(row[0])
@@ -157,31 +179,52 @@ class FabricStore:
                 target = targets[target_id]
                 if field == "resolves" and target.kind != "요청":
                     raise InvalidReference("resolves: target is not a request")
-                if field == "retracts" and (target.kind == "거절" or target.retracts is not None):
+                if field == "retracts" and (
+                    target.kind == "거절" or target.retracts is not None
+                ):
                     raise InvalidReference("retracts: invalid target")
         remaining = {key: set(value) for key, value in edges.items()}
         while remaining:
             ready = {key for key, value in remaining.items() if not value}
             if not ready:
                 raise InvalidReference("reference cycle")
-            remaining = {key: value - ready for key, value in remaining.items() if key not in ready}
+            remaining = {
+                key: value - ready
+                for key, value in remaining.items()
+                if key not in ready
+            }
 
     def entries(self, query: ThreadQuery) -> list[Thread]:
         """Read immutable facts in occurrence, recording, sequence order."""
         query = ThreadQuery.model_validate(query.model_dump())
         with self._connect() as db:
             rows = db.execute("SELECT seq, payload FROM threads").fetchall()
-        result = [Thread.model_validate({**json.loads(payload), "seq": seq}) for seq, payload in rows]
+        result = [
+            Thread.model_validate({**json.loads(payload), "seq": seq})
+            for seq, payload in rows
+        ]
         result.sort(key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
         retracted = {t.retracts for t in result if t.retracts is not None}
         effective = {t.thread_id: list(dict.fromkeys(t.tags)) for t in result}
         for t in result:
-            if t.correction is not None and t.thread_id not in retracted and t.retracts is None:
+            if (
+                t.correction is not None
+                and t.thread_id not in retracted
+                and t.retracts is None
+            ):
                 tags = effective[t.correction.target]
                 tags[:] = [tag for tag in tags if tag not in t.correction.remove]
                 tags.extend(tag for tag in t.correction.add if tag not in tags)
         result = [t.model_copy(update={"tags": effective[t.thread_id]}) for t in result]
-        result = [t for t in result if t.seq > query.after_seq and (query.kind is None or t.kind == query.kind) and (query.since is None or t.occurred_at >= query.since) and (query.until is None or t.occurred_at < query.until) and (query.tag is None or query.tag in t.tags)]
+        result = [
+            t
+            for t in result
+            if t.seq > query.after_seq
+            and (query.kind is None or t.kind == query.kind)
+            and (query.since is None or t.occurred_at >= query.since)
+            and (query.until is None or t.occurred_at < query.until)
+            and (query.tag is None or query.tag in t.tags)
+        ]
         return sorted(result, key=lambda t: (t.occurred_at, t.recorded_at, t.seq))
 
     def state(self, tag: str) -> "TagState":
@@ -190,12 +233,25 @@ class FabricStore:
 
         return project(tag, self.entries(ThreadQuery()))
 
-    def contact_statistics(self, tag: str, *, since: datetime | None = None, until: datetime | None = None) -> "ContactStatistics":
+    def contact_statistics(
+        self, tag: str, *, since: datetime | None = None, until: datetime | None = None
+    ) -> "ContactStatistics":
         """Count active events for a tag and find their latest occurrence."""
         snapshot = self.entries(ThreadQuery())
         retracted = {t.retracts for t in snapshot if t.retracts is not None}
-        events = [t for t in snapshot if tag in t.tags and t.thread_id not in retracted and t.retracts is None and t.kind not in ("태그정정", "거절") and (since is None or t.occurred_at >= since) and (until is None or t.occurred_at < until)]
-        return ContactStatistics(len(events), max((t.occurred_at for t in events), default=None))
+        events = [
+            t
+            for t in snapshot
+            if tag in t.tags
+            and t.thread_id not in retracted
+            and t.retracts is None
+            and t.kind not in ("태그정정", "거절")
+            and (since is None or t.occurred_at >= since)
+            and (until is None or t.occurred_at < until)
+        ]
+        return ContactStatistics(
+            len(events), max((t.occurred_at for t in events), default=None)
+        )
 
 
 @dataclass(frozen=True)
