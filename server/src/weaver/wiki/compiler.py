@@ -16,7 +16,7 @@ from weaver.fabric.v2.state import project
 from weaver.fabric.v2.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.schema.v2 import TagCorrection, ThreadDraft
-from weaver.wiki.store import HumanEdit, WikiStore
+from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore
 
 
 @dataclass(frozen=True)
@@ -77,8 +77,23 @@ class Compiler:
             if row is None:
                 result = self.llm.generate_json(
                     "wiki.human_edit",
-                    "Extract meaningful changes and tag corrections; ignore typos and formatting.",
-                    edit.diff,
+                    "Extract meaningful body changes and tag corrections; ignore typos, "
+                    "formatting, and frontmatter field changes. A correction target must "
+                    "be an existing thread ID from the supplied log.",
+                    json.dumps(
+                        {
+                            "diff": edit.diff,
+                            "threads": [
+                                {
+                                    "id": t.thread_id,
+                                    "content": t.content,
+                                    "tags": t.tags,
+                                }
+                                for t in self.fabric.entries(ThreadQuery())
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
                     EditResult,
                 )
                 now = datetime.now(UTC)
@@ -162,11 +177,13 @@ class Compiler:
                 e for e in self.context.candidates(tag, limit=100) if e.name == tag
             ]
             if not entries:
-                continue
+                raise ValueError(f"tag missing from context dictionary: {tag}")
             entry = entries[0]
             path = f"pages/{tag}.md"
             try:
                 props, body, base = self.store.read(path)
+                if not self.store.is_tracked_version(path, base):
+                    raise HumanEditPending(path)
             except FileNotFoundError:
                 props, body, base = {}, "", None
             related = [

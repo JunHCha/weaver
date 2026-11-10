@@ -132,3 +132,68 @@ def test_human_edit_retry_and_fields(tmp_path):
     assert any(t.field == "status" and t.value == "완료" for t in human)
     assert any(t.correction is not None for t in human)
     assert next(t for t in threads if t.thread_id == "one").tags == ["김철수"]
+
+
+def test_unsettled_human_edit_is_never_overwritten(tmp_path):
+    import os
+    import time
+
+    from weaver.wiki.store import HumanEditPending
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=1800)
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages([Page("홍길동", "person")])
+    fabric.append([draft()])
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        FakeLLM(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    compiler.run()
+    path = store.root / "pages/홍길동.md"
+    path.write_text(path.read_text() + "\n사람의 변경\n")
+    old = time.time() - 3600
+    os.utime(path, (old, old))
+    fabric.append([draft().model_copy(update={"thread_id": "two"})])
+    with pytest.raises(HumanEditPending):
+        compiler.run()
+    assert "사람의 변경" in path.read_text()
+    assert compiler.bookmark() == 1
+
+
+def test_settled_human_edit_is_used_without_feedback_loop(tmp_path):
+    from weaver.fabric.v2.store import ThreadQuery
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=0)
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages([Page("홍길동", "person")])
+    fabric.append([draft()])
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        FakeLLM(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    compiler.run()
+    path = store.root / "pages/홍길동.md"
+    path.write_text(path.read_text() + "\n사람의 변경\n")
+    fabric.append([draft().model_copy(update={"thread_id": "two"})])
+    from weaver.wiki.store import HumanEditPending
+
+    with pytest.raises(HumanEditPending):
+        compiler.run()
+    compiler.run()
+    assert "사람의 변경" in path.read_text()
+    assert len(fabric.entries(ThreadQuery())) == 2
+    assert store.scan(datetime.now(UTC).timestamp()) == []
