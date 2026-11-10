@@ -229,3 +229,14 @@ live는 `--live`, 양의 유한한 `--max-cost-usd`, `--confirm-budget`이 모�
 cd server
 uv run pytest tests/evals/test_runner.py
 ```
+
+### Event summary evaluation
+
+`uv run --project server python -m weaver.evals summary` replays the independent
+cases in `server/evals/summary_cases.json` through the summary draft and approval
+stages. It compares the draft body, questions and extracted Thread kind, content
+and tags against each case's expected values, and writes predictions and call
+traces to `reports/summary-evals.json`. Use `--cases` and `--output` to select
+other paths. This offline path uses temporary state and a fake Thread sink; the
+responses are fixtures, not calls to a provider. The older evaluation remains
+available while the runtime still uses the older Loom flow (#101).
