@@ -248,13 +248,24 @@ def test_wiki_configuration_and_runtime_wiring(tmp_path):
     assert (config.vault_root / "Notes/Wiki/열린 요청.md").exists()
 
 
-def test_capture_to_wiki_and_human_feedback(tmp_path):
+def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
     import hashlib
     import json
+    import os
+    import time
+    from datetime import UTC, datetime
 
     from weaver.fabric.v2 import FabricStore, ThreadQuery
     from weaver.schema.v2 import ReviewPackage
 
+    now = [time.time()]
+
+    class ClockDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(now[0], tz or UTC)
+
+    monkeypatch.setattr("weaver.wiki.compiler.datetime", ClockDatetime)
     config_file = tmp_path / "server.toml"
     config_file.write_text(
         "\n".join(
@@ -266,6 +277,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path):
         stream.write("\n[wiki]\nenabled = true\ninterval_seconds = 1\n")
 
     class WikiFake(FakeLlm):
+        def __init__(self):
+            self.compile_inputs = []
+
         def generate_json(self, task, system, user, schema):
             if task == "loom.approve":
                 return schema.model_validate(
@@ -306,10 +320,13 @@ def test_capture_to_wiki_and_human_feedback(tmp_path):
 
         def generate_text(self, task, system, user):
             assert task == "wiki.compile"
-            return "위키 본문"
+            payload = json.loads(user)
+            self.compile_inputs.append(payload)
+            return payload["page"] or "위키 본문"
 
     config = load_config(config_file, init_directories=True)
-    runtime = build_runtime(config, plugins=Plugins(client=WikiFake()))
+    client = WikiFake()
+    runtime = build_runtime(config, plugins=Plugins(client=client))
     cap = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV"
     data = b"test text"
     manifest = {
@@ -340,7 +357,7 @@ def test_capture_to_wiki_and_human_feedback(tmp_path):
         "feedback": None,
     }
     (config.courier.decisions / paths[0].name).write_text(json.dumps(verdict))
-    runtime = build_runtime(config, plugins=Plugins(client=WikiFake()))
+    runtime = build_runtime(config, plugins=Plugins(client=client))
     runtime._tick(threading.Event())
     assert not list(config.courier.decisions.glob("*.json"))
     assert len(list((config.archive_root / "summaries").glob("*/*.json"))) == 1
@@ -349,13 +366,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path):
     root = config.vault_root / "Weaver"
     copy = next((root / "summaries").glob("*.md"))
     assert "요약" in copy.read_text()
-    import os
-    import time
-
     job = next(task.run.__self__ for task in runtime.maintenance if task.name == "wiki")
-    now = time.time()
-    for path in root.glob("*.md"):
-        os.utime(path, (now - 1801, now - 1801))
+    job.store.clock = lambda: now[0]
+    now[0] += 1801
     job.run()
     assert copy.stem in (root / "열린 요청.md").read_text()
     assert list((root / "Digest").rglob("*.md"))
@@ -364,17 +377,14 @@ def test_capture_to_wiki_and_human_feedback(tmp_path):
     job.run()
     assert len(fabric.entries(ThreadQuery())) == 1
     assert "사람의 수정" in page.read_text()
-    now = time.time()
-    os.utime(page, (now - 1801, now - 1801))
-    import sqlite3
-
-    with sqlite3.connect(job.store.db_path) as db:
-        db.execute(
-            "UPDATE pages SET since=? WHERE path=?", (now - 1801, "pages/홍길동.md")
-        )
+    os.utime(page, (now[0], now[0]))
+    now[0] += 1801
     job.run()
     threads = fabric.entries(ThreadQuery())
     assert len(threads) == 2 and threads[-1].actor == "human"
+    assert "사람의 수정" in client.compile_inputs[-1]["page"]
+    assert "사람의 수정" in page.read_text()
+    now[0] += 1801
     job.run()
     assert len(fabric.entries(ThreadQuery())) == 2
 
