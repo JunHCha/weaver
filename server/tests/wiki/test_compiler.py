@@ -125,7 +125,11 @@ def test_human_edit_retry_and_fields(tmp_path):
         {
             "status": "완료",
             "deadline": "2025-01-02",
-            "schedule": "오후",
+            "schedule": {
+                "start": "2025-01-02T15:00:00Z",
+                "end": None,
+                "timezone": "UTC",
+            },
             "assignees": ["김철수"],
         },
     )
@@ -223,7 +227,7 @@ def test_frontmatter_follows_projected_fields_and_context(tmp_path):
     context.sync_from_pages([Page("홍길동", "person", ("별명",))])
     changes = [
         ("deadline", "2025-01-02"),
-        ("schedule", "오후"),
+        ("schedule", {"start": "2025-01-02T15:00:00Z", "end": None, "timezone": "UTC"}),
         ("assignees", {"add": ["김철수"], "remove": []}),
         ("status", "완료"),
     ]
@@ -250,7 +254,7 @@ def test_frontmatter_follows_projected_fields_and_context(tmp_path):
         for key in ("deadline", "schedule", "assignees", "status", "kind", "aliases")
     } == {
         "deadline": "2025-01-02",
-        "schedule": "오후",
+        "schedule": {"start": "2025-01-02T15:00:00Z", "end": None, "timezone": "UTC"},
         "assignees": ["김철수"],
         "status": "완료",
         "kind": "person",

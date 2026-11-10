@@ -1,6 +1,7 @@
 """Schema v2 data contracts for the review and append-only log boundary."""
 
 from typing import Annotated, Literal, Protocol, Self, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 
@@ -13,6 +14,24 @@ class TagCorrection(Contract):
     target: NonEmpty
     remove: list[NonEmpty]
     add: list[NonEmpty]
+
+
+class ScheduleValue(Contract):
+    """Structured times of a schedule, with an explicit IANA timezone."""
+
+    start: Timestamp
+    end: Timestamp | None
+    timezone: NonEmpty
+
+    @model_validator(mode="after")
+    def validate_times(self) -> Self:
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("unknown timezone") from exc
+        if self.end is not None and self.end <= self.start:
+            raise ValueError("end must follow start")
+        return self
 
 
 class ThreadDraft(Contract):
@@ -58,9 +77,14 @@ class ThreadDraft(Contract):
     resolves: NonEmpty | None
     retracts: NonEmpty | None
     correction: TagCorrection | None
+    blocked_by: NonEmpty | None = None
 
     @model_validator(mode="after")
     def validate_kind(self) -> Self:
+        if self.blocked_by is not None and self.kind != "일정":
+            raise ValueError("only schedules can be blocked")
+        if self.field == "schedule" and self.value is not None:
+            ScheduleValue.model_validate(self.value)
         if (self.direction is not None) != (self.kind == "요청"):
             raise ValueError("direction is required exactly for requests")
         if (self.correction is not None) != (self.kind == "태그정정"):
@@ -119,6 +143,16 @@ class EventSummary(Version2):
     body: NonEmpty
     replaces: Digest | None
     created_at: Timestamp
+
+
+class ApprovedSchedule(Version2, ScheduleValue):
+    """A published schedule from an approved summary and a Fabric thread."""
+
+    package_id: NonEmpty
+    thread_id: NonEmpty
+    title: NonEmpty
+    blocked_by: NonEmpty | None
+    summary_id: Digest
 
 
 type Stage = Literal["수집", "전송", "정리", "질문", "검토", "반영", "wiki갱신"]

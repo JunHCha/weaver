@@ -25,6 +25,19 @@ class V2ContractTest {
     ).validate(text, InputFormat.JSON).isEmpty()
 
     @Test
+    fun approvedScheduleRoundTripAndInvalidValues() {
+        val value = io.github.junhcha.weaver.schema.v2.ApprovedSchedule(
+            2, "package-1", "thread-1", "회의", "2026-01-01T09:00:00+09:00", null,
+            "Asia/Seoul", null, "a".repeat(64),
+        )
+        val text = WeaverCodec.encode(value)
+        assertTrue(valid("ApprovedSchedule", text))
+        assertTrue(WeaverCodec.decode<io.github.junhcha.weaver.schema.v2.ApprovedSchedule>(text) is DecodeResult.Ok)
+        assertTrue(runCatching { value.copy(timezone = "No/Such_Zone") }.isFailure)
+        assertTrue(runCatching { value.copy(end = "2025-01-01T00:00:00Z") }.isFailure)
+    }
+
+    @Test
     fun courierCodecAcceptsOnlyStrictV2ForV2Models() {
         val value = VerdictV2(2, "package-1", 1, VerdictV2.Action.APPROVE, listOf("가"), null, null)
         val text = WeaverCodec.encode(value)

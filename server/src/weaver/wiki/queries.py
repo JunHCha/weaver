@@ -25,6 +25,8 @@ def _link(thread: Thread) -> str:
 
 
 def _date(value: object, now: datetime) -> date | None:
+    if isinstance(value, dict):
+        value = value.get("start")
     if not isinstance(value, str):
         return None
     try:
@@ -47,7 +49,7 @@ def render_pages(
 ) -> dict[str, str]:
     """Render pages from one snapshot; calendar boundaries use ``now``'s timezone.
 
-    Deadlines and schedules accept ISO dates or timezone-aware timestamps.
+    Deadlines accept ISO dates or timezone-aware timestamps; schedules use their start.
     Contact counts cover the preceding 7 and 30 days up to the injected time.
     """
     if now.utcoffset() is None or inactive_days < 0:

@@ -153,3 +153,55 @@ def test_event_summary_address_and_version():
     ):
         with pytest.raises(ValidationError):
             EventSummary.model_validate(data | invalid)
+
+
+def test_schedule_value_and_block_reference(draft):
+    schedule = {
+        "start": "2026-01-01T09:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    assert ThreadDraft.model_validate(
+        draft
+        | {
+            "kind": "일정",
+            "field": "schedule",
+            "value": schedule,
+            "blocked_by": "request-1",
+        }
+    )
+    for invalid in (
+        "2026-01-01",
+        {},
+        schedule | {"timezone": "No/Such_Zone"},
+        schedule | {"start": "2026-01-01T09:00:00"},
+    ):
+        with pytest.raises(ValidationError):
+            ThreadDraft.model_validate(draft | {"field": "schedule", "value": invalid})
+    with pytest.raises(ValidationError):
+        ThreadDraft.model_validate(draft | {"blocked_by": "request-1"})
+
+
+def test_approved_schedule_contract():
+    from weaver.schema.v2 import ApprovedSchedule
+
+    data = {
+        "schema_version": 2,
+        "package_id": "package-1",
+        "thread_id": "thread-1",
+        "title": "회의",
+        "start": "2026-01-01T09:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+        "blocked_by": None,
+        "summary_id": "a" * 64,
+    }
+    assert ApprovedSchedule.model_validate(data)
+    for invalid in (
+        {"end": "2025-01-01T00:00:00Z"},
+        {"title": " "},
+        {"summary_id": "bad"},
+        {"schema_version": 1},
+    ):
+        with pytest.raises(ValidationError):
+            ApprovedSchedule.model_validate(data | invalid)

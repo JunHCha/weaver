@@ -11,6 +11,7 @@ from pathlib import Path
 from . import SHARED_MODELS, v2
 
 V2_MODELS = (
+    v2.ApprovedSchedule,
     v2.Thread,
     v2.ThreadDraft,
     v2.EventSummary,

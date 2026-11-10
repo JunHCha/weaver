@@ -138,7 +138,7 @@ class FabricStore:
                     "SELECT seq, payload FROM threads WHERE thread_id=?", (key,)
                 ).fetchone()
                 if row is not None:
-                    if row[1] != payload:
+                    if _canonical(ThreadDraft.model_validate_json(row[1])) != payload:
                         raise ThreadConflict(key)
                     seq = row[0]
                 else:
@@ -159,6 +159,7 @@ class FabricStore:
         for key, (item, _) in batch.items():
             refs = [
                 ("resolves", item.resolves),
+                ("blocked_by", item.blocked_by),
                 ("retracts", item.retracts),
                 ("correction", item.correction.target if item.correction else None),
             ]
@@ -177,8 +178,8 @@ class FabricStore:
                 if target_id in batch:
                     edges[key].add(target_id)
                 target = targets[target_id]
-                if field == "resolves" and target.kind != "요청":
-                    raise InvalidReference("resolves: target is not a request")
+                if field in ("resolves", "blocked_by") and target.kind != "요청":
+                    raise InvalidReference(f"{field}: target is not a request")
                 if field == "retracts" and (
                     target.kind == "거절" or target.retracts is not None
                 ):

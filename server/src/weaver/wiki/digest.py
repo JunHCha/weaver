@@ -50,6 +50,8 @@ def _month_path(day: date) -> str:
 
 
 def _value_day(value: object, zone: ZoneInfo) -> date | None:
+    if isinstance(value, dict):
+        value = value.get("start")
     if not isinstance(value, str):
         return None
     try:
