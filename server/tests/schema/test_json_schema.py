@@ -1,15 +1,16 @@
 """Consumer parity for structural rules; cross-value invariants stay server-side."""
 
+import json
 from itertools import product
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
-from weaver.schema import Entity, Manifest, Proposal, Thread, Verdict
-from weaver.schema.models import ProposalEntity, Segment, ThreadDraft
+from weaver.schema import Manifest, Thread, ThreadDraft, Verdict
+from weaver.schema.models import Segment
 
-from .test_contract import example
+from .test_contract import ROOT, example, model_named
 
 
 def verdicts(model, payload):
@@ -32,98 +33,76 @@ def agree(model, payload, expected):
 
 
 @pytest.mark.parametrize(
-    ("verdict", "has_edits", "reason", "instruction"),
+    ("action", "edited", "feedback"),
     list(
         product(
-            ["approve", "edit", "revise", "reject"],
-            [False, True],
-            [None, "wrong_person"],
+            ["approve", "edit", "feedback", "reject"],
+            [None, "수정 본문"],
             [None, "다시 확인"],
         )
     ),
 )
-def test_verdict_32_branches(verdict, has_edits, reason, instruction):
+def test_verdict_branches(action, edited, feedback):
     payload = example("Verdict") | dict(
-        verdict=verdict,
-        edits=[{"path": "/summary", "value": "새 요약"}] if has_edits else [],
-        reject_reason=reason,
-        instruction=instruction,
+        action=action, edited_body=edited, feedback=feedback
     )
     agree(
         Verdict,
         payload,
-        has_edits == (verdict == "edit")
-        and (reason is not None) == (verdict == "reject")
-        and (instruction is not None) == (verdict == "revise"),
+        (edited is not None) == (action == "edit")
+        and (feedback is not None) == (action == "feedback"),
     )
 
 
 @pytest.mark.parametrize(
-    ("kind", "has_request", "has_resolves", "actor"),
+    ("kind", "direction", "correction", "content"),
     list(
         product(
-            ["요청", "논의", "결정", "폐기", "약속", "일정", "변경"],
-            [False, True],
-            [False, True],
-            ["human", "ai_approved"],
+            ["요청", "결정", "일정", "기록", "태그정정", "거절"],
+            [None, "받음"],
+            [None, {"target": "thread-2", "remove": [], "add": ["새"]}],
+            [None, "내용"],
         )
     ),
 )
-def test_entry_kind_request_resolution_actor(kind, has_request, has_resolves, actor):
-    original = example("Thread")
-    payload = original | dict(
+def test_thread_kind_dependent_fields(kind, direction, correction, content):
+    payload = example("Thread") | dict(
         kind=kind,
-        request=original["request"] if has_request else None,
-        resolves=original["entry_id"] if has_resolves else None,
-        actor=actor,
+        direction=direction,
+        correction=correction,
+        content=content,
+        field=None,
+        value=None,
     )
     agree(
         Thread,
         payload,
-        has_request == (kind == "요청")
-        and (not has_resolves or (kind == "결정" and actor == "human")),
+        (direction is not None) == (kind == "요청")
+        and (correction is not None) == (kind == "태그정정")
+        and (content is None) == (kind == "거절"),
     )
 
 
-@pytest.mark.parametrize(("has_ref", "has_id"), list(product([False, True], repeat=2)))
-def test_entity_identity(has_ref, has_id):
-    payload = example("Entity") | dict(
-        ref="e1" if has_ref else None,
-        entity_id=example("Thread")["entities"][0] if has_id else None,
+@pytest.mark.parametrize("resolves", [None, "thread-2"])
+@pytest.mark.parametrize("kind", ["요청", "결정", "기록"])
+def test_only_decisions_resolve_requests(kind, resolves):
+    payload = example("Thread") | dict(
+        kind=kind,
+        direction="받음" if kind == "요청" else None,
+        resolves=resolves,
+        field=None,
+        value=None,
     )
-    agree(Entity, payload, has_ref or has_id)
-    del payload["schema_version"]
-    agree(ProposalEntity, payload, has_ref)
-
-
-@pytest.mark.parametrize("ref", [None, "e1"])
-def test_full_proposal_requires_nonnull_entity_ref(ref):
-    payload = example("Proposal")
-    payload["entities"][0]["ref"] = ref
-    payload["entities"][0]["entity_id"] = example("Thread")["entities"][0]
-    agree(Proposal, payload, ref is not None)
+    agree(Thread, payload, resolves is None or kind == "결정")
 
 
 @pytest.mark.parametrize(
     ("start", "end", "expected"),
-    [
-        (None, None, True),
-        (0, 100, True),
-        (None, 100, False),
-        (0, None, True),
-    ],
+    [(None, None, True), (0, 100, True), (None, 100, False), (0, None, True)],
 )
 def test_segment_audio_offset_pairs(start, end, expected):
     payload = example("Script")["segments"][0] | dict(start_ms=start, end_ms=end)
     agree(Segment, payload, expected)
-
-
-@pytest.mark.parametrize("resolves", [None, "d1", "evt_01ARZ3NDEKTSV4RRFFQ69G5FA0"])
-def test_ai_draft_resolves_is_null_only(resolves):
-    payload = example("Proposal")["entry_drafts"][1] | dict(
-        kind="결정", resolves=resolves
-    )
-    agree(ThreadDraft, payload, resolves is None)
 
 
 @pytest.mark.parametrize(
@@ -155,20 +134,18 @@ def test_ulid_has_exact_length_in_both_validators(suffix):
 
 
 @pytest.mark.parametrize(
-    ("model", "field"), [(Manifest, "schema_version"), (Verdict, "rev")]
+    ("model", "field"), [(Manifest, "schema_version"), (Verdict, "revision")]
 )
 def test_integer_lexical_rule_cannot_be_expressed_in_json_schema(model, field):
     # Draft 2020-12 integer is mathematical, so 1 and 1.0 are indistinguishable.
     # Consumers must also enforce the documented integer-token rule when decoding.
-    payload = example(model.__name__) | {field: 1.0}
+    payload = example(model.__name__) | {
+        field: 1.0 if field != "schema_version" else 1.0
+    }
     assert verdicts(model, payload) == (False, True)
 
 
 def test_all_exported_schema_examples_validate_independently():
-    import json
-
-    from .test_contract import ROOT
-
     validators = {}
     for path in (ROOT / "schema").glob("*.schema.json"):
         schema = json.loads(path.read_text())
@@ -185,48 +162,25 @@ def test_all_exported_schema_examples_validate_independently():
     [
         ("Manifest", "capture_id"),
         ("Receipt", "source_id"),
-        ("Proposal", "proposal_id"),
         ("Alert", "alert_id"),
-        ("Entity", "entity_id"),
-        ("Thread", "entry_id"),
-        ("Entity", "ref"),
         ("Manifest", "sha256"),
         ("Manifest", "payload"),
         ("Thread", "source_id"),
+        ("EventSummary", "summary_id"),
     ],
 )
 def test_identifier_and_path_trailing_newline_is_rejected(name, field):
-    from weaver.schema import SHARED_MODELS
-
-    model = next(m for m in SHARED_MODELS if m.__name__ == name)
     payload = example(name)
-    if name == "Entity" and field == "entity_id":
-        payload[field] = example("Thread")["entities"][0]
-    if name == "Thread" and field == "source_id":
-        payload[field] = "output:review/request"
     payload[field] += "\n"
-    agree(model, payload, False)
-
-
-def test_proposal_nested_items_do_not_repeat_version_keys():
-    payload = example("Proposal")
-    for collection in ["entities", "relations", "schedules", "entry_drafts"]:
-        assert all("schema_version" not in item for item in payload[collection])
-        modified = example("Proposal")
-        modified[collection][0]["schema_version"] = 1
-        agree(Proposal, modified, False)
+    agree(model_named(name), payload, False)
 
 
 @pytest.mark.parametrize(
     "start,end,expected",
     [(None, None, True), (0, None, True), (0, 100, True), (None, 100, False)],
 )
-def test_exported_thread_allows_unknown_end_with_consumer_parity(start, end, expected):
-    import json
-
+def test_exported_script_allows_unknown_end_with_consumer_parity(start, end, expected):
     from weaver.schema import Script
-
-    from .test_contract import ROOT
 
     payload = example("Script")
     payload["segments"][0].update(start_ms=start, end_ms=end)
@@ -236,3 +190,17 @@ def test_exported_thread_allows_unknown_end_with_consumer_parity(start, end, exp
         == expected
     )
     agree(Script, payload, expected)
+
+
+def test_schedule_value_has_consumer_parity():
+    schedule = {
+        "start": "2026-01-01T09:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    base = example("Thread") | dict(kind="일정", field="schedule")
+    agree(
+        ThreadDraft,
+        {k: v for k, v in (base | {"value": schedule}).items() if k != "seq"},
+        True,
+    )

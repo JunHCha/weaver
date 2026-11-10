@@ -67,10 +67,10 @@ jobs:
         run: |
           mkdir -p reports
           uv run --project server --locked pytest -ra --junitxml=reports/pytest.xml
-      - name: Offline evaluation regression check
+      - name: Offline summary evaluation replay
         run: >-
-          uv run --project server --locked python -m weaver.evals run
-          --baseline server/evals/baseline.json --output reports/evals.json
+          uv run --project server --locked python -m weaver.evals summary
+          --output reports/summary-evals.json
       - name: Schema export matches committed schema/
         run: |
           set -euo pipefail
@@ -80,8 +80,6 @@ jobs:
           mkdir -p "$exported" "$committed"
           uv run --project server --locked python -m weaver.schema.export --output "$exported"
           cp schema/*.schema.json "$committed"/
-          mkdir -p "$committed/v2"
-          cp schema/v2/*.schema.json "$committed/v2"/
           if ! diff -ru "$committed" "$exported"; then
             echo "::error::schema/ differs from the server export. Run: uv run --project server python -m weaver.schema.export --output schema"
             exit 1

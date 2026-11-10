@@ -78,7 +78,7 @@ def test_installed_package_and_boundaries(tmp_path: Path) -> None:
         "import importlib\n"
         "import weaver\n"
         "for name in ('schema', 'courier', 'archive', 'spinner', 'llm', "
-        "'loom', 'fabric', 'publish', 'alert'):\n"
+        "'loom', 'fabric', 'wiki', 'alert', 'runtime'):\n"
         "    importlib.import_module('weaver.' + name)\n",
     )
     assert result.returncode == 0, result.stderr

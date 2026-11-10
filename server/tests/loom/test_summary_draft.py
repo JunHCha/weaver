@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from weaver.context import ContextDictionary
 from weaver.loom.summary import SummaryDrafts
-from weaver.schema.v2 import Question, ReviewPackage
+from weaver.schema import Question, ReviewPackage
 
 
 class FakeLlm:

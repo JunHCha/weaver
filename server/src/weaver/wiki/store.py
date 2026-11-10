@@ -14,9 +14,89 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
-from weaver.publish.frontmatter import _scalar
-
 HASH_KEY = "weaver_content_sha256"
+
+
+def _without_comment(text: str) -> str:
+    """Strip YAML comments while respecting doubled quotes and JSON escapes."""
+    quote: str | None = None
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if quote is not None:
+            if char == "\\" and quote == '"':
+                i += 2
+                continue
+            if char == quote:
+                if quote == "'" and text[i : i + 2] == "''":
+                    i += 2
+                    continue
+                quote = None
+        elif char == "#" and (i == 0 or text[i - 1].isspace()):
+            return text[:i].strip()
+        elif char in ("'", '"') and (
+            i == 0 or text[i - 1].isspace() or text[i - 1] in "[,"
+        ):
+            quote = char
+        i += 1
+    if quote is not None:
+        raise ValueError("unclosed quote")
+    return text.strip()
+
+
+def _scalar(text: str) -> JsonValue:
+    text = _without_comment(text.strip())
+    if not text or text in ("null", "Null", "NULL", "~"):
+        return None
+    if text.startswith("'"):
+        if re.fullmatch(r"'(?:[^']|'')*'", text) is None:
+            raise ValueError("unsupported quoted scalar")
+        return text[1:-1].replace("''", "'")
+    if text in ("true", "True", "TRUE", "false", "False", "FALSE"):
+        return text.lower() == "true"
+    if text.startswith(('"', "[")):
+        value: JsonValue = json.loads(text)
+        if isinstance(value, list) and any(
+            isinstance(item, (dict, list)) for item in value
+        ):
+            raise ValueError("unsupported nested value")
+        return value
+    if (
+        text.startswith(("{", "|", ">", "&", "*", "!", "- ", "? ", "@", "`", "%"))
+        or text
+        in (
+            "-",
+            "?",
+            "yes",
+            "Yes",
+            "YES",
+            "no",
+            "No",
+            "NO",
+            "on",
+            "On",
+            "ON",
+            "off",
+            "Off",
+            "OFF",
+        )
+        or re.search(r":(?:\s|$)", text)
+        or any(char in text for char in "[]{}")
+    ):
+        raise ValueError("unsupported scalar")
+    if re.fullmatch(r"-?(?:0|[1-9][0-9]*)", text):
+        return int(text)
+    # Other YAML numeric spellings and implicit booleans are outside this
+    # dialect. Reject them rather than turning a typed value into human text.
+    if re.fullmatch(
+        r"[-+]?(?:0[xob][0-9a-f_]+|[0-9][0-9_]*(?:\.[0-9_]*)?"
+        r"(?::[0-9_]+(?:\.[0-9_]*)?)*(?:e[-+]?[0-9]+)?|"
+        r"\.[0-9]+(?:e[-+]?[0-9]+)?|\.inf|\.nan)",
+        text,
+        re.IGNORECASE,
+    ):
+        raise ValueError("unsupported scalar type")
+    return text
 
 
 class HumanEditPending(Exception):

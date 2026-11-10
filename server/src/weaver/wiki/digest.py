@@ -10,10 +10,10 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from weaver.fabric.v2 import ThreadQuery
-from weaver.fabric.v2.store import Fabric
+from weaver.fabric import ThreadQuery
+from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
-from weaver.schema.v2 import Thread
+from weaver.schema import Thread
 from weaver.wiki.store import WikiStore
 
 

@@ -1,14 +1,14 @@
 """File-protocol smoke through the same assembly used by ``weaver run``.
 
-Only the LlmClient is replaced. Phone capture/review producers write synthetic
-Courier files; all stores, parsers, review, feedback and vault output are real.
+Only the LlmClient is replaced. Phone capture producers write synthetic Courier
+files; all stores, parsers, drafting and review journals are real.
 ADR-028 defers audio: Galaxy call scripts are text and never invoke local STT.
 """
 
 import hashlib
 import json
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -16,8 +16,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from weaver.config import load_config
 from weaver.runtime.assemble import Plugins, build_runtime
-from weaver.schema import Manifest, Receipt
-from weaver.schema.v2 import ReviewPackage
+from weaver.schema import Manifest, Receipt, ReviewPackage
 from weaver.spinner.stt import MlxStt
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -162,20 +161,13 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(MlxStt, "__init__", forbid_stt)
     monkeypatch.setattr(MlxStt, "transcribe", forbid_stt)
 
-    # Freeze Thread recording, so Fabric ordering and rendered timestamps are stable.
-    class FixedDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime.fromisoformat(AT).astimezone(tz or UTC)
-
-    monkeypatch.setattr("weaver.loom.propose.datetime", FixedDatetime)
     config_file = tmp_path / "config.toml"
     config_file.write_text(
         "\n".join(
             f'{key}_root = "{key}"'
             for key in ("sync", "archive", "vault", "state", "log")
         )
-        + '\n[llm]\nbackend = "none"\n[publish]\nenabled = true\n'
+        + '\n[llm]\nbackend = "none"\n'
     )
     return World(load_config(config_file, environ={}, init_directories=True))
 

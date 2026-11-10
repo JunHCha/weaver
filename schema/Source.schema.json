@@ -74,7 +74,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:weaver:schema:v1:Source",
+  "$id": "urn:weaver:schema:Source",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Archive metadata. payload_ref is a logical relative key, never a local path.",

@@ -8,9 +8,9 @@ from weaver.context import ContextDictionary
 from weaver.llm.types import LlmClient
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import SummaryReview
-from weaver.schema.v2 import Thread, ThreadDraft, Verdict
+from weaver.schema import Thread, ThreadDraft, Verdict
 
-from .runner import TracedClient
+from .client import TracedClient
 
 SUMMARY_CASES = Path(__file__).resolve().parents[3] / "evals" / "summary_cases.json"
 

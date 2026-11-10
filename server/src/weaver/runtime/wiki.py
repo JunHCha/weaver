@@ -1,4 +1,4 @@
-"""Periodic consumers of the v2 Fabric log."""
+"""Periodic consumers of the Fabric log."""
 
 import sqlite3
 from datetime import datetime
@@ -6,7 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from weaver.context import ContextDictionary
-from weaver.fabric.v2 import Fabric, ThreadQuery
+from weaver.fabric import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.wiki.compiler import Compiler
 from weaver.wiki.digest import DigestBuilder

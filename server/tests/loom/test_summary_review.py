@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from weaver.context import ContextDictionary
 from weaver.loom.summary_review import SummaryReview
-from weaver.schema.v2 import ReviewPackage, Thread, ThreadDraft, Verdict
+from weaver.schema import ReviewPackage, Thread, ThreadDraft, Verdict
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 SOURCE = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -259,7 +259,7 @@ def test_edit_feedback_reject_and_replay(tmp_path: Path) -> None:
 def test_fabric_lost_response_replays_same_batch(tmp_path: Path) -> None:
     import pytest
 
-    from weaver.fabric.v2 import FabricStore, ThreadQuery
+    from weaver.fabric import FabricStore, ThreadQuery
 
     store = FabricStore(tmp_path / "fabric.sqlite3")
 

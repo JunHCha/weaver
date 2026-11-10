@@ -37,8 +37,3 @@ class LlmGate:
 
 class LlmUnavailable(LlmError):
     code = "llm_unavailable"
-
-
-class ExtractionInvalid(Exception):
-    """LLM extraction output failed validation; a contract violation (not
-    ValueError, so it gets the bounded contract retry rule)."""

@@ -31,7 +31,7 @@ def test_normalized_shared_settings(tmp_path: Path) -> None:
     assert config.courier.proposals == config.sync_root / "proposals"
     assert config.courier.decisions == config.sync_root / "decisions"
     assert config.llm.backend == "anthropic"
-    assert config.spinner.llm is config.loom.llm is config.llm
+    assert config.spinner.llm is config.llm
 
 
 @pytest.mark.parametrize(
@@ -401,7 +401,6 @@ def test_stt_paths_and_spinner_settings(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path), environ={})
     assert config.stt.model_path == config.state_root / "models/whisper-large-v3-turbo"
     assert config.spinner.stt is config.stt
-    assert config.loom.stt is None
     config = load_config(
         write_config(tmp_path, '[stt]\nmodel_path = "models/turbo"\n'), environ={}
     )
@@ -509,47 +508,18 @@ def test_timezone_oserror_is_redacted(
     assert "private" not in str(error.value)
 
 
-def test_refiner_settings_are_injected(tmp_path: Path) -> None:
-    config = load_config(
-        write_config(tmp_path, "[refiner]\nbefore = 0\nafter = 5\n"), environ={}
-    )
-    assert config.refiner.before == 0
-    assert config.refiner.after == 5
-    assert config.loom.refiner is config.refiner
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        "[refiner]\nbefore = -1",
-        "[refiner]\nafter = 6",
-        "[refiner]\nbefore = true",
-        "[refiner]\nbefore = 1.5",
-        '[refiner]\nbefore = "1"',
-        '[refiner]\nunit = "segment"',
-        "refiner = []",
-    ],
-)
-def test_invalid_refiner_settings(tmp_path: Path, extra: str) -> None:
-    with pytest.raises(ConfigError, match="refiner"):
-        load_config(write_config(tmp_path, extra), environ={})
-
-
 def test_all_shared_config_tables_coexist(tmp_path: Path) -> None:
     config = load_config(
         write_config(
             tmp_path,
             '[llm]\nbackend = "none"\n[stt]\nmodel_path = "model"\n'
-            '[time]\ntimezone = "America/New_York"\n'
-            "[refiner]\nbefore = 0\nafter = 2\n",
+            '[time]\ntimezone = "America/New_York"\n',
         ),
         environ={},
     )
     assert config.llm.backend == "none"
     assert config.stt.model_path == tmp_path / "model"
     assert config.time.timezone == "America/New_York"
-    assert config.loom.refiner is config.refiner
-    assert (config.refiner.before, config.refiner.after) == (0, 2)
 
 
 def test_spinner_retry_config_and_factory(tmp_path: Path) -> None:
@@ -588,34 +558,16 @@ def test_invalid_spinner_config(tmp_path: Path, extra: str) -> None:
     assert "secret-value" not in str(caught.value)
 
 
-def test_loom_feedback_settings_default_and_override(tmp_path: Path) -> None:
-    config = load_config(write_config(tmp_path), environ={})
-    assert config.feedback.examples is True
-    assert (config.feedback.example_limit, config.feedback.example_bytes) == (3, 2048)
-    assert config.feedback.retention_days == 180
-    assert config.loom.feedback is config.feedback
-    config = load_config(
-        write_config(
-            tmp_path,
-            "[loom]\nfeedback_examples = false\nfeedback_example_limit = 1\n",
-        ),
-        environ={},
-    )
-    assert config.feedback.examples is False and config.feedback.example_limit == 1
-
-
 @pytest.mark.parametrize(
     "extra",
     [
-        "[loom]\nfeedback_examples = 1",
-        "[loom]\nfeedback_example_limit = 11",
-        "[loom]\nfeedback_retention_days = 0",
-        "[loom]\nunknown = 1",
-        "loom = []",
+        "[refiner]\nbefore = 1",
+        "[loom]\nfeedback_examples = false",
+        "[publish]\nenabled = true",
     ],
 )
-def test_invalid_loom_feedback_settings(tmp_path: Path, extra: str) -> None:
-    with pytest.raises(ConfigError, match="loom"):
+def test_removed_tables_are_rejected(tmp_path: Path, extra: str) -> None:
+    with pytest.raises(ConfigError, match="unknown fields"):
         load_config(write_config(tmp_path, extra), environ={})
 
 

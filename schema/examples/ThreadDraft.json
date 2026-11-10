@@ -1,0 +1,23 @@
+{
+  "thread_id": "thr_0123456789abcdef",
+  "kind": "일정",
+  "content": "주간 점검 회의",
+  "occurred_at": "2026-11-07T15:40:00+09:00",
+  "recorded_at": "2026-11-07T15:40:00+09:00",
+  "tags": [
+    "홍길동"
+  ],
+  "field": "schedule",
+  "value": {
+    "start": "2026-11-12T10:00:00+09:00",
+    "end": "2026-11-12T11:00:00+09:00",
+    "timezone": "Asia/Seoul"
+  },
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "actor": "ai_approved",
+  "direction": null,
+  "resolves": null,
+  "retracts": null,
+  "correction": null,
+  "blocked_by": null
+}

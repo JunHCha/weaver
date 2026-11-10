@@ -4,9 +4,9 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 from weaver.context import ContextDictionary
-from weaver.fabric.v2 import Fabric, ThreadQuery
-from weaver.fabric.v2.state import project
-from weaver.schema.v2 import Thread
+from weaver.fabric import Fabric, ThreadQuery
+from weaver.fabric.state import project
+from weaver.schema import Thread
 from weaver.wiki.store import WikiStore
 
 

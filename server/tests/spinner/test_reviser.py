@@ -17,7 +17,6 @@ from weaver.spinner.reviser import (
     SYSTEM_PROMPT,
     ContextLimitError,
     LlmReviser,
-    ReviseEntity,
     ReviseHints,
     Revision,
     RevisionError,
@@ -28,7 +27,6 @@ from weaver.spinner.reviser import (
 )
 
 SOURCE_ID = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-ENTITY_ID = "ent_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
 def make_thread(texts: list[str], *, timed: bool = False) -> Script:
@@ -84,10 +82,7 @@ class FakeLlm:
 def test_complete_request_and_minimal_hints() -> None:
     original = make_thread(["첫 문장", "중간 문장", "마지막 문장"], timed=True)
     before = original.model_dump_json()
-    hints = ReviseHints(
-        entities=[ReviseEntity(entity_id=ENTITY_ID, name="김민수", aliases=["민수님"])],
-        counterpart="김민수 후보",
-    )
+    hints = ReviseHints(counterpart="김민수 후보")
     fake = FakeLlm(["첫 문장!", "중간 문장!", "마지막 문장!"])
     result = LlmReviser(fake).revise(original, hints)
     task, system, user, schema = fake.calls[0]
@@ -98,7 +93,7 @@ def test_complete_request_and_minimal_hints() -> None:
     assert set(payload) == {"segments", "hints"}
     assert [s["text"] for s in payload["segments"]] == original.text.splitlines()
     assert payload["hints"] == hints.model_dump(mode="json")
-    assert set(payload["hints"]["entities"][0]) == {"entity_id", "name", "aliases"}
+    assert set(payload["hints"]) == {"counterpart"}
     revised = revision_to_thread(parse_revision(result), original)
     assert revised.text == "첫 문장!\n중간 문장!\n마지막 문장!"
     for old, new in zip(original.segments, revised.segments, strict=True):
@@ -344,25 +339,6 @@ def test_wire_requires_explicit_versions(field: str) -> None:
     del payload[field]
     with pytest.raises(RevisionError, match="missing_version"):
         parse_revision(json.dumps(payload))
-
-
-def test_same_alias_candidates_remain_hints() -> None:
-    hints = ReviseHints(
-        entities=[
-            ReviseEntity(entity_id=ENTITY_ID, name="김민수", aliases=["민수"]),
-            ReviseEntity(
-                entity_id="ent_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-                name="박민수",
-                aliases=["민수"],
-            ),
-        ]
-    )
-    text = "민수가 누구인지는 모르겠어."
-    fake = FakeLlm([text])
-    original = make_thread([text])
-    wire = LlmReviser(fake).revise(original, hints)
-    assert revision_to_thread(parse_revision(wire), original).text == text
-    assert json.loads(fake.calls[0][2])["hints"] == hints.model_dump(mode="json")
 
 
 @pytest.mark.parametrize("invalid", ["duplicate", "field"])

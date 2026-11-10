@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 
 from weaver.config import ServerConfig
 from weaver.loom.kakao import KakaoParseError, parse_kakao
+from weaver.schema import Script, Segment, Source
 from weaver.schema.internal import ArchivedSource
-from weaver.schema.models import Script, Segment, Source
 
 PARSER_VERSION = "spinner.text.v1"
 

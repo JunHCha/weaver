@@ -1,27 +1,24 @@
 {
-  "schema_version": 1,
-  "entities": [
-    "ent_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-    "ent_01ARZ3NDEKTSV4RRFFQ69G5FA1"
+  "thread_id": "thr_0123456789abcdef",
+  "kind": "일정",
+  "content": "주간 점검 회의",
+  "occurred_at": "2026-11-07T15:40:00+09:00",
+  "recorded_at": "2026-11-07T15:40:00+09:00",
+  "tags": [
+    "홍길동"
   ],
-  "kind": "요청",
-  "field": null,
-  "value": "점검 회의 요청",
-  "occurred_at": "2026-11-07T15:32:00+09:00",
-  "supersedes": null,
-  "retracts": null,
-  "request": {
-    "requester": "ent_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-    "targets": [
-      "ent_01ARZ3NDEKTSV4RRFFQ69G5FA1"
-    ],
-    "due_at": null,
-    "content": "내일 점검 회의를 열어주세요."
+  "field": "schedule",
+  "value": {
+    "start": "2026-11-12T10:00:00+09:00",
+    "end": "2026-11-12T11:00:00+09:00",
+    "timezone": "Asia/Seoul"
   },
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "actor": "ai_approved",
+  "direction": null,
   "resolves": null,
-  "blocked_by_request": null,
-  "entry_id": "evt_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-  "recorded_at": "2026-11-07T15:32:00+09:00",
-  "actor": "ai_approved"
+  "retracts": null,
+  "correction": null,
+  "blocked_by": null,
+  "seq": 1
 }

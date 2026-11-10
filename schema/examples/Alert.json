@@ -1,8 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "alert_id": "alt_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-  "proposal_id": "prp_01ARZ3NDEKTSV4RRFFQ69G5FA0",
-  "schedule_ref": "s1",
-  "message": "회의 일정이 변경되었습니다.",
+  "package_id": "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "thread_id": "thr_0123456789abcdef",
+  "message": "11월 10일 일정의 시각이 바뀌었을 수 있음. 새로 승인된 요약과 다릅니다.",
   "created_at": "2026-11-07T15:32:00+09:00"
 }

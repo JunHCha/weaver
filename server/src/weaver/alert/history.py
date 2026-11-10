@@ -1,12 +1,11 @@
 """Durable record of published alerts (``state_root/alerts.sqlite3``).
 
-The phone deletes alert files it has dismissed or resolved (#33), so file
-presence cannot prevent repeats; this history does. Rows are never deleted.
-Only IDs and Fabric entry IDs are stored, never source text.
+The phone deletes alert files it has dismissed or resolved, so file presence
+cannot prevent repeats; this history does. Rows are never deleted. Only IDs and
+Fabric Thread IDs are stored, never source text.
 """
 
 import contextlib
-import json
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -28,10 +27,10 @@ class AlertHistory:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.execute(
-                "CREATE TABLE IF NOT EXISTS alerts ("
-                "alert_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, "
-                "rev INTEGER NOT NULL, schedule_ref TEXT NOT NULL, "
-                "basis TEXT NOT NULL, created_at TEXT NOT NULL)"
+                "CREATE TABLE IF NOT EXISTS alert_log ("
+                "alert_id TEXT PRIMARY KEY, package_id TEXT NOT NULL, "
+                "thread_id TEXT NOT NULL, basis TEXT NOT NULL, "
+                "created_at TEXT NOT NULL)"
             )
         for suffix in ("-wal", "-shm"):
             with contextlib.suppress(FileNotFoundError):
@@ -52,36 +51,35 @@ class AlertHistory:
     def issued(self, alert_id: str) -> bool:
         with self._connect() as db:
             row = db.execute(
-                "SELECT 1 FROM alerts WHERE alert_id=?", (alert_id,)
+                "SELECT 1 FROM alert_log WHERE alert_id=?", (alert_id,)
             ).fetchone()
         return row is not None
 
-    def count(self, proposal_id: str) -> int:
+    def count(self, package_id: str) -> int:
         with self._connect() as db:
             (count,) = db.execute(
-                "SELECT COUNT(*) FROM alerts WHERE proposal_id=?", (proposal_id,)
+                "SELECT COUNT(*) FROM alert_log WHERE package_id=?", (package_id,)
             ).fetchone()
         return int(count)
 
-    def record(self, alert: Alert, rev: int, basis: list[str]) -> None:
+    def record(self, alert: Alert, basis: str) -> None:
         """Idempotent: a repeated record keeps the first row."""
         with self._connect() as db:
             db.execute(
-                "INSERT OR IGNORE INTO alerts VALUES (?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO alert_log VALUES (?,?,?,?,?)",
                 (
                     alert.alert_id,
-                    alert.proposal_id,
-                    rev,
-                    alert.schedule_ref,
-                    json.dumps(basis),
+                    alert.package_id,
+                    alert.thread_id,
+                    basis,
                     alert.created_at.isoformat(),
                 ),
             )
 
-    def basis(self, alert_id: str) -> list[str] | None:
-        """Fabric entry IDs of the approved values the alert says may change."""
+    def basis(self, alert_id: str) -> str | None:
+        """Fabric Thread ID of the approved schedule the alert says may change."""
         with self._connect() as db:
             row = db.execute(
-                "SELECT basis FROM alerts WHERE alert_id=?", (alert_id,)
+                "SELECT basis FROM alert_log WHERE alert_id=?", (alert_id,)
             ).fetchone()
-        return None if row is None else list(json.loads(row[0]))
+        return None if row is None else str(row[0])

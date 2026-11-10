@@ -64,20 +64,6 @@ class SttConfig:
 
 
 @dataclass(frozen=True)
-class RefinerConfig:
-    """Sentence window on either side of a rule hit; hard maximum is five."""
-
-    before: int = 1
-    after: int = 1
-
-    def __post_init__(self) -> None:
-        for name in ("before", "after"):
-            value = getattr(self, name)
-            if type(value) is not int or not 0 <= value <= 5:
-                raise ConfigError(f"refiner.{name}: expected integer from 0 to 5")
-
-
-@dataclass(frozen=True)
 class SpinnerSettings:
     """Bounded retries for explicitly transient parser/reviser failures."""
 
@@ -96,56 +82,25 @@ class SpinnerSettings:
             raise ConfigError("spinner: backoff exceeds maximum")
 
 
-@dataclass(frozen=True)
-class FeedbackSettings:
-    """Loom feedback use (#27): structured prompt examples and raw-text retention."""
-
-    examples: bool = True
-    example_limit: int = 3
-    example_bytes: int = 2048
-    retention_days: int = 180
-
-    def __post_init__(self) -> None:
-        if type(self.examples) is not bool:
-            raise ConfigError("loom.feedback_examples: expected boolean")
-        for name, low, high in (
-            ("example_limit", 0, 10),
-            ("example_bytes", 0, 16384),
-            ("retention_days", 1, 3650),
-        ):
-            value = getattr(self, name)
-            if type(value) is not int or not low <= value <= high:
-                raise ConfigError(
-                    f"loom.feedback_{name}: expected integer from {low} to {high}"
-                )
-
-
-@dataclass(frozen=True)
-class PublishSettings:
-    """Vault output (#7): off by default; writes only vault_root/folder."""
-
-    enabled: bool = False
-    folder: str = "Weaver"
-
-    def __post_init__(self) -> None:
-        if type(self.enabled) is not bool:
-            raise ConfigError("publish.enabled: expected boolean")
-        if (
-            not isinstance(self.folder, str)
-            or not self.folder
-            or "\\" in self.folder
-            or "\0" in self.folder
-            or any(
-                part in ("", ".", "..") or part.startswith(".")
-                for part in self.folder.split("/")
-            )
-        ):
-            raise ConfigError("publish.folder: expected relative folder name")
+def _check_folder(enabled: object, folder: object) -> None:
+    if type(enabled) is not bool:
+        raise ConfigError("wiki.enabled: expected boolean")
+    if (
+        not isinstance(folder, str)
+        or not folder
+        or "\\" in folder
+        or "\0" in folder
+        or any(
+            part in ("", ".", "..") or part.startswith(".")
+            for part in folder.split("/")
+        )
+    ):
+        raise ConfigError("wiki.folder: expected relative folder name")
 
 
 @dataclass(frozen=True)
 class WikiSettings:
-    """Settings for periodic v2 wiki output."""
+    """Settings for periodic wiki output."""
 
     enabled: bool = False
     vault_root: Path | None = None
@@ -155,7 +110,7 @@ class WikiSettings:
     interval_seconds: float = 60
 
     def __post_init__(self) -> None:
-        PublishSettings(self.enabled, self.folder)
+        _check_folder(self.enabled, self.folder)
         if (
             not isinstance(self.timezone, str)
             or self.timezone not in available_timezones()
@@ -179,9 +134,7 @@ class ComponentConfig:
 
     llm: LlmConfig
     stt: SttConfig | None = None
-    refiner: RefinerConfig | None = None
     retry: SpinnerSettings = SpinnerSettings()
-    feedback: FeedbackSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -204,19 +157,12 @@ class ServerConfig:
     llm: LlmConfig
     stt: SttConfig
     time: TimeConfig = TimeConfig()
-    refiner: RefinerConfig = RefinerConfig()
     spinner_settings: SpinnerSettings = SpinnerSettings()
-    feedback: FeedbackSettings = FeedbackSettings()
-    publish: PublishSettings = PublishSettings()
     wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
 
     @property
     def spinner(self) -> ComponentConfig:
         return ComponentConfig(self.llm, self.stt, retry=self.spinner_settings)
-
-    @property
-    def loom(self) -> ComponentConfig:
-        return ComponentConfig(self.llm, refiner=self.refiner, feedback=self.feedback)
 
 
 def _path(value: str, base: Path, env: Mapping[str, str], field: str) -> Path:
@@ -380,10 +326,7 @@ def load_config(
         "llm",
         "stt",
         "time",
-        "refiner",
         "spinner",
-        "loom",
-        "publish",
         "wiki",
     }:
         raise ConfigError("config_file: unknown fields")
@@ -414,10 +357,6 @@ def load_config(
     except (ZoneInfoNotFoundError, ValueError, OSError):
         raise ConfigError("time.timezone: unknown IANA timezone") from None
     time_config = TimeConfig(timezone)
-    refiner_raw = raw.get("refiner", {})
-    if not isinstance(refiner_raw, dict) or refiner_raw.keys() - {"before", "after"}:
-        raise ConfigError("refiner: expected a table containing only before/after")
-    refiner = RefinerConfig(**refiner_raw)
     spinner_raw = raw.get("spinner", {})
     if not isinstance(spinner_raw, dict) or spinner_raw.keys() - {
         "max_attempts",
@@ -426,22 +365,6 @@ def load_config(
     }:
         raise ConfigError("spinner: expected retry settings table")
     spinner_settings = SpinnerSettings(**spinner_raw)
-    loom_raw = raw.get("loom", {})
-    loom_keys = {
-        "feedback_examples",
-        "feedback_example_limit",
-        "feedback_example_bytes",
-        "feedback_retention_days",
-    }
-    if not isinstance(loom_raw, dict) or loom_raw.keys() - loom_keys:
-        raise ConfigError("loom: expected feedback settings table")
-    feedback = FeedbackSettings(
-        **{key.removeprefix("feedback_"): value for key, value in loom_raw.items()}
-    )
-    publish_raw = raw.get("publish", {})
-    if not isinstance(publish_raw, dict) or publish_raw.keys() - {"enabled", "folder"}:
-        raise ConfigError("publish: expected a table containing only enabled/folder")
-    publish = PublishSettings(**publish_raw)
     wiki_raw = raw.get("wiki", {})
     if not isinstance(wiki_raw, dict) or wiki_raw.keys() - {
         "enabled",
@@ -516,9 +439,6 @@ def load_config(
         llm=llm,
         stt=stt,
         time=time_config,
-        refiner=refiner,
         spinner_settings=spinner_settings,
-        feedback=feedback,
-        publish=publish,
         wiki=wiki,
     )

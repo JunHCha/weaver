@@ -10,7 +10,7 @@ next start, and nothing is recorded as failed.
 Failure classes (per Source):
 - ValueError (invalid archive row, unsupported input): ``failed`` at once.
 - LLM contract violations (InvalidJson, SchemaMismatch, MissingOutput,
-  Refusal, invalid extraction output): retried, ``failed`` after 3.
+  Refusal): retried, ``failed`` after 3.
 - AuthenticationError, BudgetExceeded, LlmUnavailable: ``waiting_llm``; the
   LLM gate turns off and is re-probed every minute.
 - InsufficientCredit, UsageLimited (subscription allowance or daily call cap
@@ -49,7 +49,7 @@ from weaver.llm.errors import (
     UsageLimited,
 )
 
-from .gate import ExtractionInvalid, Interrupted, LlmGate, LlmUnavailable
+from .gate import Interrupted, LlmGate, LlmUnavailable
 from .ledger import Progress, RuntimeLedger
 
 logger = logging.getLogger("weaver.runtime")
@@ -67,7 +67,7 @@ RESUME_SLACK_SECONDS = 60.0
 LOCK_NAME = "weaver.lock"
 STATUS_NAME = "runtime-status.json"
 
-_CONTRACT = (InvalidJson, SchemaMismatch, MissingOutput, Refusal, ExtractionInvalid)
+_CONTRACT = (InvalidJson, SchemaMismatch, MissingOutput, Refusal)
 _LLM_OFF = (
     AuthenticationError,
     BudgetExceeded,
@@ -130,8 +130,8 @@ class SourceProcessor[S: HasSourceId](Protocol):
     def process(self, source: S, stop: threading.Event) -> Outcome: ...
 
 
-class VaultPublisher(Protocol):
-    """#7 Publisher boundary: write notes changed since the last call."""
+class TickPublisher(Protocol):
+    """Called once per tick after sources were processed."""
 
     def publish(self) -> None: ...
 
@@ -143,7 +143,7 @@ class NoPublisher:
 
 @dataclass(frozen=True)
 class MaintenanceTask:
-    """Periodic job such as #27 feedback purge; runs at startup, then per interval."""
+    """Periodic job such as the wiki compile; runs at startup, then per interval."""
 
     name: str
     interval_seconds: float
@@ -178,7 +178,7 @@ class Runtime[S: HasSourceId]:
         ledger: RuntimeLedger,
         gate: LlmGate,
         interval: float,
-        publisher: VaultPublisher | None = None,
+        publisher: TickPublisher | None = None,
         maintenance: Sequence[MaintenanceTask] = (),
         clock: Callable[[], float] = time.time,
         wait: Callable[[float], bool] | None = None,

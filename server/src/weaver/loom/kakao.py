@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
-from weaver.schema.models import Script, Segment, Source
+from weaver.schema import Script, Segment, Source
 
 _DATE = r"(?P<year>[0-9]{4})(?:년\s+|\.\s*)(?P<month>[0-9]{1,2})(?:월\s+|\.\s*)(?P<day>[0-9]{1,2})(?:일|\.)"
 _CLOCK = r"(?P<period>오전|오후) (?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})"

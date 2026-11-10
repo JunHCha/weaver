@@ -5,31 +5,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
+from weaver.alert import ScheduleAlertDetector
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
-from weaver.courier import SCAN_INTERVAL_SECONDS
-from weaver.courier.courier_v2 import CourierV2
-from weaver.fabric.store import FabricStore
-from weaver.fabric.v2 import FabricStore as FabricV2
+from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
+from weaver.fabric import FabricStore
 from weaver.llm import create_client
 from weaver.llm.types import LlmClient
-from weaver.loom import (
-    FeedbackSink,
-    ReviewStore,
-)
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import SummaryReview
-from weaver.publish import (
-    AiFolder,
-    EntityDirectory,
-    OutputSync,
-    Publisher,
-    PublishState,
-    ReviewRelations,
-    SqliteOutputWatcher,
-    VaultSync,
-)
 from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
@@ -37,61 +22,21 @@ from weaver.wiki.store import WikiStore
 
 from .gate import LlmGate, LlmStatus
 from .ledger import RuntimeLedger
-from .loop import MaintenanceTask, Runtime, VaultPublisher
-from .pipeline import (
-    AlertDetector,
-    EntityIndexSource,
-    GatedLlm,
-    llm_status,
-)
+from .loop import MaintenanceTask, Runtime
+from .pipeline import GatedLlm, llm_status
 from .summary import ReviewAdapter, SchedulePublisher, SummaryLookup, SummaryProcessor
 from .wiki import WikiJob
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
 CONFIGURATION_VERSION = "weaver.runtime.v2"
-# Raw-fragment retention is counted in days; a few runs a day are plenty.
-FEEDBACK_PURGE_INTERVAL_SECONDS = 6 * 3600.0
 
 
 @dataclass
 class Plugins:
-    """Overrides; None means the #27 SqliteFeedbackStore (sink, index, purge)."""
+    """Overrides for tests and alternative adapters."""
 
-    feedback: FeedbackSink | None = None
-    entities: EntityIndexSource | None = None
-    alerts: AlertDetector | None = None  # #9; None means ScheduleAlertDetector
-    publisher: VaultPublisher | None = None  # #7
-    maintenance: Sequence[MaintenanceTask] = ()  # in addition to feedback purge
-    client: LlmClient | None = None  # tests/alternative adapters
-
-
-def vault_publisher(
-    config: ServerConfig,
-    fabric: FabricStore,
-    entities: EntityDirectory,
-    reviews: ReviewStore,
-) -> VaultPublisher | None:
-    """[publish] enabled=true wires #7; otherwise the loop keeps its no-op."""
-    if not config.publish.enabled:
-        return None
-    state = PublishState(config.state_root / "publish.sqlite3")
-    publisher = Publisher(
-        AiFolder(config.vault_root, config.publish.folder),
-        fabric,
-        entities,
-        relations=ReviewRelations(reviews),
-        state=state,
-        timezone=config.time.zone,
-    )
-    watcher = SqliteOutputWatcher(
-        publisher.folder,
-        config.state_root / "output-watcher.sqlite3",
-        timezone=config.time.zone,
-        manifest=state,
-    )
-    return VaultSync(
-        publisher, fabric, entities, state, outputs=OutputSync(watcher, fabric)
-    )
+    maintenance: Sequence[MaintenanceTask] = ()
+    client: LlmClient | None = None
 
 
 def build_runtime(
@@ -118,19 +63,19 @@ def build_runtime(
     client = GatedLlm(real, gate)
     archive = ArchiveStore.from_config(config)
     context = ContextDictionary(config.state_root)
-    fabric_v2 = FabricV2.from_config(config)
+    fabric = FabricStore.from_config(config)
     summaries = SummaryLookup(config.archive_root / "summaries", archive)
     review = SummaryReview(
         client,
         context,
-        fabric_v2,
+        fabric,
         summaries.archive,
         state_root=config.state_root,
         proposals=config.courier.proposals,
         timezone=config.time.timezone,
     )
     adapter = ReviewAdapter(review, summaries)
-    courier = CourierV2(config.courier, archive, adapter, adapter)
+    courier = Courier(config.courier, archive, adapter, adapter)
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     spinner = Spinner.from_config(
         archive,
@@ -153,7 +98,7 @@ def build_runtime(
         )
         job = WikiJob(
             store,
-            fabric_v2,
+            fabric,
             context,
             client,
             config.state_root,
@@ -174,7 +119,10 @@ def build_runtime(
         gate=gate,
         interval=interval,
         publisher=SchedulePublisher(
-            config.sync_root, fabric_v2, review.state, plugins.publisher
+            config.sync_root,
+            fabric,
+            review.state,
+            (ScheduleAlertDetector.from_config(config), courier),
         ),
         maintenance=maintenance,
     )

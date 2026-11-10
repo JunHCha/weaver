@@ -16,7 +16,7 @@ from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_patch import Patch, apply_patches
 from weaver.loom.summary_state import SummaryState
-from weaver.schema.v2 import (
+from weaver.schema import (
     EventSummary,
     ReviewPackage,
     ScheduleValue,

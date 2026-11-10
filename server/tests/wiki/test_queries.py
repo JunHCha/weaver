@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 from weaver.context import ContextDictionary, Page
-from weaver.fabric.v2 import FabricStore
-from weaver.schema.v2 import ThreadDraft
+from weaver.fabric import FabricStore
+from weaver.schema import ThreadDraft
 from weaver.wiki.queries import render_pages, write_pages
 from weaver.wiki.store import WikiStore
 
