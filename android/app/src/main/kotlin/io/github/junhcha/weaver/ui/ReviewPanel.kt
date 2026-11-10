@@ -1,199 +1,189 @@
 package io.github.junhcha.weaver.ui
 
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.*
-import io.github.junhcha.weaver.schema.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
-import java.time.Instant
+import io.github.junhcha.weaver.schema.WeaverCodec
+import io.github.junhcha.weaver.schema.ReviewPackage
+import io.github.junhcha.weaver.schema.Verdict
+import kotlinx.coroutines.*
 
-/** Deliberately minimal proposal-level form. Every edit value is explicit JSON, including strings. */
 @Composable
-fun ReviewPanel(proposalId: String, onClose: () -> Unit) {
+fun ReviewPanel(id: String, onClose: () -> Unit) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
-    // Save the reviewed snapshot (including rev), never bind restored inputs to a newer rev.
-    var proposalJson by rememberSaveable(proposalId) { mutableStateOf<String?>(null) }
-    val proposal = remember(proposalJson) { proposalJson?.let { WeaverCodec.json.decodeFromString<Proposal>(it) } }
-    var input by rememberSaveable(proposalId, stateSaver = ReviewInput.saver) { mutableStateOf(ReviewInput()) }
-    var advancedExpanded by rememberSaveable(proposalId) { mutableStateOf(false) }
-    var proposalMissing by remember(proposalId) { mutableStateOf(false) }
-    var readError by remember(proposalId) { mutableStateOf<String?>(null) }
-    var latestRev by remember(proposalId) { mutableStateOf<Long?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var record by remember { mutableStateOf<ReviewRecord?>(null) }
-    // SAF has no portable watch API. Re-read the revision only while this form is open;
-    // submission and publication also check it immediately before writing.
-    LaunchedEffect(proposalId, changes) {
+    var snapshot by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    val p = remember(snapshot) { snapshot?.let { WeaverCodec.json.decodeFromString<ReviewPackage>(it) } }
+    var answers by rememberSaveable(id) { mutableStateOf(arrayListOf<String>()) }
+    var body by rememberSaveable(id) { mutableStateOf("") }
+    var feedback by rememberSaveable(id) { mutableStateOf("") }
+    var finalReview by rememberSaveable(id) { mutableStateOf(false) }
+    var details by rememberSaveable(id) { mutableStateOf(false) }
+    var actionInput by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var latest by remember(id) { mutableStateOf<ReviewPackage?>(null) }
+    var record by remember(id) { mutableStateOf<ReviewRecord?>(null) }
+    var readError by remember(id) { mutableStateOf<String?>(null) }
+    var error by remember(id) { mutableStateOf<String?>(null) }
+    val preferences = remember(context) { context.getSharedPreferences("review-settings", android.content.Context.MODE_PRIVATE) }
+    var vault by remember { mutableStateOf(preferences.getString("vault", "").orEmpty()) }
+    var busy by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id, changes) {
         do {
-            withContext(Dispatchers.IO) {
-                val result = runCatching { ReviewRuntime.open(context, proposalId) }
-                val records = ReviewRuntime.records(context)
-                result to records
-            }.let { (result, records) ->
-                val reviewedRev = proposalJson?.let { WeaverCodec.json.decodeFromString<Proposal>(it).rev }
-                record = records.firstOrNull { it.verdict.proposalId == proposalId && it.verdict.rev == reviewedRev }
-                // ReviewStore.latest reports this only after a successful listing with no candidate.
-                // Permission, decoding and other read failures must still be visible.
-                proposalMissing = result.exceptionOrNull()?.let {
-                    it is ReviewStore.ProposalMissingException
-                } == true
-                readError = if (result.isFailure)
-                    "제안을 읽을 수 없습니다. 최신 제안을 다시 확인하세요." else null
-                result.onSuccess { fresh ->
-                    latestRev = fresh.rev
-                    if (proposalJson == null) {
-                        proposalJson = WeaverCodec.encode(fresh)
-                        input = input.copy(value = WeaverCodec.json.encodeToString(fresh.summary))
-                    }
-                }.onFailure { latestRev = null }
+            val (result, records) = withContext(Dispatchers.IO) {
+                runCatching { ReviewRuntime.open(context, id) } to ReviewRuntime.records(context)
             }
+            val reviewed = snapshot?.let { WeaverCodec.json.decodeFromString<ReviewPackage>(it) } ?: result.getOrNull()
+            record = records.firstOrNull { it.verdict.packageId == id && it.verdict.revision == reviewed?.revision }
+            result.onSuccess { fresh ->
+                latest = fresh; readError = null
+                if (snapshot == null) {
+                    snapshot = WeaverCodec.encode(fresh)
+                    answers = ArrayList(List(fresh.questions.size) { "" })
+                    body = fresh.draftBody
+                }
+            }.onFailure { latest = null; readError = "문서를 읽을 수 없습니다. 최신 문서를 확인하세요." }
             delay(5_000)
         } while (isActive)
     }
-    val inferred = proposalMissing && record?.let {
-        it.published || it.status in setOf(ReviewStatus.SENT, ReviewStatus.INFERRED)
-    } == true
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onClose) { Text("검토 닫기") }
-        val p = proposal
         if (p != null) {
-            val stale = latestRev != p.rev && !inferred
-            ReviewSection("안내")
-            Text(FACT_REVIEW_GUIDANCE)
-            Text("요청 해소나 일정 실행 허가가 아닙니다.")
-            ReviewSection("요약과 근거")
-            Text("제안 r${p.rev} · ${p.summary}")
-            Text("근거: ${p.threadExcerpt}")
-            ReviewSection("추출 항목")
-            p.entities.forEach { HorizontalDivider(); Text("인물·주제: ${it.name} · ${confidenceLabel(it.confidence)}\n${it.threadExcerpt}") }
-            p.schedules.forEach { HorizontalDivider(); Text("일정: ${it.title} · ${it.start} ~ ${it.end ?: "미정"} · ${confidenceLabel(it.confidence)}\n${it.threadExcerpt}" +
-                if (it.blockedByRequest != null) "\n요청 미해소 · 실행 보류" else "") }
-            p.relations.forEach { HorizontalDivider(); Text("관계: ${it.from} → ${it.to} (${it.type}) · ${confidenceLabel(it.confidence)}\n${it.threadExcerpt}") }
-            p.entryDrafts.forEach { HorizontalDivider(); Text("기록: ${it.kind} · ${it.value} · ${confidenceLabel(it.confidence)}\n${it.threadExcerpt}" +
-                if (it.blockedByRequest != null || it.request != null) "\n요청·실행 허가는 별도" else "") }
-            if (stale) {
-                Text("새 rev 또는 파일 변경 감지 · 이전 rev는 제출할 수 없습니다")
-                OutlinedButton(onClick = { error = null; onClose() }) { Text("목록으로 돌아가 최신 제안 확인") }
+            val stale = latest != p
+            val enabled = !busy && !stale && record == null
+            val progressPackage = latest?.takeIf { it.revision == p.revision } ?: p
+            val progress = reviewProgress(progressPackage.stage, progressPackage.stageTimes, record?.status)
+            ReviewProgressDiagram(progress)
+            Text("요약", style = MaterialTheme.typography.titleMedium)
+            val firstLine = p.draftBody.lineSequence().first()
+            WikiText(firstLine.take(80) + if (firstLine.length > 80) "…" else "", vault)
+            OutlinedButton(onClick = { details = !details }) { Text(if (details) "본문 접기" else "본문 보기") }
+            if (details) {
+                WikiText(p.draftBody, vault)
+                CalendarPanel(p.packageId)
             }
-            if (record != null) {
-                Text(if (inferred) INFERRED_REVIEW_LABEL else record!!.status.label)
-                if (!inferred && record!!.verdict.verdict == Verdict.Kind.REVISE) {
-                    Text(if (latestRev != null && latestRev!! > p.rev) "새 rev 도착 · 최신 제안을 확인하세요"
-                        else "다시 짠 새 rev를 기다립니다")
-                }
-                if (!inferred && record!!.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING)) {
-                    OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("동일한 검토 결과 재시도") }
-                }
+            OutlinedTextField(value = vault, onValueChange = {
+                vault = it
+                preferences.edit().putString("vault", it).apply()
+            }, label = { Text("Obsidian 볼트 이름") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            if (vault.isBlank()) Text("볼트 이름을 설정하면 wiki 링크를 열 수 있습니다")
+            record?.let {
+                progress.response?.let { response -> Text("내 응답: $response") }
+                if (it.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
+                    OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
             }
-            key(p.proposalId, p.rev) {
-                val (path, value, edits, instruction, answers, reason) = input
-                val enabled = !busy && !stale && record == null
-                ReviewSection("확인할 질문")
-                if (ReviewDraft.questions(p).isEmpty()) Text("확인할 질문 없음")
-                ReviewDraft.questions(p).forEach { q ->
-                    HorizontalDivider()
-                    Text("질문 대상: ${q.summary} · ${q.confidenceLabel}")
-                    Text(q.ask.question)
-                    if (q.canConfirm) {
-                        val confirmed = q.path in input.confirmations
+            if (stale && record == null) Text("최신 문서를 다시 확인하세요")
+            if (!finalReview) {
+                Text("확인할 질문", style = MaterialTheme.typography.titleMedium)
+                if (p.questions.isEmpty()) Text("확인할 질문 없음")
+                p.questions.forEachIndexed { index, q ->
+                    Text(q.question)
+                    q.choices.forEach { choice ->
+                        val selected = answers.getOrNull(index) == choice
                         OutlinedButton(enabled = enabled, onClick = {
-                            input = input.copy(confirmations = if (confirmed) input.confirmations - q.path else input.confirmations + q.path)
-                        }) { Text(if (confirmed) "확인 취소" else "이 내용이 맞음") }
-                    } else if (q.ask.choices.isEmpty()) {
-                        Text("일정 질문은 답을 입력하고 다시 짜기를 선택하세요")
+                            answers = ArrayList(answers).apply { set(index, choice) }
+                        }) { Text(if (selected) "✓ $choice" else choice) }
                     }
-                    q.ask.choices.forEach { c ->
-                        OutlinedButton(enabled = enabled, onClick = { input = input.copy(answers = answers + (q.path to c.entityId)) }) { Text(c.label) }
-                    }
-                    OutlinedTextField(value = answers[q.path].orEmpty(), onValueChange = { input = input.copy(answers = answers + (q.path to it)) },
-                        enabled = enabled, label = { Text("답 (자유 답변은 다시 짜기로 전송)") }, modifier = Modifier.fillMaxWidth())
+                    var rationale by rememberSaveable(id, index) { mutableStateOf(false) }
+                    OutlinedButton(onClick = { rationale = !rationale }) { Text(if (rationale) "이유 접기" else "질문 이유 보기") }
+                    if (rationale) Text(q.rationale)
                 }
-                if (ReviewDraft.hasMixedAnswers(p, answers, input.confirmations)) {
-                    Text("자유 답변이 있어 다시 짜기로 전송되며, 확인한 항목이 다시 질문될 수 있습니다")
-                }
-                ReviewSection("수정")
-                OutlinedButton(onClick = { advancedExpanded = !advancedExpanded }) {
-                    Text(if (advancedExpanded) "고급: 직접 수정 접기" else "고급: 직접 수정")
-                }
-                if (edits.isNotEmpty()) {
-                    Text("수정 ${edits.size}건 추가됨")
-                    Text("수정이 있어 승인이 비활성화되었습니다. 수정 제출을 사용하세요.")
-                }
-                if (advancedExpanded) {
-                    Text("직접 수정: 예 /schedules/0/start · 값은 JSON 문자열이면 따옴표 포함")
-                    OutlinedTextField(value = path, onValueChange = { input = input.copy(path = it) }, enabled = enabled, label = { Text("JSON Pointer") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = value, onValueChange = { input = input.copy(value = it) }, enabled = enabled, label = { Text("최종 값 (JSON)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(enabled = enabled && answers.size == p.questions.size && answers.all { it.isNotEmpty() },
+                    onClick = { finalReview = true }) { Text("최종 검토") }
+            } else {
+                Text("최종 검토", style = MaterialTheme.typography.titleMedium)
+                p.questions.forEachIndexed { index, q -> Text("${q.question}: ${answers.getOrElse(index) { "" }}") }
+                OutlinedButton(enabled = enabled, onClick = { finalReview = false }) { Text("답변 수정") }
+                if (actionInput == "EDIT") OutlinedTextField(value = body, onValueChange = { body = it }, enabled = enabled,
+                    label = { Text("직접 수정할 본문") }, modifier = Modifier.fillMaxWidth())
+                if (actionInput == "FEEDBACK") OutlinedTextField(value = feedback, onValueChange = { feedback = it }, enabled = enabled,
+                    label = { Text("피드백 내용") }, modifier = Modifier.fillMaxWidth())
+                Verdict.Action.entries.forEach { action ->
                     OutlinedButton(enabled = enabled, onClick = {
-                        runCatching {
-                            val next = edits + Verdict.Edit(path, WeaverCodec.json.parseToJsonElement(value))
-                            ReviewDraft.validateEdits(p, next); input = input.copy(edits = next); error = null
-                        }.onFailure { error = it.message }
-                    }) { Text("수정 추가") }
-                    edits.forEach { Text("${it.path} = ${it.value}") }
-                    OutlinedButton(enabled = enabled, onClick = { input = input.copy(edits = emptyList()) }) { Text("수정 초기화") }
-                }
-                OutlinedTextField(value = instruction, onValueChange = { input = input.copy(instruction = it) }, enabled = enabled,
-                    label = { Text("다시 짤 자연어 지시") }, modifier = Modifier.fillMaxWidth())
-                ReviewSection("결정 버튼")
-                Text("거절 사유: $reason")
-                Verdict.RejectReason.entries.forEach { r ->
-                    OutlinedButton(enabled = enabled, onClick = { input = input.copy(reason = r) }) { Text(r.name.lowercase()) }
-                }
-                Verdict.Kind.entries.forEach { kind ->
-                    Text(when (kind) {
-                        Verdict.Kind.APPROVE -> "승인: 이대로 기록"
-                        Verdict.Kind.EDIT -> "수정 제출: 고친 내용으로 기록"
-                        Verdict.Kind.REVISE -> "다시 짜기: 지시를 반영해 새 수정본을 받음"
-                        Verdict.Kind.REJECT -> "거절: 기록하지 않음"
-                    })
-                    OutlinedButton(enabled = enabled && (kind != Verdict.Kind.APPROVE || edits.isEmpty()), onClick = {
+                        if (action in setOf(Verdict.Action.EDIT, Verdict.Action.FEEDBACK) && actionInput != action.name) {
+                            actionInput = action.name
+                            return@OutlinedButton
+                        }
                         busy = true; error = null
                         scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    val verdict = ReviewDraft.verdict(p, kind,
-                                        if (kind == Verdict.Kind.EDIT || kind == Verdict.Kind.REVISE) edits else emptyList(),
-                                        reason, instruction, answers, Instant.now().toString(), input.confirmations)
-                                    ReviewRuntime.submit(context, p, verdict)
-                                    ReviewRuntime.records(context).first { it.verdict == verdict }
-                                }
-                            }
+                            val result = withContext(Dispatchers.IO) { runCatching {
+                                val verdict = ReviewDraft.verdict(p, answers, action, body, feedback)
+                                ReviewRuntime.submit(context, p, verdict)
+                                ReviewRuntime.records(context).first { it.verdict == verdict }
+                            } }
                             result.onSuccess { record = it }.onFailure { error = it.message ?: "전송 준비 실패" }
                             busy = false
                         }
-                    }) { Text(when (kind) {
-                        Verdict.Kind.APPROVE -> "승인"; Verdict.Kind.EDIT -> "수정 제출"
-                        Verdict.Kind.REVISE -> "다시 짜기"; Verdict.Kind.REJECT -> "거절"
+                    }) { Text(when (action) {
+                        Verdict.Action.APPROVE -> "승인"; Verdict.Action.EDIT -> if (actionInput == "EDIT") "수정 제출" else "본문 직접 수정"
+                        Verdict.Action.FEEDBACK -> if (actionInput == "FEEDBACK") "피드백 제출" else "자연어 피드백"; Verdict.Action.REJECT -> "거절"
                     }) }
                 }
-                if (busy) Text("전송 준비 중")
             }
         }
-        if (!inferred) readError?.let { Text(it) }
+        if (record == null) readError?.let { Text(it) }
         error?.let { Text(it) }
     }
 }
 
-internal const val FACT_REVIEW_GUIDANCE = "통화 내용에서 뽑은 사실이 맞는지 확인합니다. 사람, 날짜·시각, 내용, 관계가 틀렸으면 고치세요. 철자·띄어쓰기·말투는 고치지 않아도 됩니다. 승인하면 기록과 노트에 사실로 남습니다."
-internal const val INFERRED_REVIEW_LABEL = "전송됨 · 제안 파일이 정리되어 PC 반영으로 추정됩니다"
-
-private fun confidenceLabel(value: Double): String = "확신도 ${kotlin.math.round(value * 100).toInt()}%"
-
 @Composable
-private fun ReviewSection(title: String) {
-    HorizontalDivider(Modifier.padding(top = 8.dp))
-    Text(title, style = MaterialTheme.typography.titleMedium)
+private fun ReviewProgressDiagram(progress: ReviewProgress) {
+    var selected by remember { mutableStateOf<ProgressStep?>(null) }
+    Text("처리 단계", style = MaterialTheme.typography.titleMedium)
+    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        progress.steps.forEachIndexed { index, step ->
+            if (index > 0) Text("→", modifier = Modifier.padding(top = 12.dp))
+            OutlinedButton(onClick = { selected = step }) {
+                Text("${step.stage.displayName()}${if (step.status == StepStatus.CURRENT) " · 현재" else ""}")
+            }
+        }
+    }
+    selected?.let { selectedStep ->
+        val step = progress.steps.first { it.stage == selectedStep.stage }
+        AlertDialog(onDismissRequest = { selected = null },
+            title = { Text(step.stage.displayName()) },
+            text = { Text("상태: ${step.status.label}\n시각: ${step.time ?: "기록 없음"}") },
+            confirmButton = { TextButton(onClick = { selected = null }) { Text("닫기") } })
+    }
+}
+
+@Suppress("DEPRECATION")
+@Composable
+private fun WikiText(text: String, vault: String) {
+    val handler = LocalUriHandler.current
+    val color = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, vault, color) {
+        buildAnnotatedString {
+            var offset = 0
+            wikiLinks(text, vault).forEach { link ->
+                append(text.substring(offset, link.start))
+                val start = length
+                append(link.label)
+                link.uri?.let { uri ->
+                    addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), start, length)
+                    addStringAnnotation("wiki", uri, start, length)
+                }
+                offset = link.end
+            }
+            append(text.substring(offset))
+        }
+    }
+    ClickableText(annotated, style = MaterialTheme.typography.bodyLarge, onClick = { position ->
+        annotated.getStringAnnotations("wiki", position, position).firstOrNull()?.let {
+            runCatching { handler.openUri(it.item) }
+        }
+    })
 }

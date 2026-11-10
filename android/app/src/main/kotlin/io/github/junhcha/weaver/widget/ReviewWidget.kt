@@ -20,7 +20,7 @@ import io.github.junhcha.weaver.inbox.InboxRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class ProposalWidget : GlanceAppWidget() {
+class ReviewWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SMALL, LARGE))
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val initial = withContext(Dispatchers.IO) { WidgetModel.load(context) }
@@ -41,15 +41,15 @@ class ProposalWidget : GlanceAppWidget() {
 internal fun WidgetContent(context: Context, model: WidgetModel, large: Boolean) {
     val normal = TextStyle(color = ColorProvider(Color(0xFF17251E)), fontSize = 14.sp)
     Column(GlanceModifier.fillMaxSize().background(Color(0xFFF0F5EF)).padding(12.dp)) {
-        Text(if (model.failed) "Weaver · 목록 확인 필요" else "Weaver · 승인 대기 ${model.pendingCount}건", style = normal, maxLines = 1,
+        Text(if (model.failed) "Weaver · 목록 확인 필요" else "Weaver · 검토 대기 ${model.pendingCount}건", style = normal, maxLines = 1,
             modifier = GlanceModifier.clickable(actionStartActivity(
                 Intent(context, MainActivity::class.java).setAction(InboxRuntime.OPEN_INBOX))))
-        if (model.rows.isEmpty() && !model.failed) Text("승인 대기 제안 없음", style = normal, maxLines = 1)
+        if (model.rows.isEmpty() && !model.failed) Text("검토 대기 문서 없음", style = normal, maxLines = 1)
         model.visible(large).forEach { row ->
-            Text("${if (row.submitted) row.deliveryStatus ?: "전송됨" else "승인 대기"} · ${row.source} · ${row.summary}",
+            Text("${if (row.submitted) row.deliveryStatus ?: "전송됨" else "검토 대기"} · ${row.summary}",
                 style = normal, maxLines = 1,
                 modifier = GlanceModifier.fillMaxWidth().padding(vertical = 6.dp)
-                    .clickable(actionStartActivity(WidgetReviewActivity.intent(context, row.id, row.rev))))
+                    .clickable(actionStartActivity(WidgetReviewActivity.intent(context, row.id, row.revision))))
         }
         if (model.overflow(large) > 0) Text("외 ${model.overflow(large)}건", style = normal, maxLines = 1)
         model.warning(large)?.let { Text(it, style = normal, maxLines = if (large) 3 else 2) }
@@ -61,6 +61,6 @@ internal fun WidgetContent(context: Context, model: WidgetModel, large: Boolean)
     }
 }
 
-class ProposalWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = ProposalWidget()
+class ReviewWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = ReviewWidget()
 }

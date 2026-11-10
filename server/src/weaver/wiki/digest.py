@@ -1,4 +1,4 @@
-"""Build evidence-linked calendar digests from the v2 Fabric log."""
+"""Build evidence-linked calendar digests from the Fabric log."""
 
 import hashlib
 import json

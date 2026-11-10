@@ -5,13 +5,12 @@ import android.content.ContentValues
 import android.content.Context
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
-import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierClient
 import io.github.junhcha.weaver.courier.CourierDatabase
+import io.github.junhcha.weaver.schema.ApprovedSchedule
 import io.github.junhcha.weaver.storage.AppStorage
 import java.io.File
-import java.util.TimeZone
 
 /** Invoked on Dispatchers.IO; no provider work or journal IO runs on the UI thread. */
 object CalendarRuntime {
@@ -22,38 +21,18 @@ object CalendarRuntime {
             CourierClient(CourierRuntime.folder(context), db).scan().schedules.filter { it.packageId == packageId }
         }
     }
-    fun registerV2(context: Context, packageId: String, threadId: String, target: CalendarTarget): String = synchronized(CourierRuntime.lock) {
-        val schedule = schedules(context, packageId).singleOrNull { it.threadId == threadId }
+    /** [read] lists the package's published schedules; tests replace the Courier folder with a fixed list. */
+    fun register(context: Context, packageId: String, threadId: String, target: CalendarTarget,
+                 read: (String) -> List<ApprovedSchedule> = { schedules(context, it) }): String = synchronized(CourierRuntime.lock) {
+        val schedule = read(packageId).singleOrNull { it.threadId == threadId }
             ?: return@synchronized "일정을 다시 읽을 수 없습니다 · 등록 차단"
-        synchronized(lock) { CalendarRegistration(journal(context), DeviceCalendarProvider(context)).registerV2(schedule, target) }
-    }
-    fun status(context: Context, id: String, rev: Long): List<String> = synchronized(lock) {
-        journal(context).mappings().filter { it.proposalId == id && it.rev == rev }.map {
-            "${it.ref}: " + (if (it.uri != null) "등록됨" else when {
-                it.manualReview -> "수동 확인 필요 · 확인 후 새로 등록"
-                it.needsTarget -> "이전 대상 사용 불가 · 새 대상 선택 후 새로 등록"
-                else -> "시도 중 중단 · 수동 재시도로 복구"
-            }) +
-                " · ${it.calendar.name} · ${it.calendar.account} · ${it.calendar.type}"
-        }
-    }
-    fun actions(context: Context, id: String, rev: Long) = synchronized(lock) {
-        journal(context).mappings().filter { it.proposalId == id && it.rev == rev && it.uri == null && (it.manualReview || it.needsTarget) }
+        synchronized(lock) { CalendarRegistration(journal(context), DeviceCalendarProvider(context)).register(schedule, target) }
     }
     fun targets(context: Context) = synchronized(lock) { DeviceCalendarProvider(context).calendars() }
     fun selected(context: Context) = synchronized(lock) { journal(context).selected() }
     fun select(context: Context, target: CalendarTarget) = synchronized(lock) {
         require(DeviceCalendarProvider(context).calendars().any { it.sameIdentity(target) })
         journal(context).select(target)
-    }
-    fun recover(context: Context, id: String, rev: Long) = synchronized(lock) {
-        val record = ReviewRuntime.records(context).first { it.verdict.proposalId == id && it.verdict.rev == rev }
-        CalendarRegistration(journal(context), DeviceCalendarProvider(context)).recover(record)
-    }
-    fun register(context: Context, id: String, rev: Long, target: CalendarTarget, restartRef: String? = null): List<String> = synchronized(lock) {
-        val record = ReviewRuntime.records(context).first { it.verdict.proposalId == id && it.verdict.rev == rev }
-        val journal = journal(context)
-        CalendarRegistration(journal, DeviceCalendarProvider(context)).register(record, target, TimeZone.getDefault().id, restartRef)
     }
 }
 
@@ -90,7 +69,7 @@ class DeviceCalendarProvider(context: Context) : CalendarProvider {
             put(Events.DTSTART, event.start)
             put(Events.DTEND, event.end)
             put(Events.EVENT_TIMEZONE, event.timezone)
-            put(Events.ALL_DAY, 0) // v1 has no all-day flag. Midnight is still a timed event.
+            put(Events.ALL_DAY, 0) // Schedules have no all-day flag. Midnight is still a timed event.
             put(Events.DESCRIPTION, marker) // App-owned marker; no SYNC_* or sync-adapter privileges.
             put(Events.HAS_ATTENDEE_DATA, 0)
         }

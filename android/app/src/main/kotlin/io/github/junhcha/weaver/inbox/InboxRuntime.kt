@@ -21,7 +21,7 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * New proposals and change alerts from Courier proposals/. Runs inside CourierWorker (same 15-minute
+ * New review packages and change alerts from Courier proposals/. Runs inside CourierWorker (same 15-minute
  * unique periodic work and foreground kick); never requests a permission and never writes the calendar.
  * Synchronous methods run on an IO thread.
  */
@@ -30,9 +30,9 @@ object InboxRuntime {
     const val OPEN_INBOX = "io.github.junhcha.weaver.OPEN_INBOX"
     /** Shown to the user: the Courier periodic interval. Doze/battery optimisation can delay it further. */
     const val INTERVAL_MINUTES = 15L
-    internal const val PROPOSAL_CHANNEL = "inbox-proposals"
+    internal const val REVIEW_CHANNEL = "inbox-reviews"
     internal const val ALERT_CHANNEL = "inbox-alerts"
-    internal const val PROPOSAL_NOTIFICATION = 33
+    internal const val REVIEW_NOTIFICATION = 33
     internal const val ALERT_NOTIFICATION = 34
     private const val MAX_LINES = 3
 
@@ -48,7 +48,7 @@ object InboxRuntime {
               now: Long = System.currentTimeMillis()): Boolean {
         val delete = synchronized(lock) {
             InboxDatabase(context).use {
-                it.reconcile(inbox.proposals, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"), inbox.packages)
+                it.reconcile(inbox.packages, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"))
             }
         }
         var successful = true
@@ -68,17 +68,17 @@ object InboxRuntime {
         return successful
     }
 
-    fun proposals(context: Context): List<InboxDatabase.ProposalItem> = synchronized(lock) {
-        InboxDatabase(context).use { it.proposals() }
+    fun reviews(context: Context): List<InboxDatabase.ReviewItem> = synchronized(lock) {
+        InboxDatabase(context).use { it.reviews() }
     }
     fun alerts(context: Context): List<InboxDatabase.AlertItem> = synchronized(lock) {
         InboxDatabase(context).use { it.alerts() }
     }
     fun lastScanAt(context: Context): Long? = synchronized(lock) { InboxDatabase(context).use { it.lastScanAt() } }
 
-    /** Called when this app queues a verdict, so a resynced copy of that rev never reappears in the list. */
-    fun submitted(context: Context, proposalId: String, rev: Long) = synchronized(lock) {
-        InboxDatabase(context).use { it.submitted(proposalId, rev) }
+    /** Called when this app queues a verdict, so a resynced copy of that revision never reappears in the list. */
+    fun submitted(context: Context, packageId: String, revision: Long) = synchronized(lock) {
+        InboxDatabase(context).use { it.submitted(packageId, revision) }
     }
 
     /** User closes an alert: it leaves the list now, and the next Courier run deletes its file. */
@@ -95,7 +95,7 @@ object InboxRuntime {
     fun refresh(context: Context, now: Long = System.currentTimeMillis()) {
         synchronized(lock) {
             InboxDatabase(context).use { db ->
-                notifyProposals(context, db, now)
+                notifyReviews(context, db, now)
                 notifyAlerts(context, db)
             }
         }
@@ -105,7 +105,7 @@ object InboxRuntime {
 
     private fun manager(context: Context): NotificationManager {
         val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(PROPOSAL_CHANNEL, "검토 대기 제안", NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(REVIEW_CHANNEL, "검토 대기 문서", NotificationManager.IMPORTANCE_DEFAULT))
         manager.createNotificationChannel(NotificationChannel(ALERT_CHANNEL, "변경 경고", NotificationManager.IMPORTANCE_DEFAULT))
         return manager
     }
@@ -115,40 +115,40 @@ object InboxRuntime {
             manager.getNotificationChannel(channel)?.importance != NotificationManager.IMPORTANCE_NONE
 
     /**
-     * Sound only for a proposal_id never notified before (or the daily 21:00 reminder). A new rev of a
-     * known proposal re-posts silently. Removals only update a still-visible summary. While notifications
+     * Sound only for a package_id never notified before (or the daily 21:00 reminder). A new revision of a
+     * known package re-posts silently. Removals only update a still-visible summary. While notifications
      * are blocked nothing is marked notified; the first post after unblocking is silent.
      */
-    internal fun notifyProposals(context: Context, db: InboxDatabase, now: Long) {
+    internal fun notifyReviews(context: Context, db: InboxDatabase, now: Long) {
         val manager = manager(context)
-        val items = db.proposals()
+        val items = db.reviews()
         if (items.isEmpty()) {
-            manager.cancel(PROPOSAL_NOTIFICATION)
-            db.setting("proposal_signature", "")
+            manager.cancel(REVIEW_NOTIFICATION)
+            db.setting("review_signature", "")
             return
         }
-        val added = items.any { it.notifiedRev == 0L }
-        val revised = items.any { it.notifiedRev in 1 until it.rev }
-        if (!allowed(context, manager, PROPOSAL_CHANNEL)) {
-            if (added || revised) db.setting("proposal_blocked", "true")
+        val added = items.any { it.notifiedRevision == 0L }
+        val revised = items.any { it.notifiedRevision in 1 until it.revision }
+        if (!allowed(context, manager, REVIEW_CHANNEL)) {
+            if (added || revised) db.setting("review_blocked", "true")
             return
         }
         val local = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault())
         val day = local.toLocalDate().toString()
         val reminder = local.hour >= ShepherdRuntime.REMINDER_HOUR && db.setting("reminded_day") != day
-        val signature = items.joinToString("\n") { "${it.proposalId}.r${it.rev}" }
-        val visible = manager.activeNotifications.any { it.id == PROPOSAL_NOTIFICATION }
-        if (!added && !revised && !reminder && !(visible && signature != db.setting("proposal_signature"))) {
-            db.setting("proposal_signature", signature)
+        val signature = items.joinToString("\n") { "${it.packageId}.r${it.revision}" }
+        val visible = manager.activeNotifications.any { it.id == REVIEW_NOTIFICATION }
+        if (!added && !revised && !reminder && !(visible && signature != db.setting("review_signature"))) {
+            db.setting("review_signature", signature)
             return
         }
-        val blocked = db.setting("proposal_blocked") == "true"
-        val lines = items.map { it.summary.take(80) + if (it.revised) " · 다시 짠 제안" else "" }
-        if (post(context, manager, PROPOSAL_NOTIFICATION, PROPOSAL_CHANNEL, "검토 대기 제안 ${items.size}건", lines,
+        val blocked = db.setting("review_blocked") == "true"
+        val lines = items.map { it.summary.take(80) + if (it.revised) " · 피드백 반영본" else "" }
+        if (post(context, manager, REVIEW_NOTIFICATION, REVIEW_CHANNEL, "검토 대기 문서 ${items.size}건", lines,
                 silent = blocked || !(added || reminder))) {
-            db.markProposalsNotified()
-            db.setting("proposal_signature", signature)
-            db.setting("proposal_blocked", "false")
+            db.markReviewsNotified()
+            db.setting("review_signature", signature)
+            db.setting("review_blocked", "false")
             if (reminder) db.setting("reminded_day", day)
         }
     }
@@ -174,8 +174,8 @@ object InboxRuntime {
             return
         }
         val blocked = db.setting("alert_blocked") == "true"
-        val lines = items.map { "승인 전 · ${it.message.take(80)}" }
-        if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, "일정 변경 가능 ${items.size}건 · 승인 전", lines,
+        val lines = items.map { it.message.take(80) }
+        if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, "일정 변경 가능 ${items.size}건", lines,
                 silent = blocked || !added)) {
             db.markAlertsNotified()
             db.setting("alert_signature", signature)

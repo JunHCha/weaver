@@ -25,7 +25,8 @@ object CourierRules {
     const val cleanupWait = 15 * 60 * 1000L
     const val ulid = "[0-7][0-9A-HJKMNP-TV-Z]{25}"
     val capture = Regex("cap_$ulid\\.json")
-    val revision = Regex("(prp_$ulid)\\.r([1-9][0-9]*)\\.json")
+    /** `<package_id>.r<revision>.json`; package IDs are opaque `[A-Za-z0-9_-]+` strings. */
+    val revision = Regex("([A-Za-z0-9_-]+)\\.r([1-9][0-9]*)\\.json")
     val alert = Regex("alert_(alt_$ulid)\\.json")
     fun ignored(name: String) = name.startsWith(".") || name.startsWith("~syncthing~")
     fun conflict(name: String) = ".sync-conflict-" in name
@@ -33,9 +34,9 @@ object CourierRules {
         name.none { it == '/' || it == '\\' || it.isISOControl() }
     fun phoneTemporary(folder: String, name: String): Boolean = ownTemporary(name) && (
         (folder == "outbox" && name.startsWith(".cap_")) ||
-        (folder == "decisions" && name.startsWith(".prp_")) || name.startsWith(".probe-")
+        folder == "decisions" || name.startsWith(".probe-")
     )
     fun ownTemporary(name: String) = Regex(
-        "\\.(?:cap_$ulid\\.[A-Za-z0-9_-]+|prp_$ulid\\.r[1-9][0-9]*\\.json|probe-[0-9a-f-]{36}\\.(?:txt|bin))\\.[0-9a-f]{16}\\.tmp",
+        "\\.(?:cap_$ulid\\.[A-Za-z0-9_-]+|[A-Za-z0-9_-]+\\.r[1-9][0-9]*\\.json|probe-[0-9a-f-]{36}\\.(?:txt|bin))\\.[0-9a-f]{16}\\.tmp",
     ).matches(name)
 }

@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "revision": 1,
+  "retracted": false,
+  "package_id": "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "thread_id": "thr_0123456789abcdef",
+  "title": "주간 점검 회의",
+  "blocked_by": null,
+  "summary_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "start": "2026-11-12T10:00:00",
+  "end": "2026-11-12T11:00:00+09:00",
+  "timezone": "Asia/Seoul"
+}

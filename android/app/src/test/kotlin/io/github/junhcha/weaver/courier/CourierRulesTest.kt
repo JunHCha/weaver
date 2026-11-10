@@ -19,5 +19,15 @@ class CourierRulesTest {
         assertFalse(CourierRules.ownTemporary(".syncthing.a.tmp"))
         assertFalse(CourierRules.ownTemporary(".stfolder"))
         assertFalse(CourierRules.ownTemporary(".arbitrary.0123456789abcdef.tmp"))
+        assertTrue(CourierRules.phoneTemporary("decisions", ".pkg_0123456789abcdef.r2.json.0123456789abcdef.tmp"))
+        assertFalse(CourierRules.phoneTemporary("decisions", ".pkg_0123456789abcdef.json.0123456789abcdef.tmp"))
+    }
+
+    @Test fun reviewFileNamesCarryOpaquePackageIds() {
+        val match = CourierRules.revision.matchEntire("pkg_0123456789abcdef.r12.json")!!
+        assertEquals(listOf("pkg_0123456789abcdef", "12"), match.groupValues.drop(1))
+        assertNull(CourierRules.revision.matchEntire("pkg_0123456789abcdef.r0.json"))
+        assertNull(CourierRules.revision.matchEntire("../pkg.r1.json"))
+        assertNull(CourierRules.revision.matchEntire("pkg.r1.json.tmp"))
     }
 }

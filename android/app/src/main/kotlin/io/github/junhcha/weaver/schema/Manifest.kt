@@ -3,7 +3,7 @@ package io.github.junhcha.weaver.schema
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Capture channel shared by Manifest and Proposal.source (schema/ $defs Channel). */
+/** Capture channel of a Manifest (schema/ $defs Channel). */
 @Serializable
 enum class Channel {
     @SerialName("call") CALL,

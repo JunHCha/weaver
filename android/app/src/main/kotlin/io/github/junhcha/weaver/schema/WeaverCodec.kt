@@ -20,23 +20,24 @@ sealed interface DecodeResult<out T> {
     data class Ok<T>(val value: T) : DecodeResult<T>
 
     /**
-     * `schema_version` is an integer other than [SCHEMA_VERSION]. The file is not processed;
-     * [diagnostic] is meant for the app log or a user-visible error list.
+     * `schema_version` is an integer other than the one the model carries. The file is not
+     * processed; [diagnostic] is meant for the app log or a user-visible error list.
      */
     data class UnsupportedVersion(val model: String, val found: Long, val expected: Long = SCHEMA_VERSION.toLong()) : DecodeResult<Nothing> {
         val diagnostic: String
             get() = "$model schema_version $found is not supported (expected $expected); skipped"
     }
 
-    /** Malformed JSON or a violation of the v1 contract. */
+    /** Malformed JSON or a violation of the contract. */
     data class Invalid(val model: String, val reason: String) : DecodeResult<Nothing> {
         val diagnostic: String get() = "$model is invalid: $reason"
     }
 }
 
 /**
- * Strict JSON for schema/ v1: unknown keys are rejected, nulls are written explicitly and
- * no key has a default, so every declared key must be present when decoding.
+ * Strict JSON for schema/: unknown keys are rejected, nulls are written explicitly and
+ * every declared key must be present when decoding. Capture files carry `schema_version`
+ * [SCHEMA_VERSION]; review, schedule and alert files carry [REVIEW_SCHEMA_VERSION].
  */
 object WeaverCodec {
     val json: Json = Json {
@@ -47,7 +48,9 @@ object WeaverCodec {
         allowSpecialFloatingPointValues = false
     }
 
-    // A JSON integer token only: 1.0, 1e0 or "1" are not schema_version 1.
+    private val REVIEW_MODELS = setOf("ApprovedSchedule", "ReviewPackage", "Verdict", "Alert")
+
+    // A JSON integer token only: 1.0, 1e0 or "1" are not a schema_version.
     private val integerToken = Regex("-?(?:0|[1-9][0-9]*)")
 
     inline fun <reified T> decode(text: String): DecodeResult<T> = decode(serializer<T>(), text)
@@ -67,7 +70,7 @@ object WeaverCodec {
         }
         val found = version.content.toLongOrNull()
             ?: return DecodeResult.Invalid(model, "schema_version is out of range")
-        val expected = if (serializer.descriptor.serialName.startsWith("io.github.junhcha.weaver.schema.v2.")) 2L else SCHEMA_VERSION.toLong()
+        val expected = (if (model in REVIEW_MODELS) REVIEW_SCHEMA_VERSION else SCHEMA_VERSION).toLong()
         if (found != expected) return DecodeResult.UnsupportedVersion(model, found, expected)
         // kotlinx accepts quoted numbers ("1") and exponent integers (1e0); the schema and
         // its README do not. Check JSON token types against the model before decoding.
@@ -75,9 +78,9 @@ object WeaverCodec {
         return try {
             DecodeResult.Ok(json.decodeFromString(serializer, text))
         } catch (e: SerializationException) {
-            DecodeResult.Invalid(model, e.message ?: "does not match the v1 model")
+            DecodeResult.Invalid(model, e.message ?: "does not match the model")
         } catch (e: IllegalArgumentException) {
-            DecodeResult.Invalid(model, e.message ?: "violates a v1 constraint")
+            DecodeResult.Invalid(model, e.message ?: "violates a constraint")
         }
     }
 

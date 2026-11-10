@@ -1,6 +1,5 @@
-package io.github.junhcha.weaver.schema.v2
+package io.github.junhcha.weaver.schema
 
-import io.github.junhcha.weaver.schema.Rules
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -33,7 +32,7 @@ data class ReviewPackage(
     @SerialName("stage_times") val stageTimes: Map<Stage, String>,
 ) {
     init {
-        require(schemaVersion == 2)
+        Rules.schemaVersion(schemaVersion, REVIEW_SCHEMA_VERSION)
         Rules.nonEmpty(packageId, "package_id")
         Rules.prefixedId("src", sourceId, "source_id")
         Rules.revision(revision)

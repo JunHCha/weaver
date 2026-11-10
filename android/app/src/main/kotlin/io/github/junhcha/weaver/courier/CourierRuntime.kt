@@ -157,7 +157,7 @@ object CourierRuntime {
     fun queueVerdict(context: Context, verdict: Verdict) = synchronized(lock) {
         val directory = File(context.filesDir, "courier-verdicts").apply { mkdirs() }
         cleanQueueTemporaries(directory)
-        val final = File(directory, "${verdict.proposalId}.r${verdict.rev}.json")
+        val final = File(directory, "${verdict.packageId}.r${verdict.revision}.json")
         val bytes = WeaverCodec.encode(verdict).toByteArray()
         check(bytes.size <= CourierRules.maxJson) { "too_large" }
         if (final.exists()) check(final.readBytes().contentEquals(bytes)) { "verdict_already_queued" }
@@ -168,7 +168,7 @@ object CourierRuntime {
                 check(temp.renameTo(final))
             } finally { temp.delete() }
         }
-        io.github.junhcha.weaver.inbox.InboxRuntime.submitted(context, verdict.proposalId, verdict.rev)
+        io.github.junhcha.weaver.inbox.InboxRuntime.submitted(context, verdict.packageId, verdict.revision)
         kick(context)
     }
 
@@ -217,7 +217,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
     companion object {
         internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase): Boolean {
             val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
-            // One listing feeds both capture publication and the proposal/alert inbox. A listing
+            // One listing feeds both capture publication and the review/alert inbox. A listing
             // failure throws before either runs, so it is never read as "every file was deleted".
             val inbox = client.scan()
             var successful = client.synchronize(inbox)
@@ -232,7 +232,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
                 try {
                     val verdict = file.inputStream().use { CourierClient.decoded<Verdict>(CourierClient.boundedJson(it)) }
-                    check(file.name == "${verdict.proposalId}.r${verdict.rev}.json") { "id_mismatch" }
+                    check(file.name == "${verdict.packageId}.r${verdict.revision}.json") { "id_mismatch" }
                     client.publishVerdict(verdict)
                     check(file.delete()) { "queue_delete_failed" }
                 } catch (error: SecurityException) { throw error

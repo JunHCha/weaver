@@ -55,9 +55,16 @@ class ModelShapeTest {
                     val values = single(path, branches).getValue("enum").jsonArray.map { it.jsonPrimitive.content }
                     assertEquals("$path: enum values", values.toSet(), descriptor.elementNames.toSet())
                 }
+                StructureKind.MAP -> {
+                    val map = single(path, branches)
+                    assertEquals("$path: type", "object", map["type"]?.jsonPrimitive?.content)
+                    compare("$path{key}", map.getValue("propertyNames").jsonObject, descriptor.getElementDescriptor(0))
+                    compare("$path{value}", map.getValue("additionalProperties").jsonObject, descriptor.getElementDescriptor(1))
+                }
                 is PrimitiveKind -> {
                     val expected = when (kind) {
                         PrimitiveKind.STRING -> "string"
+                        PrimitiveKind.BOOLEAN -> "boolean"
                         PrimitiveKind.INT, PrimitiveKind.LONG -> "integer"
                         PrimitiveKind.DOUBLE -> "number"
                         else -> error("$path: unexpected primitive $kind")
@@ -73,12 +80,15 @@ class ModelShapeTest {
             val properties = node.getValue("properties").jsonObject
             val required = node.getValue("required").jsonArray.map { it.jsonPrimitive.content }.toSet()
             assertEquals("$path: property names", properties.keys, descriptor.elementNames.toSet())
-            assertEquals("$path: every key is required", properties.keys, required)
+            // Only keys the server defaults (and so omits from `required`) may have a Kotlin default.
+            val optional = (0 until descriptor.elementsCount).filter { descriptor.isElementOptional(it) }
+                .map { descriptor.getElementName(it) }.toSet()
+            assertEquals("$path: every key is required except defaulted ones", properties.keys - required, optional)
+            assertTrue("$path: required keys are declared", properties.keys.containsAll(required))
             for (i in 0 until descriptor.elementsCount) {
                 val name = descriptor.getElementName(i)
                 val child = properties.getValue(name).jsonObject
                 val element = descriptor.getElementDescriptor(i)
-                assertTrue("$path.$name: Kotlin must not default a required key", !descriptor.isElementOptional(i))
                 assertEquals("$path.$name: nullability", isNullable(child), element.isNullable)
                 compare("$path.$name", child, element)
             }
@@ -104,7 +114,7 @@ class ModelShapeTest {
         private fun nonNullBranches(node: JsonObject): List<JsonObject> {
             val resolved = resolve(node)
             if (resolved["type"] == JsonPrimitive("null")) return emptyList()
-            // An object's own anyOf (ProposalEntity identity rule) is a constraint, not a union.
+            // An object's own anyOf is a constraint, not a union.
             if ("type" in resolved || "properties" in resolved) return listOf(resolved)
             val anyOf = resolved["anyOf"] as? JsonArray ?: return listOf(resolved)
             return anyOf.flatMap { nonNullBranches(it.jsonObject) }

@@ -1,6 +1,5 @@
-package io.github.junhcha.weaver.schema.v2
+package io.github.junhcha.weaver.schema
 
-import io.github.junhcha.weaver.schema.Rules
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlinx.serialization.SerialName
@@ -22,7 +21,7 @@ data class ApprovedSchedule(
     val retracted: Boolean = false,
 ) {
     init {
-        require(schemaVersion == 2)
+        Rules.schemaVersion(schemaVersion, REVIEW_SCHEMA_VERSION)
         Rules.revision(revision)
         Rules.nonEmpty(packageId, "package_id")
         Rules.nonEmpty(threadId, "thread_id")

@@ -1,6 +1,6 @@
 package io.github.junhcha.weaver.review
 
-import io.github.junhcha.weaver.schema.v2.Stage
+import io.github.junhcha.weaver.schema.Stage
 
 enum class StepStatus(val label: String) { DONE("완료"), CURRENT("진행 중"), UPCOMING("예정") }
 

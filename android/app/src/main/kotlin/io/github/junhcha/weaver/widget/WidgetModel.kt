@@ -9,7 +9,7 @@ import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.review.ReviewStatus
 
 /** Only the local notification summaries enter RemoteViews, never full originals or schedules. */
-data class WidgetRow(val id: String, val rev: Long, val summary: String, val source: String, val submitted: Boolean, val deliveryStatus: String? = null)
+data class WidgetRow(val id: String, val revision: Long, val summary: String, val submitted: Boolean, val deliveryStatus: String? = null)
 data class WidgetModel(
     val rows: List<WidgetRow> = emptyList(), val alertMessages: List<String> = emptyList(),
     val status: String = "동기화 대기", val failed: Boolean = false,
@@ -18,19 +18,17 @@ data class WidgetModel(
     fun visible(large: Boolean) = rows.take(if (large) 5 else 2)
     fun overflow(large: Boolean) = rows.size - visible(large).size
     fun warning(large: Boolean): String? = if (alertMessages.isEmpty()) null else
-        "승인 전 · 일정이 바뀔 수 있습니다 (${alertMessages.size}건)." +
+        "일정이 바뀌었을 수 있습니다 (${alertMessages.size}건)." +
             if (large) " ${alertMessages.first().replace('\n', ' ').split(Regex("[.!?。]\\s*")).first().take(90)}." else ""
 
     companion object {
-        fun map(proposals: List<InboxDatabase.ProposalItem>, records: List<ReviewRecord>,
+        fun map(reviews: List<InboxDatabase.ReviewItem>, records: List<ReviewRecord>,
                 alerts: List<String>, status: String): WidgetModel {
-            val submitted = records.associateBy { it.verdict.proposalId to it.verdict.rev }
+            val submitted = records.associateBy { it.verdict.packageId to it.verdict.revision }
             // Inbox is newest-arrival first; stable sorting preserves that order within each state.
-            val rows = proposals.groupBy { it.proposalId }.values.map { versions -> versions.maxBy { it.rev } }
-                .map { WidgetRow(it.proposalId, it.rev, it.summary, when (it.channel) {
-                    "CALL" -> "통화"; "KAKAO" -> "카카오"; "SHARE_TEXT" -> "공유 텍스트"
-                    "VOICE_MEMO" -> "음성 메모"; else -> it.channel
-                }, (it.proposalId to it.rev) in submitted, submitted[it.proposalId to it.rev]?.let(::deliveryLabel)) }.sortedBy { it.submitted }
+            val rows = reviews.groupBy { it.packageId }.values.map { versions -> versions.maxBy { it.revision } }
+                .map { WidgetRow(it.packageId, it.revision, it.summary, (it.packageId to it.revision) in submitted,
+                    submitted[it.packageId to it.revision]?.let(::deliveryLabel)) }.sortedBy { it.submitted }
             return WidgetModel(rows, alerts, status)
         }
         private fun deliveryLabel(record: ReviewRecord): String = if (record.published) "전송됨" else when (record.status) {
@@ -54,7 +52,7 @@ data class WidgetModel(
                             now - scan > 30 * 60_000 -> "동기화 지연 · 이전 목록입니다"
                             else -> "최근 검사 완료 · 약 15분 주기"
                         }
-                        map(db.proposals(newestRevisionFirst = true), records.filter { it.tree == db.setting("tree") }, db.alerts().map { it.message }, status)
+                        map(db.reviews(newestRevisionFirst = true), records.filter { it.tree == db.setting("tree") }, db.alerts().map { it.message }, status)
                     }
                 }
             }

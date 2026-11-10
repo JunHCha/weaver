@@ -19,15 +19,15 @@ object WidgetUpdates {
         request(context)
     }
     internal suspend fun updateInstances(context: Context, render: suspend (GlanceId) -> Unit = {
-        ProposalWidget().update(context, it)
+        ReviewWidget().update(context, it)
     }) {
-        GlanceAppWidgetManager(context).getGlanceIds(ProposalWidget::class.java).forEach { render(it) }
+        GlanceAppWidgetManager(context).getGlanceIds(ReviewWidget::class.java).forEach { render(it) }
     }
     fun request(context: Context) {
         changes.value += 1
         if (AppWidgetManager.getInstance(context).getAppWidgetIds(
-                ComponentName(context, ProposalWidgetReceiver::class.java)).isEmpty()) return
-        WorkManager.getInstance(context).enqueueUniqueWork("proposal-widget-refresh",
+                ComponentName(context, ReviewWidgetReceiver::class.java)).isEmpty()) return
+        WorkManager.getInstance(context).enqueueUniqueWork("review-widget-refresh",
             ExistingWorkPolicy.APPEND_OR_REPLACE, OneTimeWorkRequestBuilder<WidgetUpdateWorker>().build())
     }
 }

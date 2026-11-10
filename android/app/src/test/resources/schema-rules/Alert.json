@@ -5,15 +5,6 @@
     "/$defs/AlertId/type": "string",
     "/$defs/NonEmpty/pattern": "\\S",
     "/$defs/NonEmpty/type": "string",
-    "/$defs/ProposalId/maxLength": 30,
-    "/$defs/ProposalId/minLength": 30,
-    "/$defs/ProposalId/pattern": "^prp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-    "/$defs/ProposalId/type": "string",
-    "/$defs/Ref/not": {
-        "pattern": "[\\r\\n]"
-    },
-    "/$defs/Ref/pattern": "^[a-z][1-9][0-9]*$",
-    "/$defs/Ref/type": "string",
     "/$defs/Timestamp/format": "date-time",
     "/$defs/Timestamp/not": {
         "pattern": "[\\r\\n]"
@@ -21,13 +12,13 @@
     "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
     "/$defs/Timestamp/type": "string",
     "/additionalProperties": false,
-    "/properties/schema_version/const": 1,
+    "/properties/schema_version/const": 2,
     "/properties/schema_version/type": "integer",
     "/required": [
         "schema_version",
         "alert_id",
-        "proposal_id",
-        "schedule_ref",
+        "package_id",
+        "thread_id",
         "message",
         "created_at"
     ],

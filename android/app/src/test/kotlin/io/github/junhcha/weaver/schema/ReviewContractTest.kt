@@ -4,10 +4,6 @@ import com.networknt.schema.InputFormat
 import com.networknt.schema.SchemaRegistry
 import com.networknt.schema.SchemaRegistryConfig
 import com.networknt.schema.SpecificationVersion
-import io.github.junhcha.weaver.schema.v2.Question
-import io.github.junhcha.weaver.schema.v2.ReviewPackage
-import io.github.junhcha.weaver.schema.v2.Stage
-import io.github.junhcha.weaver.schema.v2.Verdict as VerdictV2
 import java.io.File
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -15,35 +11,41 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class V2ContractTest {
+class ReviewContractTest {
     private val json = Json { encodeDefaults = true }
     private val registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12) {
         it.schemaRegistryConfig(SchemaRegistryConfig.builder().formatAssertionsEnabled(true).build())
     }
     private fun valid(model: String, text: String): Boolean = registry.getSchema(
-        File(SharedSchema.dir, "v2/$model.schema.json").readText(), InputFormat.JSON,
+        File(SharedSchema.dir, "$model.schema.json").readText(), InputFormat.JSON,
     ).validate(text, InputFormat.JSON).isEmpty()
 
     @Test
+    fun noVersionDirectoryRemainsAndEveryModelHasAnExample() {
+        assertFalse(File(SharedSchema.dir, "v2").exists())
+        SharedSchema.models.keys.forEach { assertTrue(it, File(SharedSchema.dir, "examples/$it.json").isFile) }
+    }
+
+    @Test
     fun approvedScheduleRoundTripAndInvalidValues() {
-        val value = io.github.junhcha.weaver.schema.v2.ApprovedSchedule(
+        val value = ApprovedSchedule(
             2, "package-1", "thread-1", "회의", "2026-01-01T09:00:00+09:00", null,
             "Asia/Seoul", null, "a".repeat(64),
         )
         val text = WeaverCodec.encode(value)
         assertTrue(valid("ApprovedSchedule", text))
-        assertTrue(WeaverCodec.decode<io.github.junhcha.weaver.schema.v2.ApprovedSchedule>(text) is DecodeResult.Ok)
+        assertTrue(WeaverCodec.decode<ApprovedSchedule>(text) is DecodeResult.Ok)
         assertTrue(runCatching { value.copy(timezone = "No/Such_Zone") }.isFailure)
         assertTrue(runCatching { value.copy(end = "2025-01-01T00:00:00Z") }.isFailure)
     }
 
     @Test
-    fun courierCodecAcceptsOnlyStrictV2ForV2Models() {
-        val value = VerdictV2(2, "package-1", 1, VerdictV2.Action.APPROVE, listOf("가"), null, null)
+    fun courierCodecAcceptsOnlyStrictReviewVersion() {
+        val value = Verdict(2, "package-1", 1, Verdict.Action.APPROVE, listOf("가"), null, null)
         val text = WeaverCodec.encode(value)
-        assertTrue(WeaverCodec.decode<VerdictV2>(text) is DecodeResult.Ok)
-        assertTrue(WeaverCodec.decode<VerdictV2>(text.replace("\"schema_version\":2", "\"schema_version\":1")) is DecodeResult.UnsupportedVersion)
-        assertTrue(WeaverCodec.decode<VerdictV2>(text.replace("\"revision\":1", "\"revision\":\"1\"")) is DecodeResult.Invalid)
+        assertTrue(WeaverCodec.decode<Verdict>(text) is DecodeResult.Ok)
+        assertTrue(WeaverCodec.decode<Verdict>(text.replace("\"schema_version\":2", "\"schema_version\":1")) is DecodeResult.UnsupportedVersion)
+        assertTrue(WeaverCodec.decode<Verdict>(text.replace("\"revision\":1", "\"revision\":\"1\"")) is DecodeResult.Invalid)
     }
 
     @Test
@@ -63,14 +65,14 @@ class V2ContractTest {
 
     @Test
     fun verdictActionsRoundTripAndRejectInvalidBranches() {
-        val base = VerdictV2(2, "package-1", 1, VerdictV2.Action.APPROVE, emptyList(), null, null)
-        listOf(base, base.copy(action = VerdictV2.Action.EDIT, editedBody = "수정"), base.copy(action = VerdictV2.Action.FEEDBACK, feedback = "의견"), base.copy(action = VerdictV2.Action.REJECT)).forEach {
+        val base = Verdict(2, "package-1", 1, Verdict.Action.APPROVE, emptyList(), null, null)
+        listOf(base, base.copy(action = Verdict.Action.EDIT, editedBody = "수정"), base.copy(action = Verdict.Action.FEEDBACK, feedback = "의견"), base.copy(action = Verdict.Action.REJECT)).forEach {
             val text = json.encodeToString(it)
             assertTrue(valid("Verdict", text))
-            assertTrue(json.decodeFromString<VerdictV2>(text) == it)
+            assertTrue(json.decodeFromString<Verdict>(text) == it)
         }
         val invalid = json.encodeToString(base).replace("\"action\":\"approve\"", "\"action\":\"edit\"")
         assertFalse(valid("Verdict", invalid))
-        assertTrue(runCatching { json.decodeFromString<VerdictV2>(invalid) }.isFailure)
+        assertTrue(runCatching { json.decodeFromString<Verdict>(invalid) }.isFailure)
     }
 }

@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "package_id": "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "revision": 1,
+  "draft_body": "홍길동이 금요일까지 자료를 보내기로 했다.",
+  "questions": [
+    {
+      "question": "질문",
+      "rationale": "이유",
+      "choices": [
+        "가",
+        "나",
+        "다"
+      ]
+    },
+    {
+      "question": "질문",
+      "rationale": "이유",
+      "choices": [
+        "가",
+        "나",
+        "다"
+      ]
+    },
+    {
+      "question": "질문",
+      "rationale": "이유",
+      "choices": [
+        "가",
+        "나",
+        "다"
+      ]
+    },
+    {
+      "question": "질문",
+      "rationale": "이유",
+      "choices": [
+        "가",
+        "나",
+        "다"
+      ]
+    }
+  ],
+  "stage": "검토",
+  "stage_times": {
+    "수집": "2026-11-07T15:30:00+09:00",
+    "검토": "2026-11-07T15:32:00+09:00"
+  }
+}
