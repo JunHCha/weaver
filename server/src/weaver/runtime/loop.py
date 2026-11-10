@@ -251,14 +251,18 @@ class Runtime[S: HasSourceId]:
     # ---- one pass ----------------------------------------------------------------
 
     def _tick(self, stop: threading.Event) -> float:
+        was_available = self.gate.available
         try:
             self._recheck_llm()
+            was_available = self.gate.available
             self.scanner.scan_once()
             self._process_sources(stop)
             if not stop.is_set():
                 self.publisher.publish()
                 self._run_maintenance()
         except Exception as error:
+            if was_available and not self.gate.available:
+                self._last_llm_check = self.clock()
             self.consecutive_failures += 1
             delay = min(
                 self.interval * 2.0**self.consecutive_failures,
@@ -272,6 +276,8 @@ class Runtime[S: HasSourceId]:
             )
             self._safe_status("degraded")
             return delay
+        if was_available and not self.gate.available:
+            self._last_llm_check = self.clock()
         self.consecutive_failures = 0
         self._safe_status("running")
         return self.interval

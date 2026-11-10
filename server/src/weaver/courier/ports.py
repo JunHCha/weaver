@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from weaver.schema import Manifest, Verdict
+from weaver.schema.v2 import Verdict as V2Verdict
 
 
 @dataclass(frozen=True)
@@ -79,4 +80,20 @@ class DecisionStore(Protocol):
 
     def apply(self, verdict: Verdict) -> None:
         """Apply one verdict; revise publishes the next rev. Raise on failure."""
+        ...
+
+
+class PackageRevisions(Protocol):
+    def latest_rev(self, package_id: str) -> int | None:
+        """Return the latest durably recorded package revision."""
+        ...
+
+
+class DecisionStoreV2(Protocol):
+    def is_applied(self, package_id: str, rev: int) -> bool:
+        """Return whether the verdict was durably applied."""
+        ...
+
+    def apply(self, verdict: "V2Verdict") -> None:
+        """Apply a validated v2 verdict."""
         ...

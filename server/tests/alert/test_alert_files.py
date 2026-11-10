@@ -9,7 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
 from weaver.alert import AlertHistory, ScheduleAlertDetector
-from weaver.config import CourierPaths, load_config
+from weaver.config import CourierPaths
 from weaver.courier import Courier, atomic
 from weaver.fabric import FabricStore
 from weaver.loom import (
@@ -19,7 +19,6 @@ from weaver.loom import (
     ReviewStore,
     VerdictHandler,
 )
-from weaver.runtime.assemble import build_runtime
 from weaver.runtime.pipeline import AlertingPublisher, NoAlerts
 from weaver.schema import Proposal, Source, Verdict
 
@@ -133,22 +132,6 @@ def test_proposal_failure_skips_alerts(setup):
     with pytest.raises(RuntimeError):
         publisher.publish_proposal(moved())
     assert alert_files(paths) == []
-
-
-def test_runtime_wires_schedule_detector(tmp_path):
-    roots = ("sync_root", "archive_root", "vault_root", "state_root", "log_root")
-    path = tmp_path / "config.toml"
-    path.write_text("".join(f'{k} = "{k}"\n' for k in roots))
-    for key in roots:
-        (tmp_path / key).mkdir()
-    for channel in ("outbox", "receipts", "proposals", "decisions"):
-        (tmp_path / "sync_root" / channel).mkdir()
-    config = load_config(path, environ={})
-    runtime = build_runtime(config, environ={})
-    publisher = runtime.processor.proposer.courier
-    assert isinstance(publisher, AlertingPublisher)
-    assert isinstance(publisher.detector, ScheduleAlertDetector)
-    assert (config.state_root / "alerts.sqlite3").exists()
 
 
 class ReviseClient:

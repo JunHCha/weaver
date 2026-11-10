@@ -17,6 +17,12 @@ from pydantic import BaseModel
 
 from weaver.config import LlmConfig
 from weaver.llm.cli import cli_status
+from weaver.llm.errors import (
+    AuthenticationError,
+    BudgetExceeded,
+    InsufficientCredit,
+    UsageLimited,
+)
 from weaver.llm.keys import KeyUnavailable, resolve_api_key
 from weaver.llm.types import LlmClient
 from weaver.loom.extract import Extractor
@@ -69,10 +75,28 @@ class GatedLlm:
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
     ) -> T:
-        return self._target().generate_json(task, system, user, schema)
+        try:
+            return self._target().generate_json(task, system, user, schema)
+        except (
+            AuthenticationError,
+            BudgetExceeded,
+            InsufficientCredit,
+            UsageLimited,
+        ) as error:
+            self.gate.disable(error.code)
+            raise
 
     def generate_text(self, task: str, system: str, user: str) -> str:
-        return self._target().generate_text(task, system, user)
+        try:
+            return self._target().generate_text(task, system, user)
+        except (
+            AuthenticationError,
+            BudgetExceeded,
+            InsufficientCredit,
+            UsageLimited,
+        ) as error:
+            self.gate.disable(error.code)
+            raise
 
 
 class EntityIndexSource(Protocol):
