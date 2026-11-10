@@ -8,8 +8,8 @@ package io.github.junhcha.weaver.shepherd.autoshare
 object Selectors {
     const val VOICE_NOTE = "com.sec.android.app.voicenote"
     const val CHOOSER = "com.android.intentresolver"
-    const val WEAVER = "io.github.junhcha.weaver"
-    val allowedPackages = setOf(VOICE_NOTE, CHOOSER, WEAVER)
+    /** Weaver's own package is [android.content.Context.getPackageName]; debug builds add a suffix. */
+    fun allowedPackages(ownPackage: String) = setOf(VOICE_NOTE, CHOOSER, ownPackage)
     /** Packages whose nodes are inspected. Weaver's own screen (which previews the script) is never scanned. */
     val inspectedPackages = setOf(VOICE_NOTE, CHOOSER)
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the Voice Recorder, the system share sheet and Weaver itself are observed. -->
+<!-- Only the Voice Recorder, the system share sheet and Weaver itself are observed; the list is generated per build type (build.gradle.kts). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/auto_share_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeTouchInteractionStart"
@@ -7,4 +7,4 @@
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="200"
-    android:packageNames="com.sec.android.app.voicenote,com.android.intentresolver,io.github.junhcha.weaver" />
+    android:packageNames="@string/auto_share_package_names" />

@@ -57,9 +57,11 @@ class AutoShareMachine(
     private val job: AutoShareJob,
     startedAt: Long,
     private val submitted: () -> Boolean,
+    ownPackage: String,
     private val appLabel: String = "Weaver",
     private val timing: AutoShareTiming = AutoShareTiming(),
 ) {
+    private val allowedPackages = Selectors.allowedPackages(ownPackage)
     var step = AutoStep.LAUNCH
         private set
     private var stepSince = startedAt
@@ -124,7 +126,7 @@ class AutoShareMachine(
             if (submitted()) return Progress.Succeeded
         }
         val active = screen.activePackage
-        if (active != null && active !in Selectors.allowedPackages) {
+        if (active != null && active !in allowedPackages) {
             if (step == AutoStep.LAUNCH) return null
             val since = foreignSince ?: now.also { foreignSince = it }
             return if (now - since >= timing.foreignGraceMs) fail(AutoError.FOREIGN_APP) else null
