@@ -1,4 +1,4 @@
-"""Whole Galaxy call-script revision over Thread, independent of STT.
+"""Whole Galaxy call-script revision over Script, independent of STT.
 
 Only speech Segments (speaker present, nonblank text) reach the LLM, which edits
 text only. Structural Segments (headers, notice, title, blank or unknown lines)
@@ -17,7 +17,7 @@ from pydantic import Field, StrictStr, ValidationError, field_validator, model_v
 
 from weaver.llm import AnthropicClient, LlmClient, SchemaMismatch
 from weaver.llm.client import MODEL
-from weaver.schema.models import Contract, EntityId, NonEmpty, Ref, Segment, Thread
+from weaver.schema.models import Contract, EntityId, NonEmpty, Ref, Script, Segment
 
 PROMPT_VERSION: Literal["spinner.revise.v2"] = "spinner.revise.v2"
 FORMAT_VERSION: Literal[2] = 2
@@ -65,7 +65,7 @@ class Reviser(Protocol):
     def version(self) -> str | None:
         return None
 
-    def revise(self, thread: Thread, hints: ReviseHints) -> str: ...
+    def revise(self, thread: Script, hints: ReviseHints) -> str: ...
 
 
 class _EditedSegment(Contract):
@@ -143,10 +143,10 @@ def _milliseconds(seconds: float, *, end: bool) -> int:
     )
 
 
-def _validate_thread_segments(thread: Thread) -> None:
+def _validate_thread_segments(thread: Script) -> None:
     """Require ordered, disjoint ranges covering all non-whitespace content.
 
-    Whitespace between segments is a separator that Thread conversion restores
+    Whitespace between segments is a separator that Script conversion restores
     verbatim. Headers or other uncovered content must be segmented by the
     producer rather than being silently lost during revision.
     """
@@ -172,7 +172,7 @@ def _revisable(segment: Segment, text: str) -> bool:
     return segment.speaker is not None and bool(text.strip())
 
 
-def revision_to_thread(revision: Revision, original: Thread) -> Thread:
+def revision_to_thread(revision: Revision, original: Script) -> Script:
     """Rebuild ranges over corrected text; preserve source and per-segment dates.
 
     `original` supplies provenance not carried in the revision wire format and
@@ -193,7 +193,7 @@ def revision_to_thread(revision: Revision, original: Thread) -> Thread:
         raise RevisionError("invalid_thread") from None
 
 
-def _rebuild(revision: Revision, original: Thread) -> Thread:
+def _rebuild(revision: Revision, original: Script) -> Script:
     parts: list[str] = []
     segments = []
     previous_end = 0
@@ -226,7 +226,7 @@ def _rebuild(revision: Revision, original: Thread) -> Thread:
         offset += len(revised.text)
         previous_end = old.end_char
     parts.append(original.text[previous_end:])
-    return Thread(
+    return Script(
         schema_version=original.schema_version,
         source_id=original.source_id,
         channel=original.channel,
@@ -255,7 +255,7 @@ class LlmReviser:
         prompt = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
         return f"{PROMPT_VERSION}:{prompt}:{model}"
 
-    def revise(self, thread: Thread, hints: ReviseHints) -> str:
+    def revise(self, thread: Script, hints: ReviseHints) -> str:
         _validate_thread_segments(thread)
         try:
             original = [

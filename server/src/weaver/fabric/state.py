@@ -7,7 +7,7 @@ leaves only C active. Retraction facts never contribute values.
 
 from pydantic import JsonValue
 
-from weaver.schema import EntityState, Entry, SetState, StateValue
+from weaver.schema import EntityState, SetState, StateValue, Thread
 
 
 class InvalidSetOperation(ValueError):
@@ -38,11 +38,11 @@ def _equal(left: JsonValue, right: JsonValue) -> bool:
     return left == right
 
 
-def _value(entry: Entry, value: JsonValue) -> StateValue:
+def _value(entry: Thread, value: JsonValue) -> StateValue:
     return StateValue(value=value, entry_id=entry.entry_id, source_id=entry.source_id)
 
 
-def _apply_set(entry: Entry, previous: SetState | None) -> SetState:
+def _apply_set(entry: Thread, previous: SetState | None) -> SetState:
     members = list(previous.members) if previous is not None else []
     operation = entry.value
     if operation is None:
@@ -73,7 +73,7 @@ def _apply_set(entry: Entry, previous: SetState | None) -> SetState:
     return SetState(members=members, entry_id=entry.entry_id, source_id=entry.source_id)
 
 
-def fold_state(entity_id: str, entries: list[Entry]) -> EntityState:
+def fold_state(entity_id: str, entries: list[Thread]) -> EntityState:
     """Fold a store-ordered snapshot; storage has validated the reference DAG.
 
     Supersedes/retracts edges stay within the same entity set. Request blocking

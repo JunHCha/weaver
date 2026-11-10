@@ -1,6 +1,6 @@
 """Deterministic Korean rule selection; never interpret dates or call an LLM.
 
-Coordinates are half-open Unicode offsets into Thread.text. Window units are
+Coordinates are half-open Unicode offsets into Script.text. Window units are
 sentences, bounded additionally by every Segment edge and newline. Overlapping
 windows merge; merely adjacent windows stay separate. See RuleRefiner.select.
 """
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from weaver.config import RefinerConfig
-from weaver.schema import Thread
+from weaver.schema import Script
 from weaver.schema.internal import Candidate, CandidateTrigger
 from weaver.schema.models import Segment
 
@@ -107,7 +107,7 @@ def _excluded(kind: TriggerKind, match: re.Match[str], text: str) -> bool:
 
 
 class Refiner(Protocol):
-    def select(self, thread: Thread) -> list[Candidate]: ...
+    def select(self, thread: Script) -> list[Candidate]: ...
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,7 @@ class _Sentence:
     end: int
 
 
-def _sentences(thread: Thread) -> list[_Sentence]:
+def _sentences(thread: Script) -> list[_Sentence]:
     text = thread.text
     protected = [(m.start(), m.end()) for m in _NUMERIC.finditer(text)]
     cuts = {0, len(text)}
@@ -146,15 +146,15 @@ def _sentences(thread: Thread) -> list[_Sentence]:
     return sentences
 
 
-def _segments(thread: Thread, start: int, end: int) -> list[Segment]:
+def _segments(thread: Script, start: int, end: int) -> list[Segment]:
     return [s for s in thread.segments if s.start_char < end and start < s.end_char]
 
 
 class RuleRefiner:
     """Select only triggered sentences plus configured context.
 
-    No signals returns []; there is no whole-Thread fallback. Reference time is
-    the first overlapping trigger Segment's non-null occurred_at, then Thread's,
+    No signals returns []; there is no whole-Script fallback. Reference time is
+    the first overlapping trigger Segment's non-null occurred_at, then Script's,
     then null. Original offsets/time zones survive; no wall clock is consulted.
     Matching is lexical, so impossible calendar days and semantic ambiguity are
     left to extraction. All Segment boundaries remain sentence boundaries even
@@ -164,7 +164,7 @@ class RuleRefiner:
     def __init__(self, config: RefinerConfig | None = None) -> None:
         self.config = config or RefinerConfig()
 
-    def select(self, thread: Thread) -> list[Candidate]:
+    def select(self, thread: Script) -> list[Candidate]:
         sentences = _sentences(thread)
         windows: list[tuple[int, int, list[CandidateTrigger]]] = []
         for index, sentence in enumerate(sentences):

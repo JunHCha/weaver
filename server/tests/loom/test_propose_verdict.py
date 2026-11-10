@@ -8,7 +8,7 @@ import pytest
 
 from weaver.config import CourierPaths
 from weaver.courier import Courier
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.loom import (
     CourierPublisher,
     CourierReviewAdapter,
@@ -134,7 +134,7 @@ def test_four_verdicts_and_idempotency(env, kind):
     decision = verdict(env, kind, **changes)
     result = env.handler.apply(decision)
     assert isinstance(result, Proposal) == (kind == "revise")
-    assert len(env.fabric.entries(EntryQuery())) == (
+    assert len(env.fabric.entries(ThreadQuery())) == (
         2 if kind in ("approve", "edit") else 0
     )
     if kind in ("approve", "edit"):
@@ -167,7 +167,7 @@ def test_ask_blocks_entire_approval(env, group):
     decision = verdict(env, rev=2)
     with pytest.raises(ValueError, match="ask"):
         env.handler.apply(decision)
-    assert not env.fabric.entries(EntryQuery())
+    assert not env.fabric.entries(ThreadQuery())
     assert list(env.paths.decisions.iterdir()) and list(env.paths.proposals.iterdir())
     edit = verdict(
         env, "edit", rev=2, edits=[{"path": f"/{group}/0/ask", "value": None}]
@@ -208,7 +208,7 @@ def test_forbidden_or_invalid_edits_preserve_files(env, path, value):
     with pytest.raises(ValueError):
         env.handler.apply(decision)
     assert not env.store.review(decision.proposal_id, 1)
-    assert not env.fabric.entries(EntryQuery())
+    assert not env.fabric.entries(ThreadQuery())
     assert list(env.paths.decisions.iterdir()) and list(env.paths.proposals.iterdir())
 
 
@@ -233,14 +233,14 @@ def test_sink_failure_restart_retries_fixed_result(env, kind):
         env.handler.apply(decision)
     assert not env.store.is_applied(decision.proposal_id, 1)
     assert list(env.paths.decisions.iterdir())
-    before = env.fabric.entries(EntryQuery())
+    before = env.fabric.entries(ThreadQuery())
     env.sink.fail = False
     # Reopen journal and handler: no process-local deduplication.
     env.handler.store = ReviewStore(env.store.path)
     report = env.courier.scan_once()
     assert not report.problems
     assert env.store.is_applied(decision.proposal_id, 1)
-    assert env.fabric.entries(EntryQuery()) == before
+    assert env.fabric.entries(ThreadQuery()) == before
     assert env.client.calls == (1 if kind == "revise" else 0)
     assert len(env.sink.events) == 1
 
@@ -256,10 +256,10 @@ def test_fabric_success_then_interruption_replays_identical_payload(env, monkeyp
     monkeypatch.setattr(env.fabric, "append", interrupted)
     with pytest.raises(RuntimeError):
         env.handler.apply(decision)
-    entries = env.fabric.entries(EntryQuery())
+    entries = env.fabric.entries(ThreadQuery())
     monkeypatch.setattr(env.fabric, "append", append)
     assert env.handler.apply(decision) == entries
-    assert env.fabric.entries(EntryQuery()) == entries
+    assert env.fabric.entries(ThreadQuery()) == entries
 
 
 def test_cleanup_failure_after_applied_recovers_by_scan(env, monkeypatch):
@@ -339,7 +339,7 @@ def test_unresolved_ask_does_not_block_revise_or_reject(env, kind):
     env.store.save_proposal(proposal)
     env.publisher.publish_proposal(proposal)
     assert env.handler.apply(verdict(env, kind, rev=2)) is not None
-    assert not env.fabric.entries(EntryQuery())
+    assert not env.fabric.entries(ThreadQuery())
 
 
 def test_revise_publish_failure_recovers_before_stale_classification(env, monkeypatch):
@@ -380,7 +380,7 @@ def test_feedback_success_then_applied_commit_failure_deduplicates(env, monkeypa
     monkeypatch.setattr(env.sink, "record", record)
     env.handler.apply(decision)
     assert len(env.sink.events) == 1
-    assert len(env.fabric.entries(EntryQuery())) == 2
+    assert len(env.fabric.entries(ThreadQuery())) == 2
 
 
 def test_crash_between_proposal_and_decision_cleanup(env, monkeypatch):
@@ -422,7 +422,7 @@ def test_revision_output_cannot_forge_provenance_or_request_lineage(env, mutatio
     with pytest.raises(ValueError):
         env.handler.apply(decision)
     assert env.store.review(decision.proposal_id, 1) is None
-    assert not env.fabric.entries(EntryQuery())
+    assert not env.fabric.entries(ThreadQuery())
 
 
 def test_conflicting_applied_verdict_is_preserved_by_courier(env):
@@ -448,7 +448,7 @@ def test_concurrent_duplicate_reviews_serialize_across_handlers(env, kind):
         assert a.result(timeout=10) == b.result(timeout=10)
     assert len(env.sink.events) == 1
     assert env.client.calls == (1 if kind == "revise" else 0)
-    assert len(env.fabric.entries(EntryQuery())) == (2 if kind == "approve" else 0)
+    assert len(env.fabric.entries(ThreadQuery())) == (2 if kind == "approve" else 0)
 
 
 @pytest.mark.parametrize(

@@ -19,8 +19,8 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from weaver.config import ServerConfig
-from weaver.schema import EntityState, Entry
-from weaver.schema.models import EntityId, EntryKind, EntrySource, Timestamp
+from weaver.schema import EntityState, Thread
+from weaver.schema.models import EntityId, ThreadKind, ThreadSource, Timestamp
 
 SCHEMA_VERSION = 1
 _REFERENCES = ("supersedes", "retracts", "resolves", "blocked_by_request")
@@ -75,7 +75,7 @@ class SchemaVersionError(FabricError):
     """An unsupported DB version must be migrated by a newer implementation."""
 
 
-class EntryConflict(FabricError):
+class ThreadConflict(FabricError):
     """An ID was reused with different content, in storage or inside a batch."""
 
     def __init__(self, entry_id: str) -> None:
@@ -84,7 +84,7 @@ class EntryConflict(FabricError):
 
 
 class InvalidReference(FabricError):
-    """Structured reference error for callers; never includes Entry.value."""
+    """Structured reference error for callers; never includes Thread.value."""
 
     def __init__(self, entry_id: str, field: str, reason: str) -> None:
         self.entry_id = entry_id
@@ -93,7 +93,7 @@ class InvalidReference(FabricError):
         super().__init__(f"invalid {field}: {reason}")
 
 
-class EntryQuery(BaseModel):
+class ThreadQuery(BaseModel):
     """AND filters; UTC bounds apply to order_by, default occurrence time.
 
     Empty query returns all immutable facts, including retracted/superseded
@@ -102,15 +102,15 @@ class EntryQuery(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     entity_id: EntityId | None = None
-    kind: EntryKind | None = None
-    source_id: EntrySource | None = None
+    kind: ThreadKind | None = None
+    source_id: ThreadSource | None = None
     since: Timestamp | None = None
     until: Timestamp | None = None
     order_by: Literal["occurred_at", "recorded_at"] = "occurred_at"
     descending: bool = False
 
     @model_validator(mode="after")
-    def time_range(self) -> "EntryQuery":
+    def time_range(self) -> "ThreadQuery":
         if self.since is not None and self.until is not None:
             if self.since.astimezone(UTC) > self.until.astimezone(UTC):
                 raise ValueError("since must not be after until")
@@ -120,8 +120,8 @@ class EntryQuery(BaseModel):
 class Fabric(Protocol):
     """Append-only facts and deterministic current state; no execution permission."""
 
-    def append(self, entries: list[Entry]) -> None: ...
-    def entries(self, query: EntryQuery) -> list[Entry]: ...
+    def append(self, entries: list[Thread]) -> None: ...
+    def entries(self, query: ThreadQuery) -> list[Thread]: ...
     def state(self, entity_id: str) -> EntityState: ...
 
 
@@ -129,7 +129,7 @@ def _time(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
-def _canonical(entry: Entry) -> str:
+def _canonical(entry: Thread) -> str:
     payload = entry.model_dump(mode="json")
     payload["occurred_at"] = _time(entry.occurred_at)
     payload["recorded_at"] = _time(entry.recorded_at)
@@ -215,22 +215,22 @@ class FabricStore:
                 db.rollback()
             db.close()
 
-    def append(self, entries: list[Entry]) -> None:
+    def append(self, entries: list[Thread]) -> None:
         """Append all or none; identical retries preserve timestamps and rows.
 
         Replacement/retraction requires the same entity set and field. A
         retraction cannot itself be retracted or superseded. Request references
         target kind 요청; resolves additionally requires matching entities and a human
-        decision (enforced by Entry). All reference cycles are rejected.
+        decision (enforced by Thread). All reference cycles are rejected.
         """
-        batch: dict[str, Entry] = {}
+        batch: dict[str, Thread] = {}
         payloads: dict[str, str] = {}
         for supplied in entries:
             # Revalidate mutable or model_copy-constructed instances as well.
-            item = Entry.model_validate(supplied.model_dump(mode="python"))
+            item = Thread.model_validate(supplied.model_dump(mode="python"))
             payload = _canonical(item)
             if item.entry_id in payloads and payloads[item.entry_id] != payload:
-                raise EntryConflict(item.entry_id)
+                raise ThreadConflict(item.entry_id)
             batch[item.entry_id] = item
             payloads[item.entry_id] = payload
         if not batch:
@@ -245,7 +245,7 @@ class FabricStore:
                 if row is None:
                     fresh[key] = item
                 elif row[0] != payloads[key]:
-                    raise EntryConflict(key)
+                    raise ThreadConflict(key)
             self._validate_references(db, batch)
             for key, item in fresh.items():
                 db.execute(
@@ -270,7 +270,7 @@ class FabricStore:
             db.commit()
 
     @staticmethod
-    def _validate_references(db: sqlite3.Connection, batch: dict[str, Entry]) -> None:
+    def _validate_references(db: sqlite3.Connection, batch: dict[str, Thread]) -> None:
         targets = dict(batch)
         edges: dict[str, set[str]] = {}
         for key, item in batch.items():
@@ -289,7 +289,7 @@ class FabricStore:
                     ).fetchone()
                     if row is None:
                         raise InvalidReference(key, field, "missing_target")
-                    targets[target_id] = Entry.model_validate_json(row[0])
+                    targets[target_id] = Thread.model_validate_json(row[0])
                 target = targets[target_id]
                 if target_id in batch:
                     edges[key].add(target_id)
@@ -331,10 +331,10 @@ class FabricStore:
                 next(k for k, n in incoming.items() if n), "references", "cycle"
             )
 
-    def entries(self, query: EntryQuery) -> list[Entry]:
+    def entries(self, query: ThreadQuery) -> list[Thread]:
         """Return facts with AND filters and a stable, total UTC ordering."""
         # Validate copies constructed without Pydantic validation before SQL.
-        query = EntryQuery.model_validate(query.model_dump())
+        query = ThreadQuery.model_validate(query.model_dump())
         clauses, params = [], []
         for field in ("kind", "source_id"):
             value = getattr(query, field)
@@ -362,11 +362,11 @@ class FabricStore:
                 "SELECT e.entry_json FROM entries e" + where + " ORDER BY " + order,
                 params,
             ).fetchall()
-        return [Entry.model_validate_json(row[0]) for row in rows]
+        return [Thread.model_validate_json(row[0]) for row in rows]
 
     def state(self, entity_id: str) -> EntityState:
         """Replay one entity snapshot using UTC occurrence/recording/ID order."""
         from .state import fold_state
 
-        query = EntryQuery(entity_id=entity_id)
+        query = ThreadQuery(entity_id=entity_id)
         return fold_state(entity_id, self.entries(query))

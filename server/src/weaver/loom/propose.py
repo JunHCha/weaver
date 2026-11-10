@@ -18,7 +18,7 @@ from weaver.courier import Courier
 from weaver.courier.files import CourierFileError
 from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
-from weaver.schema import Alert, Entry, Proposal, Source, Verdict
+from weaver.schema import Alert, Proposal, Source, Thread, Verdict
 from weaver.schema.internal import Extraction, materialize_entries
 
 from .edits import edit_proposal
@@ -35,7 +35,7 @@ class FeedbackEvent:
     event_id: tuple[str, int]
     proposal: Proposal
     verdict: Verdict
-    result: list[Entry] | Proposal
+    result: list[Thread] | Proposal
     entity_ids: dict[str, str] = field(default_factory=dict)
     # Prompt/model versions recorded with the reviewed rev (empty for legacy).
     versions: dict[str, str] = field(default_factory=dict)
@@ -110,12 +110,12 @@ class VerdictHandler:
         self.feedback = feedback
         self.client = client
 
-    def apply(self, verdict: Verdict) -> list[Entry] | Proposal:
+    def apply(self, verdict: Verdict) -> list[Thread] | Proposal:
         verdict = Verdict.model_validate_json(verdict.model_dump_json())
         with self.store.lock():
             return self._apply(verdict)
 
-    def _apply(self, verdict: Verdict) -> list[Entry] | Proposal:
+    def _apply(self, verdict: Verdict) -> list[Thread] | Proposal:
         pid, rev = verdict.proposal_id, verdict.rev
         if any(pending_rev < rev for _, pending_rev in self.store.pending(pid)):
             raise ValueError(
@@ -225,10 +225,10 @@ class VerdictHandler:
         return result
 
     @staticmethod
-    def _decode(payload: str) -> list[Entry] | Proposal:
+    def _decode(payload: str) -> list[Thread] | Proposal:
         data = json.loads(payload)
         if isinstance(data, list):
-            return [Entry.model_validate(item) for item in data]
+            return [Thread.model_validate(item) for item in data]
         return Proposal.model_validate(data)
 
     def _revise(self, proposal: Proposal, verdict: Verdict) -> Proposal:

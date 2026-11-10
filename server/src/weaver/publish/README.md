@@ -7,9 +7,9 @@ outside the configured AI folder and the manifest's managed paths (including
 stalled paths from an older folder setting). It never changes a vault file.
 Hidden/temporary files, symlinks, and notes without source IDs are excluded.
 
-The shared editable properties have the same names as Fabric Entry fields:
+The shared editable properties have the same names as Fabric Thread fields:
 
-| Property | Value | Entry value |
+| Property | Value | Thread value |
 | --- | --- | --- |
 | `deadline` | ISO calendar date `YYYY-MM-DD` | normalized string |
 | `assignees` | array of `ent_…` IDs | `{add: [...], remove: [...]}` |
@@ -45,7 +45,7 @@ fabric.append(entries)  # may safely repeat after a crash
 watcher.acknowledge([entry.entry_id for entry in entries])
 ```
 
-`OutputWatcher` keeps the `scan() -> list[Entry]` Protocol. The concrete
+`OutputWatcher` keeps the `scan() -> list[Thread]` Protocol. The concrete
 `acknowledge` method belongs to the delivery boundary, never to the scanner's
 Fabric side effects. `OutputSync.run()` implements this sequence; enabled
 `[publish]` runtime wiring runs it before ordinary AI publication. Human output
@@ -53,7 +53,7 @@ edits are already human facts, so no extra proposal approval is requested
 (ADR-011). This recording has no calendar adapter or execution permission.
 
 The private SQLite database (0600, FULL/fullfsync) stores stable output IDs,
-normalized successful baselines, pending target snapshots and immutable Entry
+normalized successful baselines, pending target snapshots and immutable Thread
 payloads. A transaction serializes scans and commits the pending payloads and
 local scan date together. Failed append or a crash before acknowledgment returns
 the identical IDs, values and timestamps again, including after restart. Fabric's
@@ -76,7 +76,7 @@ path, so copies get independent `output:<ID>` sources. If exactly one previously
 active path disappears and exactly one new path has the same note ID, registration
 continues at the new path. Multiple possible old or new paths are ambiguous and
 get fresh baselines instead of guessing. Deletion marks a registration inactive
-without a deletion Entry; already pending entries still deliver. Divergent copies
+without a deletion Thread; already pending entries still deliver. Divergent copies
 are recorded independently without resolving conflicts.
 
 Comparison happens once per configured local date, at the next runtime tick.

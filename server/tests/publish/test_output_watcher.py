@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.publish import AiFolder, OutputSync, PublishState, SqliteOutputWatcher
 from weaver.publish.frontmatter import read_properties
 
@@ -124,7 +124,7 @@ def test_retries_restart_crash_after_append_and_checkpoint(
     assert restarted.scan() == first
     assert h.baseline() == before
     OutputSync(restarted, fabric).run()
-    assert fabric.entries(EntryQuery()) == first
+    assert fabric.entries(ThreadQuery()) == first
     assert restarted.scan() == []
     assert h.baseline() != before
 
@@ -297,12 +297,12 @@ def test_scan_and_append_never_write_vault_or_calendar(
     calendar.write_text("[]")
     fabric = FabricStore(tmp_path / "fabric.sqlite3")
     entries = h.watcher.scan()
-    assert fabric.entries(EntryQuery()) == []
+    assert fabric.entries(ThreadQuery()) == []
     assert entries
     OutputSync(h.watcher, fabric).run()
     assert {p: p.read_bytes() for p in before} == before
     assert calendar.read_text() == "[]"
-    assert len(fabric.entries(EntryQuery())) == 1
+    assert len(fabric.entries(ThreadQuery())) == 1
 
 
 def test_yaml_block_lists_and_null(h: Harness) -> None:

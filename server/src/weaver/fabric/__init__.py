@@ -2,18 +2,18 @@
 
 from .state import InvalidSetOperation
 from .store import (
-    EntryConflict,
-    EntryQuery,
     Fabric,
     FabricError,
     FabricStore,
     InvalidReference,
     SchemaVersionError,
+    ThreadConflict,
+    ThreadQuery,
 )
 
 __all__ = [
-    "EntryConflict",
-    "EntryQuery",
+    "ThreadConflict",
+    "ThreadQuery",
     "Fabric",
     "FabricError",
     "FabricStore",

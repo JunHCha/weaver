@@ -14,7 +14,7 @@ import pytest
 
 from weaver.config import CourierPaths, LlmConfig
 from weaver.courier import Courier
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.keys import KeyUnavailable, resolve_api_key
 from weaver.loom import (
     CourierPublisher,
@@ -334,4 +334,4 @@ def test_without_llm_approve_applies_and_revise_is_refused(review):
         leftover.unlink()
     entries = review.handler.apply(verdict(review, "approve"))
     assert len(entries) == 2
-    assert len(review.fabric.entries(EntryQuery())) == 2
+    assert len(review.fabric.entries(ThreadQuery())) == 2

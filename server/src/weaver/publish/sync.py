@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 
-from weaver.fabric import EntryQuery, Fabric
+from weaver.fabric import Fabric, ThreadQuery
 from weaver.loom.review_store import ReviewStore
 from weaver.schema import Proposal
 
@@ -29,7 +29,7 @@ class ReviewRelations:
     """Relations of APPLIED approve/edit reviews, endpoints resolved to IDs.
 
     ``this`` (the proposal's source) becomes the review's record notes, or the
-    src_ ID when the approval produced no Entry.
+    src_ ID when the approval produced no Thread.
     """
 
     def __init__(self, reviews: ReviewStore) -> None:
@@ -122,10 +122,10 @@ class VaultSync:
         raw = self.state.get(_CURSOR)
         since, seen = (None, set[str]()) if raw is None else _decode(raw)
         if full:
-            entries = self.fabric.entries(EntryQuery(order_by="recorded_at"))
+            entries = self.fabric.entries(ThreadQuery(order_by="recorded_at"))
             changed = {e.entity_id for e in self.entities.index().entities}
         else:
-            query = EntryQuery(since=since, order_by="recorded_at")
+            query = ThreadQuery(since=since, order_by="recorded_at")
             entries = [e for e in self.fabric.entries(query) if e.entry_id not in seen]
             changed = set()
         changed |= {entity for item in entries for entity in item.entities}

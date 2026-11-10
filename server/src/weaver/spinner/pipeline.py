@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from weaver.config import ServerConfig, SpinnerSettings
 from weaver.llm import LlmError
 from weaver.loom.call import GalaxyCallParser
-from weaver.schema.models import Source, Thread
+from weaver.schema.models import Script, Source
 from weaver.spinner.reviser import (
     FORMAT_VERSION,
     PROMPT_VERSION,
@@ -52,7 +52,7 @@ class TextParser(Protocol):
     def version(self) -> str | None:
         return None
 
-    def parse(self, source: Source, text: str) -> Thread: ...
+    def parse(self, source: Source, text: str) -> Script: ...
 
 
 class Spinner:
@@ -199,7 +199,7 @@ class Spinner:
         error: BaseException | None,
         *,
         source: Source | None = None,
-        result: Thread | None = None,
+        result: Script | None = None,
         field: Literal["parsed", "thread"] | None = None,
     ) -> None:
         elapsed = max(0.0, self._clock() - started)
@@ -240,7 +240,7 @@ class Spinner:
         self,
         db: sqlite3.Connection,
         source: Source,
-        result: Thread,
+        result: Script,
         field: Literal["parsed", "thread"],
     ) -> None:
         db.execute(
@@ -253,17 +253,17 @@ class Spinner:
         source: Source,
         attempt: int,
         stage: str,
-        operation: Callable[[], Thread],
+        operation: Callable[[], Script],
         *,
         field: Literal["parsed", "thread"] | None = None,
-    ) -> Thread:
+    ) -> Script:
         record = self._start(source, attempt, stage)
         started = self._clock()
         try:
             try:
                 result = operation()
                 # Revalidate injected adapters, including unchecked model_copy output.
-                result = Thread.model_validate(result.model_dump())
+                result = Script.model_validate(result.model_dump())
             except ValidationError:
                 raise SpinnerError("invalid_adapter_thread") from None
             if (result.source_id, result.channel, result.occurred_at) != (
@@ -278,7 +278,7 @@ class Spinner:
         self._finish(record, started, None, source=source, result=result, field=field)
         return result
 
-    def _parse(self, source: Source) -> Thread:
+    def _parse(self, source: Source) -> Script:
         if source.kind != "text":
             raise SpinnerError("unsupported_kind: fleece STT is deferred")
         if source.channel not in {"kakao", "share_text", "call"}:
@@ -307,7 +307,7 @@ class Spinner:
             return parser.parse(source, text)
         return text_to_thread(source, text, timezone=self._timezone)
 
-    def _revise(self, source: Source, parsed: Thread) -> Thread:
+    def _revise(self, source: Source, parsed: Script) -> Script:
         if self._reviser is None:
             raise SpinnerError("call_reviser_not_configured")
         serialized = self._reviser.revise(
@@ -315,8 +315,8 @@ class Spinner:
         )
         return revision_to_thread(parse_revision(serialized), parsed)
 
-    def spin(self, source: Source, *, reprocess: bool = False) -> Thread:
-        """Return only a committed complete Thread, preserving failed checkpoints."""
+    def spin(self, source: Source, *, reprocess: bool = False) -> Script:
+        """Return only a committed complete Script, preserving failed checkpoints."""
         with self._lock():
             with self._connect() as db:
                 self._recover(db)
@@ -324,7 +324,7 @@ class Spinner:
                 source, 0, "spin", partial(self._spin_locked, source, reprocess)
             )
 
-    def _spin_locked(self, source: Source, reprocess: bool) -> Thread:
+    def _spin_locked(self, source: Source, reprocess: bool) -> Script:
         if source.channel == "call":
             if "call" not in self._parsers:
                 raise SpinnerError("call_parser_not_configured")
@@ -342,12 +342,12 @@ class Spinner:
                 db.execute("DELETE FROM results WHERE source_id=? AND version=?", key)
                 row = None
             if row and row[2] is not None:
-                return Thread.model_validate_json(row[2])
+                return Script.model_validate_json(row[2])
             db.execute(
                 "INSERT OR IGNORE INTO results(source_id,version,source) VALUES(?,?,?)",
                 (*key, source.model_dump_json()),
             )
-        parsed = Thread.model_validate_json(row[1]) if row and row[1] else None
+        parsed = Script.model_validate_json(row[1]) if row and row[1] else None
         delay = self._settings.backoff_seconds
         for attempt in range(1, self._settings.max_attempts + 1):
             total = self._start(source, attempt, "total")

@@ -43,7 +43,7 @@ class SchemaRulesTest {
         "ProposalId" to id("prp"),
         "AlertId" to id("alt"),
         "EntityId" to id("ent"),
-        "EntryId" to id("evt"),
+        "ThreadId" to id("evt"),
         "Timestamp" to ints(
             "pattern" to SchemaRules.TIMESTAMP,
             "format" to SchemaRules.DATE_TIME_FORMAT,

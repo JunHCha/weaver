@@ -18,17 +18,17 @@ from .models import (
     EntityId,
     EntityRef,
     EntityType,
-    Entry,
-    EntryDraft,
     Evidence,
     NonEmpty,
     Proposal,
     Ref,
     RelationType,
     Schedule,
+    Script,
     Source,
     SourceId,
     Thread,
+    ThreadDraft,
     Timestamp,
 )
 
@@ -39,7 +39,7 @@ class ArchivedSource(Contract):
 
 
 class CandidateTrigger(Contract):
-    """Rule hit in original Thread coordinates, with its unmodified time offset."""
+    """Rule hit in original Script coordinates, with its unmodified time offset."""
 
     kind: Literal["date", "time", "duration", "honorific"]
     start_char: int = Field(ge=0, strict=True)
@@ -50,7 +50,7 @@ class CandidateTrigger(Contract):
 
 
 class Candidate(Contract):
-    """A selected Thread range; offsets index original Unicode code points.
+    """A selected Script range; offsets index original Unicode code points.
 
     The 0..1 sentence defaults preserve callers of the initial v1 internal
     Candidate, which supplied only char ranges and context. They are legacy
@@ -67,15 +67,15 @@ class Candidate(Contract):
     end_sentence: int = Field(default=1, ge=1, strict=True)
     triggers: list[CandidateTrigger] = Field(default_factory=list)
 
-    def validate_thread(self, thread: Thread) -> None:
+    def validate_thread(self, thread: Script) -> None:
         if self.source_id != thread.source_id:
-            raise ValueError("candidate source does not match Thread")
+            raise ValueError("candidate source does not match Script")
         if not 0 <= self.start_char < self.end_char <= len(thread.text):
-            raise ValueError("candidate range exceeds Thread")
+            raise ValueError("candidate range exceeds Script")
         if not set(self.segment_ids) <= {s.segment_id for s in thread.segments}:
             raise ValueError("unknown candidate segment")
         if self.context != thread.text[self.start_char : self.end_char]:
-            raise ValueError("candidate context does not match Thread")
+            raise ValueError("candidate context does not match Script")
         if self.end_sentence <= self.start_sentence:
             raise ValueError("candidate sentence range must be ordered")
         for trigger in self.triggers:
@@ -134,7 +134,7 @@ class Extraction(Contract):
     entities: list[ExtractedEntity]
     schedules: list[Schedule]
     relations: list[ExtractedRelation]
-    entry_drafts: list[EntryDraft]
+    entry_drafts: list[ThreadDraft]
 
     def to_proposal(self, source: Source, proposal_id: str, rev: int) -> Proposal:
         payload = self.model_dump(mode="json", by_alias=True)
@@ -156,7 +156,7 @@ def materialize_entries(
     entity_ids: dict[str, str],
     entry_ids: dict[str, str],
     recorded_at: datetime,
-) -> list[Entry]:
+) -> list[Thread]:
     """Map approved draft refs to durable IDs; return facts without executing them.
 
     Caller allocates new ent_/evt_ ULIDs once, preserves existing entity matches,
@@ -169,7 +169,7 @@ def materialize_entries(
     if set(entry_ids) != {d.ref for d in proposal.entry_drafts}:
         raise ValueError("entry_ids must cover exactly the draft refs")
     if len(set(entry_ids.values())) != len(entry_ids):
-        raise ValueError("drafts require distinct Entry IDs")
+        raise ValueError("drafts require distinct Thread IDs")
     existing = {e.entity_id for e in proposal.entities if e.entity_id is not None}
     allocated = [entity_ids[e.ref] for e in proposal.entities if e.entity_id is None]
     if len(allocated) != len(set(allocated)) or existing.intersection(allocated):
@@ -210,27 +210,27 @@ def materialize_entries(
                 "requester": resolve_entity(draft.request.requester),
                 "targets": [resolve_entity(ref) for ref in draft.request.targets],
             }
-        entries.append(Entry.model_validate(payload))
+        entries.append(Thread.model_validate(payload))
     return entries
 
 
 def create_request_decision(
-    request: Entry,
+    request: Thread,
     *,
     entry_id: str,
     value: JsonValue,
     occurred_at: datetime,
     recorded_at: datetime,
     source_id: str,
-) -> Entry:
+) -> Thread:
     """Record an explicit user decision outside the AI Proposal approval path.
 
     Call only in response to a user decision; this factory never executes actions.
     Fabric still owns state folding, including retraction and decision semantics.
     """
     if request.kind != "요청" or request.request is None:
-        raise ValueError("decision target must be a request Entry")
-    return Entry.model_validate(
+        raise ValueError("decision target must be a request Thread")
+    return Thread.model_validate(
         {
             "schema_version": 1,
             "entry_id": entry_id,

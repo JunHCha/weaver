@@ -2,15 +2,15 @@
 
 from pydantic import Field, JsonValue
 
-from .models import Contract, EntityId, Entry, EntryId, EntrySource
+from .models import Contract, EntityId, Thread, ThreadId, ThreadSource
 
 
 class StateValue(Contract):
     """A current value (including an explicit null) with its contributing fact."""
 
     value: JsonValue
-    entry_id: EntryId
-    source_id: EntrySource
+    entry_id: ThreadId
+    source_id: ThreadSource
 
 
 class SetState(Contract):
@@ -21,22 +21,22 @@ class SetState(Contract):
     """
 
     members: list[StateValue]
-    entry_id: EntryId
-    source_id: EntrySource
+    entry_id: ThreadId
+    source_id: ThreadSource
 
 
 class EntityState(Contract):
     """Replay of active facts, never action permission.
 
     Lists follow Fabric's UTC total order. Accumulated items and requests retain
-    full Entry metadata. Decisions maps directly resolved request IDs to their
+    full Thread metadata. Decisions maps directly resolved request IDs to their
     latest active human decision, even if the request is no longer active.
     Original and inactive history remains available through Fabric.entries.
     """
 
     entity_id: EntityId
     fields: dict[str, StateValue] = Field(default_factory=dict)
-    accumulated: list[Entry] = Field(default_factory=list)
+    accumulated: list[Thread] = Field(default_factory=list)
     sets: dict[str, SetState] = Field(default_factory=dict)
-    open_requests: list[Entry] = Field(default_factory=list)
-    decisions: dict[str, Entry] = Field(default_factory=dict)
+    open_requests: list[Thread] = Field(default_factory=list)
+    decisions: dict[str, Thread] = Field(default_factory=dict)

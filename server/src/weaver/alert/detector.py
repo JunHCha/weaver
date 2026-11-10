@@ -23,7 +23,7 @@ Policy (see the PR for alternatives):
 - The message names only the local date and changed aspects, never titles,
   names, values or excerpts, and always says it is pre-approval information.
 - alert_id is derived from (proposal_id, schedule ref, change signature of
-  approved and proposed canonical values, not Entry IDs), not rev: a revision with the same change is not re-warned, a different change is.
+  approved and proposed canonical values, not Thread IDs), not rev: a revision with the same change is not re-warned, a different change is.
   AlertHistory remembers published IDs, so phone deletions are not recreated.
 """
 

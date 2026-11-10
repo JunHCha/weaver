@@ -11,18 +11,18 @@ from pydantic import ValidationError
 
 from weaver.config import load_config
 from weaver.fabric import (
-    EntryConflict,
-    EntryQuery,
     FabricError,
     FabricStore,
     InvalidReference,
     SchemaVersionError,
+    ThreadConflict,
+    ThreadQuery,
 )
-from weaver.schema import Entry
+from weaver.schema import Thread
 
 
-def entry(n: int = 1, **changes: object) -> Entry:
-    return Entry.model_validate(
+def entry(n: int = 1, **changes: object) -> Thread:
+    return Thread.model_validate(
         dict(
             schema_version=1,
             entry_id=f"evt_{n:026d}",
@@ -49,7 +49,7 @@ def test_roundtrip_and_retry(tmp_path: Path) -> None:
     items = [entry(), entry(2, supersedes=entry().entry_id)]
     store.append(items)
     store.append(items)
-    assert FabricStore(store.path).entries(EntryQuery()) == items
+    assert FabricStore(store.path).entries(ThreadQuery()) == items
 
 
 def test_filters_and_half_open_ranges(tmp_path: Path) -> None:
@@ -58,18 +58,18 @@ def test_filters_and_half_open_ranges(tmp_path: Path) -> None:
     b = entry(2, entities=[f"ent_{3:026d}"], kind="결정", source_id="output:note")
     store.append([a, b])
     for entity_id in a.entities:
-        assert store.entries(EntryQuery(entity_id=entity_id)) == [a]
-    assert store.entries(EntryQuery(kind="결정", source_id="output:note")) == [b]
-    assert store.entries(EntryQuery(kind="변경", source_id="output:note")) == []
-    assert store.entries(EntryQuery(since=a.occurred_at)) == [a, b]
-    assert store.entries(EntryQuery(until=a.occurred_at)) == []
-    assert store.entries(EntryQuery(order_by="recorded_at", since=a.recorded_at)) == [
+        assert store.entries(ThreadQuery(entity_id=entity_id)) == [a]
+    assert store.entries(ThreadQuery(kind="결정", source_id="output:note")) == [b]
+    assert store.entries(ThreadQuery(kind="변경", source_id="output:note")) == []
+    assert store.entries(ThreadQuery(since=a.occurred_at)) == [a, b]
+    assert store.entries(ThreadQuery(until=a.occurred_at)) == []
+    assert store.entries(ThreadQuery(order_by="recorded_at", since=a.recorded_at)) == [
         a,
         b,
     ]
-    assert store.entries(EntryQuery(order_by="recorded_at", until=a.recorded_at)) == []
+    assert store.entries(ThreadQuery(order_by="recorded_at", until=a.recorded_at)) == []
     with pytest.raises(ValidationError):
-        EntryQuery(since=a.recorded_at, until=a.occurred_at)
+        ThreadQuery(since=a.recorded_at, until=a.occurred_at)
 
 
 def test_late_arrival_timezone_and_ties(tmp_path: Path) -> None:
@@ -81,19 +81,19 @@ def test_late_arrival_timezone_and_ties(tmp_path: Path) -> None:
     d = entry(4, recorded_at="2026-01-15T00:00:00Z")
     store.append([a, b, d])
     store.append([c])
-    assert store.entries(EntryQuery()) == [c, d, b, a]
-    assert store.entries(EntryQuery(descending=True)) == [a, b, d, c]
-    assert store.entries(EntryQuery(order_by="recorded_at")) == [d, b, a, c]
-    assert store.entries(EntryQuery(order_by="recorded_at", descending=True)) == [
+    assert store.entries(ThreadQuery()) == [c, d, b, a]
+    assert store.entries(ThreadQuery(descending=True)) == [a, b, d, c]
+    assert store.entries(ThreadQuery(order_by="recorded_at")) == [d, b, a, c]
+    assert store.entries(ThreadQuery(order_by="recorded_at", descending=True)) == [
         c,
         a,
         b,
         d,
     ]
-    assert store.entries(EntryQuery(since="2026-01-01T09:00:00+09:00")) == [d, b, a]
+    assert store.entries(ThreadQuery(since="2026-01-01T09:00:00+09:00")) == [d, b, a]
     # Canonical UTC representation makes equivalent instants idempotent.
     store.append([entry(1)])
-    assert len(store.entries(EntryQuery())) == 4
+    assert len(store.entries(ThreadQuery())) == 4
 
 
 @pytest.mark.parametrize("field", ["occurred_at", "recorded_at"])
@@ -110,12 +110,12 @@ def test_conflicts_in_storage_and_batch_are_atomic(tmp_path: Path) -> None:
         [entry(2), entry(value="different")],
         [entry(2), entry(2, actor="human")],
     ):
-        with pytest.raises(EntryConflict):
+        with pytest.raises(ThreadConflict):
             store.append(batch)
-        assert FabricStore(store.path).entries(EntryQuery()) == [entry()]
+        assert FabricStore(store.path).entries(ThreadQuery()) == [entry()]
     store.append([entry(), entry()])
     store.append([])
-    assert store.entries(EntryQuery()) == [entry()]
+    assert store.entries(ThreadQuery()) == [entry()]
 
 
 @pytest.mark.parametrize("table", ["entries", "entry_entities"])
@@ -134,7 +134,7 @@ def test_sql_append_only_even_without_recursive_triggers(
         db.execute("PRAGMA recursive_triggers=OFF")
         with pytest.raises(sqlite3.IntegrityError):
             db.execute(statements[operation])
-    assert store.entries(EntryQuery()) == [entry()]
+    assert store.entries(ThreadQuery()) == [entry()]
 
 
 def test_mid_batch_sql_failure_rolls_back_rows_and_links(tmp_path: Path) -> None:
@@ -145,12 +145,12 @@ def test_mid_batch_sql_failure_rolls_back_rows_and_links(tmp_path: Path) -> None
                    BEGIN SELECT RAISE(ABORT, 'injected failure'); END""")
     with pytest.raises(FabricError):
         store.append([entry(), entry(2)])
-    assert FabricStore(store.path).entries(EntryQuery()) == []
+    assert FabricStore(store.path).entries(ThreadQuery()) == []
     with sqlite3.connect(store.path) as db:
         assert db.execute("SELECT count(*) FROM entry_entities").fetchone()[0] == 0
         db.execute("DROP TRIGGER fail_second")
     store.append([entry(), entry(2)])
-    assert len(store.entries(EntryQuery())) == 2
+    assert len(store.entries(ThreadQuery())) == 2
 
 
 @pytest.mark.parametrize(
@@ -167,7 +167,7 @@ def test_missing_and_self_references(tmp_path: Path, field: str) -> None:
             store.append([entry(2), bad])
         assert error.value.reason == reason
         assert error.value.field == field
-        assert store.entries(EntryQuery()) == []
+        assert store.entries(ThreadQuery()) == []
 
 
 @pytest.mark.parametrize("field", ["supersedes", "retracts"])
@@ -186,7 +186,7 @@ def test_replacement_scope(
     with pytest.raises(InvalidReference) as error:
         store.append([entry(2, **{field: entry().entry_id}, **changes)])
     assert error.value.reason == reason
-    assert store.entries(EntryQuery()) == [entry()]
+    assert store.entries(ThreadQuery()) == [entry()]
 
 
 def test_forward_chain_and_retraction_preserve_originals(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_forward_chain_and_retraction_preserve_originals(tmp_path: Path) -> None
     )
     retraction = entry(3, retracts=replacement.entry_id)
     store.append([retraction, replacement, original])
-    assert store.entries(EntryQuery()) == [original, replacement, retraction]
+    assert store.entries(ThreadQuery()) == [original, replacement, retraction]
     with pytest.raises(InvalidReference, match="retraction_of_retraction"):
         store.append([entry(4, retracts=retraction.entry_id)])
     with pytest.raises(InvalidReference, match="mutually_exclusive"):
@@ -211,14 +211,14 @@ def test_forward_chain_and_retraction_preserve_originals(tmp_path: Path) -> None
                 entry(6, supersedes=entry(5).entry_id),
             ]
         )
-    assert FabricStore(store.path).entries(EntryQuery()) == [
+    assert FabricStore(store.path).entries(ThreadQuery()) == [
         original,
         replacement,
         retraction,
     ]
 
 
-def request(n: int = 1) -> Entry:
+def request(n: int = 1) -> Thread:
     return entry(
         n,
         kind="요청",
@@ -238,7 +238,7 @@ def test_request_links_and_human_resolution(tmp_path: Path) -> None:
     decision = entry(2, kind="결정", actor="human", resolves=req.entry_id, field=None)
     blocked = entry(3, blocked_by_request=req.entry_id, entities=[f"ent_{3:026d}"])
     store.append([decision, blocked, req])
-    assert store.entries(EntryQuery()) == [req, decision, blocked]
+    assert store.entries(ThreadQuery()) == [req, decision, blocked]
     # Repeated decisions are immutable facts; interpretation is left to state folding.
     store.append([entry(4, kind="결정", actor="human", resolves=req.entry_id)])
     for field in ("resolves", "blocked_by_request"):
@@ -252,7 +252,7 @@ def test_request_links_and_human_resolution(tmp_path: Path) -> None:
         )
     with pytest.raises(ValidationError):
         entry(kind="결정", resolves=req.entry_id, actor="ai_approved")
-    assert len(store.entries(EntryQuery())) == 4
+    assert len(store.entries(ThreadQuery())) == 4
 
 
 def test_mutated_entries_are_revalidated(tmp_path: Path) -> None:
@@ -260,7 +260,7 @@ def test_mutated_entries_are_revalidated(tmp_path: Path) -> None:
     bad = entry().model_copy(update={"occurred_at": None})
     with pytest.raises(ValidationError):
         store.append([entry(2), bad])
-    assert store.entries(EntryQuery()) == []
+    assert store.entries(ThreadQuery()) == []
 
 
 def test_concurrent_idempotent_writers(tmp_path: Path) -> None:
@@ -271,7 +271,7 @@ def test_concurrent_idempotent_writers(tmp_path: Path) -> None:
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(write, range(12)))
-    assert FabricStore(path).entries(EntryQuery()) == [entry(), entry(2)]
+    assert FabricStore(path).entries(ThreadQuery()) == [entry(), entry(2)]
 
 
 def test_schema_version_and_connection_settings(tmp_path: Path) -> None:
@@ -307,7 +307,7 @@ def test_json_value_roundtrip(tmp_path: Path, value: object) -> None:
     store = FabricStore(tmp_path / "fabric.sqlite3")
     item = entry(value=value)
     store.append([item])
-    assert store.entries(EntryQuery()) == [item]
+    assert store.entries(ThreadQuery()) == [item]
 
 
 def test_retry_normalizes_json_keys_and_request_due_timezone(tmp_path: Path) -> None:
@@ -315,12 +315,12 @@ def test_retry_normalizes_json_keys_and_request_due_timezone(tmp_path: Path) -> 
     raw = request().model_dump(mode="json")
     raw["request"]["due_at"] = "2026-03-01T09:00:00+09:00"
     raw["value"] = {"a": 1, "b": False}
-    item = Entry.model_validate(raw)
+    item = Thread.model_validate(raw)
     store.append([item])
     raw["request"]["due_at"] = "2026-03-01T00:00:00Z"
     raw["value"] = {"b": False, "a": 1}
-    store.append([Entry.model_validate(raw)])
-    assert store.entries(EntryQuery()) == [item]
+    store.append([Thread.model_validate(raw)])
+    assert store.entries(ThreadQuery()) == [item]
 
 
 def test_dst_fold_range_uses_utc_instants(tmp_path: Path) -> None:
@@ -333,9 +333,9 @@ def test_dst_fold_range_uses_utc_instants(tmp_path: Path) -> None:
         for i, instant in enumerate(("05:44", "05:45", "06:00", "06:14", "06:15"), 1)
     ]
     store.append(items)
-    assert store.entries(EntryQuery(since=since, until=until)) == items[1:4]
+    assert store.entries(ThreadQuery(since=since, until=until)) == items[1:4]
     with pytest.raises(ValidationError, match="since must not be after until"):
-        EntryQuery(since=until, until=since)
+        ThreadQuery(since=until, until=since)
 
 
 def test_reopening_repairs_database_and_live_sidecar_permissions(
@@ -352,7 +352,7 @@ def test_reopening_repairs_database_and_live_sidecar_permissions(
         for file in files:
             file.chmod(0o644)
         reopened = FabricStore(store.path)
-        assert reopened.entries(EntryQuery()) == [entry()]
+        assert reopened.entries(ThreadQuery()) == [entry()]
         for file in files:
             assert stat.S_IMODE(file.stat().st_mode) == 0o600
     assert not files[1].exists()

@@ -24,7 +24,7 @@ from typing import Any, get_args
 from weaver.config import FeedbackSettings, ServerConfig
 from weaver.schema import Proposal
 from weaver.schema.internal import EntityIndex
-from weaver.schema.models import EntityType, EntryKind, RejectReason, RelationType
+from weaver.schema.models import EntityType, RejectReason, RelationType, ThreadKind
 
 from . import entities
 from .propose import FeedbackEvent
@@ -34,7 +34,7 @@ SCHEMA_VERSION = 1
 # Closed vocabularies and IDs are not raw text; they may appear in fake samples.
 _PUBLIC = {
     value
-    for alias in (EntityType, EntryKind, RelationType, RejectReason)
+    for alias in (EntityType, ThreadKind, RelationType, RejectReason)
     for value in get_args(alias.__value__)
 }
 _ID = re.compile(r"(?:ent|evt|prp|src)_[0-9A-HJKMNP-TV-Z]{26}")

@@ -79,180 +79,6 @@
       ],
       "type": "string"
     },
-    "EntryDraft": {
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "else": {
-            "properties": {
-              "request": {
-                "type": "null"
-              }
-            }
-          },
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "요청"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "request": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        {
-          "else": {
-            "properties": {
-              "resolves": {
-                "type": "null"
-              }
-            }
-          },
-          "if": {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "결정"
-                ]
-              }
-            }
-          }
-        }
-      ],
-      "description": "Approval records facts only. blocked_by_request forbids derived execution\nuntil a user-authored decision Entry resolves the referenced request Entry.\nresolves is always null: AI-generated drafts cannot resolve requests.",
-      "properties": {
-        "ask": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Ask"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "blocked_by_request": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Ref"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "confidence": {
-          "$ref": "#/$defs/Confidence"
-        },
-        "entities": {
-          "items": {
-            "$ref": "#/$defs/EntityRef"
-          },
-          "title": "Entities",
-          "type": "array"
-        },
-        "field": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/NonEmpty"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "kind": {
-          "$ref": "#/$defs/EntryKind"
-        },
-        "occurred_at": {
-          "$ref": "#/$defs/Timestamp"
-        },
-        "ref": {
-          "$ref": "#/$defs/Ref"
-        },
-        "request": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Request"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "resolves": {
-          "title": "Resolves",
-          "type": "null"
-        },
-        "retracts": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EntryId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "supersedes": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EntryId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "thread_excerpt": {
-          "$ref": "#/$defs/NonEmpty"
-        },
-        "value": {
-          "$ref": "#/$defs/JsonValue"
-        }
-      },
-      "required": [
-        "confidence",
-        "ask",
-        "thread_excerpt",
-        "ref",
-        "entities",
-        "kind",
-        "field",
-        "value",
-        "occurred_at",
-        "supersedes",
-        "retracts",
-        "request",
-        "resolves",
-        "blocked_by_request"
-      ],
-      "title": "EntryDraft",
-      "type": "object"
-    },
-    "EntryId": {
-      "maxLength": 30,
-      "minLength": 30,
-      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-      "type": "string"
-    },
-    "EntryKind": {
-      "enum": [
-        "요청",
-        "논의",
-        "결정",
-        "폐기",
-        "약속",
-        "일정",
-        "변경"
-      ],
-      "type": "string"
-    },
     "JsonValue": {},
     "NonEmpty": {
       "pattern": "\\S",
@@ -471,7 +297,7 @@
     },
     "Schedule": {
       "additionalProperties": false,
-      "description": "Calendar creation is forbidden while blocked_by_request is non-null,\nuntil a human decision Entry resolves it. Verdict approve only records facts.",
+      "description": "Calendar creation is forbidden while blocked_by_request is non-null,\nuntil a human decision Thread resolves it. Verdict approve only records facts.",
       "properties": {
         "ask": {
           "anyOf": [
@@ -582,6 +408,180 @@
       "title": "SourceSummary",
       "type": "object"
     },
+    "ThreadDraft": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "request": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "요청"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "request": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "resolves": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "결정"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "Approval records facts only. blocked_by_request forbids derived execution\nuntil a user-authored decision Thread resolves the referenced request Thread.\nresolves is always null: AI-generated drafts cannot resolve requests.",
+      "properties": {
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ask"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_by_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          },
+          "title": "Entities",
+          "type": "array"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ThreadKind"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Request"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolves": {
+          "title": "Resolves",
+          "type": "null"
+        },
+        "retracts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_excerpt": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "confidence",
+        "ask",
+        "thread_excerpt",
+        "ref",
+        "entities",
+        "kind",
+        "field",
+        "value",
+        "occurred_at",
+        "supersedes",
+        "retracts",
+        "request",
+        "resolves",
+        "blocked_by_request"
+      ],
+      "title": "ThreadDraft",
+      "type": "object"
+    },
+    "ThreadId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "ThreadKind": {
+      "enum": [
+        "요청",
+        "논의",
+        "결정",
+        "폐기",
+        "약속",
+        "일정",
+        "변경"
+      ],
+      "type": "string"
+    },
     "Timestamp": {
       "format": "date-time",
       "not": {
@@ -605,7 +605,7 @@
     },
     "entry_drafts": {
       "items": {
-        "$ref": "#/$defs/EntryDraft"
+        "$ref": "#/$defs/ThreadDraft"
       },
       "title": "Entry Drafts",
       "type": "array"

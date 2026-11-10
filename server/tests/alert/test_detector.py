@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from weaver.alert import AlertHistory, ScheduleAlertDetector, alert_id_for
-from weaver.fabric import EntryQuery, FabricStore
-from weaver.schema import Entry, Proposal
+from weaver.fabric import FabricStore, ThreadQuery
+from weaver.schema import Proposal, Thread
 
 SEOUL = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 11, 8, 12, 0, tzinfo=SEOUL)
@@ -19,8 +19,8 @@ SRC = "src_01ARZ3NDEKTSV4RRFFQ69G5FA0"
 SECRET = "비밀 원문 점검 회의"
 
 
-def fact(n: int, field: str | None, value: object, entity: str = MEETING) -> Entry:
-    return Entry.model_validate(
+def fact(n: int, field: str | None, value: object, entity: str = MEETING) -> Thread:
+    return Thread.model_validate(
         dict(
             schema_version=1,
             entry_id=f"evt_{n:026d}",
@@ -134,14 +134,14 @@ def detector(tmp_path: Path, fabric: FabricStore, **kw) -> ScheduleAlertDetector
 
 def test_future_time_change_alerts_without_touching_fabric(tmp_path, fabric):
     fabric.append([fact(1, "date", "2026-11-10T15:00:00+09:00")])
-    before = fabric.entries(EntryQuery())
+    before = fabric.entries(ThreadQuery())
     [alert] = detector(tmp_path, fabric).detect(moved())
     assert alert.proposal_id == PRP
     assert alert.schedule_ref == "s1"
     assert alert.created_at == NOW
     assert alert.message == "11월 10일 일정의 시각이 바뀔 수 있음. 승인 전 정보입니다."
     assert SECRET not in alert.model_dump_json()
-    assert fabric.entries(EntryQuery()) == before
+    assert fabric.entries(ThreadQuery()) == before
 
 
 @pytest.mark.parametrize(
@@ -206,7 +206,7 @@ def test_new_entry_with_same_approved_value_does_not_rewarn(tmp_path, fabric):
     run = detector(tmp_path, fabric)
     [alert] = run.detect(moved())
     run.published(alert)
-    # e.g. a human edit re-recording the same value under a new Entry ID
+    # e.g. a human edit re-recording the same value under a new Thread ID
     fabric.append([fact(2, "date", "2026-11-10T06:00:00Z")])
     assert detector(tmp_path, fabric).detect(moved()) == []
     # A different approved value is a different change.

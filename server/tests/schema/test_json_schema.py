@@ -6,8 +6,8 @@ import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
-from weaver.schema import Entity, Entry, Manifest, Proposal, Verdict
-from weaver.schema.models import EntryDraft, ProposalEntity, Segment
+from weaver.schema import Entity, Manifest, Proposal, Thread, Verdict
+from weaver.schema.models import ProposalEntity, Segment, ThreadDraft
 
 from .test_contract import example
 
@@ -70,7 +70,7 @@ def test_verdict_32_branches(verdict, has_edits, reason, instruction):
     ),
 )
 def test_entry_kind_request_resolution_actor(kind, has_request, has_resolves, actor):
-    original = example("Entry")
+    original = example("Thread")
     payload = original | dict(
         kind=kind,
         request=original["request"] if has_request else None,
@@ -78,7 +78,7 @@ def test_entry_kind_request_resolution_actor(kind, has_request, has_resolves, ac
         actor=actor,
     )
     agree(
-        Entry,
+        Thread,
         payload,
         has_request == (kind == "요청")
         and (not has_resolves or (kind == "결정" and actor == "human")),
@@ -89,7 +89,7 @@ def test_entry_kind_request_resolution_actor(kind, has_request, has_resolves, ac
 def test_entity_identity(has_ref, has_id):
     payload = example("Entity") | dict(
         ref="e1" if has_ref else None,
-        entity_id=example("Entry")["entities"][0] if has_id else None,
+        entity_id=example("Thread")["entities"][0] if has_id else None,
     )
     agree(Entity, payload, has_ref or has_id)
     del payload["schema_version"]
@@ -100,7 +100,7 @@ def test_entity_identity(has_ref, has_id):
 def test_full_proposal_requires_nonnull_entity_ref(ref):
     payload = example("Proposal")
     payload["entities"][0]["ref"] = ref
-    payload["entities"][0]["entity_id"] = example("Entry")["entities"][0]
+    payload["entities"][0]["entity_id"] = example("Thread")["entities"][0]
     agree(Proposal, payload, ref is not None)
 
 
@@ -114,7 +114,7 @@ def test_full_proposal_requires_nonnull_entity_ref(ref):
     ],
 )
 def test_segment_audio_offset_pairs(start, end, expected):
-    payload = example("Thread")["segments"][0] | dict(start_ms=start, end_ms=end)
+    payload = example("Script")["segments"][0] | dict(start_ms=start, end_ms=end)
     agree(Segment, payload, expected)
 
 
@@ -123,7 +123,7 @@ def test_ai_draft_resolves_is_null_only(resolves):
     payload = example("Proposal")["entry_drafts"][1] | dict(
         kind="결정", resolves=resolves
     )
-    agree(EntryDraft, payload, resolves is None)
+    agree(ThreadDraft, payload, resolves is None)
 
 
 @pytest.mark.parametrize(
@@ -188,11 +188,11 @@ def test_all_exported_schema_examples_validate_independently():
         ("Proposal", "proposal_id"),
         ("Alert", "alert_id"),
         ("Entity", "entity_id"),
-        ("Entry", "entry_id"),
+        ("Thread", "entry_id"),
         ("Entity", "ref"),
         ("Manifest", "sha256"),
         ("Manifest", "payload"),
-        ("Entry", "source_id"),
+        ("Thread", "source_id"),
     ],
 )
 def test_identifier_and_path_trailing_newline_is_rejected(name, field):
@@ -201,8 +201,8 @@ def test_identifier_and_path_trailing_newline_is_rejected(name, field):
     model = next(m for m in SHARED_MODELS if m.__name__ == name)
     payload = example(name)
     if name == "Entity" and field == "entity_id":
-        payload[field] = example("Entry")["entities"][0]
-    if name == "Entry" and field == "source_id":
+        payload[field] = example("Thread")["entities"][0]
+    if name == "Thread" and field == "source_id":
         payload[field] = "output:review/request"
     payload[field] += "\n"
     agree(model, payload, False)
@@ -224,15 +224,15 @@ def test_proposal_nested_items_do_not_repeat_version_keys():
 def test_exported_thread_allows_unknown_end_with_consumer_parity(start, end, expected):
     import json
 
-    from weaver.schema import Thread
+    from weaver.schema import Script
 
     from .test_contract import ROOT
 
-    payload = example("Thread")
+    payload = example("Script")
     payload["segments"][0].update(start_ms=start, end_ms=end)
-    schema = json.loads((ROOT / "schema/Thread.schema.json").read_text())
+    schema = json.loads((ROOT / "schema/Script.schema.json").read_text())
     assert (
         Draft202012Validator(schema, format_checker=FormatChecker()).is_valid(payload)
         == expected
     )
-    agree(Thread, payload, expected)
+    agree(Script, payload, expected)

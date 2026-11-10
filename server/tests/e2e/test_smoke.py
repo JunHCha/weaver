@@ -16,7 +16,7 @@ import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
 from weaver.config import load_config
-from weaver.fabric import EntryQuery, FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.loom import ReviewStore, SqliteFeedbackStore
 from weaver.runtime.assemble import Plugins, build_runtime
 from weaver.schema import Manifest, Proposal, Receipt, Verdict
@@ -197,7 +197,7 @@ class World:
         return path
 
     def entries(self):
-        return self.fabric.entries(EntryQuery())
+        return self.fabric.entries(ThreadQuery())
 
     def vault(self):
         return {
@@ -223,7 +223,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(MlxStt, "__init__", forbid_stt)
     monkeypatch.setattr(MlxStt, "transcribe", forbid_stt)
 
-    # Freeze Entry recording, so Fabric ordering and rendered timestamps are stable.
+    # Freeze Thread recording, so Fabric ordering and rendered timestamps are stable.
     class FixedDatetime(datetime):
         @classmethod
         def now(cls, tz=None):

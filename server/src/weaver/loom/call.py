@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import timedelta
 
 from weaver.loom.kakao import Diagnostic, ParseResult
-from weaver.schema import Source, Thread
+from weaver.schema import Script, Source
 from weaver.schema.models import Segment
 
 _NOTICE = "AI로 생성된 콘텐츠입니다"
@@ -50,7 +50,7 @@ def parse_call(source: Source, text: str) -> ParseResult:
     """Retain preamble, headers, bodies, blank and unknown lines without edits.
 
     Each nonempty line's content (LF/CRLF excluded) is one Segment. Line endings
-    and empty lines are whitespace separators between Segments, so Thread.text
+    and empty lines are whitespace separators between Segments, so Script.text
     stays exact while the Reviser can restore them verbatim. Only a speech body
     Segment carries speaker/time; headers and other lines are structural (null).
     A block contains one body line; surplus lines are preserved with diagnostics.
@@ -172,7 +172,7 @@ def parse_call(source: Source, text: str) -> ParseResult:
         elif previous[0] is not None:
             segments[previous[0]].end_ms = current[4]
     return ParseResult(
-        Thread(
+        Script(
             schema_version=1,
             source_id=source.source_id,
             channel=source.channel,
@@ -189,7 +189,7 @@ class GalaxyCallParser:
 
     version = "galaxy.call.v1"
 
-    def parse(self, source: Source, text: str) -> Thread:
+    def parse(self, source: Source, text: str) -> Script:
         result = parse_call(source, text)
         for code, count in Counter(d.code for d in result.diagnostics).items():
             _LOG.warning("call:%s count=%d", code, count)

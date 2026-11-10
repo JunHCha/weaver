@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from weaver.schema import SHARED_MODELS, Proposal, Thread, Verdict
+from weaver.schema import SHARED_MODELS, Proposal, Script, Verdict
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -49,12 +49,12 @@ def test_file_contract_rejects_invalid_envelopes(model, mutation):
         ("Alert", "alert_id", "alt_Z1ARZ3NDEKTSV4RRFFQ69G5FAV"),
         ("Entity", "type", "decision"),
         ("Relation", "type", "결정됨"),
-        ("Entry", "kind", "자동실행"),
+        ("Thread", "kind", "자동실행"),
         ("Source", "channel", "photo"),
-        ("Thread", "source_id", "src_bad"),
+        ("Script", "source_id", "src_bad"),
         ("Manifest", "captured_at", "2026-11-07T12:00:00"),
-        ("Entry", "recorded_at", "2026-11-07"),
-        ("Thread", "occurred_at", 1794030000),
+        ("Thread", "recorded_at", "2026-11-07"),
+        ("Script", "occurred_at", 1794030000),
         ("Source", "payload_ref", "/Users/private/audio.m4a"),
         ("Source", "payload_ref", "../secret"),
         ("Manifest", "schema_version", True),
@@ -115,23 +115,23 @@ def test_proposal_rejects_dangling_reference_and_unblocked_request():
         Proposal.model_validate(payload)
 
 
-@pytest.mark.parametrize("name", ["Thread-text", "Thread-kakao", "Thread-audio"])
+@pytest.mark.parametrize("name", ["Script-text", "Script-kakao", "Script-audio"])
 def test_thread_ranges_preserve_text(name):
-    thread = Thread.model_validate(example(name))
+    thread = Script.model_validate(example(name))
     for segment in thread.segments:
         assert thread.text[segment.start_char : segment.end_char]
     assert thread.source_id == example("Source")["source_id"]
 
 
 def test_thread_invalid_range_and_audio_pair():
-    payload = example("Thread")
+    payload = example("Script")
     payload["segments"][0]["end_char"] = len(payload["text"]) + 1
     with pytest.raises(ValidationError):
-        Thread.model_validate(payload)
-    payload = example("Thread-audio")
+        Script.model_validate(payload)
+    payload = example("Script-audio")
     payload["segments"][0]["start_ms"] = None
     with pytest.raises(ValidationError):
-        Thread.model_validate(payload)
+        Script.model_validate(payload)
 
 
 @pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
@@ -160,9 +160,9 @@ def test_every_core_model_rejects_bad_identifiers(model):
         ("Receipt", "received_at"),
         ("Verdict", "reviewed_at"),
         ("Alert", "created_at"),
-        ("Entry", "occurred_at"),
-        ("Source", "captured_at"),
         ("Thread", "occurred_at"),
+        ("Source", "captured_at"),
+        ("Script", "occurred_at"),
     ],
 )
 def test_all_dated_models_require_explicit_timezone(model_name, field):
@@ -174,10 +174,10 @@ def test_all_dated_models_require_explicit_timezone(model_name, field):
 
 
 def test_request_fields_are_kind_dependent_and_resolution_is_human_only():
-    from weaver.schema import Entry
+    from weaver.schema import Thread
 
-    request = example("Entry")
-    decision = example("Entry-decision")
+    request = example("Thread")
+    decision = example("Thread-decision")
     for broken in [
         request | {"request": None},
         request | {"resolves": decision["entry_id"]},
@@ -185,10 +185,10 @@ def test_request_fields_are_kind_dependent_and_resolution_is_human_only():
         decision | {"request": request["request"]},
     ]:
         with pytest.raises(ValidationError):
-            Entry.model_validate(broken)
+            Thread.model_validate(broken)
 
 
-@pytest.mark.parametrize("kind", ["Entity", "Proposal", "Entry"])
+@pytest.mark.parametrize("kind", ["Entity", "Proposal", "Thread"])
 def test_confidence_and_nullability(kind):
     model = next(m for m in SHARED_MODELS if m.__name__ == kind)
     payload = example(kind)
@@ -235,7 +235,7 @@ def test_source_thread_pair_preserves_metadata(kind):
     from weaver.schema import Source
 
     source = Source.model_validate(example(f"Source-{kind}"))
-    thread = Thread.model_validate(example(f"Thread-{kind}"))
+    thread = Script.model_validate(example(f"Script-{kind}"))
     assert (source.source_id, source.channel, source.occurred_at) == (
         thread.source_id,
         thread.channel,

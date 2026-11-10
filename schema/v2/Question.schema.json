@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v2:Question",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A low-confidence question and exactly three choices.",
+  "properties": {
+    "choices": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Choices",
+      "type": "array"
+    },
+    "question": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "rationale": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "question",
+    "rationale",
+    "choices"
+  ],
+  "title": "Question",
+  "type": "object"
+}
