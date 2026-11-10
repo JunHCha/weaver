@@ -1,5 +1,7 @@
 package io.github.junhcha.weaver.ui
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,13 +57,16 @@ fun ReviewV2Panel(id: String, onClose: () -> Unit) {
         if (p != null) {
             val stale = latest != p
             val enabled = !busy && !stale && record == null
+            val progressPackage = latest?.takeIf { it.revision == p.revision } ?: p
+            val progress = reviewProgress(progressPackage.stage, progressPackage.stageTimes, record?.status)
+            ReviewProgressDiagram(progress)
             Text("요약", style = MaterialTheme.typography.titleMedium)
             val firstLine = p.draftBody.lineSequence().first()
             Text(firstLine.take(80) + if (firstLine.length > 80) "…" else "")
             OutlinedButton(onClick = { details = !details }) { Text(if (details) "본문 접기" else "본문 보기") }
             if (details) Text(p.draftBody)
             record?.let {
-                Text(it.status.label)
+                progress.response?.let { response -> Text("내 응답: $response") }
                 if (it.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
                     OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
             }
@@ -116,5 +121,26 @@ fun ReviewV2Panel(id: String, onClose: () -> Unit) {
         }
         if (record == null) readError?.let { Text(it) }
         error?.let { Text(it) }
+    }
+}
+
+@Composable
+private fun ReviewProgressDiagram(progress: ReviewProgress) {
+    var selected by remember { mutableStateOf<ProgressStep?>(null) }
+    Text("처리 단계", style = MaterialTheme.typography.titleMedium)
+    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        progress.steps.forEachIndexed { index, step ->
+            if (index > 0) Text("→", modifier = Modifier.padding(top = 12.dp))
+            OutlinedButton(onClick = { selected = step }) {
+                Text("${step.stage.displayName()}${if (step.status == StepStatus.CURRENT) " · 현재" else ""}")
+            }
+        }
+    }
+    selected?.let { selectedStep ->
+        val step = progress.steps.first { it.stage == selectedStep.stage }
+        AlertDialog(onDismissRequest = { selected = null },
+            title = { Text(step.stage.displayName()) },
+            text = { Text("상태: ${step.status.label}\n시각: ${step.time ?: "기록 없음"}") },
+            confirmButton = { TextButton(onClick = { selected = null }) { Text("닫기") } })
     }
 }
