@@ -193,3 +193,19 @@ compatibility, not STT performance.
   the MVP scope.
 - Require human review before proposed facts reach Fabric and vault export.
 - Keep API keys, signing keys, passwords, and personal configuration out of git.
+
+The v2 wiki is disabled by default. To enable periodic compilation, add the
+following to `server.toml` (paths are relative to the configuration file):
+
+```toml
+[wiki]
+enabled = true
+# vault_root = "vault" # optional; defaults to the top-level vault_root
+folder = "Weaver"
+timezone = "Asia/Seoul"
+settle_seconds = 1800
+interval_seconds = 60
+```
+
+The settle period protects recent human edits; pending pages are retried on a
+later wiki interval. Keep the state directory outside the wiki vault.

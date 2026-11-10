@@ -10,6 +10,7 @@ import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
@@ -143,6 +144,36 @@ class PublishSettings:
 
 
 @dataclass(frozen=True)
+class WikiSettings:
+    """Settings for periodic v2 wiki output."""
+
+    enabled: bool = False
+    vault_root: Path | None = None
+    folder: str = "Weaver"
+    timezone: str = "Asia/Seoul"
+    settle_seconds: float = 1800
+    interval_seconds: float = 60
+
+    def __post_init__(self) -> None:
+        PublishSettings(self.enabled, self.folder)
+        if (
+            not isinstance(self.timezone, str)
+            or self.timezone not in available_timezones()
+            or self.timezone in {"Factory", "localtime", "posixrules"}
+        ):
+            raise ConfigError("wiki.timezone: unknown IANA timezone")
+        for name in ("settle_seconds", "interval_seconds"):
+            value = getattr(self, name)
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value < 0
+                or (name == "interval_seconds" and value == 0)
+            ):
+                raise ConfigError(f"wiki.{name}: invalid interval")
+
+
+@dataclass(frozen=True)
 class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
@@ -177,6 +208,7 @@ class ServerConfig:
     spinner_settings: SpinnerSettings = SpinnerSettings()
     feedback: FeedbackSettings = FeedbackSettings()
     publish: PublishSettings = PublishSettings()
+    wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -352,6 +384,7 @@ def load_config(
         "spinner",
         "loom",
         "publish",
+        "wiki",
     }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
@@ -409,6 +442,24 @@ def load_config(
     if not isinstance(publish_raw, dict) or publish_raw.keys() - {"enabled", "folder"}:
         raise ConfigError("publish: expected a table containing only enabled/folder")
     publish = PublishSettings(**publish_raw)
+    wiki_raw = raw.get("wiki", {})
+    if not isinstance(wiki_raw, dict) or wiki_raw.keys() - {
+        "enabled",
+        "vault_root",
+        "folder",
+        "timezone",
+        "settle_seconds",
+        "interval_seconds",
+    }:
+        raise ConfigError("wiki: unknown fields")
+    wiki_values = dict(wiki_raw)
+    if "vault_root" in wiki_values:
+        if not isinstance(wiki_values["vault_root"], str):
+            raise ConfigError("wiki.vault_root: expected path string")
+        wiki_values["vault_root"] = _path(
+            wiki_values["vault_root"], config_file.parent, env, "wiki.vault_root"
+        )
+    wiki = WikiSettings(**wiki_values)
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -421,6 +472,13 @@ def load_config(
     stt = SttConfig(_path(model_path, config_file.parent, env, "stt.model_path"))
     boundaries = {**roots, "stt.model_path": stt.model_path}
     _check_boundaries(boundaries)
+    if wiki.vault_root is not None:
+        for field in ("sync_root", "archive_root", "state_root", "log_root"):
+            if _overlaps(wiki.vault_root, roots[field]):
+                raise ConfigError(f"wiki.vault_root and {field}: paths overlap")
+        _check_directory(wiki.vault_root, "wiki.vault_root", init_directories)
+        if init_directories:
+            wiki.vault_root.mkdir(parents=True, exist_ok=True)
     if llm.api_key_file is not None and any(
         _overlaps(llm.api_key_file, roots[public])
         for public in ("sync_root", "vault_root")
@@ -462,4 +520,5 @@ def load_config(
         spinner_settings=spinner_settings,
         feedback=feedback,
         publish=publish,
+        wiki=wiki,
     )

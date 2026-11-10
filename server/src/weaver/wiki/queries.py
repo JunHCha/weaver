@@ -1,5 +1,6 @@
 """Deterministic, read-only wiki views over a Fabric snapshot."""
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 from weaver.context import ContextDictionary
@@ -20,8 +21,8 @@ def _text(value: str) -> str:
     )
 
 
-def _link(thread: Thread) -> str:
-    return f"[[{thread.source_id}]]"
+def _link(thread: Thread, source_link: Callable[[str], str]) -> str:
+    return f"[[{source_link(thread.source_id)}]]"
 
 
 def _date(value: object, now: datetime) -> date | None:
@@ -46,6 +47,7 @@ def render_pages(
     *,
     now: datetime,
     inactive_days: int = 30,
+    source_link: Callable[[str], str] = lambda source_id: source_id,
 ) -> dict[str, str]:
     """Render pages from one snapshot; calendar boundaries use ``now``'s timezone.
 
@@ -75,7 +77,7 @@ def render_pages(
                 and t.thread_id not in resolved
             ):
                 requests.append(
-                    f"- {t.occurred_at.astimezone(now.tzinfo).date()}: {_text(t.content or '')} — {_link(t)}"
+                    f"- {t.occurred_at.astimezone(now.tzinfo).date()}: {_text(t.content or '')} — {_link(t, source_link)}"
                 )
         requests.append("")
     tags = sorted({tag for t in active for tag in t.tags})
@@ -111,7 +113,7 @@ def render_pages(
             if lower <= day < lower + timedelta(days=7):
                 marker = f" — {moves}회 미뤄짐" if moves >= 2 else ""
                 deadlines.append(
-                    f"- {day} {_text(tag)} ({'마감' if field == 'deadline' else '일정'}): {_text(source.content or '')} — {_link(source)}{marker}"
+                    f"- {day} {_text(tag)} ({'마감' if field == 'deadline' else '일정'}): {_text(source.content or '')} — {_link(source, source_link)}{marker}"
                 )
         deadlines.append("")
     contacts = ["# 사람별 연락", ""]
@@ -142,13 +144,16 @@ def write_pages(
     *,
     now: datetime,
     inactive_days: int = 30,
+    source_link: Callable[[str], str] = lambda source_id: source_id,
 ) -> None:
     """Write generated pages through WikiStore and register them as read-only."""
     for path, body in render_pages(
-        fabric, context, now=now, inactive_days=inactive_days
+        fabric, context, now=now, inactive_days=inactive_days, source_link=source_link
     ).items():
         try:
-            _, _, base_hash = store.read(path)
+            _, previous, base_hash = store.read(path)
+            if previous == body and store.is_tracked_version(path, base_hash):
+                continue
         except FileNotFoundError:
             base_hash = None
         store.write(path, {}, body, base_hash, readonly=True)

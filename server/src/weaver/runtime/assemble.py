@@ -3,6 +3,7 @@
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
@@ -32,6 +33,7 @@ from weaver.publish import (
 from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
+from weaver.wiki.store import WikiStore
 
 from .gate import LlmGate, LlmStatus
 from .ledger import RuntimeLedger
@@ -43,6 +45,7 @@ from .pipeline import (
     llm_status,
 )
 from .summary import ReviewAdapter, SummaryLookup, SummaryProcessor
+from .wiki import WikiJob
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
 CONFIGURATION_VERSION = "weaver.runtime.v2"
@@ -139,6 +142,27 @@ def build_runtime(
     )
     processor = SummaryProcessor(spinner, drafts, gate)
 
+    maintenance = list(plugins.maintenance)
+    if config.wiki.enabled:
+        store = WikiStore(
+            config.wiki.vault_root or config.vault_root,
+            config.state_root,
+            wiki_root=config.wiki.folder,
+            settle_seconds=config.wiki.settle_seconds,
+        )
+        job = WikiJob(
+            store,
+            fabric_v2,
+            context,
+            client,
+            config.state_root,
+            ZoneInfo(config.wiki.timezone),
+            summaries,
+        )
+        maintenance.append(
+            MaintenanceTask("wiki", config.wiki.interval_seconds, job.run)
+        )
+
     return Runtime(
         state_root=config.state_root,
         scanner=courier,
@@ -149,5 +173,5 @@ def build_runtime(
         gate=gate,
         interval=interval,
         publisher=plugins.publisher,
-        maintenance=plugins.maintenance,
+        maintenance=maintenance,
     )
