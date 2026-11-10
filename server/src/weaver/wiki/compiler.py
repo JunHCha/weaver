@@ -1,5 +1,6 @@
 """Compile Fabric snapshots into protected wiki pages and ingest human edits."""
 
+import fcntl
 import hashlib
 import json
 import sqlite3
@@ -161,11 +162,17 @@ class Compiler:
 
     def run(self) -> None:
         """Collect settled edits and advance only after every page is durable."""
+        with self.state_path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._run()
+
+    def _run(self) -> None:
         self.store.restore_readonly()
         for edit in self.store.scan(datetime.now(UTC).timestamp()):
             self._edit(edit)
         new = self.fabric.entries(ThreadQuery(after_seq=self.bookmark()))
         if not new:
+            self._sync_pages()
             return
         all_threads = self.fabric.entries(ThreadQuery())
         tags = {tag for t in new for tag in t.tags}
@@ -229,6 +236,11 @@ class Compiler:
             props["kind"] = entry.kind
             props["aliases"] = list(entry.aliases)
             self.store.write(path, props, generated + "\n\n" + "\n".join(links), base)
+        self._sync_pages()
+        with sqlite3.connect(self.state_path) as db:
+            db.execute("UPDATE bookmark SET seq=?", (max(t.seq for t in new),))
+
+    def _sync_pages(self) -> None:
         pages = []
         directory = self.store.root / "pages"
         if directory.exists():
@@ -248,5 +260,3 @@ class Compiler:
                         )
                     )
         self.context.sync_from_pages(pages)
-        with sqlite3.connect(self.state_path) as db:
-            db.execute("UPDATE bookmark SET seq=?", (max(t.seq for t in new),))
