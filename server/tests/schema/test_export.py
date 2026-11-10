@@ -59,3 +59,19 @@ def test_internal_models_are_not_exported(tmp_path: Path):
         "EntityIndex",
     ]:
         assert internal not in text
+
+
+def test_v2_export_matches_committed_artifacts(tmp_path):
+    from weaver.schema.export import V2_MODELS
+
+    export(tmp_path)
+    generated = {p.name: p.read_bytes() for p in (tmp_path / "v2").glob("*.json")}
+    committed = {
+        p.name: p.read_bytes() for p in (ROOT / "schema" / "v2").glob("*.json")
+    }
+    assert len(generated) == len(V2_MODELS)
+    assert generated == committed
+    for content in generated.values():
+        schema = json.loads(content)
+        assert schema["$id"].startswith("urn:weaver:schema:v2:")
+        check_refs(schema, schema)

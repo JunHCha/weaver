@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Question": {
+      "additionalProperties": false,
+      "description": "A low-confidence question and exactly three choices.",
+      "properties": {
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/NonEmpty"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Choices",
+          "type": "array"
+        },
+        "question": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "rationale": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "question",
+        "rationale",
+        "choices"
+      ],
+      "title": "Question",
+      "type": "object"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Stage": {
+      "enum": [
+        "수집",
+        "전송",
+        "정리",
+        "질문",
+        "검토",
+        "반영",
+        "wiki갱신"
+      ],
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:v2:ReviewPackage",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One source's draft and bounded questions for phone review.",
+  "properties": {
+    "draft_body": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "package_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/Question"
+      },
+      "maxItems": 3,
+      "title": "Questions",
+      "type": "array"
+    },
+    "revision": {
+      "$ref": "#/$defs/Revision"
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    },
+    "stage": {
+      "$ref": "#/$defs/Stage"
+    },
+    "stage_times": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Timestamp"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/Stage"
+      },
+      "title": "Stage Times",
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "source_id",
+    "revision",
+    "draft_body",
+    "questions",
+    "stage",
+    "stage_times"
+  ],
+  "title": "ReviewPackage",
+  "type": "object"
+}

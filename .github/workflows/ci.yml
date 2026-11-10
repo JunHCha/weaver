@@ -80,6 +80,8 @@ jobs:
           mkdir -p "$exported" "$committed"
           uv run --project server --locked python -m weaver.schema.export --output "$exported"
           cp schema/*.schema.json "$committed"/
+          mkdir -p "$committed/v2"
+          cp schema/v2/*.schema.json "$committed/v2"/
           if ! diff -ru "$committed" "$exported"; then
             echo "::error::schema/ differs from the server export. Run: uv run --project server python -m weaver.schema.export --output schema"
             exit 1
