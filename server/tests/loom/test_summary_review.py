@@ -495,12 +495,17 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
     )
     for value, index in [
         ({"start": "invalid", "end": None}, None),
+        ({"start": "2026-01-02T09:00:00", "timezone": "Invalid/Zone"}, None),
+        ({"start": "2026-03-08T02:30:00", "timezone": "America/New_York"}, None),
         ({"start": "2026-01-02T10:00:00", "end": "2026-01-02T09:00:00"}, None),
         ({"start": "2026-01-02T10:00:00", "end": None}, 0),
     ]:
         llm.value, llm.index = value, index
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as caught:
             review.approve(package(), "원문", verdict, now=NOW)
+        from weaver.failures import failure_reason
+
+        assert "operation_failed" not in failure_reason(caught.value)
     assert sink.drafts == []
 
 

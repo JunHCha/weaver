@@ -380,3 +380,22 @@ def test_status_missing_binary(tmp_path: Path) -> None:
     config = LlmConfig("claude_cli", claude_path=tmp_path / "nope")
     status = llm_status(config, {"PATH": str(tmp_path)})
     assert (status.available, status.reason) == (False, "claude_not_found")
+
+
+def test_validation_diagnostic_survives_redacted_cli_error(
+    tmp_path, fake_claude, caplog
+):
+    class Response(BaseModel):
+        direction: str
+
+    client, _, _ = make(
+        tmp_path,
+        fake_claude,
+        ok(structured_output={"direction": {"synthetic-private-source": "private"}}),
+    )
+    with pytest.raises(SchemaMismatch):
+        client.generate_json("loom.approve", "system", "prompt", Response)
+    assert "ValidationError reason=" in caplog.text
+    assert '"loc": ["direction"]' in caplog.text
+    assert "synthetic-private-source" not in caplog.text
+    assert "private" not in caplog.text

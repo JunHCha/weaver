@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -415,14 +415,20 @@ class SummaryReview:
                     zone_name = self.timezone
                 if not isinstance(zone_name, str):
                     raise ValueError("schedule timezone must be a string")
-                zone = ZoneInfo(zone_name)
+                try:
+                    zone = ZoneInfo(zone_name)
+                except (ZoneInfoNotFoundError, ValueError):
+                    raise ValueError("unknown timezone") from None
                 value["timezone"] = zone.key
                 for key in ("start", "end"):
                     raw = value.get(key)
                     if raw is not None:
                         if not isinstance(raw, str):
                             raise ValueError("schedule time must be a string")
-                        dt = datetime.fromisoformat(raw)
+                        try:
+                            dt = datetime.fromisoformat(raw)
+                        except ValueError:
+                            raise ValueError("invalid schedule time") from None
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=zone)
                             if dt.astimezone(UTC).astimezone(zone).replace(

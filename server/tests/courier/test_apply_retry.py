@@ -174,3 +174,26 @@ def test_cli_failure_ledger_does_not_grow_after_stop(
     assert len(runner_calls) == 3  # real schema transform reached the injected runner
     assert len(ledger.records()) == 3
     assert {record["status"] for record in ledger.records()} == {"backend_error"}
+
+
+def test_apply_validation_logs_safe_reason(
+    paths, captures, revisions, decisions, caplog
+):
+    from pydantic import BaseModel
+
+    class Model(BaseModel):
+        direction: str
+
+    courier, _, _ = setup_retry(paths, captures, revisions, decisions)
+
+    def apply(verdict):
+        Model.model_validate({"direction": {"synthetic-private-source": "secret"}})
+
+    decisions.apply = apply
+    with caplog.at_level(logging.WARNING):
+        courier.scan_once()
+    assert "ValidationError reason=" in caplog.text
+    assert '"loc": ["direction"]' in caplog.text
+    assert "Input should be a string" in caplog.text
+    assert "synthetic-private-source" not in caplog.text
+    assert "secret" not in caplog.text
