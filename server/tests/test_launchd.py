@@ -353,3 +353,14 @@ def test_damaged_archive_row_does_not_block_others(tmp_path):
     assert sum(status["sources"].values()) == 2
     assert len(runtime.feed.source_rows(exclude=runtime.ledger.final_ids())) == 1
     assert status["sources"]["waiting_llm"] == 1
+
+
+def test_plist_persists_backend_override(tmp_path):
+    plist = launchd.render_plist(
+        python=tmp_path / "python",
+        config_file=tmp_path / "config.toml",
+        log_root=tmp_path,
+        working_directory=tmp_path,
+        llm_backend="codex_cli",
+    )
+    assert plistlib.loads(plist)["ProgramArguments"][-2:] == ["--llm", "codex_cli"]

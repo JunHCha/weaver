@@ -63,6 +63,9 @@ _DISABLED_FEATURES = (
     "memories",
     "tool_suggest",
     "skill_search",
+    "request_permissions_tool",
+    "default_mode_request_user_input",
+    "sleep_tool",
 )
 _status_cache: dict[tuple[str, str | None], tuple[float, CliStatus]] = {}
 _status_lock = threading.Lock()
@@ -161,6 +164,12 @@ class CodexCliClient(ClaudeCliClient):
                 "mcp_servers={}",
                 "-c",
                 "project_doc_max_bytes=0",
+                "-c",
+                "tools.update_plan.enabled=false",
+                "-c",
+                'developer_instructions="Complete the supplied inference task using only '
+                "its input. Do not call tools, execute commands, or access files. "
+                'Return only the requested final output."',
             ]
             for feature in _DISABLED_FEATURES:
                 argv += ["--disable", feature]
