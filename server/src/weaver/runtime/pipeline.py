@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from weaver.config import LlmConfig
 from weaver.llm.cli import cli_status
+from weaver.llm.codex import codex_status
 from weaver.llm.errors import (
     AuthenticationError,
     BudgetExceeded,
@@ -27,6 +28,9 @@ def llm_status(config: LlmConfig, environ: Mapping[str, str]) -> LlmStatus:
     """Never reveals the key or its path, only why it is unusable."""
     if config.backend == "none":
         return LlmStatus(False, "backend_none")
+    if config.backend == "codex_cli":
+        status = codex_status(config, environ)
+        return LlmStatus(status.available, status.reason)
     if config.backend == "claude_cli":
         status = cli_status(config, environ)
         return LlmStatus(status.available, status.reason)

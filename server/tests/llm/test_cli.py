@@ -380,3 +380,40 @@ def test_status_missing_binary(tmp_path: Path) -> None:
     config = LlmConfig("claude_cli", claude_path=tmp_path / "nope")
     status = llm_status(config, {"PATH": str(tmp_path)})
     assert (status.available, status.reason) == (False, "claude_not_found")
+
+
+def test_validation_diagnostic_survives_redacted_cli_error(
+    tmp_path, fake_claude, caplog
+):
+    class Response(BaseModel):
+        direction: str
+
+    client, _, _ = make(
+        tmp_path,
+        fake_claude,
+        ok(structured_output={"direction": {"synthetic-private-source": "private"}}),
+    )
+    with pytest.raises(SchemaMismatch):
+        client.generate_json("loom.approve", "system", "prompt", Response)
+    assert "ValidationError reason=" in caplog.text
+    assert '"loc": ["direction"]' in caplog.text
+    assert "synthetic-private-source" not in caplog.text
+    assert "private" not in caplog.text
+
+
+def test_claude_call_summary_has_shared_count_and_no_body(
+    tmp_path, fake_claude, caplog
+):
+    import logging
+
+    client, _, _ = make(tmp_path, fake_claude, ok(result="private-reply"))
+    with caplog.at_level(logging.INFO):
+        assert (
+            client.generate_text("test.call", "private-system", SECRET_PROMPT)
+            == "private-reply"
+        )
+    lines = [r.message for r in caplog.records if r.levelno == logging.INFO]
+    assert len(lines) == 1
+    assert "test.call claude_cli succeeded" in lines[0]
+    assert "in=? out=? (today 1/30)" in lines[0]
+    assert "private-reply" not in caplog.text and SECRET_PROMPT not in caplog.text

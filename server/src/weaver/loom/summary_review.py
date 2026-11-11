@@ -3,13 +3,14 @@
 import difflib
 import hashlib
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, NotRequired, Self, TypedDict
-from zoneinfo import ZoneInfo
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.context import ContextDictionary, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
@@ -24,6 +25,9 @@ from weaver.schema import (
     ThreadSink,
     Verdict,
 )
+from weaver.schema.models import NonEmpty, Timestamp
+
+logger = logging.getLogger(__name__)
 
 
 class Correction(BaseModel):
@@ -49,33 +53,47 @@ class AssigneeChange(TypedDict):
     remove: list[str]
 
 
-class ExtractedThread(BaseModel):
-    """Model-provided fact, with provenance supplied by the server."""
+def _literal_enums(schema: dict[str, Any]) -> None:
+    # Anthropic 0.125 drops const into a description, but preserves enum.
+    # Keep single-value kind/field literals enforceable after transformation.
+    for property_schema in schema["properties"].values():
+        if "const" in property_schema:
+            property_schema["enum"] = [property_schema.pop("const")]
 
-    kind: Literal["요청", "결정", "일정", "기록"]
-    content: str
-    occurred_at: datetime
-    tags: list[str]
-    field: Literal["deadline", "schedule", "assignees", "status"] | None
-    value: str | ExtractedSchedule | AssigneeChange | None
-    direction: Literal["받음", "보냄"] | None
-    resolves: str | None
-    retracts: str | None
-    blocked_by_index: int | None = None
 
-    @model_validator(mode="after")
-    def validate_value(self) -> Self:
-        if self.value is not None:
-            if self.field == "schedule":
-                TypeAdapter(ExtractedSchedule).validate_python(self.value)
-            elif self.field == "assignees":
-                TypeAdapter(AssigneeChange).validate_python(self.value)
-            elif self.field in ("deadline", "status"):
-                if not isinstance(self.value, str):
-                    raise ValueError("deadline and status values must be strings")
-            else:
-                raise ValueError("value requires a field")
-        return self
+class _ExtractedThread[K, D, R, B, F, V](BaseModel):
+    """Flat response contract specialized by both kind and field.
+
+    Plain unions deliberately emit anyOf, which survives Anthropic's schema
+    transform; discriminator/if/then constraints are not needed.
+    """
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra=_literal_enums)
+
+    kind: K
+    content: NonEmpty
+    occurred_at: Timestamp
+    tags: list[NonEmpty]
+    field: F
+    value: V
+    direction: D
+    resolves: R
+    retracts: NonEmpty | None
+    blocked_by_index: B | None = None
+
+
+type _FieldThread[K, D, R, B] = (
+    _ExtractedThread[K, D, R, B, None, None]
+    | _ExtractedThread[K, D, R, B, Literal["deadline", "status"], str | None]
+    | _ExtractedThread[K, D, R, B, Literal["schedule"], ExtractedSchedule | None]
+    | _ExtractedThread[K, D, R, B, Literal["assignees"], AssigneeChange | None]
+)
+type ExtractedThread = (
+    _FieldThread[Literal["요청"], Literal["받음", "보냄"], None, None]
+    | _FieldThread[Literal["결정"], None, NonEmpty | None, None]
+    | _FieldThread[Literal["일정"], None, None, Annotated[int, Field(ge=0)] | None]
+    | _FieldThread[Literal["기록"], None, None, None]
+)
 
 
 class ApprovedResponse(BaseModel):
@@ -340,6 +358,19 @@ class SummaryReview:
                 " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
                 " blocked_by_index에 같은 응답 threads 배열의 요청 인덱스(0부터)를 쓴다."
                 " 의존 관계를 추측하지 말고 없거나 불확실하면 null로 둔다."
+                " 요청에만 direction을 받음/보냄으로 쓰고 나머지는 null로 둔다."
+                " resolves는 결정에서만 기존 요청 ID를 쓰고 나머지는 null로 둔다."
+                " field가 없으면 value도 null이다. deadline/status 값은 문자열,"
+                " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
+                " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
+                " occurred_at은 시간대를 포함한 RFC 3339 시각이다."
+                " 일정 start는 유효한 ISO 8601 시각이며 end는 start보다 늦어야 한다."
+                " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
+                " 해당 시간대에 존재하지 않는 현지 시각을 만들지 않는다."
+                " blocked_by_index는 반드시 이 배열 범위 안의 요청을 가리킨다."
+                " 태그정정/거절 Thread는 추출하지 않는다. correction은 서버가 null로 둔다."
+                " corrections의 observed는 원문에 실제로 있는 표기이고 canonical은"
+                " 검토 답 하나와 정확히 일치해야 한다. edit에서는 corrections를 비운다."
             ),
             json.dumps(
                 {
@@ -387,14 +418,20 @@ class SummaryReview:
                     zone_name = self.timezone
                 if not isinstance(zone_name, str):
                     raise ValueError("schedule timezone must be a string")
-                zone = ZoneInfo(zone_name)
+                try:
+                    zone = ZoneInfo(zone_name)
+                except (ZoneInfoNotFoundError, ValueError):
+                    raise ValueError("unknown timezone") from None
                 value["timezone"] = zone.key
                 for key in ("start", "end"):
                     raw = value.get(key)
                     if raw is not None:
                         if not isinstance(raw, str):
                             raise ValueError("schedule time must be a string")
-                        dt = datetime.fromisoformat(raw)
+                        try:
+                            dt = datetime.fromisoformat(raw)
+                        except ValueError:
+                            raise ValueError("invalid schedule time") from None
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=zone)
                             if dt.astimezone(UTC).astimezone(zone).replace(
@@ -426,11 +463,18 @@ class SummaryReview:
                     correction=None,
                 )
             )
-        corrections = response.corrections if verdict.action == "approve" else []
-        for correction in corrections:
-            if (
-                correction.canonical not in verdict.answers
-                or correction.observed not in script
-            ):
-                raise ValueError("correction was not selected or observed")
+        proposed = response.corrections if verdict.action == "approve" else []
+        # Corrections only teach the context dictionary. An unverifiable one is
+        # dropped instead of failing the approval; the dictionary stays protected.
+        corrections = [
+            c
+            for c in proposed
+            if c.canonical in verdict.answers and c.observed in script
+        ]
+        if len(corrections) < len(proposed):
+            logger.warning(
+                "dropped unverified corrections: %d of %d",
+                len(proposed) - len(corrections),
+                len(proposed),
+            )
         return Prepared(summary=summary, threads=drafts, corrections=corrections)

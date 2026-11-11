@@ -1,5 +1,6 @@
 """Periodic consumers of the Fabric log."""
 
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from weaver.wiki.queries import write_pages
 from weaver.wiki.store import HumanEditPending, WikiStore
 
 from .summary import SummaryLookup
+
+logger = logging.getLogger(__name__)
 
 
 class WikiJob:
@@ -42,6 +45,7 @@ class WikiJob:
         self.digest = DigestBuilder(
             fabric, store, client, state / "wiki-digest.sqlite3", zone, self.source_link
         )
+        self._waiting: dict[str, tuple[str, float | None]] = {}
         self.state_path = state / "wiki-queries.sqlite3"
         with sqlite3.connect(self.state_path) as db:
             db.execute(
@@ -73,16 +77,35 @@ class WikiJob:
                 base = None
             self.store.write(path, {}, summary.body, base, readonly=True)
 
+    def _deferred(self, consumer: str, error: HumanEditPending) -> None:
+        status = (str(error), error.ready_at)
+        if self._waiting.get(consumer) != status:
+            remaining = (
+                max(0.0, error.ready_at - self.store.clock())
+                if error.ready_at is not None
+                else None
+            )
+            logger.info(
+                "Wiki consumer deferred: consumer=%s count=1 remaining_seconds=%s",
+                consumer,
+                "?" if remaining is None else f"{remaining:.0f}",
+            )
+            self._waiting[consumer] = status
+
     def run(self) -> None:
         try:
             self.compiler.run()
-        except HumanEditPending:
+        except HumanEditPending as error:
+            self._deferred("compiler", error)
             return
+        self._waiting.pop("compiler", None)
         try:
             self._copy_summaries()
             self.digest.update()
-        except HumanEditPending:
-            pass
+        except HumanEditPending as error:
+            self._deferred("digest", error)
+        else:
+            self._waiting.pop("digest", None)
         with sqlite3.connect(self.state_path) as db:
             row = db.execute("SELECT seq FROM bookmark WHERE id=1").fetchone()
             new = self.fabric.entries(ThreadQuery(after_seq=row[0] if row else 0))
@@ -95,8 +118,10 @@ class WikiJob:
                 now=datetime.now(self.zone),
                 source_link=self.source_link,
             )
-        except HumanEditPending:
+        except HumanEditPending as error:
+            self._deferred("queries", error)
             return
+        self._waiting.pop("queries", None)
         with sqlite3.connect(self.state_path) as db:
             if new:
                 db.execute(

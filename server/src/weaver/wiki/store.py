@@ -103,6 +103,10 @@ def _scalar(text: str) -> JsonValue:
 class HumanEditPending(Exception):
     """A page changed or is too recent to safely overwrite."""
 
+    def __init__(self, path: str, *, ready_at: float | None = None) -> None:
+        super().__init__(path)
+        self.ready_at = ready_at
+
 
 @dataclass(frozen=True)
 class HumanEdit:
@@ -375,6 +379,23 @@ class WikiStore:
             ).fetchone()
         return row is not None and _hash(row[0]) == digest
 
+    def check_write(self, path: str, base_hash: str | None) -> None:
+        """Check hash and quiet period before expensive generation.
+
+        This is advisory: write checks again because the file may change meanwhile.
+        """
+        target = self._path(path)
+        current = target.read_bytes() if target.exists() else None
+        if (None if current is None else _hash(current)) != base_hash:
+            raise HumanEditPending(path)
+        if (
+            current is not None
+            and self.clock() - target.stat().st_mtime < self.settle_seconds
+        ):
+            raise HumanEditPending(
+                path, ready_at=target.stat().st_mtime + self.settle_seconds
+            )
+
     def write(
         self,
         path: str,
@@ -386,15 +407,7 @@ class WikiStore:
         readonly: bool = False,
     ) -> str:
         """Write and commit a page if its hash and quiet period permit it."""
-        target = self._path(path)
-        current = target.read_bytes() if target.exists() else None
-        if (None if current is None else _hash(current)) != base_hash:
-            raise HumanEditPending(path)
-        if (
-            current is not None
-            and self.clock() - target.stat().st_mtime < self.settle_seconds
-        ):
-            raise HumanEditPending(path)
+        self.check_write(path, base_hash)
         data = _render(frontmatter, body)
         self._replace(path, data, base_hash)
         rev = self._commit(path, data, "weaver", metadata)

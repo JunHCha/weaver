@@ -359,6 +359,16 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
             assert "명시" in system and "blocked_by_index" in system
+            for rule in (
+                "배열 범위",
+                "start보다 늦어야",
+                "IANA",
+                "원문에 실제로",
+                "정확히 일치",
+                "존재하지 않는",
+                "{add:",
+            ):
+                assert rule in system
             assert json.loads(user)["timezone"] == "America/New_York"
             base = {
                 "occurred_at": NOW.isoformat(),
@@ -485,12 +495,17 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
     )
     for value, index in [
         ({"start": "invalid", "end": None}, None),
+        ({"start": "2026-01-02T09:00:00", "timezone": "Invalid/Zone"}, None),
+        ({"start": "2026-03-08T02:30:00", "timezone": "America/New_York"}, None),
         ({"start": "2026-01-02T10:00:00", "end": "2026-01-02T09:00:00"}, None),
         ({"start": "2026-01-02T10:00:00", "end": None}, 0),
     ]:
         llm.value, llm.index = value, index
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as caught:
             review.approve(package(), "원문", verdict, now=NOW)
+        from weaver.failures import failure_reason
+
+        assert "operation_failed" not in failure_reason(caught.value)
     assert sink.drafts == []
 
 
@@ -603,3 +618,36 @@ def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> Non
     result = review.apply(package(), "원문", verdict, now=NOW)
     assert result is not None
     assert result.body == verdict.edited_body
+
+
+def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["corrections"] = [
+                {"observed": "홍길돈", "canonical": "홍길동", "kind": "person"},
+                {"observed": "홍길돈", "canonical": "직접 입력한 답", "kind": "person"},
+                {"observed": "원문에 없음", "canonical": "홍길동", "kind": "person"},
+            ]
+            return schema.model_validate(data)
+
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    review = SummaryReview(
+        Llm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    assert len(sink.drafts) == 1
+    assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]
+    assert context.candidates("원문에 없음") == []

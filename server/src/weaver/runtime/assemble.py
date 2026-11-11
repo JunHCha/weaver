@@ -57,7 +57,7 @@ def build_runtime(
         # Constructing the client needs no credentials; the gate decides use.
         real = (
             create_client(config.llm, state_root=config.state_root)
-            if config.llm.backend in {"anthropic", "claude_cli"}
+            if config.llm.backend in {"anthropic", "claude_cli", "codex_cli"}
             else None
         )
         gate = LlmGate(lambda: llm_status(config.llm, env))

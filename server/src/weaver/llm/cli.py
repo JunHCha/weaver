@@ -27,6 +27,7 @@ import anthropic
 from pydantic import BaseModel, ValidationError
 
 from weaver.config import LlmConfig
+from weaver.failures import failure_reason
 
 from .errors import (
     AuthenticationError,
@@ -245,6 +246,8 @@ def _classify(text: str, status: object) -> LlmError:
 
 
 class ClaudeCliClient:
+    backend = "claude_cli"
+    workdir_name = WORKDIR_NAME
     model = MODEL  # Read by Loom version tracking; not part of LlmClient.
 
     def __init__(
@@ -257,7 +260,7 @@ class ClaudeCliClient:
         environ: Mapping[str, str] | None = None,
         deadline_seconds: float = 120,
     ) -> None:
-        if config.backend != "claude_cli":
+        if config.backend != self.backend:
             raise ValueError("ClaudeCliClient requires claude_cli backend")
         if not 0 < deadline_seconds <= 600:
             raise ValueError("invalid deadline")
@@ -266,7 +269,7 @@ class ClaudeCliClient:
         self.runner = runner
         self.environ = os.environ if environ is None else environ
         self.deadline_seconds = deadline_seconds
-        self.workdir = state_root / WORKDIR_NAME
+        self.workdir = state_root / self.workdir_name
 
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
@@ -309,8 +312,9 @@ class ClaudeCliClient:
         started = time.monotonic()
         record: dict[str, Any] = {
             "task": task,
-            "backend": "claude_cli",
-            "model": MODEL,
+            "backend": self.backend,
+            "model": self.model,
+            "daily_cap": self.config.max_cli_calls_per_day,
             "started_at": datetime.now(UTC).isoformat(),
             "status": "pending",
             "elapsed_seconds": 0.0,
@@ -406,7 +410,11 @@ class ClaudeCliClient:
                 raise InvalidJson() from None
         try:
             return schema.model_validate_json(json.dumps(structured))
-        except ValidationError:
+        except ValidationError as error:
+            logging.getLogger(__name__).warning(
+                "LLM response validation failed: ValidationError reason=%s",
+                failure_reason(error),
+            )
             raise SchemaMismatch() from None
 
 
