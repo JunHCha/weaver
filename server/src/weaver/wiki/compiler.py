@@ -7,6 +7,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 
@@ -17,6 +18,7 @@ from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.schema import TagCorrection, ThreadDraft
+from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore
 
 
@@ -61,9 +63,13 @@ class Compiler:
             db.executescript(
                 "CREATE TABLE IF NOT EXISTS bookmark (seq INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edits (rev TEXT PRIMARY KEY, drafts TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS compiled_pages "
+                "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, hash TEXT NOT NULL);"
             )
             if not db.execute("SELECT 1 FROM bookmark").fetchone():
                 db.execute("INSERT INTO bookmark VALUES (0)")
+
+        self.cache = GenerationCache(state_path)
 
     def bookmark(self) -> int:
         """Return the last fully applied sequence."""
@@ -168,13 +174,14 @@ class Compiler:
 
     def _run(self) -> None:
         self.store.restore_readonly()
-        for edit in self.store.scan(datetime.now(UTC).timestamp()):
+        for edit in self.store.scan(self.store.clock()):
             self._edit(edit)
         new = self.fabric.entries(ThreadQuery(after_seq=self.bookmark()))
         if not new:
             self._sync_pages()
             return
-        all_threads = self.fabric.entries(ThreadQuery())
+        high = max(t.seq for t in new)
+        all_threads = [t for t in self.fabric.entries(ThreadQuery()) if t.seq <= high]
         tags = {tag for t in new for tag in t.tags}
         for t in new:
             if t.correction:
@@ -198,6 +205,21 @@ class Compiler:
                     raise HumanEditPending(path)
             except FileNotFoundError:
                 props, body, base = {}, "", None
+            snapshot = fingerprint(
+                {
+                    "threads": [t.model_dump(mode="json") for t in all_threads],
+                    "kind": entry.kind,
+                    "aliases": entry.aliases,
+                }
+            )
+            with sqlite3.connect(self.state_path) as db:
+                completed = db.execute(
+                    "SELECT 1 FROM compiled_pages WHERE path=? AND fingerprint=? AND hash=?",
+                    (path, snapshot, base),
+                ).fetchone()
+            if completed:
+                continue
+            self.store.check_write(path, base)
             retracted = {t.retracts for t in all_threads if t.retracts}
             related = [
                 t
@@ -222,10 +244,16 @@ class Compiler:
                         summary_path, {}, summary.body, None, readonly=True
                     )
                 links.append(f"- {t.content} [[{summary_path[:-3]}]]")
-            generated = self.llm.generate_text(
-                "wiki.compile",
-                "Update the page using the evidence; preserve human edits.",
-                json.dumps({"page": body, "evidence": links}, ensure_ascii=False),
+            payload = json.dumps({"page": body, "evidence": links}, ensure_ascii=False)
+            generated = self.cache.get(
+                path,
+                {"payload": payload, "base": base},
+                partial(
+                    self.llm.generate_text,
+                    "wiki.compile",
+                    "Update the page using the evidence; preserve human edits.",
+                    payload,
+                ),
             )
             state = project(tag, all_threads)
             for field in ("deadline", "schedule", "status"):
@@ -235,7 +263,15 @@ class Compiler:
             props["assignees"] = list[JsonValue](sorted(state.assignees))
             props["kind"] = entry.kind
             props["aliases"] = list(entry.aliases)
-            self.store.write(path, props, generated + "\n\n" + "\n".join(links), base)
+            written = self.store.write(
+                path, props, generated + "\n\n" + "\n".join(links), base
+            )
+            with sqlite3.connect(self.state_path) as db:
+                db.execute(
+                    "INSERT OR REPLACE INTO compiled_pages VALUES (?, ?, ?)",
+                    (path, snapshot, written),
+                )
+            self.cache.discard(path)
         self._sync_pages()
         with sqlite3.connect(self.state_path) as db:
             db.execute("UPDATE bookmark SET seq=?", (max(t.seq for t in new),))
