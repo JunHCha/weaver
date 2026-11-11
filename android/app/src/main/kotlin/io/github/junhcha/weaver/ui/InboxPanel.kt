@@ -4,6 +4,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import io.github.junhcha.weaver.review.reviewTitle
+import io.github.junhcha.weaver.review.sourceLabel
+import io.github.junhcha.weaver.review.reviewLabel
+import io.github.junhcha.weaver.schema.ReviewPackage
 import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedButton
@@ -15,11 +23,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxDatabase
@@ -27,14 +35,8 @@ import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.ReviewRecord
 import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.review.ReviewStatus
-import io.github.junhcha.weaver.review.displayName
-import io.github.junhcha.weaver.schema.Stage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** Review entry shared by home and notifications. */
 @Composable
@@ -43,20 +45,18 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
     var reviews by remember { mutableStateOf(emptyList<InboxDatabase.ReviewItem>()) }
-    var questionCounts by remember { mutableStateOf(emptyMap<String, Int?>()) }
+    var packages by remember { mutableStateOf(emptyMap<String, ReviewPackage?>()) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
-    var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     var alerts by remember { mutableStateOf(emptyList<InboxDatabase.AlertItem>()) }
-    var lastScan by remember { mutableStateOf<Long?>(null) }
+    var records by remember { mutableStateOf(emptyList<ReviewRecord>()) }
     LaunchedEffect(changes) {
+        alerts = withContext(Dispatchers.IO) { InboxRuntime.alerts(context) }
         records = withContext(Dispatchers.IO) { ReviewRuntime.records(context) }
-        withContext(Dispatchers.IO) {
-            Triple(InboxRuntime.reviews(context), InboxRuntime.alerts(context), InboxRuntime.lastScanAt(context))
-        }.let { (items, a, scan) ->
-            reviews = items; alerts = a; lastScan = scan
-            questionCounts = withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) { InboxRuntime.reviews(context) }.let { items ->
+            reviews = items
+            packages = withContext(Dispatchers.IO) {
                 items.associate { item -> item.packageId to runCatching {
-                    ReviewRuntime.open(context, item.packageId).questions.size
+                    ReviewRuntime.open(context, item.packageId)
                 }.getOrNull() }
             }
         }
@@ -67,37 +67,51 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             OutlinedButton(onClick = { CourierRuntime.kick(context) }) { Text("동기화 새로고침") }
             if (reviews.isEmpty()) Text("검토 대기 문서 없음")
             reviews.forEach { item ->
+                val p = packages[item.packageId]
+                val record = records.firstOrNull { it.verdict.packageId == item.packageId && it.verdict.revision == item.revision }
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("단계: ${stageLabel(item.stage)}")
-                        Text("revision ${item.revision} · 미해결 질문 ${questionCounts[item.packageId]?.let { "${it}개" } ?: if (item.packageId in questionCounts) "확인 불가" else "확인 중"}" +
-                            if (item.revised) " · 피드백 반영본" else "")
-                        Text(item.summary.replace('\n', ' '), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        OutlinedButton(onClick = { selected = item.packageId }) { Text("문서 r${item.revision} 검토") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(color = when (p?.sourceLabel()) {
+                                "통화" -> MaterialTheme.colorScheme.tertiaryContainer
+                                "카카오톡" -> MaterialTheme.colorScheme.primaryContainer
+                                "음성 메모" -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.secondaryContainer
+                            }, shape = MaterialTheme.shapes.small) {
+                                Text(p?.sourceLabel() ?: "문서", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                            }
+                            Surface(color = if ((p == null && item.packageId in packages) || record?.status in setOf(ReviewStatus.ERROR, ReviewStatus.CONFLICT))
+                                MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+                                shape = MaterialTheme.shapes.small) {
+                                Text(if (p == null && item.packageId in packages) "문서 확인 필요" else record?.status?.reviewLabel() ?: if (item.revised) "피드백 반영 · 다시 확인" else "검토 필요",
+                                    Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                            }
+                        }
+                        Text(p?.reviewTitle() ?: item.summary, style = MaterialTheme.typography.titleMedium)
+                        Text(p?.questions?.size?.let { if (it == 0) "요약을 확인해 주세요" else "확인할 질문 ${it}개" } ?: if (item.packageId in packages) "문서를 읽지 못했습니다. 동기화 새로고침 후 다시 확인해 주세요." else "문서를 준비하고 있습니다")
+                        OutlinedButton(onClick = { selected = item.packageId }) { Text("문서 검토") }
+                    }
+                }
+                if (selected == item.packageId) {
+                    BackHandler { selected = null }
+                    ReviewPanel(item.packageId, onClose = { selected = null })
+                }
+            }
+            alerts.forEach { alert ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("확인할 일정 변경", style = MaterialTheme.typography.titleSmall)
+                        Text(alert.message)
+                        OutlinedButton(onClick = {
+                            scope.launch(Dispatchers.IO) { InboxRuntime.dismissAlert(context, alert.alertId) }
+                        }) { Text("확인했어요") }
                     }
                 }
             }
-            records.forEach { record ->
-                Text("${record.verdict.packageId} r${record.verdict.revision}: ${record.status.label}")
-                if (record.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
-                    OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
+            records.filter { it.status == ReviewStatus.ERROR && reviews.none { item -> item.packageId == it.verdict.packageId } }.forEach { record ->
+                Text(record.status.reviewLabel())
+                OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("다시 보내기") }
             }
-            selected?.let { id -> ReviewPanel(id, onClose = { selected = null }) }
-            Text("통화 정리는 갤럭시 스크립트 텍스트를 공유해 시작하세요. 홈의 Shepherd 통화 목록에서 확인할 수 있습니다.")
-            Text("변경 경고 ${alerts.size}건")
-            alerts.forEach { alert ->
-                Text(alert.message)
-                OutlinedButton(onClick = {
-                    scope.launch(Dispatchers.IO) { InboxRuntime.dismissAlert(context, alert.alertId) }
-                }) { Text("경고 닫기") }
-            }
-            Text("검사 주기 ${InboxRuntime.INTERVAL_MINUTES}분 · 기기 절전(Doze·배터리 최적화)으로 더 늦어질 수 있습니다.")
-            Text("마지막 성공 검사: " + (lastScan?.let {
-                DateTimeFormatter.ofPattern("MM-dd HH:mm").format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()))
-            } ?: "아직 없음"))
         }
     }
 }
-
-private fun stageLabel(stage: String): String =
-    runCatching { Stage.valueOf(stage).displayName() }.getOrDefault(stage)

@@ -6,13 +6,38 @@
     "/additionalProperties": false,
     "/allOf": [
         {
-            "else": {
+            "if": {
                 "properties": {
-                    "edited_body": {
-                        "type": "null"
+                    "action": {
+                        "const": "feedback"
                     }
                 }
             },
+            "then": {
+                "properties": {
+                    "feedback": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "action": {
+                        "const": "reject"
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "feedback": {
+                        "type": "null"
+                    }
+                }
+            }
+        },
+        {
             "if": {
                 "properties": {
                     "action": {
@@ -29,24 +54,20 @@
             }
         },
         {
-            "else": {
-                "properties": {
-                    "feedback": {
-                        "type": "null"
-                    }
-                }
-            },
             "if": {
                 "properties": {
                     "action": {
-                        "const": "feedback"
+                        "enum": [
+                            "approve",
+                            "reject"
+                        ]
                     }
                 }
             },
             "then": {
                 "properties": {
-                    "feedback": {
-                        "type": "string"
+                    "edited_body": {
+                        "type": "null"
                     }
                 }
             }

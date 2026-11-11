@@ -73,17 +73,21 @@ def test_invalid_decisions_are_reported_and_kept(
 
 
 def test_apply_failure_is_retried_and_unconfirmed_apply_is_reported(
-    courier, paths, revisions, decisions
+    courier, paths, revisions, decisions, monkeypatch
 ):
+    tick = [0.0]
+    monkeypatch.setattr(courier, "_clock", lambda: tick[0])
     revisions.latest[PKG] = 1
     path = write_json(paths.decisions / f"{PKG}.r1.json", verdict_for())
     decisions.failures = 1
     assert courier.scan_once().problems == {f"decisions/{path.name}": "apply_failed"}
     decisions.confirm = False
+    tick[0] += 30
     assert courier.scan_once().problems == {
         f"decisions/{path.name}": "apply_unconfirmed"
     }
     decisions.confirm = True
+    tick[0] += 30
     assert courier.scan_once().applied == [(PKG, 1)]
 
 

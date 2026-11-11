@@ -1,5 +1,8 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package io.github.junhcha.weaver.schema
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -11,7 +14,9 @@ enum class Stage {
 }
 
 @Serializable
-data class Question(val question: String, val rationale: String, val choices: List<String>) {
+data class Question(val question: String, val rationale: String, val choices: List<String>,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("source_excerpt") val sourceExcerpt: String = "",
+) {
     init {
         Rules.nonEmpty(question, "question")
         Rules.nonEmpty(rationale, "rationale")
@@ -30,6 +35,9 @@ data class ReviewPackage(
     val questions: List<Question>,
     val stage: Stage,
     @SerialName("stage_times") val stageTimes: Map<Stage, String>,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("source_text") val sourceText: String = "",
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("source_type") val sourceType: String = "",
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val title: String = "",
 ) {
     init {
         Rules.schemaVersion(schemaVersion, REVIEW_SCHEMA_VERSION)

@@ -8,7 +8,7 @@
       "answers": ["홍길동"],
       "expected": {
         "body": "홍길돈이 금요일에 자료를 보내기로 했다.",
-        "questions": [{"question": "누구인가요?", "rationale": "이름이 불확실함", "choices": ["홍길동", "김철수", "모름"]}],
+        "questions": [{"question": "누구인가요?", "rationale": "이름이 불확실함", "choices": ["홍길동", "김철수", "모름"], "source_excerpt": "홍길돈이 금요일에 자료를 보내기로 했다."}],
         "threads": [{"kind": "결정", "content": "홍길동이 금요일에 자료를 보내기로 했다.", "tags": ["홍길동"]}]
       },
       "responses": {

@@ -316,6 +316,7 @@ class ThreadSink(Protocol):
 class Question(Contract):
     """A low-confidence question and exactly three choices."""
 
+    source_excerpt: str = ""
     question: NonEmpty
     rationale: NonEmpty
     choices: Annotated[list[NonEmpty], Field(min_length=3, max_length=3)]
@@ -366,6 +367,9 @@ class ReviewPackage(Version2):
     package_id: NonEmpty
     source_id: SourceId
     revision: Revision
+    title: str = ""
+    source_text: str = ""
+    source_type: str = ""
     draft_body: NonEmpty
     questions: Annotated[list[Question], Field(max_length=3)]
     stage: Stage
@@ -379,11 +383,21 @@ class Verdict(Version2):
         json_schema_extra={
             "allOf": [
                 {
-                    "if": {"properties": {"action": {"const": action}}},
-                    "then": {"properties": {field: {"type": "string"}}},
-                    "else": {"properties": {field: {"type": "null"}}},
-                }
-                for action, field in [("edit", "edited_body"), ("feedback", "feedback")]
+                    "if": {"properties": {"action": {"const": "feedback"}}},
+                    "then": {"properties": {"feedback": {"type": "string"}}},
+                },
+                {
+                    "if": {"properties": {"action": {"const": "reject"}}},
+                    "then": {"properties": {"feedback": {"type": "null"}}},
+                },
+                {
+                    "if": {"properties": {"action": {"const": "edit"}}},
+                    "then": {"properties": {"edited_body": {"type": "string"}}},
+                },
+                {
+                    "if": {"properties": {"action": {"enum": ["approve", "reject"]}}},
+                    "then": {"properties": {"edited_body": {"type": "null"}}},
+                },
             ]
         }
     )
@@ -397,10 +411,14 @@ class Verdict(Version2):
 
     @model_validator(mode="after")
     def action_inputs(self) -> Self:
-        if (self.edited_body is not None) != (self.action == "edit"):
-            raise ValueError("edited_body is required exactly for edit")
-        if (self.feedback is not None) != (self.action == "feedback"):
-            raise ValueError("feedback is required exactly for feedback")
+        if self.action == "edit" and self.edited_body is None:
+            raise ValueError("edited_body is required for edit")
+        if self.action in {"approve", "reject"} and self.edited_body is not None:
+            raise ValueError("edited_body is accepted only for edit or feedback")
+        if self.action == "feedback" and self.feedback is None:
+            raise ValueError("feedback is required for feedback")
+        if self.action == "reject" and self.feedback is not None:
+            raise ValueError("feedback is not accepted for reject")
         return self
 
 

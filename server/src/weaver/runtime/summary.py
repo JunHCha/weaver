@@ -127,7 +127,12 @@ class SummaryProcessor:
         script = self.spinner.spin(source)
         if stop.is_set():
             raise Interrupted()
-        self.drafts.create(source.source_id, script.text, source.hints.counterpart)
+        self.drafts.create(
+            source.source_id,
+            script.text,
+            source.hints.counterpart,
+            source_type=source.channel,
+        )
         return "done"
 
 

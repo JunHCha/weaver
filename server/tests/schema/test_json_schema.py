@@ -49,8 +49,10 @@ def test_verdict_branches(action, edited, feedback):
     agree(
         Verdict,
         payload,
-        (edited is not None) == (action == "edit")
-        and (feedback is not None) == (action == "feedback"),
+        (action != "edit" or edited is not None)
+        and (action not in {"approve", "reject"} or edited is None)
+        and (action != "feedback" or feedback is not None)
+        and (action != "reject" or feedback is None),
     )
 
 

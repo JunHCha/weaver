@@ -54,10 +54,10 @@ class ReviewTest {
         }
     }
 
-    @Test fun answersMustSelectOneChoicePerQuestion() {
+    @Test fun answersMustIncludeOneNonblankResponsePerQuestion() {
         val folder = Folder(); val p = review(); folder.put(p)
         val store = ReviewStore(temporary.newFolder())
-        val bad = verdict(p, Verdict.Action.APPROVE).copy(answers = listOf("목록에 없는 답"))
+        val bad = verdict(p, Verdict.Action.APPROVE).copy(answers = emptyList())
         assertThrows(IllegalArgumentException::class.java) { store.queue(folder, p, bad) }
         assertTrue(store.records().isEmpty())
     }

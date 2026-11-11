@@ -66,6 +66,15 @@ class InboxTest {
         .singleOrNull { shadowOf(manager).getNotification(id) === it }
     private fun silent(n: Notification) = n.group != null && n.groupAlertBehavior == Notification.GROUP_ALERT_SUMMARY
 
+    @Test fun oldestPendingRemainsFirstAfterNewRevision() {
+        InboxDatabase(app).use { db ->
+            db.reconcile(listOf(review), emptyList(), emptySet(), morning, "test", false)
+            db.reconcile(listOf(review, other), emptyList(), emptySet(), morning + 1000, "test", false)
+            db.reconcile(listOf(review.copy(revision = 2), other), emptyList(), emptySet(), morning + 2000, "test", false)
+            assertEquals(listOf(review.packageId, other.packageId), db.reviews().map { it.packageId })
+        }
+    }
+
     @Test fun databaseOfAnOlderContractIsDiscardedAndStartsEmpty() {
         val path = File(app.filesDir, "inbox.sqlite3")
         android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->

@@ -238,10 +238,11 @@ def test_verdict_action_requires_appropriate_input():
         data | {"action": "feedback", "feedback": "더 자세히"}
     )
     assert Verdict.model_validate(data | {"action": "reject"})
+    assert Verdict.model_validate(data | {"feedback": "더 자세히"})
     for invalid in (
         {"action": "edit"},
         {"action": "feedback"},
-        {"feedback": "더 자세히"},
+        {"action": "reject", "feedback": "더 자세히"},
         {"action": "reject", "edited_body": "수정"},
     ):
         with pytest.raises(ValidationError):

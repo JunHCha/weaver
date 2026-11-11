@@ -492,3 +492,114 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
         with pytest.raises(ValueError):
             review.approve(package(), "원문", verdict, now=NOW)
     assert sink.drafts == []
+
+
+def test_freeform_answers_and_feedback_use_one_approval_request(tmp_path: Path) -> None:
+    import json
+
+    class RecordingLlm(FakeLlm):
+        calls: list[tuple[str, str]] = []
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            self.calls.append((task, user))
+            return schema.model_validate(
+                {"body": "추가 답변 반영", "corrections": [], "threads": []}
+            )
+
+    llm = RecordingLlm()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["보기 밖의 자유 답변", "두 번째 답", "세 번째 답"],
+        feedback="추가 요청도 반영",
+        edited_body=None,
+    )
+    batch = package().model_copy(update={"questions": package().questions * 3})
+    result = review.approve(batch, "원문", verdict, now=NOW)
+    assert result.body == "추가 답변 반영"
+    assert len(llm.calls) == 1
+    assert llm.calls[0][0] == "loom.approve"
+    payload = json.loads(llm.calls[0][1])
+    assert payload["answers"] == verdict.answers
+    assert payload["feedback"] == verdict.feedback
+    assert len(payload["questions"]) == 3
+
+
+def test_feedback_request_includes_collected_answers(tmp_path: Path) -> None:
+    import json
+
+    class RecordingLlm(FakeLlm):
+        calls: list[str] = []
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            assert task == "loom.feedback"
+            self.calls.append(user)
+            return schema.model_validate({"patches": []})
+
+    llm = RecordingLlm()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="feedback",
+        answers=["직접 입력한 이름"],
+        feedback="수정",
+        edited_body="직접 수정한 본문",
+    )
+    result = review.apply(package(), "원문", verdict, now=NOW)
+    assert isinstance(result, ReviewPackage)
+    assert result.draft_body == "직접 수정한 본문"
+    assert result.revision == 2
+    assert json.loads(llm.calls[0])["body"] == "직접 수정한 본문"
+    assert len(llm.calls) == 1
+    assert json.loads(llm.calls[0])["answers"] == verdict.answers
+
+
+def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> None:
+    class ExtractionLlm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            return schema.model_validate(
+                {"body": "모델이 바꾼 문장", "corrections": [], "threads": []}
+            )
+
+    review = SummaryReview(
+        ExtractionLlm(),
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="edit",
+        answers=["자유 답변"],
+        edited_body="사람이 직접 쓴 문장",
+        feedback=None,
+    )
+    result = review.apply(package(), "원문", verdict, now=NOW)
+    assert result is not None
+    assert result.body == verdict.edited_body

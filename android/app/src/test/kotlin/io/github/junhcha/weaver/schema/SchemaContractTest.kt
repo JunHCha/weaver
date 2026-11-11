@@ -209,7 +209,7 @@ class SchemaContractTest {
     fun kotlinRefusesToBuildMismatchedVerdictBranches() {
         val approve = Verdict(REVIEW_SCHEMA_VERSION, "pkg_0123456789abcdef", 1, Verdict.Action.APPROVE, emptyList(), null, null)
         listOf(
-            { approve.copy(feedback = "x") },
+            { approve.copy(action = Verdict.Action.REJECT, feedback = "x") },
             { approve.copy(editedBody = "x") },
             { approve.copy(action = Verdict.Action.EDIT) },
             { approve.copy(action = Verdict.Action.FEEDBACK) },

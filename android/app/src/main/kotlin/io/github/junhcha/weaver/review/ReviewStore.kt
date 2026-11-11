@@ -72,7 +72,7 @@ class ReviewStore(private val directory: File) {
 
     fun queue(folder: CourierFolder, p: ReviewPackage, verdict: Verdict) {
         check(p.packageId == verdict.packageId && p.revision == verdict.revision)
-        require(verdict.answers.size == p.questions.size && verdict.answers.zip(p.questions).all { (a, q) -> a in q.choices })
+        require(verdict.answers.size == p.questions.size && verdict.answers.all { it.isNotBlank() })
         check(latest(folder, p.packageId) == p) { "새 revision이 도착했습니다. 최신 문서를 다시 확인하세요" }
         check(WeaverCodec.encode(verdict).toByteArray().size <= CourierRules.maxJson) { "too_large" }
         val existing = file(p.packageId, p.revision)

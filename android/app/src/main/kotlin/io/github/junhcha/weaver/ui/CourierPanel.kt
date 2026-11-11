@@ -47,8 +47,8 @@ fun CourierPanel() {
         }
     }
     Column {
-        Text("Courier · Documents/WeaverCourier")
-        Text(status)
+        Text("문서 동기화 설정")
+        if (showDiagnostics) Text(status)
         OutlinedButton(enabled = !busy, onClick = { picker.launch(CourierRuntime.picker(context)) }) {
             Text("동기화 폴더 선택 / 권한 복구")
         }
