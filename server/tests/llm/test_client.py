@@ -210,3 +210,33 @@ def test_validation_diagnostic_survives_redacted_api_error(tmp_path, caplog):
     assert '"loc": ["direction"]' in caplog.text
     assert "synthetic-private-source" not in caplog.text
     assert "private" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "reply,error",
+    [
+        (BackendReply("hello", usage=TokenUsage(3400, 800)), None),
+        (AuthenticationError(), AuthenticationError),
+    ],
+)
+def test_api_call_summary_is_one_redacted_info_line(tmp_path, caplog, reply, error):
+    import logging
+
+    client, _, _ = make_client(tmp_path, reply)
+    with caplog.at_level(logging.INFO):
+        if error:
+            with pytest.raises(error):
+                client.generate_text("test.call", "private-system", "private-user")
+        else:
+            assert (
+                client.generate_text("test.call", "private-system", "private-user")
+                == "hello"
+            )
+    lines = [r.message for r in caplog.records if r.levelno == logging.INFO]
+    assert len(lines) == 1
+    assert "test.call anthropic" in lines[0]
+    assert "(today 0/-)" in lines[0]
+    assert not any(
+        s in caplog.text
+        for s in ("private-system", "private-user", "secret-key", "hello")
+    )
