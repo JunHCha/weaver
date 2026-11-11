@@ -21,6 +21,7 @@ class CourierClient(
     data class Inbox(
         val receipts: List<Receipt>, val packages: List<ReviewPackage>, val alerts: List<Alert>,
         val unreadable: Set<String> = emptySet(), val schedules: List<ApprovedSchedule> = emptyList(),
+        val pipeline: List<PipelineItem> = emptyList(),
     )
 
     fun scan(): Inbox {
@@ -29,10 +30,11 @@ class CourierClient(
         val packages = mutableListOf<ReviewPackage>()
         val unreadable = mutableSetOf<String>()
         val schedules = mutableListOf<ApprovedSchedule>()
-        (CourierRules.folders + "proposals/schedules").forEach { directory ->
+        val pipeline = mutableListOf<PipelineItem>()
+        (CourierRules.folders + listOf("proposals/schedules", "proposals/pipeline")).forEach { directory ->
             folder.list(directory).forEach { entry ->
                 val name = entry.name
-                if (directory == "proposals" && name == "schedules" && !entry.regular) return@forEach
+                if (directory == "proposals" && name in listOf("schedules", "pipeline") && !entry.regular) return@forEach
                 if (CourierRules.conflict(name)) {
                     db.diagnostic(directory, name, "sync_conflict")
                     return@forEach
@@ -45,11 +47,16 @@ class CourierClient(
                     return@forEach
                 }
                 // Only PC-owned JSON is consumed; outbox payloads are never interpreted as JSON.
-                if (directory !in listOf("receipts", "proposals", "proposals/schedules")) return@forEach
+                if (directory !in listOf("receipts", "proposals", "proposals/schedules", "proposals/pipeline")) return@forEach
                 val read = attempt(directory, name) {
                     check(entry.regular && CourierRules.safeName(name)) { "not_regular_file" }
                     val text = folder.read(directory, name).use(::boundedJson)
                     when {
+                        directory == "proposals/pipeline" -> {
+                            val item = decoded<PipelineItem>(text)
+                            check(name == "${item.sourceId}.json") { "id_mismatch" }
+                            pipeline.add(item)
+                        }
                         directory == "proposals/schedules" -> {
                             val schedule = decoded<ApprovedSchedule>(text)
                             check(name == "${schedule.threadId}.json") { "id_mismatch" }
@@ -77,7 +84,7 @@ class CourierClient(
             }
         }
         return Inbox(receipts, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } },
-            alerts, unreadable, schedules)
+            alerts, unreadable, schedules, pipeline)
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */

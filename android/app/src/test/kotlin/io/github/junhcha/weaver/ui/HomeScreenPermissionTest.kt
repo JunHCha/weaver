@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.junhcha.weaver.MainActivity
@@ -36,6 +37,8 @@ class HomeScreenPermissionTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         Feature.entries.forEach { assertTrue("$it must start denied", !it.isGranted(context)) }
 
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithText("수확·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("권한 없음").assertCountEquals(Feature.entries.size)
         compose.onAllNodesWithText("권한 요청").assertCountEquals(Feature.entries.size)
@@ -49,6 +52,8 @@ class HomeScreenPermissionTest {
         shadowOf(app).grantPermissions(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
         compose.activityRule.scenario.recreate()
 
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithText("수확·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("허용됨").assertCountEquals(2)
         compose.onAllNodesWithText("권한 없음").assertCountEquals(1)
@@ -74,7 +79,7 @@ class HomeScreenPermissionTest {
         }
         val tapIntent = shadowOf(shadowOf(manager).allNotifications.single().contentIntent).savedIntent
         assertEquals(ShepherdRuntime.OPEN_PENDING, tapIntent.action)
-        compose.onNodeWithText("Shepherd 통화 목록").assertExists()
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
         val originalIntent = compose.activity.intent
         try {
             // Deliver the actual notification intent to the existing activity's callback.
@@ -89,7 +94,7 @@ class HomeScreenPermissionTest {
             compose.waitUntil(5_000) {
                 compose.onAllNodesWithText("처리 안 함").fetchSemanticsNodes().size == 1
             }
-            compose.onNodeWithText("처리 안 함").performClick()
+            compose.onNodeWithText("처리 안 함").performScrollTo().performClick()
             compose.waitUntil(5_000) { ShepherdRuntime.pendingCalls(app).isEmpty() }
             // The database can finish before the asynchronous screen refresh.
             compose.waitUntil(5_000) {

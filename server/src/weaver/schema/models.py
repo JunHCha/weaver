@@ -432,6 +432,64 @@ class Alert(Version2):
     created_at: Timestamp
 
 
+type PipelineLocation = Literal["spinner", "loom", "user", "fabric", "wiki"]
+type PipelineStatus = Literal[
+    "working", "review", "applying", "apply_stopped", "done", "rejected"
+]
+
+
+class PipelineThread(Contract):
+    thread_id: NonEmpty
+    kind: Literal["요청", "결정", "일정", "기록", "태그정정", "거절"]
+
+
+class PipelinePage(Contract):
+    """Full-file fingerprint; path is relative to the phone's shared vault."""
+
+    path: NonEmpty = Field(
+        json_schema_extra={
+            "pattern": r"^(?!/)(?!.*\\)(?!.*//)(?!.*(?:^|/)\.)[^\r\n]+\.md$"
+        }
+    )
+    updated_at: Timestamp
+    sha256: Digest
+
+    @field_validator("path")
+    @classmethod
+    def safe_path(cls, value: str) -> str:
+        if (
+            value.startswith("/")
+            or "\\" in value
+            or "\n" in value
+            or "\r" in value
+            or any(p in ("", ".", "..") or p.startswith(".") for p in value.split("/"))
+            or not value.endswith(".md")
+        ):
+            raise ValueError("invalid vault-relative page path")
+        return value
+
+
+class PipelineItem(Version2):
+    """Durable observation, independent of short-lived review/receipt files."""
+
+    revision: Revision
+    capture_id: CaptureId
+    source_id: SourceId
+    package_id: NonEmpty | None
+    package_revision: Revision | None
+    source_type: Channel
+    title: str
+    location: PipelineLocation
+    status: PipelineStatus
+    apply_failure_limit: Revision
+    stage_times: dict[Stage, Timestamp]
+    history: list[PipelineLocation]
+    threads: list[PipelineThread]
+    pages: list[PipelinePage]
+    digest: PipelinePage | None
+    updated_at: Timestamp
+
+
 SHARED_MODELS = (
     Manifest,
     Receipt,
@@ -445,4 +503,5 @@ SHARED_MODELS = (
     Question,
     Verdict,
     Alert,
+    PipelineItem,
 )

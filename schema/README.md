@@ -32,12 +32,13 @@ synthetic.
 | `EventSummary` | server | 2 | The approved, content-addressed summary document. |
 | `ThreadDraft`, `Thread` | server | - | A Fabric row before and after `seq` is assigned. |
 | `ApprovedSchedule` | server → phone | 2 | A schedule projected from Fabric for calendar registration. |
+| `PipelineItem` | server → phone | 2 | Durable source location, transitions, stage times and committed Thread/wiki results. |
 | `Alert` | server → phone | 2 | A notice that a newly approved schedule moved an approved one. |
 
 ## Common rules
 
 - Capture files (`Manifest`, `Receipt`, `Source`, `Script`) carry integer
-  `schema_version: 1`; review, summary, schedule and alert files carry `2`.
+  `schema_version: 1`; review, summary, schedule, alert and pipeline files carry `2`.
   Consumers reject any other version, and the server rejects versions older than
   the current ones without migrating data. Fabric rows carry no version key; the
   Fabric database itself is versioned.
@@ -82,3 +83,38 @@ Script. A known `start_ms` permits a null `end_ms`; a non-null `end_ms` requires
 repeated by the Python models and the Kotlin classes.
 
 `ArchivedSource` (server-only, with the local payload path) is not exported.
+
+## Pipeline observations
+
+`proposals/pipeline/<source_id>.json` is an additive `PipelineItem` projection;
+existing Manifest/Receipt/ReviewPackage/Verdict shapes and versions do not change.
+The phone retains the highest source revision rather than treating a missing file
+as success or deletion. A private `pipeline.sqlite3` preserves revisions and
+location history across server restarts and can republish deleted projections.
+`capture_id` and the existing Receipt join local captures to a Source. `history`
+records observed location transitions, including repeated `loom`/`user` feedback
+visits; absent old observations are not reconstructed from guessed timestamps.
+
+`stage_times` records capture time (수집), the durable Receipt's receive time
+(전송), summary/questions completion and review-wait entry (정리/질문/검토),
+durable approval application (반영), and the committed wiki output's file time
+(wiki갱신). Unrecorded historical steps remain absent. Processing and approval
+remain authoritative if the observation sidecar temporarily fails; the publisher
+reconciles durable journals on a later tick. Such a failure can leave intermediate
+observations absent, so consumers must not invent those times or transitions.
+
+The configured consecutive matching approval failure limit (default five)
+publishes `apply_stopped` in the same scan. `apply_failure_limit` records that
+actual limit, so the phone does not mislabel a custom configuration as five. A server restart may retry the existing verdict but does not clear the
+observed stopped state until application actually succeeds. A newly reviewed
+revision can return to `user` normally.
+
+`threads` exposes IDs and kinds; `pages` and `digest` contain safe vault-relative
+`.md` paths, full-file SHA-256 fingerprints and update times. Outputs are observed
+only from committed tracked wiki versions; a pending human edit is not advertised
+as a generated result, and the last confirmed output remains available. The phone
+compares the hash with its SAF-accessible vault file before enabling a link. A
+daily Digest can concern an older occurrence day even when updated today; only a
+basename matching today's `YYYY-MM-DD.md` is labelled today's Digest. The map's
+"today" update filtering uses the phone's local date. Wiki publication follows
+its existing maintenance interval; the next observation tick exposes new output.

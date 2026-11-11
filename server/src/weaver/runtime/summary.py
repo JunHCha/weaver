@@ -19,6 +19,7 @@ from weaver.wiki.compiler import Summary
 
 from .gate import Interrupted, LlmGate
 from .loop import Outcome
+from .progress import PipelinePublisher
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,15 @@ class SummaryLookup:
 class ReviewAdapter:
     """Expose the summary journal through Courier ports."""
 
-    def __init__(self, review: SummaryReview, lookup: SummaryLookup) -> None:
+    def __init__(
+        self,
+        review: SummaryReview,
+        lookup: SummaryLookup,
+        progress: PipelinePublisher | None = None,
+    ) -> None:
         self.review = review
         self.lookup = lookup
+        self.progress = progress
 
     def latest_rev(self, package_id: str) -> int | None:
         with self.review.state.connect() as db:
@@ -86,6 +93,8 @@ class ReviewAdapter:
             raise ValueError("conflicting verdict")
 
     def apply(self, verdict: Verdict) -> None:
+        if self.progress is not None:
+            self.progress.applying(verdict)
         package, script = self.review.state.load_package(
             verdict.package_id, verdict.revision
         )
@@ -98,10 +107,19 @@ class ReviewAdapter:
 class SummaryProcessor:
     """Produce a single durable review package for each archived source."""
 
-    def __init__(self, spinner: Spinner, drafts: SummaryDrafts, gate: LlmGate) -> None:
+    def __init__(
+        self,
+        spinner: Spinner,
+        drafts: SummaryDrafts,
+        gate: LlmGate,
+        progress: PipelinePublisher | None = None,
+    ) -> None:
         self.spinner, self.drafts, self.gate = spinner, drafts, gate
+        self.progress = progress
 
     def process(self, source: Source, stop: threading.Event) -> Outcome:
+        if self.progress is not None:
+            self.progress.begin(source)
         with self.drafts.state.connect() as db:
             rows = db.execute(
                 "SELECT package FROM packages WHERE revision=1"
@@ -115,6 +133,8 @@ class SummaryProcessor:
                         (package.package_id,),
                     ).fetchone()
                 if not applied:
+                    if self.progress is not None:
+                        self.progress.observe_package(package)
                     self.drafts.proposals.mkdir(parents=True, exist_ok=True)
                     write_json_atomic(
                         self.drafts.proposals / f"{package.package_id}.r1.json", package
@@ -127,12 +147,16 @@ class SummaryProcessor:
         script = self.spinner.spin(source)
         if stop.is_set():
             raise Interrupted()
-        self.drafts.create(
+        if self.progress is not None:
+            self.progress.organized(source)
+        package, _ = self.drafts.create(
             source.source_id,
             script.text,
             source.hints.counterpart,
             source_type=source.channel,
         )
+        if self.progress is not None:
+            self.progress.observe_package(package)
         return "done"
 
 
@@ -159,8 +183,10 @@ class SchedulePublisher:
         fabric: Fabric,
         state: SummaryState,
         alerts: tuple[AlertDetector, AlertSink] | None = None,
+        progress: PipelinePublisher | None = None,
     ) -> None:
         self.root, self.fabric, self.state, self.alerts = root, fabric, state, alerts
+        self.progress = progress
 
     def publish(self) -> None:
         with self.state.connect() as db:
@@ -187,6 +213,8 @@ class SchedulePublisher:
         write_approved_schedules(self.root, schedules)
         if self.alerts is not None:
             self._alert(approvals, snapshot)
+        if self.progress is not None:
+            self.progress.publish()
 
     def _alert(
         self, approvals: list[tuple[str, list[Thread]]], snapshot: list[Thread]

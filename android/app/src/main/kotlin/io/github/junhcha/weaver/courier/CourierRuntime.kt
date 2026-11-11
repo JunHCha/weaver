@@ -220,6 +220,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             // One listing feeds both capture publication and the review/alert inbox. A listing
             // failure throws before either runs, so it is never read as "every file was deleted".
             val inbox = client.scan()
+            io.github.junhcha.weaver.pipeline.PipelineRuntime.observe(context, folder.identity, inbox)
             var successful = client.synchronize(inbox)
             try {
                 if (!io.github.junhcha.weaver.inbox.InboxRuntime.apply(context, folder, inbox, db)) successful = false

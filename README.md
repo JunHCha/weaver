@@ -107,6 +107,19 @@ It does not authorize execution of requests found in the source material.
 
 See the [JSON contracts](schema/README.md) for the wire formats and review rules.
 
+## Your data at a glance
+
+The Android first screen maps each item across **양치기 · 물레 · 베틀 · 천 · 위키**
+and **나**. Tap a node for its items or open **나** for pending approvals. Landscape
+windows keep the map beside a right panel; portrait windows use a bottom sheet.
+The map replays changes since the last visit once, with no live movement loop.
+
+The server publishes additive progress observations under `proposals/pipeline/`;
+existing archive receipts confirm Mac arrival. Today's Thread results, wiki pages
+and Digest link back to each item. Select the phone's synchronized local vault and
+enter its Obsidian name to enable page links after matching file bytes arrive.
+See [the data flow map](docs/pipeline-map.md) for state and synchronization rules.
+
 ## Current status
 
 Merged implementation:
@@ -126,7 +139,8 @@ Merged implementation:
 - Android Shepherd call metadata and manual text sharing, Storage Access
   Framework (SAF) Courier transport, review and change-alert notifications, one
   review screen (summary first, choice questions, processing steps), a Glance
-  widget, and approved schedule registration through CalendarContract with
+  widget, a data flow home map with per-item progress and result links, and
+  approved schedule registration through CalendarContract with
   interruption recovery.
 - Offline summary evaluation replay and server E2E smoke tests.
 
@@ -201,7 +215,9 @@ compatibility, not STT performance.
 ## Privacy principles
 
 - Keep raw sources in local storage outside the vault. Sync only the four Courier
-  folders; keep archives, server state, the vault, and credentials separate.
+  folders for transport; keep archives, server state, and credentials separate.
+  To open generated pages on the phone, separately share the intended vault
+  through Syncthing and grant Weaver read access to its local folder.
 - Centralize LLM calls in `LlmClient`. The current input is text, not raw audio;
   text sent for revision, drafting and extraction leaves the device. Call revision sends
   speech segments from the shared transcript. Automatic redaction is not provided.

@@ -24,6 +24,7 @@ from .gate import LlmGate, LlmStatus
 from .ledger import RuntimeLedger
 from .loop import MaintenanceTask, Runtime
 from .pipeline import GatedLlm, llm_status
+from .progress import PipelineJournal, PipelinePublisher
 from .summary import ReviewAdapter, SchedulePublisher, SummaryLookup, SummaryProcessor
 from .wiki import WikiJob
 
@@ -74,7 +75,18 @@ def build_runtime(
         proposals=config.courier.proposals,
         timezone=config.time.timezone,
     )
-    adapter = ReviewAdapter(review, summaries)
+    progress = PipelinePublisher(
+        PipelineJournal(
+            config.state_root,
+            config.courier.proposals,
+            failure_limit=config.courier_settings.max_attempts,
+        ),
+        archive,
+        review.state,
+        fabric,
+        config.courier.proposals,
+    )
+    adapter = ReviewAdapter(review, summaries, progress)
     courier = Courier(
         config.courier,
         archive,
@@ -82,6 +94,7 @@ def build_runtime(
         adapter,
         retry=config.courier_settings,
         can_apply=lambda: gate.available,
+        on_apply_stopped=progress.stopped,
     )
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     spinner = Spinner.from_config(
@@ -93,7 +106,7 @@ def build_runtime(
     drafts = SummaryDrafts(
         client, context, config.courier.proposals, state_root=config.state_root
     )
-    processor = SummaryProcessor(spinner, drafts, gate)
+    processor = SummaryProcessor(spinner, drafts, gate, progress)
 
     maintenance = list(plugins.maintenance)
     if config.wiki.enabled:
@@ -103,6 +116,8 @@ def build_runtime(
             wiki_root=config.wiki.folder,
             settle_seconds=config.wiki.settle_seconds,
         )
+        progress.wiki = store
+        progress.vault = config.wiki.vault_root or config.vault_root
         job = WikiJob(
             store,
             fabric,
@@ -130,6 +145,7 @@ def build_runtime(
             fabric,
             review.state,
             (ScheduleAlertDetector.from_config(config), courier),
+            progress,
         ),
         maintenance=maintenance,
     )

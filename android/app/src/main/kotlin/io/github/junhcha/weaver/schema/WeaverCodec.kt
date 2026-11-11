@@ -48,7 +48,7 @@ object WeaverCodec {
         allowSpecialFloatingPointValues = false
     }
 
-    private val REVIEW_MODELS = setOf("ApprovedSchedule", "ReviewPackage", "Verdict", "Alert")
+    private val REVIEW_MODELS = setOf("ApprovedSchedule", "ReviewPackage", "Verdict", "Alert", "PipelineItem")
 
     // A JSON integer token only: 1.0, 1e0 or "1" are not a schema_version.
     private val integerToken = Regex("-?(?:0|[1-9][0-9]*)")
