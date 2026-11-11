@@ -14,6 +14,7 @@ from weaver.fabric import ThreadQuery
 from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
 from weaver.schema import Thread
+from weaver.wiki.generation import GenerationCache
 from weaver.wiki.store import WikiStore
 
 
@@ -94,6 +95,8 @@ class DigestBuilder:
                 "CREATE TABLE IF NOT EXISTS bookmark (id INTEGER PRIMARY KEY CHECK (id=1), seq INTEGER NOT NULL)"
             )
 
+        self.cache = GenerationCache(state_path)
+
     def _write(
         self, path: str, inputs: object, evidence: list[str], top: str = ""
     ) -> bool:
@@ -108,7 +111,29 @@ class DigestBuilder:
             props, previous, base = self.wiki.read(path)
         except FileNotFoundError:
             props, previous, base = {}, "", None
+        self.wiki.check_write(path, base)
         payload = {"inputs": inputs, "previous": previous, "evidence": evidence}
+        body = self.cache.get(
+            path,
+            {
+                "payload": payload,
+                "base": base,
+                "top": top,
+                "links": [self.source_link(item) for item in evidence],
+            },
+            lambda: self._generate(payload, evidence, top),
+        )
+        self.wiki.write(path, props, body, base, metadata="digest update")
+        with sqlite3.connect(self.state_path) as db:
+            db.execute(
+                "INSERT OR REPLACE INTO pages VALUES (?, ?)", (path, fingerprint)
+            )
+        self.cache.discard(path)
+        return True
+
+    def _generate(
+        self, payload: dict[str, object], evidence: list[str], top: str
+    ) -> str:
         result = (
             self.llm.generate_json(
                 "wiki.digest",
@@ -133,14 +158,7 @@ class DigestBuilder:
                 for item in dict.fromkeys(sentence.evidence)
             )
             lines.append(f"- {sentence.text} {links}")
-        self.wiki.write(
-            path, props, top + "\n".join(lines) + "\n", base, metadata="digest update"
-        )
-        with sqlite3.connect(self.state_path) as db:
-            db.execute(
-                "INSERT OR REPLACE INTO pages VALUES (?, ?)", (path, fingerprint)
-            )
-        return True
+        return top + "\n".join(lines) + "\n"
 
     def update(self) -> None:
         """Consume new Threads and refresh changed days, weeks, and months."""
