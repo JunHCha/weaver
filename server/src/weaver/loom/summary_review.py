@@ -3,6 +3,7 @@
 import difflib
 import hashlib
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,8 @@ from weaver.schema import (
     Verdict,
 )
 from weaver.schema.models import NonEmpty, Timestamp
+
+logger = logging.getLogger(__name__)
 
 
 class Correction(BaseModel):
@@ -460,11 +463,18 @@ class SummaryReview:
                     correction=None,
                 )
             )
-        corrections = response.corrections if verdict.action == "approve" else []
-        for correction in corrections:
-            if (
-                correction.canonical not in verdict.answers
-                or correction.observed not in script
-            ):
-                raise ValueError("correction was not selected or observed")
+        proposed = response.corrections if verdict.action == "approve" else []
+        # Corrections only teach the context dictionary. An unverifiable one is
+        # dropped instead of failing the approval; the dictionary stays protected.
+        corrections = [
+            c
+            for c in proposed
+            if c.canonical in verdict.answers and c.observed in script
+        ]
+        if len(corrections) < len(proposed):
+            logger.warning(
+                "dropped unverified corrections: %d of %d",
+                len(proposed) - len(corrections),
+                len(proposed),
+            )
         return Prepared(summary=summary, threads=drafts, corrections=corrections)
