@@ -88,7 +88,7 @@ class WikiJob:
             logger.info(
                 "Wiki consumer deferred: consumer=%s count=1 remaining_seconds=%s",
                 consumer,
-                remaining,
+                "?" if remaining is None else f"{remaining:.0f}",
             )
             self._waiting[consumer] = status
 

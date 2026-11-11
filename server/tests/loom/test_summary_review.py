@@ -618,3 +618,36 @@ def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> Non
     result = review.apply(package(), "원문", verdict, now=NOW)
     assert result is not None
     assert result.body == verdict.edited_body
+
+
+def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["corrections"] = [
+                {"observed": "홍길돈", "canonical": "홍길동", "kind": "person"},
+                {"observed": "홍길돈", "canonical": "직접 입력한 답", "kind": "person"},
+                {"observed": "원문에 없음", "canonical": "홍길동", "kind": "person"},
+            ]
+            return schema.model_validate(data)
+
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    review = SummaryReview(
+        Llm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    assert len(sink.drafts) == 1
+    assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]
+    assert context.candidates("원문에 없음") == []
