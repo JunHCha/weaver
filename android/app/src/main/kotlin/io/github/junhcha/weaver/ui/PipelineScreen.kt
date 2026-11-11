@@ -54,7 +54,12 @@ import kotlinx.coroutines.delay
 @Composable
 fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
     val activity = LocalActivity.current as ComponentActivity
-    val model = remember(activity) { ViewModelProvider(activity)[PipelineViewModel::class.java] }
+    val model = remember(activity) {
+        ViewModelProvider(
+            activity,
+            ViewModelProvider.AndroidViewModelFactory(activity.application),
+        )[PipelineViewModel::class.java]
+    }
     val state by model.state.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, activity) {
