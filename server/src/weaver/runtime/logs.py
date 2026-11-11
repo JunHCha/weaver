@@ -41,7 +41,12 @@ class _NoTracebacks(logging.Formatter):
         return ""
 
 
-def configure_logging(log_root: Path, *, level: int = logging.INFO) -> Path:
+def configure_logging(
+    log_root: Path, *, level: int = logging.INFO, console: bool | None = None
+) -> Path:
+    """Mirror to stderr for interactive foreground runs, or by explicit choice."""
+    if console is None:
+        console = sys.stderr.isatty() and not os.environ.get("WEAVER_SUPERVISED")
     log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = log_root / LOG_NAME
     handler = _PrivateRotatingHandler(
@@ -55,6 +60,10 @@ def configure_logging(log_root: Path, *, level: int = logging.INFO) -> Path:
         weaver.removeHandler(old)
         old.close()
     weaver.addHandler(handler)
+    if console:
+        stream = logging.StreamHandler(sys.stderr)
+        stream.setFormatter(_NoTracebacks(_FORMAT))
+        weaver.addHandler(stream)
     weaver.setLevel(level)
     for noisy in ("httpx", "httpcore", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
