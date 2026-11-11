@@ -82,6 +82,29 @@ class SpinnerSettings:
             raise ConfigError("spinner: backoff exceeds maximum")
 
 
+@dataclass(frozen=True)
+class CourierSettings:
+    """Bounded, process-local retries of the same Verdict and error."""
+
+    max_attempts: int = 5
+    backoff_seconds: float = 30
+    max_backoff_seconds: float = 1800
+
+    def __post_init__(self) -> None:
+        if type(self.max_attempts) is not int or self.max_attempts < 1:
+            raise ConfigError("courier.max_attempts: expected positive integer")
+        for name in ("backoff_seconds", "max_backoff_seconds"):
+            value = getattr(self, name)
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ConfigError(f"courier.{name}: expected finite positive number")
+        if self.backoff_seconds > self.max_backoff_seconds:
+            raise ConfigError("courier: backoff exceeds maximum")
+
+
 def _check_folder(enabled: object, folder: object) -> None:
     if type(enabled) is not bool:
         raise ConfigError("wiki.enabled: expected boolean")
@@ -159,6 +182,7 @@ class ServerConfig:
     time: TimeConfig = TimeConfig()
     spinner_settings: SpinnerSettings = SpinnerSettings()
     wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
+    courier_settings: CourierSettings = CourierSettings()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -327,6 +351,7 @@ def load_config(
         "stt",
         "time",
         "spinner",
+        "courier",
         "wiki",
     }:
         raise ConfigError("config_file: unknown fields")
@@ -365,6 +390,14 @@ def load_config(
     }:
         raise ConfigError("spinner: expected retry settings table")
     spinner_settings = SpinnerSettings(**spinner_raw)
+    courier_raw = raw.get("courier", {})
+    if not isinstance(courier_raw, dict) or courier_raw.keys() - {
+        "max_attempts",
+        "backoff_seconds",
+        "max_backoff_seconds",
+    }:
+        raise ConfigError("courier: expected retry settings table")
+    courier_settings = CourierSettings(**courier_raw)
     wiki_raw = raw.get("wiki", {})
     if not isinstance(wiki_raw, dict) or wiki_raw.keys() - {
         "enabled",
@@ -440,5 +473,6 @@ def load_config(
         stt=stt,
         time=time_config,
         spinner_settings=spinner_settings,
+        courier_settings=courier_settings,
         wiki=wiki,
     )

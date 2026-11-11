@@ -121,6 +121,7 @@ def test_review_budget_gate_stops_repeat_calls(tmp_path):
     runtime = build_runtime(config, plugins=Plugins(client=client))
     now = [1000.0]
     runtime.clock = lambda: now[0]
+    runtime.scanner._clock = lambda: now[0]
     package, _ = runtime.processor.drafts.create(
         "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문"
     )
@@ -140,7 +141,8 @@ def test_review_budget_gate_stops_repeat_calls(tmp_path):
     )
     runtime._tick(threading.Event())
     assert not runtime.gate.available and client.calls == 1 and decision.exists()
-    runtime._tick(threading.Event())
+    for _ in range(10):
+        runtime._tick(threading.Event())
     assert client.calls == 1 and decision.exists()
     client.exhausted = False
     now[0] += 61

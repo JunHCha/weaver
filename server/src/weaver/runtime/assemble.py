@@ -75,7 +75,14 @@ def build_runtime(
         timezone=config.time.timezone,
     )
     adapter = ReviewAdapter(review, summaries)
-    courier = Courier(config.courier, archive, adapter, adapter)
+    courier = Courier(
+        config.courier,
+        archive,
+        adapter,
+        adapter,
+        retry=config.courier_settings,
+        can_apply=lambda: gate.available,
+    )
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     spinner = Spinner.from_config(
         archive,

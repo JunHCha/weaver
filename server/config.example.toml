@@ -69,3 +69,10 @@ max_backoff_seconds = 4
 # timezone = "Asia/Seoul"
 # settle_seconds = 1800      # a human-edited page waits this long before rewrite
 # interval_seconds = 60
+
+# Same Verdict + same error: 5 attempts, exponential backoff, then stop.
+# Restarting resets this in-memory limit so fixes recover existing decisions.
+[courier]
+max_attempts = 5
+backoff_seconds = 30
+max_backoff_seconds = 1800

@@ -613,3 +613,28 @@ def test_build_runtime_wires_claude_cli(tmp_path: Path) -> None:
     assert runtime.gate.status.reason == "claude_not_logged_in"
     client = create_client(config.llm, state_root=config.state_root)
     assert isinstance(client, ClaudeCliClient)
+
+
+def test_courier_retry_settings(tmp_path: Path) -> None:
+    default = load_config(write_config(tmp_path), environ={}).courier_settings
+    assert default.max_attempts == 5
+    configured = load_config(
+        write_config(
+            tmp_path,
+            "[courier]\nmax_attempts = 2\nbackoff_seconds = 5\nmax_backoff_seconds = 10",
+        ),
+        environ={},
+    ).courier_settings
+    assert (
+        configured.max_attempts,
+        configured.backoff_seconds,
+        configured.max_backoff_seconds,
+    ) == (2, 5, 10)
+
+
+@pytest.mark.parametrize(
+    "settings", ["courier = 1", "[courier]\nunknown = 1", "[courier]\nmax_attempts = 0"]
+)
+def test_invalid_courier_settings(tmp_path: Path, settings: str) -> None:
+    with pytest.raises(ConfigError, match="courier"):
+        load_config(write_config(tmp_path, settings), environ={})

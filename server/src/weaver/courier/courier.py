@@ -3,7 +3,8 @@
 Every scan re-reads the four folders from scratch, so files that arrived while
 the server was down, or that synced in a different order, are picked up on the
 next pass. A file that cannot be processed yet is left in place and retried on
-every scan. Logs carry only the folder, file name and an error code.
+every scan, except bounded application retries. Logs carry only the folder,
+file name and an error code.
 """
 
 import hashlib
@@ -17,7 +18,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from weaver.config import CourierPaths
+from weaver.config import CourierPaths, CourierSettings
 from weaver.schema import Alert, Manifest, ReviewPackage, Verdict
 
 from .atomic import write_json_atomic
@@ -50,6 +51,8 @@ SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Codes for conditions that normally resolve on their own (late sync arrival).
 _PENDING = {
+    "apply_waiting",
+    "apply_backoff",
     "missing",
     "payload_missing",
     "payload_changed",
@@ -58,6 +61,7 @@ _PENDING = {
 }
 # Codes that indicate forged, malformed or conflicting input.
 _WARNING = {
+    "apply_stopped",
     "id_mismatch",
     "rev_mismatch",
     "invalid_json",
@@ -104,6 +108,14 @@ class ScanReport:
     problems: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class ApplyFailure:
+    verdict_digest: str
+    error_digest: str
+    attempts: int
+    next_attempt: float
+
+
 class Courier:
     def __init__(
         self,
@@ -111,7 +123,17 @@ class Courier:
         captures: CaptureStore,
         revisions: PackageRevisions,
         decisions: DecisionStore,
+        *,
+        retry: CourierSettings | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        can_apply: Callable[[], bool] | None = None,
     ) -> None:
+        self._can_apply = can_apply
+        self._retry = retry or CourierSettings()
+        self._clock = clock
+        # Deliberately volatile: restarting after a code/config fix must retry
+        # existing decisions. No raw verdict or exception text is retained.
+        self._apply_failures: dict[str, ApplyFailure] = {}
         self.paths = paths
         self._captures = captures
         self._revisions = revisions
@@ -298,7 +320,9 @@ class Courier:
     def _scan_decisions(
         self, report: ScanReport, current: dict[tuple[str, str], str]
     ) -> None:
+        present: set[str] = set()
         for path in self._entries("decisions", self.paths.decisions, report, current):
+            present.add(path.name)
             name = parse_revision_name(path.name)
             if name is None:
                 continue
@@ -335,8 +359,22 @@ class Courier:
                     raise CourierFileError("stale_rev")
                 if rev > latest:
                     raise CourierFileError("unknown_rev")
+                if self._can_apply is not None and not self._can_apply():
+                    raise CourierFileError("apply_waiting")
+                digest = hashlib.sha256(verdict.model_dump_json().encode()).hexdigest()
+                failure = self._apply_failures.get(path.name)
+                if failure is not None and failure.verdict_digest != digest:
+                    self._apply_failures.pop(path.name)
+                    failure = None
+                if failure is not None:
+                    if failure.attempts >= self._retry.max_attempts:
+                        raise CourierFileError("apply_stopped")
+                    if self._clock() < failure.next_attempt:
+                        raise CourierFileError("apply_backoff")
                 try:
                     self._decisions.apply(verdict)
+                    if not _ask(self._decisions.is_applied, pid, rev):
+                        raise CourierFileError("apply_unconfirmed")
                 except Exception as exc:
                     logger.warning(
                         "courier apply failed: %s (%s, %s)",
@@ -344,15 +382,55 @@ class Courier:
                         pid,
                         rev,
                     )
-                    raise CourierFileError("apply_failed") from None
-                if not _ask(self._decisions.is_applied, pid, rev):
-                    raise CourierFileError("apply_unconfirmed")
+                    self._record_apply_failure(path.name, digest, exc)
+                    code = (
+                        exc.code
+                        if isinstance(exc, CourierFileError)
+                        else "apply_failed"
+                    )
+                    raise CourierFileError(code) from None
+                self._apply_failures.pop(path.name, None)
                 report.applied.append((pid, rev))
                 self._clean_decision(path, pid, rev, report)
             except CourierFileError as error:
                 self._report(current, "decisions", path.name, error.code, report)
             except OSError:
                 self._report(current, "decisions", path.name, "io_error", report)
+
+        self._apply_failures = {
+            name: failure
+            for name, failure in self._apply_failures.items()
+            if name in present
+        }
+
+    def _record_apply_failure(
+        self, name: str, verdict_digest: str, exc: Exception
+    ) -> None:
+        error_digest = hashlib.sha256(
+            f"{type(exc).__module__}.{type(exc).__qualname__}:{exc}".encode()
+        ).hexdigest()
+        previous = self._apply_failures.get(name)
+        attempts = (
+            previous.attempts + 1
+            if previous is not None and previous.error_digest == error_digest
+            else 1
+        )
+        # Iterative multiplication avoids huge powers for user-supplied limits.
+        delay = self._retry.backoff_seconds
+        for _ in range(attempts - 1):
+            delay = min(delay * 2, self._retry.max_backoff_seconds)
+            if delay == self._retry.max_backoff_seconds:
+                break
+        self._apply_failures[name] = ApplyFailure(
+            verdict_digest, error_digest, attempts, self._clock() + delay
+        )
+        if attempts == self._retry.max_attempts:
+            logger.warning(
+                "courier apply retries stopped: %s after %s attempts; "
+                "restart or submit a new verdict to retry",
+                name,
+                attempts,
+            )
 
     def _sweep_receipts(
         self, report: ScanReport, current: dict[tuple[str, str], str]
@@ -390,6 +468,7 @@ class Courier:
         # the next scan repeat this idempotent cleanup.
         self._remove_revisions(package_id, below=rev + 1)
         path.unlink(missing_ok=True)
+        self._apply_failures.pop(path.name, None)
         report.cleaned.append(path.name)
 
     def _remove_revisions(self, package_id: str, below: int) -> None:
