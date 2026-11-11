@@ -1,18 +1,16 @@
 package io.github.junhcha.weaver.ui
 
 import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.*
@@ -32,14 +30,14 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
     var body by rememberSaveable(id) { mutableStateOf("") }
     var feedback by rememberSaveable(id) { mutableStateOf("") }
     var finalReview by rememberSaveable(id) { mutableStateOf(false) }
-    var details by rememberSaveable(id) { mutableStateOf(false) }
-    var actionInput by rememberSaveable(id) { mutableStateOf<String?>(null) }
     var latest by remember(id) { mutableStateOf<ReviewPackage?>(null) }
     var record by remember(id) { mutableStateOf<ReviewRecord?>(null) }
     var readError by remember(id) { mutableStateOf<String?>(null) }
     var error by remember(id) { mutableStateOf<String?>(null) }
     val preferences = remember(context) { context.getSharedPreferences("review-settings", android.content.Context.MODE_PRIVATE) }
     var vault by remember { mutableStateOf(preferences.getString("vault", "").orEmpty()) }
+    var showLinks by rememberSaveable(id) { mutableStateOf(false) }
+    var showSource by rememberSaveable(id) { mutableStateOf(false) }
     var busy by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id, changes) {
         do {
@@ -64,24 +62,26 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
         if (p != null) {
             val stale = latest != p
             val enabled = !busy && !stale && record == null
-            val progressPackage = latest?.takeIf { it.revision == p.revision } ?: p
-            val progress = reviewProgress(progressPackage.stage, progressPackage.stageTimes, record?.status)
-            ReviewProgressDiagram(progress)
-            Text("요약", style = MaterialTheme.typography.titleMedium)
-            val firstLine = p.draftBody.lineSequence().first()
-            WikiText(firstLine.take(80) + if (firstLine.length > 80) "…" else "", vault)
-            OutlinedButton(onClick = { details = !details }) { Text(if (details) "본문 접기" else "본문 보기") }
-            if (details) {
-                WikiText(p.draftBody, vault)
-                CalendarPanel(p.packageId)
+            Text(p.reviewTitle(), style = MaterialTheme.typography.titleLarge)
+            Text("요약 · 바로 수정할 수 있습니다", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(value = body, onValueChange = { body = it }, enabled = enabled,
+                label = { Text("요약 본문") }, modifier = Modifier.fillMaxWidth())
+            if (p.sourceText.isNotBlank()) {
+                TextButton(onClick = { showSource = !showSource }) { Text(if (showSource) "전체 원문 접기" else "전체 원문 보기") }
+                if (showSource) Text(p.sourceText)
             }
-            OutlinedTextField(value = vault, onValueChange = {
-                vault = it
-                preferences.edit().putString("vault", it).apply()
-            }, label = { Text("Obsidian 볼트 이름") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            if (vault.isBlank()) Text("볼트 이름을 설정하면 wiki 링크를 열 수 있습니다")
+            if (wikiLinks(body, vault).isNotEmpty()) {
+                TextButton(onClick = { showLinks = !showLinks }) { Text("문서 링크 열기") }
+                if (showLinks) {
+                    OutlinedTextField(value = vault, onValueChange = {
+                        vault = it; preferences.edit().putString("vault", it).apply()
+                    }, label = { Text("Obsidian 볼트 이름") }, singleLine = true)
+                    wikiLinks(body, vault).forEach { link -> WikiText(body.substring(link.start, link.end), vault) }
+                }
+            }
+            CalendarPanel(p.packageId)
             record?.let {
-                progress.response?.let { response -> Text("내 응답: $response") }
+                Text(it.status.reviewLabel())
                 if (it.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))
                     OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
             }
@@ -91,32 +91,39 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                 if (p.questions.isEmpty()) Text("확인할 질문 없음")
                 p.questions.forEachIndexed { index, q ->
                     Text(q.question)
+                    val excerpt = q.sourceExcerpt.ifBlank { p.sourceText.take(1200) }
+                    if (excerpt.isNotBlank()) {
+                        Text("관련 원문", style = MaterialTheme.typography.labelLarge)
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
+                            Text(excerpt, modifier = Modifier.padding(12.dp))
+                        }
+                    } else Text("이전 문서에는 원문이 포함되지 않았습니다. 요약을 확인하고 답변해 주세요.",
+                        style = MaterialTheme.typography.bodySmall)
                     q.choices.forEach { choice ->
                         val selected = answers.getOrNull(index) == choice
                         OutlinedButton(enabled = enabled, onClick = {
                             answers = ArrayList(answers).apply { set(index, choice) }
                         }) { Text(if (selected) "✓ $choice" else choice) }
                     }
-                    var rationale by rememberSaveable(id, index) { mutableStateOf(false) }
-                    OutlinedButton(onClick = { rationale = !rationale }) { Text(if (rationale) "이유 접기" else "질문 이유 보기") }
-                    if (rationale) Text(q.rationale)
+                    OutlinedTextField(value = answers.getOrElse(index) { "" },
+                        onValueChange = { value -> answers = ArrayList(answers).apply { set(index, value) } },
+                        enabled = enabled, label = { Text("직접 답변 ${index + 1}") },
+                        placeholder = { Text("선택지 대신 자유롭게 답변하세요") }, modifier = Modifier.fillMaxWidth())
+
                 }
-                OutlinedButton(enabled = enabled && answers.size == p.questions.size && answers.all { it.isNotEmpty() },
+                OutlinedButton(enabled = enabled && answers.size == p.questions.size && answers.all { it.isNotBlank() },
                     onClick = { finalReview = true }) { Text("최종 검토") }
             } else {
                 Text("최종 검토", style = MaterialTheme.typography.titleMedium)
                 p.questions.forEachIndexed { index, q -> Text("${q.question}: ${answers.getOrElse(index) { "" }}") }
                 OutlinedButton(enabled = enabled, onClick = { finalReview = false }) { Text("답변 수정") }
-                if (actionInput == "EDIT") OutlinedTextField(value = body, onValueChange = { body = it }, enabled = enabled,
-                    label = { Text("직접 수정할 본문") }, modifier = Modifier.fillMaxWidth())
-                if (actionInput == "FEEDBACK") OutlinedTextField(value = feedback, onValueChange = { feedback = it }, enabled = enabled,
-                    label = { Text("피드백 내용") }, modifier = Modifier.fillMaxWidth())
-                Verdict.Action.entries.forEach { action ->
-                    OutlinedButton(enabled = enabled, onClick = {
-                        if (action in setOf(Verdict.Action.EDIT, Verdict.Action.FEEDBACK) && actionInput != action.name) {
-                            actionInput = action.name
-                            return@OutlinedButton
-                        }
+                OutlinedTextField(value = feedback, onValueChange = { feedback = it }, enabled = enabled,
+                    label = { Text("추가 피드백 (선택)") }, modifier = Modifier.fillMaxWidth())
+                Text("모든 답변과 피드백을 한 번에 보냅니다.", style = MaterialTheme.typography.bodySmall)
+                val actions = listOf(Verdict.Action.APPROVE, Verdict.Action.FEEDBACK, Verdict.Action.REJECT)
+                actions.forEach { requestedAction ->
+                    val action = if (requestedAction == Verdict.Action.APPROVE && body != p.draftBody) Verdict.Action.EDIT else requestedAction
+                    OutlinedButton(enabled = enabled && (requestedAction != Verdict.Action.FEEDBACK || feedback.isNotBlank()), onClick = {
                         busy = true; error = null
                         scope.launch {
                             val result = withContext(Dispatchers.IO) { runCatching {
@@ -127,9 +134,9 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                             result.onSuccess { record = it }.onFailure { error = it.message ?: "전송 준비 실패" }
                             busy = false
                         }
-                    }) { Text(when (action) {
-                        Verdict.Action.APPROVE -> "승인"; Verdict.Action.EDIT -> if (actionInput == "EDIT") "수정 제출" else "본문 직접 수정"
-                        Verdict.Action.FEEDBACK -> if (actionInput == "FEEDBACK") "피드백 제출" else "자연어 피드백"; Verdict.Action.REJECT -> "거절"
+                    }) { Text(when (requestedAction) {
+                        Verdict.Action.APPROVE -> if (body != p.draftBody) "수정 제출" else "승인"; Verdict.Action.EDIT -> "수정 제출"
+                        Verdict.Action.FEEDBACK -> "피드백 반영 요청"; Verdict.Action.REJECT -> "거절"
                     }) }
                 }
             }
@@ -139,26 +146,6 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
     }
 }
 
-@Composable
-private fun ReviewProgressDiagram(progress: ReviewProgress) {
-    var selected by remember { mutableStateOf<ProgressStep?>(null) }
-    Text("처리 단계", style = MaterialTheme.typography.titleMedium)
-    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        progress.steps.forEachIndexed { index, step ->
-            if (index > 0) Text("→", modifier = Modifier.padding(top = 12.dp))
-            OutlinedButton(onClick = { selected = step }) {
-                Text("${step.stage.displayName()}${if (step.status == StepStatus.CURRENT) " · 현재" else ""}")
-            }
-        }
-    }
-    selected?.let { selectedStep ->
-        val step = progress.steps.first { it.stage == selectedStep.stage }
-        AlertDialog(onDismissRequest = { selected = null },
-            title = { Text(step.stage.displayName()) },
-            text = { Text("상태: ${step.status.label}\n시각: ${step.time ?: "기록 없음"}") },
-            confirmButton = { TextButton(onClick = { selected = null }) { Text("닫기") } })
-    }
-}
 
 @Suppress("DEPRECATION")
 @Composable

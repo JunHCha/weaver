@@ -82,11 +82,11 @@ class ReviewPanelTest {
         val (context, p) = prepare { it.copy(draftBody = "요약 문장\n숨겨진 본문", questions = listOf(
             Question("선택 질문", "선택 이유", listOf("선택 하나", "선택 둘", "선택 셋")))) }
         render { InboxPanel() }
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("문서 r${p.revision} 검토").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("문서 r${p.revision} 검토").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("문서 검토").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("문서 검토").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("선택 질문").fetchSemanticsNodes().isNotEmpty() }
         assertTrue(compose.onAllNodesWithText("요약 문장", substring = true).fetchSemanticsNodes().isNotEmpty())
-        compose.onNodeWithText("숨겨진 본문", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("요약 본문").assertExists()
         compose.onNodeWithText("최종 검토").assertIsNotEnabled()
         compose.onNodeWithText("선택 둘").performScrollTo().performClick()
         compose.onNodeWithText("최종 검토").performScrollTo().performClick()
@@ -97,28 +97,57 @@ class ReviewPanelTest {
         assertEquals(Verdict.Action.APPROVE, verdict.action)
     }
 
+    @Test fun freeformAnswersAndFeedbackAreSubmittedTogether() {
+        val (context, p) = prepare { it.copy(sourceText = "전체 원문", questions = listOf(
+            Question("언제 만나나요?", "이유", listOf("오늘", "내일", "모레"), "다음 주 목요일에 만나요"))) }
+        render { ReviewPanel(p.packageId) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("직접 답변 1").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("다음 주 목요일에 만나요").assertExists()
+        compose.onNodeWithText("직접 답변 1").performScrollTo().performTextReplacement("다음 주 목요일 오후")
+        compose.onNodeWithText("최종 검토").performScrollTo().performClick()
+        compose.onNodeWithText("추가 피드백 (선택)").performScrollTo().performTextReplacement("장소는 추후 확정")
+        compose.onNodeWithText("승인").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(listOf("다음 주 목요일 오후"), verdict.answers)
+        assertEquals("장소는 추후 확정", verdict.feedback)
+    }
+
+    @Test fun feedbackKeepsEditedSummaryWithoutApproving() {
+        val (context, p) = prepare { it.copy(questions = emptyList()) }
+        render { ReviewPanel(p.packageId) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("요약 본문").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("요약 본문").performTextReplacement("사람이 수정한 요약")
+        compose.onNodeWithText("최종 검토").performScrollTo().performClick()
+        compose.onNodeWithText("추가 피드백 (선택)").performScrollTo().performTextReplacement("날짜를 더 확인해 주세요")
+        compose.onNodeWithText("피드백 반영 요청").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(Verdict.Action.FEEDBACK, verdict.action)
+        assertEquals("사람이 수정한 요약", verdict.editedBody)
+    }
+
     @Test fun rejectAndEditNeedTheirOwnInputAndQueueOneVerdict() {
         val (context, p) = prepare { it.copy(questions = emptyList()) }
         render { ReviewPanel(p.packageId) {} }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("최종 검토").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("확인할 질문 없음").assertExists()
         compose.onNodeWithText("최종 검토").performScrollTo().performClick()
-        compose.onNodeWithText("본문 직접 수정").performScrollTo().performClick()
-        compose.onNodeWithText("직접 수정할 본문").performScrollTo().performTextReplacement("고친 본문")
+        compose.onNodeWithText("요약 본문").performScrollTo().performTextReplacement("고친 본문")
         compose.onNodeWithText("수정 제출").performScrollTo().performClick()
         compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
         val verdict = ReviewRuntime.records(context).single().verdict
         assertEquals(Verdict.Action.EDIT, verdict.action)
         assertEquals("고친 본문", verdict.editedBody)
-        compose.onNodeWithText("승인").assertIsNotEnabled()
+        compose.onNodeWithText("수정 제출").assertIsNotEnabled()
         compose.onNodeWithText("거절").assertIsNotEnabled()
     }
 
     @Test fun answersSurviveActivityRecreation() {
         val (_, p) = prepare()
         val choice = p.questions.single().choices[1]
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("문서 r${p.revision} 검토").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("문서 r${p.revision} 검토").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("문서 검토").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("문서 검토").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText(p.questions.single().question).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(choice).performScrollTo().performClick()
         compose.onNodeWithText("✓ $choice").assertExists()

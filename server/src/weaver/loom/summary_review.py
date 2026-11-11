@@ -129,14 +129,14 @@ class SummaryReview:
             verdict.revision,
         ):
             raise ValueError("verdict does not match this revision")
-        if verdict.action == "approve" and (
-            len(verdict.answers) != len(package.questions)
-            or any(
-                a not in q.choices
-                for a, q in zip(verdict.answers, package.questions, strict=True)
-            )
+        if verdict.action == "approve" and len(verdict.answers) != len(
+            package.questions
         ):
-            raise ValueError("answers must select one choice for each question")
+            raise ValueError(
+                "answers must include one nonblank answer for each question"
+            )
+        if len(verdict.answers) > len(package.questions):
+            raise ValueError("too many answers")
         with self.state.lock():
             self.state.save_package(package, script)
             with self.state.connect() as db:
@@ -229,19 +229,22 @@ class SummaryReview:
     ) -> Prepared:
         timestamp = now or datetime.now(UTC)
         if verdict.action == "feedback":
+            base_body = verdict.edited_body or package.draft_body
             response = self.llm.generate_json(
                 "loom.feedback",
                 "요청한 변경만 원문 부분 교체 목록으로 작성한다.",
                 json.dumps(
                     {
-                        "body": package.draft_body,
+                        "body": base_body,
                         "feedback": verdict.feedback,
+                        "questions": [q.model_dump() for q in package.questions],
+                        "answers": verdict.answers,
                     },
                     ensure_ascii=False,
                 ),
                 FeedbackResponse,
             )
-            body = apply_patches(package.draft_body, response.patches)
+            body = apply_patches(base_body, response.patches)
             revised = package.model_copy(
                 update={
                     "revision": package.revision + 1,
@@ -298,9 +301,9 @@ class SummaryReview:
         response = self.llm.generate_json(
             "loom.approve",
             (
-                "사람이 작성한 본문에서 사실만 추출한다."
+                "사람이 작성한 본문에 검토 답과 추가 피드백을 반영하고 사실만 추출한다."
                 if verdict.action == "edit"
-                else "검토 답을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
+                else "검토 답과 추가 피드백을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
             )
             + (
                 " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
@@ -317,6 +320,7 @@ class SummaryReview:
                     else package.draft_body,
                     "questions": [q.model_dump() for q in package.questions],
                     "answers": verdict.answers,
+                    "feedback": verdict.feedback,
                 },
                 ensure_ascii=False,
             ),
@@ -326,7 +330,9 @@ class SummaryReview:
             "schema_version": 2,
             "source_id": package.source_id,
             "script": script,
-            "body": verdict.edited_body if verdict.action == "edit" else response.body,
+            "body": verdict.edited_body
+            if verdict.action == "edit" and verdict.feedback is None
+            else response.body,
             "replaces": replaces,
             "created_at": timestamp.isoformat(),
         }

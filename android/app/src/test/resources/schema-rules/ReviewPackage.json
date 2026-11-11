@@ -5,6 +5,7 @@
     "/$defs/Question/properties/choices/maxItems": 3,
     "/$defs/Question/properties/choices/minItems": 3,
     "/$defs/Question/properties/choices/type": "array",
+    "/$defs/Question/properties/source_excerpt/type": "string",
     "/$defs/Question/required": [
         "question",
         "rationale",
@@ -38,6 +39,8 @@
     "/properties/questions/type": "array",
     "/properties/schema_version/const": 2,
     "/properties/schema_version/type": "integer",
+    "/properties/source_text/type": "string",
+    "/properties/source_type/type": "string",
     "/properties/stage_times/additionalProperties": {
         "$ref": "#/$defs/Timestamp"
     },

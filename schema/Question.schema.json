@@ -24,6 +24,11 @@
     },
     "rationale": {
       "$ref": "#/$defs/NonEmpty"
+    },
+    "source_excerpt": {
+      "default": "",
+      "title": "Source Excerpt",
+      "type": "string"
     }
   },
   "required": [

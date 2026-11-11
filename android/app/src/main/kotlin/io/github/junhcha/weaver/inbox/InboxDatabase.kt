@@ -177,7 +177,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
 
     fun reviews(newestRevisionFirst: Boolean = false): List<ReviewItem> = readableDatabase.rawQuery(
         """SELECT package_id, revision, summary, stage, revised, notified_revision FROM reviews
-            WHERE state='$ACTIVE' ORDER BY ${if (newestRevisionFirst) "changed_at" else "first_seen"} DESC, package_id DESC""", null,
+            WHERE state='$ACTIVE' ORDER BY ${if (newestRevisionFirst) "changed_at" else "first_seen"} ${if (newestRevisionFirst) "DESC" else "ASC"}, package_id ASC""", null,
     ).use { c -> buildList {
         while (c.moveToNext()) add(ReviewItem(c.getString(0), c.getLong(1), c.getString(2), c.getString(3),
             c.getInt(4) == 1, c.getLong(5)))

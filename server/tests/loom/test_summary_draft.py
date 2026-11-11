@@ -106,3 +106,24 @@ def test_draft_is_available_after_restart(tmp_path: Path) -> None:
         state_root=state_root,
     )
     assert restored.state.load_package("pkg", 1) == (package, script)
+
+
+def test_original_source_and_topic_survive_polish(tmp_path: Path) -> None:
+    llm = FakeLlm(1)
+    service = SummaryDrafts(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        tmp_path / "proposals",
+        state_root=tmp_path / "state",
+        revision_threshold=3,
+    )
+    original = "첫 통화 원문입니다.\n질문 0과 관련한 내용입니다."
+    package, _ = service.create(
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", original, source_type="call"
+    )
+    assert package.source_text == original
+    assert package.source_type == "call"
+    assert package.title == "결정했다."
+    assert package.questions[0].source_excerpt in original
+    assert "질문 0" in package.questions[0].source_excerpt
+    assert [call[0] for call in llm.calls] == ["loom.polish", "loom.summary"]

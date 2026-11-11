@@ -20,8 +20,10 @@ data class Verdict(
         answers.forEach { Rules.nonEmpty(it, "answer") }
         editedBody?.let { Rules.nonEmpty(it, "edited_body") }
         feedback?.let { Rules.nonEmpty(it, "feedback") }
-        require((editedBody != null) == (action == Action.EDIT))
-        require((feedback != null) == (action == Action.FEEDBACK))
+        require(action != Action.EDIT || editedBody != null)
+        require(editedBody == null || action in setOf(Action.EDIT, Action.FEEDBACK))
+        require(action != Action.FEEDBACK || feedback != null)
+        require(action != Action.REJECT || feedback == null)
     }
 
     @Serializable
