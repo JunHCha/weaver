@@ -7,6 +7,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
+from weaver.llm.schemas import openai_schema
 from weaver.loom.summary_review import ApprovedResponse
 
 
@@ -32,6 +33,7 @@ def response():
     }
 
 
+@pytest.mark.parametrize("transform", [anthropic.transform_schema, openai_schema])
 @pytest.mark.parametrize("kind", ["요청", "결정", "일정", "기록"])
 @pytest.mark.parametrize(
     "field,value",
@@ -44,9 +46,9 @@ def response():
     ],
 )
 def test_transformed_schema_keeps_kind_and_field_constraints(
-    response, kind, field, value
+    response, kind, field, value, transform
 ):
-    validator = Draft202012Validator(anthropic.transform_schema(ApprovedResponse))
+    validator = Draft202012Validator(transform(ApprovedResponse))
     thread = response["threads"][0]
     thread.update(
         kind=kind,
