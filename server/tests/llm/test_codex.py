@@ -140,6 +140,11 @@ def test_argv_stdin_schema_usage_cleanup_and_log(setup, caplog):
     [
         (RunResult(1, b"", b"401 authentication failed"), None, AuthenticationError),
         (
+            RunResult(1, b"not json", b"authentication failed"),
+            None,
+            AuthenticationError,
+        ),
+        (
             RunResult(1, b'{"type":"error","message":"quota exceeded"}', b""),
             None,
             UsageLimited,
@@ -229,3 +234,31 @@ def test_missing_binary_and_gate(setup, monkeypatch):
         ).reason
         == "codex_not_found"
     )
+
+
+def test_tool_event_is_rejected(setup):
+    runner = FakeRunner(
+        RunResult(
+            0, b'{"type":"item.completed","item":{"type":"command_execution"}}', b""
+        )
+    )
+    with pytest.raises(LlmError):
+        client_for(setup, runner).generate_text("test.call", "s", "u")
+    assert setup[1].records()[0]["status"] == LlmError.code
+
+
+def test_cached_status_uses_home_and_ttl(setup):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(kwargs["env"])
+        return RunResult(0, b"", b"")
+
+    config = setup[0]
+    assert codex_status(config, {"HOME": "/cache-a"}, runner=runner, now=0).available
+    assert codex_status(config, {"HOME": "/cache-a"}, runner=runner, now=1).available
+    assert len(calls) == 1
+    assert codex_status(config, {"HOME": "/cache-b"}, runner=runner, now=1).available
+    assert len(calls) == 2
+    codex_status(config, {"HOME": "/cache-a"}, runner=runner, now=61)
+    assert len(calls) == 3

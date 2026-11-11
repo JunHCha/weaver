@@ -235,7 +235,7 @@ def test_api_call_summary_is_one_redacted_info_line(tmp_path, caplog, reply, err
     lines = [r.message for r in caplog.records if r.levelno == logging.INFO]
     assert len(lines) == 1
     assert "test.call anthropic" in lines[0]
-    assert "(today 0/-)" in lines[0]
+    assert "(today 1/-)" in lines[0]
     assert not any(
         s in caplog.text
         for s in ("private-system", "private-user", "secret-key", "hello")

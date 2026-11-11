@@ -107,7 +107,11 @@ def codex_status(
             res.returncode == 0 and not res.timed_out and not res.overflow,
             "codex_status_timeout"
             if res.timed_out
-            else ("configured" if res.returncode == 0 else "codex_not_logged_in"),
+            else (
+                "configured"
+                if res.returncode == 0 and not res.overflow
+                else "codex_not_logged_in"
+            ),
         )
     except OSError:
         status = CliStatus(False, "codex_unavailable")
@@ -215,7 +219,16 @@ class CodexCliClient(ClaudeCliClient):
                 completed = False
                 failure = ""
                 for line in res.stdout.splitlines():
-                    event = json.loads(line)
+                    try:
+                        event = json.loads(line)
+                    except (ValueError, RecursionError):
+                        if res.returncode != 0:
+                            raise _classify(
+                                res.stderr.decode("utf-8", "replace")
+                                + res.stdout.decode("utf-8", "replace"),
+                                None,
+                            ) from None
+                        raise LlmError() from None
                     if not isinstance(event, dict):
                         raise LlmError()
                     if event.get("type") == "turn.completed":
