@@ -7,6 +7,7 @@ No background paid request survives the return from a public method.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -20,6 +21,7 @@ import anthropic
 from pydantic import BaseModel, ValidationError
 
 from weaver.config import LlmConfig
+from weaver.failures import failure_reason
 
 from .anthropic import AnthropicTransport
 from .errors import (
@@ -228,7 +230,11 @@ class AnthropicClient:
                     raise InvalidJson() from None
                 try:
                     result = schema.model_validate_json(reply.text)
-                except ValidationError:
+                except ValidationError as error:
+                    logging.getLogger(__name__).warning(
+                        "LLM response validation failed: ValidationError reason=%s",
+                        failure_reason(error),
+                    )
                     raise SchemaMismatch() from None
             record["status"] = "succeeded"
             return result

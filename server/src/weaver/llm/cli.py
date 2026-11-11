@@ -27,6 +27,7 @@ import anthropic
 from pydantic import BaseModel, ValidationError
 
 from weaver.config import LlmConfig
+from weaver.failures import failure_reason
 
 from .errors import (
     AuthenticationError,
@@ -406,7 +407,11 @@ class ClaudeCliClient:
                 raise InvalidJson() from None
         try:
             return schema.model_validate_json(json.dumps(structured))
-        except ValidationError:
+        except ValidationError as error:
+            logging.getLogger(__name__).warning(
+                "LLM response validation failed: ValidationError reason=%s",
+                failure_reason(error),
+            )
             raise SchemaMismatch() from None
 
 

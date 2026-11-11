@@ -61,6 +61,13 @@ def run(
             help="Validate, create missing data directories, and exit",
         ),
     ] = False,
+    console: Annotated[
+        bool | None,
+        typer.Option(
+            "--console/--no-console",
+            help="Mirror logs to stderr (default: TTY outside supervised mode)",
+        ),
+    ] = None,
     interval: Annotated[
         float, typer.Option("--interval", min=0.5, help="Rescan interval seconds")
     ] = 5.0,
@@ -76,7 +83,7 @@ def run(
     from weaver.runtime import EXIT_ALREADY_RUNNING, AlreadyRunning, InstanceLock
     from weaver.runtime.logs import configure_logging
 
-    log_file = configure_logging(settings.log_root)
+    log_file = configure_logging(settings.log_root, console=console)
     logger = logging.getLogger("weaver.runtime")
     try:
         # Lock before opening any store so a duplicate never touches state.

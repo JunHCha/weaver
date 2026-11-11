@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weaver.config import CourierPaths, CourierSettings
+from weaver.failures import failure_reason
 from weaver.schema import Alert, Manifest, ReviewPackage, Verdict
 
 from .atomic import write_json_atomic
@@ -343,8 +344,9 @@ class Courier:
                         raise
                     except Exception as exc:
                         logger.warning(
-                            "courier recovery failed: %s (%s, %s)",
+                            "courier recovery failed: %s reason=%s (%s, %s)",
                             type(exc).__name__,
+                            failure_reason(exc),
                             pid,
                             rev,
                         )
@@ -377,8 +379,9 @@ class Courier:
                         raise CourierFileError("apply_unconfirmed")
                 except Exception as exc:
                     logger.warning(
-                        "courier apply failed: %s (%s, %s)",
+                        "courier apply failed: %s reason=%s (%s, %s)",
                         type(exc).__name__,
+                        failure_reason(exc),
                         pid,
                         rev,
                     )

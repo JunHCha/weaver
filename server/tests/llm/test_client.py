@@ -195,3 +195,18 @@ def test_unrepresentable_schema_is_redacted_and_recorded(tmp_path: Path) -> None
     assert not transport.requests
     assert ledger.records()[0]["status"] == "unsupported_structured_output"
     assert ledger.records()[0]["attempts"] == 0
+
+
+def test_validation_diagnostic_survives_redacted_api_error(tmp_path, caplog):
+    class Response(BaseModel):
+        direction: str
+
+    client, _, _ = make_client(
+        tmp_path, BackendReply('{"direction":{"synthetic-private-source":"private"}}')
+    )
+    with pytest.raises(SchemaMismatch):
+        client.generate_json("loom.approve", "system", "prompt", Response)
+    assert "ValidationError reason=" in caplog.text
+    assert '"loc": ["direction"]' in caplog.text
+    assert "synthetic-private-source" not in caplog.text
+    assert "private" not in caplog.text
