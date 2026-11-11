@@ -6,7 +6,10 @@ from pathlib import Path
 
 import anthropic
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel
+
+from weaver.llm.schemas import openai_schema
 
 ROOT = Path(__file__).resolve().parents[2] / "src" / "weaver"
 
@@ -65,6 +68,23 @@ def discovered_schemas():
 )
 def test_response_schema_transforms(model):
     assert anthropic.transform_schema(model)["type"] == "object"
+    wire = openai_schema(model)
+    Draft202012Validator.check_schema(wire)
+    assert wire["type"] == "object"
+
+    def check(node):
+        if isinstance(node, dict):
+            assert not {"default", "discriminator", "oneOf"} & node.keys()
+            if node.get("type") == "object":
+                assert node["additionalProperties"] is False
+                assert set(node["required"]) == set(node["properties"])
+            for child in node.values():
+                check(child)
+        elif isinstance(node, list):
+            for child in node:
+                check(child)
+
+    check(wire)
 
 
 def test_discovery_rejects_unknown_schema():

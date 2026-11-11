@@ -15,8 +15,17 @@ from pathlib import Path
 from typing import Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
-Backend = Literal["none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"]
-_BACKENDS = {"none", "anthropic", "agent_sdk", "claude_cli", "openai_compatible"}
+Backend = Literal[
+    "none", "anthropic", "agent_sdk", "claude_cli", "codex_cli", "openai_compatible"
+]
+_BACKENDS = {
+    "none",
+    "anthropic",
+    "agent_sdk",
+    "claude_cli",
+    "codex_cli",
+    "openai_compatible",
+}
 _ROOTS = ("sync_root", "archive_root", "vault_root", "state_root", "log_root")
 _CHANNELS = ("outbox", "receipts", "proposals", "decisions")
 
@@ -43,6 +52,9 @@ class LlmConfig:
     # and the daily call cap that protects the subscription allowance.
     claude_path: Path | None = None
     max_cli_calls_per_day: int = 30
+    codex_path: Path | None = None
+    codex_model: str | None = None
+    codex_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +244,9 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         "api_key_env",
         "api_key_file",
         "claude_path",
+        "codex_path",
+        "codex_model",
+        "codex_effort",
         "max_cli_calls_per_day",
     }:
         raise ConfigError("llm: unknown fields (inline credentials are unsupported)")
@@ -260,6 +275,27 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         ):
             raise ConfigError("llm.claude_path: expected absolute path")
         claude_path = _path(raw_claude, base, env, "llm.claude_path")
+    codex_path: Path | None = None
+    if "codex_path" in value:
+        raw_codex = value["codex_path"]
+        if not isinstance(raw_codex, str) or not (
+            raw_codex.startswith("/") or raw_codex.startswith("~/")
+        ):
+            raise ConfigError("llm.codex_path: expected absolute path")
+        codex_path = _path(raw_codex, base, env, "llm.codex_path")
+    model = value.get("codex_model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise ConfigError("llm.codex_model: expected nonempty string")
+    effort = value.get("codex_effort")
+    if effort is not None and effort not in (
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ):
+        raise ConfigError("llm.codex_effort: unknown effort")
     cap = value.get("max_cli_calls_per_day", 30)
     if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
         raise ConfigError("llm.max_cli_calls_per_day: expected integer >= 1")
@@ -269,6 +305,9 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         key_file,
         claude_path,
         cap,
+        codex_path,
+        model,
+        cast(str | None, effort),
     )
 
 

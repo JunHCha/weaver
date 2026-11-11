@@ -6,6 +6,7 @@ from weaver.config import LlmConfig
 
 from .cli import ClaudeCliClient
 from .client import AnthropicClient
+from .codex import CodexCliClient
 from .errors import (
     AuthenticationError,
     BudgetExceeded,
@@ -29,6 +30,7 @@ __all__ = [
     "LlmClient",
     "AnthropicClient",
     "ClaudeCliClient",
+    "CodexCliClient",
     "create_client",
     "AuthenticationError",
     "BudgetExceeded",
@@ -54,6 +56,10 @@ def create_client(config: LlmConfig, *, state_root: Path) -> LlmClient:
     Alternative adapters are tracked by #46; never silently fall back to them.
     The state_root directory must already exist (explicit config initialization).
     """
+    if config.backend == "codex_cli":
+        return CodexCliClient(
+            config, Ledger(state_root / "llm.sqlite3"), state_root=state_root
+        )
     if config.backend == "claude_cli":
         return ClaudeCliClient(
             config, Ledger(state_root / "llm.sqlite3"), state_root=state_root

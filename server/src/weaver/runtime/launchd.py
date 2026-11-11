@@ -58,6 +58,7 @@ def render_plist(
     log_root: Path,
     working_directory: Path,
     label: str = LABEL,
+    llm_backend: str | None = None,
 ) -> bytes:
     for name, path in (
         ("python", python),
@@ -92,6 +93,10 @@ def render_plist(
         "StandardOutPath": str(log_root / "launchd.out.log"),
         "StandardErrorPath": str(log_root / "launchd.err.log"),
     }
+    if llm_backend is not None:
+        if llm_backend not in {"anthropic", "claude_cli", "codex_cli"}:
+            raise ValueError("unsupported LLM override")
+        job["ProgramArguments"] += ["--llm", llm_backend]
     return plistlib.dumps(job, fmt=plistlib.FMT_XML, sort_keys=True)
 
 

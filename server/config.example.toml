@@ -9,7 +9,7 @@ log_root = "data/logs"
 
 [llm]
 # Default follows ADR-021. Use "none" for an explicitly unselected backend.
-# Other identifiers: agent_sdk, claude_cli, openai_compatible.
+# Other identifiers: agent_sdk, claude_cli, codex_cli, openai_compatible.
 # Configuration validation never creates a client or calls a backend.
 backend = "anthropic"
 # Reference only: provide the value outside the configuration file.
@@ -23,12 +23,28 @@ api_key_env = "ANTHROPIC_API_KEY"
 # PATH (a `#!/usr/bin/env node` install may not start there), so set the
 # absolute path to the native binary (see `command -v claude`):
 # claude_path = "/Users/you/.local/bin/claude"
+# backend = "codex_cli" uses the official Codex CLI >= 0.167.0 (run
+# `codex login` yourself). API key environment variables are never inherited.
+# Optional absolute binary path, else found on PATH:
+# codex_path = "/opt/bin/codex"
+# Omit these to use Codex defaults; effort support depends on the chosen model.
+# codex_model = "your-model"
+# codex_effort = "high"  # none, minimal, low, medium, high, xhigh
+# Both CLI backends share llm.sqlite3 and the same daily call counter.
+# Each call runs in a fresh empty state subdirectory, with ephemeral sessions,
+# read-only sandbox, approval never, and user config/rules ignored. Shell,
+# plugins, apps, hooks and agent tools are disabled. Managed system policy and
+# CLI built-in/model-provided tools can still apply; this is not an OS read jail.
+# Raw prompts/responses are excluded from the ledger and INFO call summary.
 # Daily call cap protecting the subscription allowance (integer >= 1):
 # max_cli_calls_per_day = 30
 
 # All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
 # To create missing directories explicitly (existing data is preserved):
 # uv run --project server python -m weaver.app run --config <file> --init-directories
+# Temporarily override the configured backend (also works with --check-config):
+# python -m weaver.app run --config <file> --llm codex_cli
+# install-agent --llm codex_cli persists the override in the generated plist.
 # To validate without changing files:
 # uv run --project server python -m weaver.app run --config <file> --check-config
 # Selection: --config > WEAVER_CONFIG > $XDG_CONFIG_HOME/weaver/config.toml

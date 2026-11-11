@@ -101,6 +101,8 @@ class Ledger:
                     json.dumps(record),
                 ),
             )
+        if record["status"] != "pending":
+            self._log_call(record)
         if blocked:
             raise BudgetExceeded()
         if total + amount >= round(self.warn_usd * NANO_USD):
@@ -136,6 +138,52 @@ class Ledger:
                     call_id,
                 ),
             )
+
+        self._log_call(record)
+
+    def _log_call(self, record: dict[str, Any]) -> None:
+        if not logger.isEnabledFor(logging.INFO):
+            return
+        if not {"task", "backend", "status", "elapsed_seconds"} <= record.keys():
+            return
+        day = datetime.now().astimezone().date().isoformat()
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT calls FROM cli_daily WHERE day=?", (day,)
+            ).fetchone()
+        today = int(row[0]) if row else 0
+        if record["backend"] == "anthropic":
+            # API calls retain their monetary budget; the CLI cap does not apply.
+            today = sum(
+                1
+                for item in self.records()
+                if item.get("backend") == "anthropic"
+                and item.get("attempts", 0) > 0
+                and datetime.fromisoformat(item["started_at"])
+                .astimezone()
+                .date()
+                .isoformat()
+                == day
+            )
+        usage = record.get("usage", [])
+
+        def tokens(name: str) -> str:
+            if not usage:
+                return "?"
+            count = sum(item.get(name, 0) for item in usage)
+            return f"{count / 1000:.1f}K" if count >= 1000 else str(count)
+
+        logger.info(
+            "%s %s %s %.1fs in=%s out=%s (today %s/%s)",
+            record["task"],
+            record["backend"],
+            record["status"],
+            record["elapsed_seconds"],
+            tokens("input_tokens"),
+            tokens("output_tokens"),
+            today,
+            record.get("daily_cap", "-"),
+        )
 
     def records(self) -> list[dict[str, Any]]:
         with self._connect() as db:

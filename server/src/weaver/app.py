@@ -6,6 +6,8 @@ imports what it needs lazily.
 
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -21,10 +23,24 @@ ConfigOption = Annotated[
 ]
 
 
+class LlmBackend(StrEnum):
+    anthropic = "anthropic"
+    claude_cli = "claude_cli"
+    codex_cli = "codex_cli"
+
+
+LlmOption = Annotated[
+    LlmBackend | None,
+    typer.Option("--llm", help="Override llm.backend for this invocation"),
+]
+
+
 EX_CONFIG = 78  # sysexits.h: configuration error
 
 
-def _load(config: str | None, *, init_directories: bool = False) -> "ServerConfig":
+def _load(
+    config: str | None, *, init_directories: bool = False, llm: LlmBackend | None = None
+) -> "ServerConfig":
     """Configuration errors exit 78 (EX_CONFIG) with field names only.
 
     Under launchd (WEAVER_SUPERVISED=1) the process first waits, because
@@ -36,7 +52,10 @@ def _load(config: str | None, *, init_directories: bool = False) -> "ServerConfi
     from weaver.config import ConfigError, load_config
 
     try:
-        return load_config(config, init_directories=init_directories)
+        settings = load_config(config, init_directories=init_directories)
+        if llm is not None:
+            settings = replace(settings, llm=replace(settings.llm, backend=llm.value))
+        return settings
     except ConfigError as error:
         typer.echo(f"Error: invalid configuration: {error}", err=True)
         from weaver.runtime import launchd
@@ -51,6 +70,7 @@ def _load(config: str | None, *, init_directories: bool = False) -> "ServerConfi
 @cli.command()
 def run(
     config: ConfigOption = None,
+    llm: LlmOption = None,
     check_config: Annotated[
         bool, typer.Option("--check-config", help="Validate settings and exit")
     ] = False,
@@ -73,7 +93,7 @@ def run(
     ] = 5.0,
 ) -> None:
     """Run Weaver in the foreground until SIGTERM (launchd-friendly)."""
-    settings = _load(config, init_directories=init_directories)
+    settings = _load(config, init_directories=init_directories, llm=llm)
     if check_config or init_directories:
         typer.echo("Configuration valid.")
         return
@@ -112,6 +132,7 @@ def run(
 @cli.command("install-agent")
 def install_agent(
     config: ConfigOption = None,
+    llm: LlmOption = None,
     python: Annotated[
         str | None,
         typer.Option(
@@ -125,7 +146,7 @@ def install_agent(
     """Install and start the user LaunchAgent (~/Library/LaunchAgents)."""
     from weaver.runtime import launchd
 
-    settings = _load(config)
+    settings = _load(config, llm=llm)
     interpreter = Path(python) if python else Path(sys.executable).absolute()
     if not interpreter.is_absolute() or not interpreter.is_file():
         raise typer.BadParameter("python: expected an existing absolute path")
@@ -141,6 +162,7 @@ def install_agent(
         config_file=settings.config_file,
         log_root=settings.log_root,
         working_directory=settings.state_root,
+        llm_backend=llm.value if llm is not None else None,
     )
     _warn_llm_under_launchd(settings, plist)
     if print_only:
@@ -186,11 +208,11 @@ def uninstall_agent() -> None:
 
 
 @cli.command()
-def status(config: ConfigOption = None) -> None:
+def status(config: ConfigOption = None, llm: LlmOption = None) -> None:
     """Show launchd state and the running instance's last status report."""
     from weaver.runtime import launchd
 
-    settings = _load(config)
+    settings = _load(config, llm=llm)
     typer.echo(f"launchd: {launchd.status(launchctl=launchd.run_launchctl)}")
     report = settings.state_root / "runtime-status.json"
     try:

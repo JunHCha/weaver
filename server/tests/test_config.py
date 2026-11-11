@@ -638,3 +638,64 @@ def test_courier_retry_settings(tmp_path: Path) -> None:
 def test_invalid_courier_settings(tmp_path: Path, settings: str) -> None:
     with pytest.raises(ConfigError, match="courier"):
         load_config(write_config(tmp_path, settings), environ={})
+
+
+def test_codex_settings_and_invocation_override(tmp_path):
+    from weaver.app import LlmBackend, _load
+
+    path = write_config(
+        tmp_path,
+        """[llm]
+backend = "codex_cli"
+codex_path = "/opt/bin/codex"
+codex_model = "fake-model"
+codex_effort = "high"
+max_cli_calls_per_day = 8
+""",
+    )
+    settings = load_config(path, environ={})
+    assert settings.llm.codex_model == "fake-model"
+    assert settings.llm.codex_effort == "high"
+    assert settings.llm.codex_path == Path("/opt/bin/codex")
+    overridden = _load(str(path), llm=LlmBackend.claude_cli)
+    assert overridden.llm.backend == "claude_cli"
+    assert overridden.spinner.llm.backend == "claude_cli"
+    assert load_config(path, environ={}).llm.backend == "codex_cli"
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        'codex_path = "relative"',
+        'codex_model = ""',
+        "codex_model = 1",
+        'codex_effort = "secret-invalid"',
+        "codex_effort = []",
+    ],
+)
+def test_invalid_codex_settings(tmp_path, setting):
+    path = write_config(tmp_path, "[llm]\n" + setting)
+    with pytest.raises(ConfigError, match="llm.codex") as error:
+        load_config(path, environ={})
+    assert "secret-invalid" not in str(error.value)
+
+
+def test_llm_option_with_config_check_and_initialization(tmp_path):
+    from typer.testing import CliRunner
+
+    from weaver.app import cli
+
+    path = write_config(tmp_path, '[llm]\nbackend = "none"', create=False)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["run", "--config", str(path), "--llm", "codex_cli", "--init-directories"]
+    )
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        cli, ["run", "--config", str(path), "--llm", "claude_cli", "--check-config"]
+    )
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        cli, ["run", "--config", str(path), "--llm", "bad", "--check-config"]
+    )
+    assert result.exit_code == 2
