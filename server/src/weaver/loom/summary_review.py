@@ -6,10 +6,10 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NotRequired, Self, TypedDict
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, TypeAdapter, model_validator
 
 from weaver.context import ContextDictionary, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
@@ -34,6 +34,21 @@ class Correction(BaseModel):
     kind: Kind
 
 
+class ExtractedSchedule(TypedDict):
+    """Raw local times; SummaryReview supplies the configured timezone."""
+
+    start: str
+    end: NotRequired[str | None]
+    timezone: NotRequired[str | None]
+
+
+class AssigneeChange(TypedDict):
+    """ADR-033 set operation, never a replacement list."""
+
+    add: list[str]
+    remove: list[str]
+
+
 class ExtractedThread(BaseModel):
     """Model-provided fact, with provenance supplied by the server."""
 
@@ -42,11 +57,25 @@ class ExtractedThread(BaseModel):
     occurred_at: datetime
     tags: list[str]
     field: Literal["deadline", "schedule", "assignees", "status"] | None
-    value: JsonValue
+    value: str | ExtractedSchedule | AssigneeChange | None
     direction: Literal["받음", "보냄"] | None
     resolves: str | None
     retracts: str | None
     blocked_by_index: int | None = None
+
+    @model_validator(mode="after")
+    def validate_value(self) -> Self:
+        if self.value is not None:
+            if self.field == "schedule":
+                TypeAdapter(ExtractedSchedule).validate_python(self.value)
+            elif self.field == "assignees":
+                TypeAdapter(AssigneeChange).validate_python(self.value)
+            elif self.field in ("deadline", "status"):
+                if not isinstance(self.value, str):
+                    raise ValueError("deadline and status values must be strings")
+            else:
+                raise ValueError("value requires a field")
+        return self
 
 
 class ApprovedResponse(BaseModel):
