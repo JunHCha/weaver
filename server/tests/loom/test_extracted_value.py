@@ -1,13 +1,13 @@
 """Approval transport values retain the field-specific ADR-033 shapes."""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from weaver.loom.summary_review import ExtractedThread
 
 
 def extract(field, value):
-    return ExtractedThread.model_validate(
+    return TypeAdapter(ExtractedThread).validate_python(
         dict(
             kind="기록",
             content="synthetic fact",

@@ -359,6 +359,16 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
             assert "명시" in system and "blocked_by_index" in system
+            for rule in (
+                "배열 범위",
+                "start보다 늦어야",
+                "IANA",
+                "원문에 실제로",
+                "정확히 일치",
+                "존재하지 않는",
+                "{add:",
+            ):
+                assert rule in system
             assert json.loads(user)["timezone"] == "America/New_York"
             base = {
                 "occurred_at": NOW.isoformat(),
