@@ -33,6 +33,7 @@ object SharedSchema {
         "Verdict" to Verdict.serializer(),
         "ApprovedSchedule" to ApprovedSchedule.serializer(),
         "Alert" to Alert.serializer(),
+        "PipelineItem" to PipelineItem.serializer(),
     )
 
     /** Capture files carry schema_version 1; review, schedule and alert files carry 2. */

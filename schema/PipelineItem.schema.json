@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "CaptureId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Channel": {
+      "enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+      ],
+      "type": "string"
+    },
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "PipelineLocation": {
+      "enum": [
+        "spinner",
+        "loom",
+        "user",
+        "fabric",
+        "wiki"
+      ],
+      "type": "string"
+    },
+    "PipelinePage": {
+      "additionalProperties": false,
+      "description": "Full-file fingerprint; path is relative to the phone's shared vault.",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/NonEmpty",
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.)[^\\r\\n]+\\.md$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "path",
+        "updated_at",
+        "sha256"
+      ],
+      "title": "PipelinePage",
+      "type": "object"
+    },
+    "PipelineStatus": {
+      "enum": [
+        "working",
+        "review",
+        "applying",
+        "apply_stopped",
+        "done",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "PipelineThread": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "요청",
+            "결정",
+            "일정",
+            "기록",
+            "태그정정",
+            "거절"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "thread_id",
+        "kind"
+      ],
+      "title": "PipelineThread",
+      "type": "object"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Stage": {
+      "enum": [
+        "수집",
+        "전송",
+        "정리",
+        "질문",
+        "검토",
+        "반영",
+        "wiki갱신"
+      ],
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:PipelineItem",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Durable observation, independent of short-lived review/receipt files.",
+  "properties": {
+    "apply_failure_limit": {
+      "$ref": "#/$defs/Revision"
+    },
+    "capture_id": {
+      "$ref": "#/$defs/CaptureId"
+    },
+    "digest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PipelinePage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "history": {
+      "items": {
+        "$ref": "#/$defs/PipelineLocation"
+      },
+      "title": "History",
+      "type": "array"
+    },
+    "location": {
+      "$ref": "#/$defs/PipelineLocation"
+    },
+    "package_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "package_revision": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Revision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/PipelinePage"
+      },
+      "title": "Pages",
+      "type": "array"
+    },
+    "revision": {
+      "$ref": "#/$defs/Revision"
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    },
+    "source_type": {
+      "$ref": "#/$defs/Channel"
+    },
+    "stage_times": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Timestamp"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/Stage"
+      },
+      "title": "Stage Times",
+      "type": "object"
+    },
+    "status": {
+      "$ref": "#/$defs/PipelineStatus"
+    },
+    "threads": {
+      "items": {
+        "$ref": "#/$defs/PipelineThread"
+      },
+      "title": "Threads",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "updated_at": {
+      "$ref": "#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "revision",
+    "capture_id",
+    "source_id",
+    "package_id",
+    "package_revision",
+    "source_type",
+    "title",
+    "location",
+    "status",
+    "apply_failure_limit",
+    "stage_times",
+    "history",
+    "threads",
+    "pages",
+    "digest",
+    "updated_at"
+  ],
+  "title": "PipelineItem",
+  "type": "object"
+}

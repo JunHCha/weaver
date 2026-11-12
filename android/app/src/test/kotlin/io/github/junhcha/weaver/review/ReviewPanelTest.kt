@@ -144,10 +144,18 @@ class ReviewPanelTest {
     }
 
     @Test fun answersSurviveActivityRecreation() {
-        val (_, p) = prepare()
+        val (context, p) = prepare()
+        assertTrue(io.github.junhcha.weaver.pipeline.PipelineRuntime.snapshot(context).any { it.needsReview })
         val choice = p.questions.single().choices[1]
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("문서 검토").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("문서 검토").performScrollTo().performClick()
+        // The fixture is installed after Activity startup; refresh its retained model
+        // explicitly before driving the real home-to-review navigation.
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
+        model.refresh()
+        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
+        compose.onNodeWithContentDescription("나 노드").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
+        compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText(p.questions.single().question).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(choice).performScrollTo().performClick()
         compose.onNodeWithText("✓ $choice").assertExists()

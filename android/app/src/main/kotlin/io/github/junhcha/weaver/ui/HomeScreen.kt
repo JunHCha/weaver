@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 
 /** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
 @Composable
-fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
+fun ToolsScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }

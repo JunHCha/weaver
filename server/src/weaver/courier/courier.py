@@ -128,7 +128,9 @@ class Courier:
         retry: CourierSettings | None = None,
         clock: Callable[[], float] = time.monotonic,
         can_apply: Callable[[], bool] | None = None,
+        on_apply_stopped: Callable[[Verdict], None] | None = None,
     ) -> None:
+        self._on_apply_stopped = on_apply_stopped
         self._can_apply = can_apply
         self._retry = retry or CourierSettings()
         self._clock = clock
@@ -370,6 +372,8 @@ class Courier:
                     failure = None
                 if failure is not None:
                     if failure.attempts >= self._retry.max_attempts:
+                        if self._on_apply_stopped is not None:
+                            self._on_apply_stopped(verdict)
                         raise CourierFileError("apply_stopped")
                     if self._clock() < failure.next_attempt:
                         raise CourierFileError("apply_backoff")
@@ -386,8 +390,16 @@ class Courier:
                         rev,
                     )
                     self._record_apply_failure(path.name, digest, exc)
+                    stopped = (
+                        self._apply_failures[path.name].attempts
+                        >= self._retry.max_attempts
+                    )
+                    if stopped and self._on_apply_stopped is not None:
+                        self._on_apply_stopped(verdict)
                     code = (
-                        exc.code
+                        "apply_stopped"
+                        if stopped
+                        else exc.code
                         if isinstance(exc, CourierFileError)
                         else "apply_failed"
                     )

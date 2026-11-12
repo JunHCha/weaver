@@ -10,6 +10,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import JsonValue
@@ -416,6 +417,26 @@ class WikiStore:
                 (path, data, rev, int(readonly), None),
             )
         return _hash(data)
+
+    def published_pages(self) -> list[tuple[str, bytes, datetime]]:
+        """Committed full-file versions only; pending human edits are not outputs."""
+        with self._db() as db:
+            rows = db.execute("SELECT path, content FROM pages").fetchall()
+        result = []
+        for path, baseline in rows:
+            try:
+                target = self._path(path)
+                if target.is_file() and target.read_bytes() == baseline:
+                    result.append(
+                        (
+                            path,
+                            baseline,
+                            datetime.fromtimestamp(target.stat().st_mtime, UTC),
+                        )
+                    )
+            except (ValueError, OSError):
+                continue
+        return result
 
     def scan(self, now: float) -> list[HumanEdit]:
         """Confirm stable human edits and return all unacknowledged edits."""

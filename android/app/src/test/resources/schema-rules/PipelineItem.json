@@ -1,0 +1,135 @@
+{
+    "/$defs/CaptureId/maxLength": 30,
+    "/$defs/CaptureId/minLength": 30,
+    "/$defs/CaptureId/pattern": "^cap_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/CaptureId/type": "string",
+    "/$defs/Channel/enum": [
+        "call",
+        "voice_memo",
+        "kakao",
+        "share_text"
+    ],
+    "/$defs/Channel/type": "string",
+    "/$defs/Digest/maxLength": 64,
+    "/$defs/Digest/minLength": 64,
+    "/$defs/Digest/pattern": "^[0-9a-f]{64}$",
+    "/$defs/Digest/type": "string",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/PipelineLocation/enum": [
+        "spinner",
+        "loom",
+        "user",
+        "fabric",
+        "wiki"
+    ],
+    "/$defs/PipelineLocation/type": "string",
+    "/$defs/PipelinePage/additionalProperties": false,
+    "/$defs/PipelinePage/properties/path/pattern": "^(?!/)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.)[^\\r\\n]+\\.md$",
+    "/$defs/PipelinePage/required": [
+        "path",
+        "updated_at",
+        "sha256"
+    ],
+    "/$defs/PipelinePage/type": "object",
+    "/$defs/PipelineStatus/enum": [
+        "working",
+        "review",
+        "applying",
+        "apply_stopped",
+        "done",
+        "rejected"
+    ],
+    "/$defs/PipelineStatus/type": "string",
+    "/$defs/PipelineThread/additionalProperties": false,
+    "/$defs/PipelineThread/properties/kind/enum": [
+        "요청",
+        "결정",
+        "일정",
+        "기록",
+        "태그정정",
+        "거절"
+    ],
+    "/$defs/PipelineThread/properties/kind/type": "string",
+    "/$defs/PipelineThread/required": [
+        "thread_id",
+        "kind"
+    ],
+    "/$defs/PipelineThread/type": "object",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/$defs/SourceId/maxLength": 30,
+    "/$defs/SourceId/minLength": 30,
+    "/$defs/SourceId/pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/SourceId/type": "string",
+    "/$defs/Stage/enum": [
+        "수집",
+        "전송",
+        "정리",
+        "질문",
+        "검토",
+        "반영",
+        "wiki갱신"
+    ],
+    "/$defs/Stage/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/properties/digest/anyOf": [
+        {
+            "$ref": "#/$defs/PipelinePage"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/history/type": "array",
+    "/properties/package_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/package_revision/anyOf": [
+        {
+            "$ref": "#/$defs/Revision"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/pages/type": "array",
+    "/properties/schema_version/const": 2,
+    "/properties/schema_version/type": "integer",
+    "/properties/stage_times/additionalProperties": {
+        "$ref": "#/$defs/Timestamp"
+    },
+    "/properties/stage_times/type": "object",
+    "/properties/threads/type": "array",
+    "/required": [
+        "schema_version",
+        "revision",
+        "capture_id",
+        "source_id",
+        "package_id",
+        "package_revision",
+        "source_type",
+        "title",
+        "location",
+        "status",
+        "apply_failure_limit",
+        "stage_times",
+        "history",
+        "threads",
+        "pages",
+        "digest",
+        "updated_at"
+    ],
+    "/type": "object"
+}
