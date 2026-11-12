@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import unicodedata
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,22 @@ from pathlib import Path
 from pydantic import JsonValue
 
 HASH_KEY = "weaver_content_sha256"
+
+
+def normalize_path(path: str) -> str:
+    """Canonical spelling for wiki keys, git paths, and links."""
+    return unicodedata.normalize("NFC", path)
+
+
+def _disk_child(parent: Path, name: str) -> Path:
+    """Resolve existing decomposed names on normalization-sensitive filesystems."""
+    target = parent / name
+    if target.exists() or target.is_symlink() or not parent.is_dir():
+        return target
+    matches = [p for p in parent.iterdir() if normalize_path(p.name) == name]
+    if len(matches) > 1:
+        raise ValueError("ambiguous normalized wiki path")
+    return matches[0] if matches else target
 
 
 def _without_comment(text: str) -> str:
@@ -214,7 +231,7 @@ class WikiStore:
         settle_seconds: float = 1800,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        relative_root = Path(wiki_root)
+        relative_root = Path(normalize_path(wiki_root))
         if (
             relative_root.is_absolute()
             or not relative_root.parts
@@ -226,7 +243,7 @@ class WikiStore:
             raise ValueError("invalid wiki root")
         self.root = vault
         for part in relative_root.parts:
-            self.root = self.root / part
+            self.root = _disk_child(self.root, part)
             if self.root.is_symlink():
                 raise ValueError("symlink in wiki root")
             self.root.mkdir(exist_ok=True, parents=True)
@@ -253,12 +270,33 @@ class WikiStore:
         with self._db() as db:
             db.executescript("""CREATE TABLE IF NOT EXISTS pages (path TEXT PRIMARY KEY, content BLOB NOT NULL, rev TEXT NOT NULL, readonly INTEGER NOT NULL, candidate TEXT, since REAL, mtime REAL);
                 CREATE TABLE IF NOT EXISTS pending (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);""")
+            # Keep an existing canonical baseline; legacy aliases must never
+            # become new human edits. This transaction is safe to repeat.
+            for (path,) in db.execute(
+                "SELECT path FROM pages ORDER BY path"
+            ).fetchall():
+                canonical = normalize_path(path)
+                if path != canonical:
+                    db.execute(
+                        "UPDATE OR IGNORE pages SET path=? WHERE path=?",
+                        (canonical, path),
+                    )
+                    db.execute("DELETE FROM pages WHERE path=?", (path,))
+            for rev, payload in db.execute(
+                "SELECT rev, payload FROM pending"
+            ).fetchall():
+                edit = json.loads(payload)
+                edit["path"] = normalize_path(edit["path"])
+                db.execute(
+                    "UPDATE pending SET payload=? WHERE rev=?",
+                    (json.dumps(edit, ensure_ascii=False), rev),
+                )
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
 
     def _path(self, path: str) -> Path:
-        relative = Path(path)
+        relative = Path(normalize_path(path))
         if (
             relative.is_absolute()
             or not relative.parts
@@ -274,7 +312,7 @@ class WikiStore:
         if current.is_symlink():
             raise ValueError("symlink root")
         for part in relative.parts:
-            current = current / part
+            current = _disk_child(current, part)
             if current.is_symlink():
                 raise ValueError("symlink in path")
         return current
@@ -303,6 +341,7 @@ class WikiStore:
         ).stdout.strip()
 
     def _commit(self, path: str, data: bytes, author: str, message: str) -> str:
+        path = normalize_path(path)
         # Commit the bytes that were verified, never a later version read by git.
         env = os.environ.copy()
         env.update(
@@ -372,6 +411,7 @@ class WikiStore:
 
     def is_tracked_version(self, path: str, digest: str) -> bool:
         """Whether the hash matches the latest recorded version of this page."""
+        path = normalize_path(path)
         self._path(path)
         with self._db() as db:
             row = db.execute(
@@ -384,6 +424,7 @@ class WikiStore:
 
         This is advisory: write checks again because the file may change meanwhile.
         """
+        path = normalize_path(path)
         target = self._path(path)
         current = target.read_bytes() if target.exists() else None
         if (None if current is None else _hash(current)) != base_hash:
@@ -407,6 +448,7 @@ class WikiStore:
         readonly: bool = False,
     ) -> str:
         """Write and commit a page if its hash and quiet period permit it."""
+        path = normalize_path(path)
         self.check_write(path, base_hash)
         data = _render(frontmatter, body)
         self._replace(path, data, base_hash)
@@ -450,7 +492,9 @@ class WikiStore:
                     if not name.startswith(".") and not (base / name).is_symlink()
                 ]
                 for name in files:
-                    path = (base / name).relative_to(self.root).as_posix()
+                    path = normalize_path(
+                        (base / name).relative_to(self.root).as_posix()
+                    )
                     if path in known:
                         continue
                     try:
@@ -460,6 +504,7 @@ class WikiStore:
                                 "INSERT INTO pages VALUES (?, ?, ?, 0, NULL, NULL, NULL)",
                                 (path, b"", self._git("rev-parse", "HEAD")),
                             )
+                            known.add(path)
                     except ValueError:
                         continue
             rows = db.execute(
@@ -492,9 +537,29 @@ class WikiStore:
                         and now - since >= self.settle_seconds
                         and now - stat.st_mtime >= self.settle_seconds
                     ):
-                        before, after = _properties(baseline), _properties(data)
                         if _hash(target.read_bytes()) != digest:
                             continue
+                        head = self._git("rev-parse", "HEAD")
+                        entry = self._git("ls-tree", "-z", head, "--", path)
+                        if entry:
+                            blob = entry.split("\t", 1)[0].split()[2]
+                            committed = subprocess.check_output(
+                                [
+                                    "git",
+                                    "--git-dir",
+                                    str(self.git_dir),
+                                    "cat-file",
+                                    "blob",
+                                    blob,
+                                ]
+                            )
+                            if committed == data:
+                                db.execute(
+                                    "UPDATE pages SET content=?, rev=?, candidate=NULL, since=NULL, mtime=? WHERE path=?",
+                                    (data, head, stat.st_mtime, path),
+                                )
+                                continue
+                        before, after = _properties(baseline), _properties(data)
                         new_rev = self._commit(
                             path, data, "human", f"human edit: {path}"
                         )

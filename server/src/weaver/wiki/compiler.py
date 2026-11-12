@@ -19,7 +19,7 @@ from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.schema import TagCorrection, ThreadDraft
 from weaver.wiki.generation import GenerationCache, fingerprint
-from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore
+from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore, normalize_path
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ class Compiler:
                         )
                     )
 
-                tag = Path(edit.path).stem
+                tag = normalize_path(Path(edit.path).stem)
                 for change in result.changes:
                     make(change.content, change.tags, correction=change.correction)
                 for field in ("deadline", "schedule", "assignees", "status"):
@@ -198,7 +198,7 @@ class Compiler:
                 e for e in self.context.candidates(tag, limit=100) if e.name == tag
             ]
             entry = entries[0] if entries else ContextEntry(tag, "topic")
-            path = f"pages/{tag}.md"
+            path = normalize_path(f"pages/{tag}.md")
             try:
                 props, body, base = self.store.read(path)
                 if not self.store.is_tracked_version(path, base):
@@ -236,7 +236,9 @@ class Compiler:
                     continue
                 summary = self.summary(t.source_id)
                 safe_title = summary.title.replace("/", "-").replace("\\", "-")
-                summary_path = f"summaries/{safe_title} {t.source_id}.md"
+                summary_path = normalize_path(
+                    f"summaries/{safe_title} {t.source_id}.md"
+                )
                 try:
                     self.store.read(summary_path)
                 except FileNotFoundError:
@@ -287,7 +289,7 @@ class Compiler:
                 if kind in ("person", "organization", "project", "topic"):
                     pages.append(
                         Page(
-                            page_path.stem,
+                            normalize_path(page_path.stem),
                             cast(Kind, kind),
                             tuple(x for x in aliases if isinstance(x, str))
                             if isinstance(aliases, list)

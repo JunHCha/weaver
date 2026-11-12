@@ -108,3 +108,18 @@ def test_calendar_timezone_and_invalid_values(tmp_path):
     page = render_pages(fabric, context, now=now)["다가오는 마감.md"]
     assert "2026-11-16 가" in page.split("## 다음 주")[1]
     assert "나" not in page
+
+
+def test_source_links_are_normalized(tmp_path):
+    import unicodedata
+
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    add(fabric, 1, kind="요청", direction="받음")
+    pages = render_pages(
+        fabric,
+        context,
+        now=datetime(2026, 11, 10, 12, tzinfo=UTC),
+        source_link=lambda _: unicodedata.normalize("NFD", "summaries/한글"),
+    )
+    assert "[[summaries/한글]]" in pages["열린 요청.md"]
