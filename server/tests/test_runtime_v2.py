@@ -327,17 +327,15 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                             }
                         ],
                         "excluded_threads": [],
-                    }
-                )
-            if task == "wiki.digest":
-                return schema.model_validate(
-                    {
-                        "sentences": [
+                        "digests": [
                             {
-                                "text": "요약",
-                                "evidence": [json.loads(user)["evidence"][0]],
+                                "path": target["path"],
+                                "sentences": [
+                                    {"text": "요약", "evidence": target["evidence"]}
+                                ],
                             }
-                        ]
+                            for target in payload["digest_targets"]
+                        ],
                     }
                 )
             if task == "wiki.human_edit":

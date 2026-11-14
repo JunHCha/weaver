@@ -15,7 +15,6 @@ from weaver.fabric import FabricStore
 from weaver.runtime.wiki import WikiJob
 from weaver.schema import ThreadDraft
 from weaver.wiki.compiler import Compiler, EditResult, Summary
-from weaver.wiki.digest import DigestBuilder
 from weaver.wiki.store import HumanEditPending, WikiStore
 
 
@@ -65,8 +64,8 @@ def thread(key, tags=None):
     )
 
 
-@pytest.fixture(params=["digest", "compiler"])
-def consumer(tmp_path, request):
+@pytest.fixture
+def consumer(tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     clock = [2_000_000_000.0]
@@ -79,30 +78,19 @@ def consumer(tmp_path, request):
     state = tmp_path / "consumer.db"
 
     def make():
-        if request.param == "digest":
-            return DigestBuilder(
-                fabric, store, llm, state, ZoneInfo("UTC"), lambda s: s
-            )
         return Compiler(
             store, fabric, context, llm, state, lambda _: Summary("source", "summary")
         )
 
     def run(instance):
-        if request.param == "digest":
-            instance.update()
-        else:
-            instance.run()
+        instance.run()
 
     def bookmark():
         with sqlite3.connect(state) as db:
             row = db.execute("SELECT seq FROM bookmark").fetchone()
         return row[0] if row else 0
 
-    path = (
-        "Digest/2025/01/2025-01-01.md"
-        if request.param == "digest"
-        else "pages/topic.md"
-    )
+    path = "pages/topic.md"
     return store, fabric, llm, clock, make, run, bookmark, path
 
 
@@ -128,12 +116,11 @@ def test_settle_blocks_generation_across_cycles_and_then_updates(consumer):
     assert store.read(path)[2] == original
     clock[0] += 1800
     run(make())
-    # Each digest level generates once; the compiler has one page.
-    assert len(llm.calls) == (3 if path.startswith("Digest") else 1)
+    assert len(llm.calls) == 1
     assert bookmark() == 2
     assert store.read(path)[2] != original
     run(make())
-    assert len(llm.calls) == (3 if path.startswith("Digest") else 1)
+    assert len(llm.calls) == 1
 
 
 def test_generation_race_reuses_durable_result_after_settle(consumer):
@@ -176,7 +163,7 @@ def test_changed_input_invalidates_race_cache(consumer):
     llm.hook = lambda: None
     clock[0] += 1800
     run(make())
-    assert len(llm.calls) == (4 if path.startswith("Digest") else 2)
+    assert len(llm.calls) == 2
     assert "third" in llm.calls[1][1]
     assert bookmark() == 3
 
@@ -220,7 +207,7 @@ def test_deferred_logging_is_private_and_only_on_state_change(tmp_path, caplog):
 def test_partial_failure_preserves_completed_pages_and_bookmark(consumer, monkeypatch):
     store, fabric, llm, clock, make, run, bookmark, path = consumer
     fabric.append([thread("first", ["a", "b"])])
-    blocked = "Digest/Weekly/2025-W01.md" if path.startswith("Digest") else "pages/b.md"
+    blocked = "pages/b.md"
     original_write = store.write
 
     def write(page, *args, **kwargs):
@@ -237,7 +224,7 @@ def test_partial_failure_preserves_completed_pages_and_bookmark(consumer, monkey
     assert len(llm.calls) == 2
     monkeypatch.setattr(store, "write", original_write)
     run(make())
-    assert len(llm.calls) == (3 if path.startswith("Digest") else 2)
+    assert len(llm.calls) == 2
     assert bookmark() == 1
 
 
@@ -292,6 +279,15 @@ def test_decomposed_summary_links_and_page_names_across_consumers(tmp_path):
                             }
                         ],
                         "excluded_threads": [],
+                        "digests": [
+                            {
+                                "path": target["path"],
+                                "sentences": [
+                                    {"text": "요약", "evidence": target["evidence"]}
+                                ],
+                            }
+                            for target in payload["digest_targets"]
+                        ],
                     }
                 )
             return super().generate_json(task, system, user, schema)

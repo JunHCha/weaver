@@ -15,6 +15,7 @@ from weaver.fabric.state import project
 from weaver.llm.errors import SchemaMismatch
 from weaver.schema import Thread
 from weaver.wiki.compiler import Compiler
+from weaver.wiki.digest import DigestBuilder, DigestEntry
 from weaver.wiki.generation import fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION, WORK_VAULT_RULES
@@ -52,6 +53,7 @@ class WikiBatch(BaseModel):
 
     pages: list[WikiPage] = Field(min_length=1, max_length=64)
     excluded_threads: list[ExcludedThread]
+    digests: list[DigestEntry] = Field(default_factory=list)
 
 
 _VALIDATION_REASONS = frozenset(
@@ -77,6 +79,8 @@ class WikiValidationError(ValueError):
 
 class BatchCompiler(Compiler):
     """One corpus-level LLM call; validate the whole batch before writing pages."""
+
+    digest: DigestBuilder | None = None
 
     def _existing_pages(self) -> dict[str, tuple[dict[str, JsonValue], str, str]]:
         pages = {}
@@ -156,6 +160,7 @@ class BatchCompiler(Compiler):
                 "assignees": sorted(state.assignees),
                 "open_requests": [t.thread_id for t in state.open_requests],
             }
+        digest_targets = self.digest.plan(threads, high) if self.digest else []
         corpus = {
             "rules_version": RULES_VERSION,
             "threads": [t.model_dump(mode="json") for t in active],
@@ -180,9 +185,18 @@ class BatchCompiler(Compiler):
                     (snapshot,),
                 )
             )
-        reusable = row is not None and all(
-            item[2] in (json.loads(row[1]).get(path), completed.get(path))
-            for path, item in existing.items()
+        bases = json.loads(row[1]) if row is not None else {}
+        cached_targets = bases.get("__digest_targets__", {})
+        reusable = (
+            row is not None
+            and all(
+                cached_targets.get(target.path) == target.payload()
+                for target in digest_targets
+            )
+            and all(
+                item[2] in (bases.get(path), completed.get(path))
+                for path, item in existing.items()
+            )
         )
         if reusable:
             assert row is not None
@@ -194,10 +208,11 @@ class BatchCompiler(Compiler):
             for path, (_, _, digest) in existing.items():
                 self.store.check_write(path, digest)
             payload = corpus | {
+                "digest_targets": [target.payload() for target in digest_targets],
                 "existing_pages": [
                     {"path": path, "body": body, "properties": props}
                     for path, (props, body, _) in existing.items()
-                ]
+                ],
             }
             try:
                 result = self.llm.generate_json(
@@ -236,7 +251,15 @@ class BatchCompiler(Compiler):
                         high,
                         snapshot,
                         result.model_dump_json(),
-                        json.dumps({p: item[2] for p, item in existing.items()}),
+                        json.dumps(
+                            {p: item[2] for p, item in existing.items()}
+                            | {
+                                "__digest_targets__": {
+                                    target.path: target.payload()
+                                    for target in digest_targets
+                                }
+                            }
+                        ),
                         datetime.now(UTC).isoformat(),
                     ),
                 )
@@ -293,6 +316,8 @@ class BatchCompiler(Compiler):
                     "INSERT OR REPLACE INTO compiled_pages VALUES (?, ?, ?)",
                     (path, snapshot, written),
                 )
+        if self.digest is not None:
+            self.digest.apply(digest_targets, result.digests, high)
         self._sync_pages()
         with sqlite3.connect(self.state_path) as db:
             db.execute("UPDATE bookmark SET seq=?", (high,))
