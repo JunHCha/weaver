@@ -35,9 +35,15 @@ class InvalidReference(FabricError):
 
 
 class ThreadQuery(BaseModel):
-    """Filters over occurrence time and the append sequence."""
+    """Filters over occurrence time and the append sequence.
+
+    ``실행`` Threads record what an Action did; they are not business facts, so
+    readers skip them unless they set ``include_executions`` or ask for that
+    kind. Wiki, Digest, queries and the pipeline map therefore never see them.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+    include_executions: bool = False
     after_seq: int = 0
     since: datetime | None = None
     until: datetime | None = None
@@ -162,6 +168,8 @@ class FabricStore:
                 ("blocked_by", item.blocked_by),
                 ("retracts", item.retracts),
                 ("correction", item.correction.target if item.correction else None),
+                ("executes", item.executes),
+                ("updates", item.updates),
             ]
             for field, target_id in refs:
                 if target_id is None:
@@ -184,6 +192,10 @@ class FabricStore:
                     target.kind == "거절" or target.retracts is not None
                 ):
                     raise InvalidReference("retracts: invalid target")
+                if field == "updates" and target.kind != "일정":
+                    raise InvalidReference("updates: target is not a schedule")
+                if field == "executes" and target.kind in ("실행", "태그정정", "거절"):
+                    raise InvalidReference("executes: target is not a business fact")
         remaining = {key: set(value) for key, value in edges.items()}
         while remaining:
             ready = {key for key, value in remaining.items() if not value}
@@ -221,6 +233,7 @@ class FabricStore:
             t
             for t in result
             if t.seq > query.after_seq
+            and (t.kind != "실행" or query.include_executions or query.kind == "실행")
             and (query.kind is None or t.kind == query.kind)
             and (query.since is None or t.occurred_at >= query.since)
             and (query.until is None or t.occurred_at < query.until)
@@ -246,7 +259,7 @@ class FabricStore:
             if tag in t.tags
             and t.thread_id not in retracted
             and t.retracts is None
-            and t.kind not in ("태그정정", "거절")
+            and t.kind not in ("태그정정", "거절", "실행")
             and (since is None or t.occurred_at >= since)
             and (until is None or t.occurred_at < until)
         ]

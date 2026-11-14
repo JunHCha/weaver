@@ -7,28 +7,35 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import io.github.junhcha.weaver.calendar.ActionPhase
+import io.github.junhcha.weaver.calendar.ActionState
 import io.github.junhcha.weaver.calendar.CalendarRuntime
 import io.github.junhcha.weaver.calendar.CalendarTarget
-import io.github.junhcha.weaver.schema.ApprovedSchedule
+import io.github.junhcha.weaver.courier.CourierRuntime
+import io.github.junhcha.weaver.schema.ActionKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Calendar changes approved on the PC run on their own. The user only chooses the target calendar once and
+ * watches the state here; until a calendar is chosen the actions wait.
+ */
 @Composable
-fun CalendarPanel(packageId: String) {
+fun CalendarPanel() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var schedules by remember(packageId) { mutableStateOf<List<ApprovedSchedule>>(emptyList()) }
+    var actions by remember { mutableStateOf<List<ActionState>>(emptyList()) }
     var targets by remember { mutableStateOf<List<CalendarTarget>>(emptyList()) }
     var selected by remember { mutableStateOf<CalendarTarget?>(null) }
     var message by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    LaunchedEffect(packageId) {
+    LaunchedEffect(Unit) {
         do {
-            runCatching { withContext(Dispatchers.IO) { CalendarRuntime.schedules(context, packageId) } }
-                .onSuccess { schedules = it }.onFailure { schedules = emptyList(); message = "일정을 읽을 수 없습니다" }
+            runCatching { withContext(Dispatchers.IO) { CalendarRuntime.actions(context) to CalendarRuntime.selected(context) } }
+                .onSuccess { (items, saved) -> actions = items; if (selected == null) selected = saved }
+                .onFailure { message = "일정 상태를 읽을 수 없습니다" }
             delay(5_000)
         } while (isActive)
     }
@@ -43,9 +50,10 @@ fun CalendarPanel(packageId: String) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (Feature.CALENDAR.isGranted(context)) load() else message = "캘린더 권한이 필요합니다"
     }
-    if (schedules.isNotEmpty()) Column {
-        Text("승인 일정 · 사용자 등록")
-        Text("선택한 계정의 설정에 따라 외부 서비스로 동기화될 수 있습니다. 참석자 초대는 보내지 않습니다.")
+    if (actions.isNotEmpty()) Column {
+        Text("승인 일정 · 자동 반영")
+        Text("승인된 일정의 등록, 수정, 철회는 선택한 캘린더에 자동으로 반영됩니다. " +
+            "선택한 계정의 설정에 따라 외부 서비스로 동기화될 수 있습니다. 참석자 초대는 보내지 않습니다.")
         OutlinedButton(onClick = {
             if (Feature.CALENDAR.isGranted(context)) load()
             else permission.launch(Feature.CALENDAR.permissions().toTypedArray())
@@ -54,32 +62,41 @@ fun CalendarPanel(packageId: String) {
             OutlinedButton(onClick = {
                 scope.launch {
                     runCatching { withContext(Dispatchers.IO) { CalendarRuntime.select(context, target) } }
-                        .onSuccess { selected = target }.onFailure { message = "캘린더 선택 실패" }
+                        .onSuccess { selected = target; CourierRuntime.kick(context) }.onFailure { message = "캘린더 선택 실패" }
                 }
             }) { Text("${target.name} · ${target.account} · ${target.type}") }
         }
         selected?.let { Text("선택됨: ${it.name} · ${it.account}") }
-        schedules.forEach { schedule ->
-            CalendarSchedule(schedule, !busy && selected != null) {
-                    val target = checkNotNull(selected)
-                    busy = true
-                    scope.launch {
-                        runCatching { withContext(Dispatchers.IO) { CalendarRuntime.register(context, packageId, schedule.threadId, target) } }
-                            .onSuccess { message = it }.onFailure { message = "등록 실패 · 다시 시도하세요" }
-                        busy = false
-                    }
-            }
-        }
+        actions.takeLast(MAX_LISTED).reversed().forEach { CalendarActionRow(it, selected != null) }
         if (message.isNotEmpty()) Text(message)
     }
 }
 
+private const val MAX_LISTED = 8
+
 @Composable
-internal fun CalendarSchedule(schedule: ApprovedSchedule, enabled: Boolean, onRegister: () -> Unit) {
-    Text("${schedule.title} · ${schedule.start} ~ ${schedule.end ?: "1시간"}")
-    when {
-        schedule.retracted -> Text("철회됨 · 캘린더에서 직접 등록 해제하세요")
-        schedule.blockedBy != null -> Text("요청 ${schedule.blockedBy} 미해소 · 등록 차단")
-        else -> OutlinedButton(enabled = enabled, onClick = onRegister) { Text("캘린더에 등록") }
+internal fun CalendarActionRow(state: ActionState, targetChosen: Boolean) {
+    Text("${actionLabel(state.kind)} · ${state.title}")
+    Text(actionStatus(state, targetChosen))
+}
+
+internal fun actionLabel(kind: ActionKind) = when (kind) {
+    ActionKind.REGISTER -> "등록"
+    ActionKind.UPDATE -> "수정"
+    ActionKind.REMOVE -> "철회"
+}
+
+internal fun actionStatus(state: ActionState, targetChosen: Boolean): String = when (state.phase) {
+    ActionPhase.DONE -> "완료"
+    ActionPhase.FAILED -> when (state.error) {
+        "manual_review" -> "포기 · 수동 확인 필요: 캘린더의 기존 일정을 확인하세요"
+        "event_missing" -> "포기 · 캘린더에서 일정을 찾을 수 없습니다"
+        else -> "포기 · ${state.attempts}회 시도했지만 실패했습니다"
+    }
+    ActionPhase.RETRY -> "재시도 대기 · ${state.attempts}회 실패"
+    ActionPhase.PENDING -> when {
+        !targetChosen || state.note == "target" -> "대기 중 · 대상 캘린더를 선택하세요"
+        state.note == "permission" -> "대기 중 · 캘린더 권한이 필요합니다"
+        else -> "대기 중"
     }
 }

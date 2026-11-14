@@ -20,7 +20,7 @@ class CourierClient(
      */
     data class Inbox(
         val receipts: List<Receipt>, val packages: List<ReviewPackage>, val alerts: List<Alert>,
-        val unreadable: Set<String> = emptySet(), val schedules: List<ApprovedSchedule> = emptyList(),
+        val unreadable: Set<String> = emptySet(), val actions: List<Action> = emptyList(),
         val pipeline: List<PipelineItem> = emptyList(),
     )
 
@@ -29,9 +29,9 @@ class CourierClient(
         val alerts = mutableListOf<Alert>()
         val packages = mutableListOf<ReviewPackage>()
         val unreadable = mutableSetOf<String>()
-        val schedules = mutableListOf<ApprovedSchedule>()
+        val actions = mutableListOf<Action>()
         val pipeline = mutableListOf<PipelineItem>()
-        (CourierRules.folders + listOf("proposals/schedules", "proposals/pipeline")).forEach { directory ->
+        (CourierRules.folders + listOf("proposals/pipeline") + CourierRules.actionFolders).forEach { directory ->
             folder.list(directory).forEach { entry ->
                 val name = entry.name
                 if (directory == "proposals" && name in listOf("schedules", "pipeline") && !entry.regular) return@forEach
@@ -47,7 +47,7 @@ class CourierClient(
                     return@forEach
                 }
                 // Only PC-owned JSON is consumed; outbox payloads are never interpreted as JSON.
-                if (directory !in listOf("receipts", "proposals", "proposals/schedules", "proposals/pipeline")) return@forEach
+                if (directory !in listOf("receipts", "proposals", "proposals/pipeline", CourierRules.ACTIONS)) return@forEach
                 val read = attempt(directory, name) {
                     check(entry.regular && CourierRules.safeName(name)) { "not_regular_file" }
                     val text = folder.read(directory, name).use(::boundedJson)
@@ -57,10 +57,10 @@ class CourierClient(
                             check(name == "${item.sourceId}.json") { "id_mismatch" }
                             pipeline.add(item)
                         }
-                        directory == "proposals/schedules" -> {
-                            val schedule = decoded<ApprovedSchedule>(text)
-                            check(name == "${schedule.threadId}.json") { "id_mismatch" }
-                            schedules.add(schedule)
+                        directory == CourierRules.ACTIONS -> {
+                            val action = decoded<Action>(text)
+                            check(name == "${action.actionId}.json") { "id_mismatch" }
+                            actions.add(action)
                         }
                         directory == "receipts" && CourierRules.capture.matches(name) -> {
                             val receipt = decoded<Receipt>(text)
@@ -84,7 +84,7 @@ class CourierClient(
             }
         }
         return Inbox(receipts, packages.groupBy { it.packageId }.values.map { it.maxBy { p -> p.revision } },
-            alerts, unreadable, schedules, pipeline)
+            alerts, unreadable, actions.sortedBy { it.seq }, pipeline)
     }
 
     /** Returns false if a publication failed, allowing WorkManager backoff. */
@@ -170,6 +170,18 @@ class CourierClient(
                 db.state(id, "DONE", now())
             }
         }
+    }
+
+    /** A result is published once; the PC removes it after recording the 실행 Thread. */
+    fun publishActionResult(result: ActionResult) {
+        val name = "${result.actionId}.json"
+        val bytes = WeaverCodec.encode(result).toByteArray()
+        check(bytes.size <= CourierRules.maxJson) { "too_large" }
+        if (folder.list(CourierRules.ACTION_RESULTS).any { it.name == name }) {
+            check(folder.read(CourierRules.ACTION_RESULTS, name).use {
+                readBounded(it).contentEquals(bytes)
+            }) { "existing_result_mismatch" }
+        } else folder.publish(CourierRules.ACTION_RESULTS, name) { it.write(bytes) }
     }
 
     fun publishVerdict(verdict: Verdict) {

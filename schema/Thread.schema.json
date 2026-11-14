@@ -124,6 +124,73 @@
       }
     },
     {
+      "else": {
+        "properties": {
+          "executes": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "실행"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "executes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "properties": {
+          "actor": {
+            "enum": [
+              "ai_approved",
+              "human"
+            ]
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "실행"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "const": "system"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "not": {
+              "const": "일정"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "updates": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
       "if": {
         "properties": {
           "kind": {
@@ -147,7 +214,8 @@
     "actor": {
       "enum": [
         "ai_approved",
-        "human"
+        "human",
+        "system"
       ],
       "title": "Actor",
       "type": "string"
@@ -198,6 +266,17 @@
       ],
       "title": "Direction"
     },
+    "executes": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "field": {
       "anyOf": [
         {
@@ -222,7 +301,8 @@
         "일정",
         "기록",
         "태그정정",
-        "거절"
+        "거절",
+        "실행"
       ],
       "title": "Kind",
       "type": "string"
@@ -270,6 +350,17 @@
     },
     "thread_id": {
       "$ref": "#/$defs/NonEmpty"
+    },
+    "updates": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "value": {
       "$ref": "#/$defs/JsonValue"

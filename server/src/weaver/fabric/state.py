@@ -39,7 +39,7 @@ def project(tag: str, threads: list[Thread]) -> TagState:
         for t in threads
         if t.thread_id not in retracted
         and t.retracts is None
-        and t.kind not in ("태그정정", "거절")
+        and t.kind not in ("태그정정", "거절", "실행")
     ]
     resolved = {t.resolves for t in active if t.resolves is not None}
     for t in active:

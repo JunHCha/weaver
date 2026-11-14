@@ -37,7 +37,7 @@ sealed interface DecodeResult<out T> {
 /**
  * Strict JSON for schema/: unknown keys are rejected, nulls are written explicitly and
  * every declared key must be present when decoding. Capture files carry `schema_version`
- * [SCHEMA_VERSION]; review, schedule and alert files carry [REVIEW_SCHEMA_VERSION].
+ * [SCHEMA_VERSION]; review, action and alert files carry [REVIEW_SCHEMA_VERSION].
  */
 object WeaverCodec {
     val json: Json = Json {
@@ -48,7 +48,7 @@ object WeaverCodec {
         allowSpecialFloatingPointValues = false
     }
 
-    private val REVIEW_MODELS = setOf("ApprovedSchedule", "ReviewPackage", "Verdict", "Alert", "PipelineItem")
+    private val REVIEW_MODELS = setOf("Action", "ActionResult", "ReviewPackage", "Verdict", "Alert", "PipelineItem")
 
     // A JSON integer token only: 1.0, 1e0 or "1" are not a schema_version.
     private val integerToken = Regex("-?(?:0|[1-9][0-9]*)")

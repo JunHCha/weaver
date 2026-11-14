@@ -13,12 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.context import ContextDictionary, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
+from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import (
     EventSummary,
     ReviewPackage,
     ScheduleValue,
+    Thread,
     ThreadDraft,
     ThreadSink,
     Verdict,
@@ -78,6 +80,7 @@ class _ExtractedThread[K, D, R, B, F, V](BaseModel):
     resolves: R
     retracts: NonEmpty | None
     blocked_by_index: B | None = None
+    updates: NonEmpty | None = None
 
 
 type _FieldThread[K, D, R, B] = (
@@ -293,6 +296,21 @@ class SummaryReview:
             )
         return self._prepare(package, script, verdict, timestamp, replaces)
 
+    def _schedules(self) -> tuple[set[str], list[Thread]]:
+        """Schedule Threads already in Fabric: every valid link target, and the
+        ones still standing (shown to the model). A sink that cannot be read
+        has none, so no link can be made.
+        """
+        entries = getattr(self.sink, "entries", None)
+        if not callable(entries):
+            return set(), []
+        threads: list[Thread] = entries(ThreadQuery())
+        retracted = {t.retracts for t in threads if t.retracts}
+        schedules = [t for t in threads if t.kind == "일정" and t.value is not None]
+        active = [t for t in schedules if t.thread_id not in retracted]
+        active.sort(key=lambda t: t.seq)
+        return {t.thread_id for t in schedules}, active[-50:]
+
     def _prepare(
         self,
         package: ReviewPackage,
@@ -302,6 +320,7 @@ class SummaryReview:
         replaces: str | None,
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
+        known, existing_active = self._schedules()
         response = self.llm.generate_json(
             "loom.approve",
             (
@@ -325,6 +344,10 @@ class SummaryReview:
                 " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
                 " 해당 시간대에 존재하지 않는 현지 시각을 만들지 않는다."
                 " blocked_by_index는 반드시 이 배열 범위 안의 요청을 가리킨다."
+                " existing_schedules는 이미 승인된 일정이다. 문서가 그중 하나의 변경"
+                "(시각 이동 등)이라고 명시한 일정에만 updates에 그 id를 쓴다."
+                " 제목이나 태그가 비슷하다는 이유로 연결하지 말고, 새 일정이거나"
+                " 불확실하면 null로 둔다. 일정이 아닌 Thread의 updates는 항상 null이다."
                 " 태그정정/거절 Thread는 추출하지 않는다. correction은 서버가 null로 둔다."
                 " corrections의 observed는 원문에 실제로 있는 표기이고 canonical은"
                 " 검토 답 하나와 정확히 일치해야 한다. edit에서는 corrections를 비운다."
@@ -332,6 +355,15 @@ class SummaryReview:
             json.dumps(
                 {
                     "timezone": self.timezone,
+                    "existing_schedules": [
+                        {
+                            "id": t.thread_id,
+                            "title": t.content,
+                            "value": t.value,
+                            "tags": t.tags,
+                        }
+                        for t in existing_active
+                    ],
                     "body": verdict.edited_body
                     if verdict.action == "edit"
                     else package.draft_body,
@@ -365,7 +397,14 @@ class SummaryReview:
         ]
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
-            data = thread.model_dump(exclude={"blocked_by_index"})
+            data = thread.model_dump(exclude={"blocked_by_index", "updates"})
+            updates = thread.updates
+            if updates is not None and (
+                thread.kind != "일정" or thread.value is None or updates not in known
+            ):
+                # An unfounded link is dropped; the schedule stays a new event.
+                logger.warning("dropped unfounded schedule update link")
+                updates = None
             if thread.field == "schedule" and thread.value is not None:
                 if not isinstance(thread.value, dict):
                     raise ValueError("schedule value must be an object")
@@ -414,6 +453,7 @@ class SummaryReview:
                     thread_id=ids[len(drafts)],
                     **data,
                     blocked_by=ids[index] if index is not None else None,
+                    updates=updates,
                     recorded_at=timestamp,
                     source_id=package.source_id,
                     actor="human" if verdict.action == "edit" else "ai_approved",

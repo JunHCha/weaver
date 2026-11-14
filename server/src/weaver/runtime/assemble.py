@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
+from weaver.action import ActionCourier, ActionJob, ActionOutbox
 from weaver.alert import ScheduleAlertDetector
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
@@ -25,7 +26,12 @@ from .ledger import RuntimeLedger
 from .loop import MaintenanceTask, Runtime
 from .pipeline import GatedLlm, llm_status
 from .progress import PipelineJournal, PipelinePublisher
-from .summary import ReviewAdapter, SchedulePublisher, SummaryLookup, SummaryProcessor
+from .summary import (
+    ObservationPublisher,
+    ReviewAdapter,
+    SummaryLookup,
+    SummaryProcessor,
+)
 from .wiki import WikiJob
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
@@ -133,6 +139,12 @@ def build_runtime(
             MaintenanceTask("wiki", config.wiki.interval_seconds, job.run)
         )
 
+    # Calendar commands: derived from Fabric, run by the phone, results come
+    # back as 실행 Threads. Not LLM-gated; it only reads and writes local files.
+    outbox = ActionOutbox(config.state_root / "action-outbox.sqlite3")
+    actions = ActionJob(fabric, outbox, ActionCourier(config.sync_root, outbox, fabric))
+    maintenance.append(MaintenanceTask("actions", interval, actions.run))
+
     return Runtime(
         state_root=config.state_root,
         scanner=courier,
@@ -142,8 +154,7 @@ def build_runtime(
         ledger=ledger,
         gate=gate,
         interval=interval,
-        publisher=SchedulePublisher(
-            config.sync_root,
+        publisher=ObservationPublisher(
             fabric,
             review.state,
             (ScheduleAlertDetector.from_config(config), courier),

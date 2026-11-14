@@ -28,6 +28,7 @@ def response():
                 "resolves": None,
                 "retracts": None,
                 "blocked_by_index": None,
+                "updates": None,
             }
         ],
     }

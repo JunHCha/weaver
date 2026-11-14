@@ -127,12 +127,12 @@ class DigestBuilder:
             for t in threads
             if t.thread_id not in retracted
             and not t.retracts
-            and t.kind not in ("태그정정", "거절")
+            and t.kind not in ("태그정정", "거절", "실행")
         ]
         days = {
             t.occurred_at.astimezone(self.timezone).date()
             for t in threads
-            if t.kind not in ("태그정정", "거절")
+            if t.kind not in ("태그정정", "거절", "실행")
         }
         days.update(
             day

@@ -1,0 +1,77 @@
+{
+    "/$defs/ActionId/maxLength": 36,
+    "/$defs/ActionId/minLength": 36,
+    "/$defs/ActionId/pattern": "^act_[0-9a-f]{32}$",
+    "/$defs/ActionId/type": "string",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/else": {
+        "properties": {
+            "error": {
+                "type": "string"
+            },
+            "external_id": {
+                "type": "null"
+            }
+        }
+    },
+    "/if": {
+        "properties": {
+            "outcome": {
+                "const": "completed"
+            }
+        }
+    },
+    "/properties/error/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/external_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/outcome/enum": [
+        "completed",
+        "failed"
+    ],
+    "/properties/outcome/type": "string",
+    "/properties/schema_version/const": 2,
+    "/properties/schema_version/type": "integer",
+    "/required": [
+        "schema_version",
+        "action_id",
+        "outcome",
+        "external_id",
+        "attempts",
+        "finished_at",
+        "error"
+    ],
+    "/then": {
+        "properties": {
+            "error": {
+                "type": "null"
+            },
+            "external_id": {
+                "type": "string"
+            }
+        }
+    },
+    "/type": "object"
+}

@@ -18,6 +18,8 @@ internal object SchemaRules {
     const val LINE_BREAK = "[\\r\\n]"
 
     const val ID_LENGTH = 30
+    const val ACTION_ID = "^act_[0-9a-f]{32}$"
+    const val ACTION_ID_LENGTH = 36
     const val REVISION_MIN = 1
     const val OFFSET_MIN = 0
     const val DATE_TIME_FORMAT = "date-time"
@@ -40,6 +42,7 @@ internal object Rules {
     private val payloadRef = Regex(SchemaRules.PAYLOAD_REF)
     private val nonEmpty = Regex(SchemaRules.NON_EMPTY)
     private val lineBreak = Regex(SchemaRules.LINE_BREAK)
+    private val actionId = Regex(SchemaRules.ACTION_ID)
     private val ids = mutableMapOf<String, Regex>()
 
     // ECMA-262 `$` (JSON Schema) only matches at the very end; java.util.regex `$` also
@@ -52,6 +55,10 @@ internal object Rules {
 
     fun prefixedId(prefix: String, value: String, field: String) {
         require(id(prefix).schemaMatches(value)) { "$field must be $prefix + uppercase ULID" }
+    }
+
+    fun actionId(value: String) {
+        require(actionId.schemaMatches(value)) { "action_id must be act_ + 32 lowercase hex characters" }
     }
 
     fun timestamp(value: String, field: String) {
@@ -95,5 +102,5 @@ internal object Rules {
 /** Wire version of capture files (Manifest, Receipt). */
 const val SCHEMA_VERSION: Int = 1
 
-/** Wire version of review, schedule and alert files. */
+/** Wire version of review, action and alert files. */
 const val REVIEW_SCHEMA_VERSION: Int = 2

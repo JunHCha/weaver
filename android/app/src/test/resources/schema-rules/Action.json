@@ -1,0 +1,83 @@
+{
+    "/$defs/ActionId/maxLength": 36,
+    "/$defs/ActionId/minLength": 36,
+    "/$defs/ActionId/pattern": "^act_[0-9a-f]{32}$",
+    "/$defs/ActionId/type": "string",
+    "/$defs/ActionKind/enum": [
+        "calendar.register",
+        "calendar.update",
+        "calendar.remove"
+    ],
+    "/$defs/ActionKind/type": "string",
+    "/$defs/CalendarPayload/additionalProperties": false,
+    "/$defs/CalendarPayload/properties/end/anyOf": [
+        {
+            "$ref": "#/$defs/Timestamp"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/CalendarPayload/required": [
+        "start",
+        "end",
+        "timezone",
+        "title"
+    ],
+    "/$defs/CalendarPayload/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/else": {
+        "properties": {
+            "external_id": {
+                "type": "string"
+            }
+        }
+    },
+    "/if": {
+        "properties": {
+            "kind": {
+                "const": "calendar.register"
+            }
+        }
+    },
+    "/properties/external_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/schema_version/const": 2,
+    "/properties/schema_version/type": "integer",
+    "/properties/seq/minimum": 1,
+    "/properties/seq/type": "integer",
+    "/required": [
+        "schema_version",
+        "action_id",
+        "kind",
+        "thread_id",
+        "seq",
+        "input_version",
+        "payload",
+        "external_id"
+    ],
+    "/then": {
+        "properties": {
+            "external_id": {
+                "type": "null"
+            }
+        }
+    },
+    "/type": "object"
+}

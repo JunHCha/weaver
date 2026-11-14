@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 
 from weaver.runtime.progress import PipelineJournal
-from weaver.schema import PipelineItem, Source
+from weaver.schema import PipelineItem, Source, ThreadDraft
 
 
 def source():
@@ -139,7 +139,7 @@ def runtime_capture(tmp_path, failure_limit=5):
     return runtime, config, llm
 
 
-def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path):
+def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path, caplog):
     import hashlib
     import json
     import threading
@@ -201,6 +201,43 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path):
     assert all("content" not in thread for thread in capture_wire["threads"])
     assert observed.threads[0].kind == "기록"
     assert "반영" in observed.stage_times
+    # An Action result is recorded in Fabric but never listed as a produced fact.
+    from weaver.fabric import FabricStore
+
+    fabric = FabricStore.from_config(config)
+    fact = observed.threads[0].thread_id
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="exe_" + "a" * 32,
+                kind="실행",
+                content="calendar.register completed",
+                occurred_at=datetime(2026, 1, 2, tzinfo=UTC),
+                recorded_at=datetime(2026, 1, 2, tzinfo=UTC),
+                tags=[],
+                field=None,
+                value={
+                    "action_id": "act_" + "a" * 32,
+                    "action": "calendar.register",
+                    "outcome": "completed",
+                    "external_id": "content://calendar/events/7",
+                    "error": None,
+                },
+                source_id=package.source_id,
+                actor="system",
+                direction=None,
+                resolves=None,
+                retracts=None,
+                correction=None,
+                executes=fact,
+            )
+        ]
+    )
+    with caplog.at_level("WARNING"):
+        restarted.publisher.progress.publish()
+    assert "observation unavailable" not in caplog.text
+    after = PipelineItem.model_validate_json(path.read_bytes())
+    assert [t.kind for t in after.threads] == ["기록"]
     store = WikiStore(config.vault_root, config.state_root, settle_seconds=0)
     restarted.publisher.progress.wiki = store
     restarted.publisher.progress.vault = config.vault_root

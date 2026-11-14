@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "action_id": "act_0123456789abcdef0123456789abcdef",
+  "outcome": "failed",
+  "external_id": null,
+  "attempts": 5,
+  "finished_at": "2026-11-07T18:00:00+09:00",
+  "error": "provider_error"
+}

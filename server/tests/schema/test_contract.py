@@ -8,7 +8,8 @@ from pydantic import ValidationError
 
 from weaver.schema import (
     SHARED_MODELS,
-    ApprovedSchedule,
+    Action,
+    ActionResult,
     EventSummary,
     Question,
     ReviewPackage,
@@ -63,16 +64,7 @@ def test_unknown_keys_are_rejected(model):
 @pytest.mark.parametrize("model", SHARED_MODELS, ids=lambda m: m.__name__)
 def test_all_top_level_keys_are_required_even_if_nullable(model):
     payload = example(model.__name__)
-    defaults = (
-        {"blocked_by", "revision", "retracted"}
-        if model
-        in (
-            ApprovedSchedule,
-            Thread,
-            ThreadDraft,
-        )
-        else set()
-    )
+    defaults = {"blocked_by", "executes"} if model in (Thread, ThreadDraft) else set()
     if model.__name__ == "PipelineItem":
         defaults.add("wiki_edit")
     for key in payload:
@@ -105,7 +97,10 @@ def test_all_top_level_keys_are_required_even_if_nullable(model):
         ("ReviewPackage", "revision", True),
         ("Thread", "kind", "자동실행"),
         ("EventSummary", "summary_id", "wrong"),
-        ("ApprovedSchedule", "summary_id", "bad"),
+        ("Action", "action_id", "act_zz"),
+        ("Action", "kind", "calendar.destroy"),
+        ("ActionResult", "attempts", 0),
+        ("ActionResult", "finished_at", "2026-11-07T12:00:00"),
     ],
 )
 def test_invalid_values(model_name, field, bad):
@@ -283,15 +278,56 @@ def test_schedule_value_and_block_reference(draft):
         ThreadDraft.model_validate(draft | {"blocked_by": "request-1"})
 
 
-def test_approved_schedule_contract():
-    data = example("ApprovedSchedule")
+def test_action_contract():
+    data = example("Action")
     for invalid in (
-        {"end": "2025-01-01T00:00:00Z"},
-        {"title": " "},
-        {"timezone": "x/y"},
+        {"external_id": "content://x/1"},  # a register has no target yet
+        {"seq": 0},
+        {"payload": data["payload"] | {"end": "2025-01-01T00:00:00Z"}},
+        {"payload": data["payload"] | {"title": " "}},
+        {"payload": data["payload"] | {"timezone": "x/y"}},
     ):
         with pytest.raises(ValidationError):
-            ApprovedSchedule.model_validate(data | invalid)
+            Action.model_validate(data | invalid)
+    update = example("Action-update")
+    assert Action.model_validate(update).external_id
+    with pytest.raises(ValidationError):
+        Action.model_validate(update | {"external_id": None})
+
+
+def test_action_result_contract():
+    done = example("ActionResult")
+    failed = example("ActionResult-failed")
+    assert ActionResult.model_validate(done).outcome == "completed"
+    assert ActionResult.model_validate(failed).error == "provider_error"
+    for invalid in (
+        done | {"external_id": None},
+        done | {"error": "provider_error"},
+        failed | {"external_id": "content://x/1"},
+        failed | {"error": None},
+    ):
+        with pytest.raises(ValidationError):
+            ActionResult.model_validate(invalid)
+
+
+def test_execution_thread_contract():
+    data = example("Thread-execution")
+    assert Thread.model_validate(data).actor == "system"
+    for invalid in (
+        {"executes": None},
+        {"actor": "human"},
+        {"tags": ["홍길동"]},
+        {"field": "status"},
+        {"value": None},
+        {"value": data["value"] | {"outcome": "failed"}},
+        {"retracts": "thr_x"},
+    ):
+        with pytest.raises(ValidationError):
+            Thread.model_validate(data | invalid)
+    fact = example("Thread")
+    for invalid in ({"actor": "system"}, {"executes": "thr_0123456789abcdef"}):
+        with pytest.raises(ValidationError):
+            Thread.model_validate(fact | invalid)
 
 
 def test_capture_host_contract():

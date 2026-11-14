@@ -129,7 +129,8 @@ class SchemaContractTest {
             Triple("ReviewPackage", "\"revision\": 1", "\"revision\": 1.0"),
             Triple("Verdict", "\"revision\": 1", "\"revision\": 1e0"),
             Triple("Verdict", "\"revision\": 1", "\"revision\": 1E+0"),
-            Triple("ApprovedSchedule", "\"revision\": 1", "\"revision\": 1.0"),
+            Triple("Action", "\"seq\": 4", "\"seq\": 4.0"),
+            Triple("ActionResult", "\"attempts\": 5", "\"attempts\": 5e0"),
             Triple("Manifest", "\"size\": 45", "\"size\": 45.0"),
             Triple("Manifest", "\"size\": 45", "\"size\": 4.5e1"),
         ).forEach { (model, from, to) -> assertKotlinInvalid(model, from, to) }

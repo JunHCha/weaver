@@ -1,0 +1,25 @@
+{
+  "thread_id": "exe_0123456789abcdef0123456789abcdef",
+  "kind": "실행",
+  "content": "calendar.register completed",
+  "occurred_at": "2026-11-07T15:45:00+09:00",
+  "recorded_at": "2026-11-07T15:45:00+09:00",
+  "tags": [],
+  "field": null,
+  "value": {
+    "action_id": "act_0123456789abcdef0123456789abcdef",
+    "action": "calendar.register",
+    "outcome": "completed",
+    "external_id": "content://com.android.calendar/events/42",
+    "error": null
+  },
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "actor": "system",
+  "direction": null,
+  "resolves": null,
+  "retracts": null,
+  "correction": null,
+  "blocked_by": null,
+  "executes": "thr_0123456789abcdef",
+  "seq": 2
+}

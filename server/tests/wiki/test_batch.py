@@ -395,3 +395,41 @@ def test_batch_cache_survives_failure_after_digest_writes(tmp_path, monkeypatch)
     job.run()
     assert len(llm.calls) == 1
     assert job.compiler.bookmark() == 2
+
+
+def execution(key, executes, at):
+    """A 실행 Thread: the result of an Action, not a business fact."""
+    return ThreadDraft(
+        thread_id=key,
+        kind="실행",
+        content="calendar.register completed",
+        occurred_at=at,
+        recorded_at=at,
+        tags=[],
+        field=None,
+        value={
+            "action_id": "act_" + "a" * 32,
+            "action": "calendar.register",
+            "outcome": "completed",
+            "external_id": "content://calendar/events/7",
+            "error": None,
+        },
+        source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        actor="system",
+        direction=None,
+        resolves=None,
+        retracts=None,
+        correction=None,
+        executes=executes,
+    )
+
+
+def test_executions_are_not_knowledge_and_trigger_no_new_batch(tmp_path):
+    _, fabric, llm, compiler = setup(tmp_path)
+    compiler.run()
+    assert len(llm.calls) == 1 and compiler.bookmark() == 2
+    fabric.append([execution("exe_1", "one", datetime(2026, 11, 2, tzinfo=UTC))])
+    compiler.run()
+    assert len(llm.calls) == 1
+    assert compiler.bookmark() == 2
+    assert all("exe_1" not in json.dumps(call[1]) for call in llm.calls)

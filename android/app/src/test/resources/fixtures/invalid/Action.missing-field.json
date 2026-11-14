@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "action_id": "act_0123456789abcdef0123456789abcdef",
+  "kind": "calendar.register",
+  "thread_id": "thr_0123456789abcdef",
+  "seq": 1,
+  "input_version": 1,
+  "external_id": null
+}

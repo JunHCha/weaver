@@ -10,9 +10,19 @@ import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import androidx.test.core.app.ApplicationProvider
-import io.github.junhcha.weaver.schema.ApprovedSchedule
+import io.github.junhcha.weaver.courier.CourierClient
+import io.github.junhcha.weaver.courier.CourierDatabase
+import io.github.junhcha.weaver.courier.CourierRuntime
+import io.github.junhcha.weaver.courier.MemoryFolder
+import io.github.junhcha.weaver.schema.Action
+import io.github.junhcha.weaver.schema.ActionKind
+import io.github.junhcha.weaver.schema.ActionResult
+import io.github.junhcha.weaver.schema.CalendarPayload
+import io.github.junhcha.weaver.schema.DecodeResult
+import io.github.junhcha.weaver.schema.WeaverCodec
 import io.github.junhcha.weaver.storage.AppStorage
 import org.junit.Assert.*
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,9 +40,12 @@ import java.util.concurrent.TimeUnit
 class CalendarRuntimeTest {
     private lateinit var context: Context
     private lateinit var provider: RecordingProvider
-    private val schedule = ApprovedSchedule(2, "package-1", "thread-1", "회의", "2026-11-08T00:00:00+09:00", null,
-        "Asia/Seoul", null, "a".repeat(64))
     private val target = CalendarTarget(71, "Synthetic calendar", "synthetic@example.invalid", "LOCAL")
+    private val actionId = "act_" + "1".repeat(32)
+    private val register = Action(2, actionId, ActionKind.REGISTER, "thread-1", 1, 1,
+        CalendarPayload("2026-11-08T00:00:00+09:00", null, "Asia/Seoul", "회의"), null)
+    private lateinit var folder: MemoryFolder
+    private lateinit var database: CourierDatabase
 
     class RecordingProvider : ContentProvider() {
         val inserts = mutableListOf<ContentValues>()
@@ -63,32 +76,51 @@ class CalendarRuntimeTest {
             inserts += ContentValues(values)
             return ContentUris.withAppendedId(Events.CONTENT_URI, inserts.size.toLong())
         }
-        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = error("unexpected update")
-        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = error("unexpected delete")
+        val updates = mutableListOf<Pair<Uri, ContentValues>>()
+        val deletes = mutableListOf<Uri>()
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int {
+            check(Looper.myLooper() != Looper.getMainLooper()) { "provider update ran on UI thread" }
+            if (denied) throw SecurityException("synthetic denied")
+            updates += uri to ContentValues(values); return 1
+        }
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+            if (denied) throw SecurityException("synthetic denied")
+            deletes += uri; return 1
+        }
         override fun getType(uri: Uri): String? = null
     }
 
     @Before fun prepare() {
         context = ApplicationProvider.getApplicationContext()
         File(AppStorage.exchangeDir(context), "calendar").deleteRecursively()
-                provider = RecordingProvider()
+        provider = RecordingProvider()
         provider.attachInfo(context, ProviderInfo().apply { authority = CalendarContract.AUTHORITY })
         ShadowContentResolver.registerProviderInternal(CalendarContract.AUTHORITY, provider)
+        folder = MemoryFolder()
+        database = CourierDatabase(context)
         CalendarRuntime.select(context, target)
     }
-    private fun register() = CalendarRuntime.register(context, schedule.packageId, schedule.threadId, target) { listOf(schedule) }
+    @After fun close() { database.close() }
+
+    /** The Courier worker holds this lock around every pass. */
+    private fun execute(vararg actions: Action): Boolean = synchronized(CourierRuntime.lock) {
+        CalendarRuntime.execute(context, actions.toList(), CourierClient(folder, database), database)
+    }
+    private fun reported(id: String = actionId) =
+        (WeaverCodec.decode<ActionResult>(folder.files.getValue("action-results/$id.json").decodeToString()) as DecodeResult.Ok).value
     private fun <T> background(block: () -> T): T {
         val executor = Executors.newSingleThreadExecutor()
         try { return executor.submit(Callable { block() }).get(10, TimeUnit.SECONDS) }
         catch (failure: java.util.concurrent.ExecutionException) { throw failure.cause!! }
         finally { executor.shutdownNow() }
     }
+    private fun journal() = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
 
-    @Test fun concurrentTapsInsertOnceWithContractFieldsAndDurableMapping() {
+    @Test fun concurrentPassesInsertOnceWithContractFieldsAndReportTheResult() {
         val executor = Executors.newFixedThreadPool(4)
         try {
-            val futures = (1..8).map { executor.submit(Callable { register() }) }
-            futures.forEach { assertTrue(it.get(10, TimeUnit.SECONDS).contains("등록됨")) }
+            val futures = (1..8).map { executor.submit(Callable { execute(register) }) }
+            futures.forEach { assertTrue(it.get(10, TimeUnit.SECONDS)) }
         } finally { executor.shutdownNow() }
         assertEquals(1, provider.inserts.size)
         val values = provider.inserts.single()
@@ -99,35 +131,84 @@ class CalendarRuntimeTest {
         assertFalse(values.containsKey(Events.RRULE))
         assertFalse(values.containsKey(Events.ORGANIZER))
         assertTrue(values.getAsString(Events.DESCRIPTION).startsWith("Weaver registration "))
-        val journal = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
-        assertEquals("thread-1", journal.mappings().single().threadId)
-        assertNotNull(journal.mappings().single().uri)
+        assertEquals(actionId, journal().mappings().single().threadId)
+        assertNotNull(journal().mappings().single().uri)
+        val result = reported()
+        assertEquals(ActionResult.Outcome.COMPLETED, result.outcome)
+        assertEquals(journal().mappings().single().uri, result.externalId)
+        assertEquals(listOf("$actionId.json"), folder.published)
     }
 
-    @Test fun unreadableScheduleBlocksRegistration() {
-        val message = CalendarRuntime.register(context, "package-1", "missing", target) { listOf(schedule) }
-        assertEquals("일정을 다시 읽을 수 없습니다 · 등록 차단", message)
+    @Test fun updateAndRemoveReachTheCalendarProviderOffTheUiThread() {
+        assertTrue(background { execute(register) })
+        val event = checkNotNull(reported().externalId)
+        val moved = register.copy(actionId = "act_" + "2".repeat(32), kind = ActionKind.UPDATE, seq = 2, externalId = event,
+            payload = register.payload.copy(start = "2026-11-09T00:00:00+09:00"))
+        assertTrue(background { execute(moved) })
+        val (uri, values) = provider.updates.single()
+        assertEquals(event, uri.toString())
+        assertEquals(CalendarEvent.from(moved.payload).start, values.getAsLong(Events.DTSTART))
+        val gone = register.copy(actionId = "act_" + "3".repeat(32), kind = ActionKind.REMOVE, seq = 3, externalId = event)
+        assertTrue(background { execute(gone) })
+        assertEquals(event, provider.deletes.single().toString())
+        assertEquals(ActionResult.Outcome.COMPLETED, reported(gone.actionId).outcome)
+        assertTrue(journal().mappings().single().removed)
+    }
+
+    @Test fun onlyCalendarEventRowsCanBeChangedWhateverTheActionNames() {
+        val outsider = register.copy(kind = ActionKind.REMOVE, externalId = "content://contacts/people/1")
+        assertTrue(background { execute(outsider) })
+        assertTrue(provider.deletes.isEmpty())
+        assertEquals(ActionPhase.RETRY, journal().action(outsider.actionId)?.phase)
+        assertFalse(folder.files.containsKey("action-results/${outsider.actionId}.json"))
+    }
+
+    @Test fun withoutASelectedCalendarTheActionWaitsAndNothingIsReported() {
+        File(AppStorage.exchangeDir(context), "calendar").deleteRecursively()
+        assertTrue(background { execute(register) })
         assertTrue(provider.inserts.isEmpty())
+        assertTrue(folder.published.isEmpty())
+        assertEquals("target", journal().action(actionId)?.note)
+        assertEquals(listOf(actionId), CalendarRuntime.actions(context).map { it.actionId })
+        CalendarRuntime.select(context, target)
+        assertTrue(background { execute(register) })
+        assertEquals(1, provider.inserts.size)
+        assertEquals(ActionResult.Outcome.COMPLETED, reported().outcome)
     }
 
-    @Test fun revokedPermissionKeepsStateAndSupportsManualRetry() {
+    @Test fun revokedPermissionKeepsStateAndRunsOnceGranted() {
         provider.denied = true
-        assertTrue(background { register() }.contains("등록 실패"))
+        assertTrue(background { execute(register) })
         assertTrue(provider.inserts.isEmpty())
+        assertTrue(folder.published.isEmpty())
+        assertEquals("permission", journal().action(actionId)?.note)
         provider.denied = false
-        assertTrue(background { register() }.contains("등록됨"))
+        assertTrue(background { execute(register) })
         assertEquals(1, provider.inserts.size)
     }
 
+    @Test fun anUnpublishableResultIsRetriedWithoutRunningTheActionAgain() {
+        folder.failName = "$actionId.json"
+        assertFalse(background { execute(register) })
+        assertEquals(1, provider.inserts.size)
+        folder.failName = null
+        assertTrue(background { execute(register) })
+        assertEquals(1, provider.inserts.size)
+        assertEquals(ActionResult.Outcome.COMPLETED, reported().outcome)
+    }
+
     @Test fun copiedMarkerWithDifferentCalendarAndTimeNeverAutomaticallyInserts() {
-        background { register() }
-        val journal = CalendarJournal(File(AppStorage.exchangeDir(context), "calendar/registrations.json"))
+        background { execute(register) }
+        val journal = journal()
         val pending = journal.mappings().single().copy(uri = null, rowId = null)
         journal.put(pending)
+        journal.put(ActionState(actionId, ActionKind.REGISTER, "회의"))
+        folder.files.remove("action-results/$actionId.json")
         val copied = provider.inserts.single()
         copied.put(Events.CALENDAR_ID, 999L)
         copied.put(Events.DTSTART, copied.getAsLong(Events.DTSTART) + 60_000)
-        assertTrue(background { register() }.contains("수동 확인"))
+        assertTrue(background { execute(register) })
+        assertEquals("manual_review", reported().error)
         assertNull(journal.mappings().single().uri)
         assertEquals(1, provider.inserts.size) // Only the original fixture, no new writes.
     }

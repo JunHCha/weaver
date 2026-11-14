@@ -164,6 +164,7 @@ class WikiEditPublisher:
                             thread_id=t.thread_id, kind=t.kind, content=t.content or ""
                         )
                         for t in recorded
+                        if t.kind != "실행"
                     ],
                     stage_times=current.stage_times | {"반영": now},
                     wiki_edit=metadata.model_copy(

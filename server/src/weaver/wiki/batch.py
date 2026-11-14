@@ -120,7 +120,7 @@ class BatchCompiler(Compiler):
             for t in threads
             if t.thread_id not in retracted
             and not t.retracts
-            and t.kind not in ("태그정정", "거절")
+            and t.kind not in ("태그정정", "거절", "실행")
         ]
         if not active:
             # There is no new knowledge to publish, but existing pages may now

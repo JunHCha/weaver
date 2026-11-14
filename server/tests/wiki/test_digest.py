@@ -181,3 +181,42 @@ def test_request_with_deadline_appears_once_without_source_link(tmp_path):
     body = wiki.read("Digest/2025/01/2025-01-01.md")[1]
     assert body.split("## 요약")[0].count("request") == 1
     assert "[[" not in body
+
+
+def execution(key, executes, at):
+    """A 실행 Thread: the result of an Action, not a business fact."""
+    return ThreadDraft(
+        thread_id=key,
+        kind="실행",
+        content="calendar.register completed",
+        occurred_at=at,
+        recorded_at=at,
+        tags=[],
+        field=None,
+        value={
+            "action_id": "act_" + "a" * 32,
+            "action": "calendar.register",
+            "outcome": "completed",
+            "external_id": "content://calendar/events/7",
+            "error": None,
+        },
+        source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        actor="system",
+        direction=None,
+        resolves=None,
+        retracts=None,
+        correction=None,
+        executes=executes,
+    )
+
+
+def test_digest_never_plans_a_day_for_an_execution(tmp_path):
+    fabric, _, builder, _ = setup(tmp_path)
+    fabric.append([draft("first", datetime(2025, 1, 10, tzinfo=UTC))])
+    targets = plan(fabric, builder)
+    builder.apply(targets, entries(targets), 1)
+    fabric.append([execution("exe_1", "first", datetime(2025, 3, 5, tzinfo=UTC))])
+    assert plan(fabric, builder) == []
+    # Even handed the raw rows, the builder does not count an execution as a fact.
+    raw = canonical_threads(fabric.entries(ThreadQuery(include_executions=True)))
+    assert builder.plan(raw, max(t.seq for t in raw)) == []

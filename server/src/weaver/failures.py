@@ -8,7 +8,7 @@ from pydantic import ValidationError
 # validators, dict keys, extra fields). Only static vocabulary reaches logs.
 _FIELDS = frozenset(
     "body corrections threads observed canonical kind content occurred_at tags "
-    "field value direction resolves retracts blocked_by_index start end timezone "
+    "field value direction resolves retracts blocked_by_index updates start end timezone "
     "add remove thread_id recorded_at source_id actor correction blocked_by".split()
 )
 _MESSAGES = {

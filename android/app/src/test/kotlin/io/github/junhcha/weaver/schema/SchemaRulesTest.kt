@@ -41,6 +41,11 @@ class SchemaRulesTest {
         "CaptureId" to id("cap"),
         "SourceId" to id("src"),
         "AlertId" to id("alt"),
+        "ActionId" to ints(
+            "pattern" to SchemaRules.ACTION_ID,
+            "minLength" to SchemaRules.ACTION_ID_LENGTH,
+            "maxLength" to SchemaRules.ACTION_ID_LENGTH,
+        ),
         "Timestamp" to ints(
             "pattern" to SchemaRules.TIMESTAMP,
             "format" to SchemaRules.DATE_TIME_FORMAT,

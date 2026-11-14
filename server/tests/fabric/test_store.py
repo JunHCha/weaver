@@ -262,3 +262,77 @@ def test_old_version_database_is_rejected(tmp_path):
         db.execute("CREATE TABLE old_rows (id TEXT)")
     with pytest.raises(SchemaVersionError):
         FabricStore(tmp_path / "unversioned.sqlite3")
+
+
+def execution(key, executes, at):
+    """A 실행 Thread: the result of an Action, not a business fact."""
+    return ThreadDraft(
+        thread_id=key,
+        kind="실행",
+        content="calendar.register completed",
+        occurred_at=at,
+        recorded_at=at,
+        tags=[],
+        field=None,
+        value={
+            "action_id": "act_" + "a" * 32,
+            "action": "calendar.register",
+            "outcome": "completed",
+            "external_id": "content://calendar/events/7",
+            "error": None,
+        },
+        source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        actor="system",
+        direction=None,
+        resolves=None,
+        retracts=None,
+        correction=None,
+        executes=executes,
+    )
+
+
+def test_executions_are_hidden_unless_asked_and_must_point_at_a_fact(tmp_path):
+    from weaver.fabric import InvalidReference
+
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    store.append([draft("fact")])
+    done = execution("exe_1", "fact", datetime(2025, 1, 3, tzinfo=UTC))
+    assert store.append([done])[0].seq == 2
+    assert store.append([done])[0].seq == 2  # an identical replay is the same row
+    assert [t.thread_id for t in store.entries(ThreadQuery())] == ["fact"]
+    assert store.entries(ThreadQuery(after_seq=1)) == []
+    assert [t.thread_id for t in store.entries(ThreadQuery(kind="실행"))] == ["exe_1"]
+    both = store.entries(ThreadQuery(include_executions=True))
+    assert [t.thread_id for t in both] == ["fact", "exe_1"]
+    assert store.contact_statistics("홍길동").count == 1
+    assert store.state("홍길동").fields == {}
+    with pytest.raises(InvalidReference):
+        store.append([execution("exe_2", "missing", datetime(2025, 1, 3, tzinfo=UTC))])
+    with pytest.raises(InvalidReference):
+        store.append([execution("exe_3", "exe_1", datetime(2025, 1, 3, tzinfo=UTC))])
+    with pytest.raises(ThreadConflict):
+        store.append([done.model_copy(update={"content": "calendar.register failed"})])
+
+
+def test_updates_must_point_at_a_schedule_and_only_schedules_may_carry_it(tmp_path):
+    from weaver.fabric import InvalidReference
+
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    value = {
+        "start": "2026-12-01T10:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+
+    def sched(key, **changes):
+        return draft(key, kind="일정", field="schedule", value=value, **changes)
+
+    store.append([sched("s1"), draft("note")])
+    assert store.append([sched("s2", updates="s1")])[0].seq == 3
+    for target in ("missing", "note", "s9"):
+        with pytest.raises(InvalidReference):
+            store.append([sched("s3", updates=target)])
+    with pytest.raises(ValueError):
+        draft("x", updates="s1")
+    with pytest.raises(ValueError):
+        draft("x", kind="일정", updates="s1")

@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "action_id": "act_0123456789abcdef0123456789abcdef",
+  "outcome": "completed",
+  "external_id": "content://com.android.calendar/events/42",
+  "attempts": 1,
+  "finished_at": "2026-11-07T15:45:00+09:00",
+  "error": null
+}

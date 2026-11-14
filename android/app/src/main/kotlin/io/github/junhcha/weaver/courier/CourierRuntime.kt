@@ -228,6 +228,12 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             } catch (error: Exception) {
                 db.diagnostic("proposals", "inbox", CourierClient.errorCode(error)); successful = false
             }
+            try {
+                if (!io.github.junhcha.weaver.calendar.CalendarRuntime.execute(context, inbox.actions, client, db)) successful = false
+            } catch (error: SecurityException) { throw error
+            } catch (error: Exception) {
+                db.diagnostic("actions", "execute", CourierClient.errorCode(error)); successful = false
+            }
             val directory = File(context.filesDir, "courier-verdicts")
             CourierRuntime.cleanQueueTemporaries(directory)
             directory.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
