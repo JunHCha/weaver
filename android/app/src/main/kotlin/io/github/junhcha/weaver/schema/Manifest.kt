@@ -1,5 +1,7 @@
 package io.github.junhcha.weaver.schema
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -19,6 +21,17 @@ enum class CaptureKind {
     @SerialName("text") TEXT,
 }
 
+@Serializable
+enum class ManifestCaptureHost {
+    @SerialName("phone") PHONE, @SerialName("mac") MAC, @SerialName("device") DEVICE
+}
+
+@Serializable
+enum class CaptureHost {
+    @SerialName("phone") PHONE, @SerialName("mac") MAC, @SerialName("device") DEVICE, @SerialName("unknown") UNKNOWN
+}
+
+@OptIn(ExperimentalSerializationApi::class)
 /** Shepherd → outbox/<capture_id>.json. Mirrors schema/Manifest.schema.json. */
 @Serializable
 data class Manifest(
@@ -32,6 +45,7 @@ data class Manifest(
     @SerialName("captured_at") val capturedAt: String,
     @SerialName("occurred_at") val occurredAt: String?,
     val hints: Hints,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("capture_host") val captureHost: ManifestCaptureHost? = null,
 ) {
     init {
         Rules.schemaVersion(schemaVersion)

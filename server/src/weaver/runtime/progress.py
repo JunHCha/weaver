@@ -156,6 +156,8 @@ class PipelineJournal:
         self.directory.mkdir(parents=True, exist_ok=True)
         final = self.directory / f"{item.source_id}.json"
         payload = item.model_dump(mode="json")
+        if not item.capture_hosts or set(item.capture_hosts) == {"unknown"}:
+            payload.pop("capture_hosts", None)
         if item.wiki_edit is None:
             # Existing strict v2 clients continue to read capture observations.
             payload.pop("wiki_edit", None)
@@ -195,7 +197,11 @@ class PipelinePublisher:
 
     def receive(self, source: Source) -> PipelineItem:
         captures = self.archive.captures_for(source.source_id)
-        return self.journal.receive(source, captures[0].receipt.received_at)
+        item = self.journal.receive(source, captures[0].receipt.received_at)
+        hosts = sorted({capture.capture_host or "unknown" for capture in captures})
+        if item.capture_hosts != hosts:
+            item = self.journal.update(source.source_id, capture_hosts=hosts)
+        return item
 
     @observation
     def begin(self, source: Source) -> None:

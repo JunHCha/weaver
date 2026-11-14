@@ -24,6 +24,16 @@ class PipelineStoreTest {
             assertTrue(store.items("other").isEmpty())
         } finally { dir.deleteRecursively() }
     }
+    @Test fun storesMultipleHostsAndRetainsThemAcrossOldRevisions() {
+        val dir = Files.createTempDirectory("pipeline-hosts").toFile()
+        try {
+            val store = PipelineStore(dir)
+            val first = item(1, PipelineLocation.USER, listOf(PipelineLocation.USER))
+            val latest = first.copy(revision = 2, captureHosts = listOf(CaptureHost.PHONE, CaptureHost.UNKNOWN))
+            store.merge("root", listOf(first, latest, first))
+            assertEquals(latest, PipelineStore(dir).items("root").single())
+        } finally { dir.deleteRecursively() }
+    }
     @Test fun visitUsesHistorySuffixIncludingFeedbackAndFirstVisitDoesNotInventMovement() {
         val a = item(1, PipelineLocation.USER, listOf(PipelineLocation.SPINNER, PipelineLocation.LOOM, PipelineLocation.USER))
         assertTrue(movement(null, a).isEmpty())

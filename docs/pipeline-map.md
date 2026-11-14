@@ -8,13 +8,15 @@ approve content, call a model, or request permission to a new folder.
 
 | Row | Phone | Mac | Output |
 | --- | --- | --- | --- |
-| Top | Shepherd | Spinner | Fabric (on Mac) |
+| Top | Common collection: Shepherd | Spinner | Fabric (on Mac) |
 | Bottom | You (review) | Loom | Wiki (Obsidian vault) |
 
-Dashed regions indicate places. Courier is an icon on the phone–Mac transport
+Shepherd is a shared collection role outside the phone region. Dashed regions indicate places. Courier is an icon on the phone–Mac transport
 lines, rather than another storage node. The two review lines carry “엮은 내용”
 (the summary document and at most three questions) and “승인” (the verdict), not
 Threads. Loom extracts Threads only after approval and records them in Fabric.
+
+Each item shows collection badges for every distinct capture host: this phone, Mac, another device, or unknown. Only local pending captures appear in the unpublished queue; remote queues are not observed. Capture hosts contain no device identifiers. Older records without an explicit host remain unknown.
 
 Each item has one block. Fill color identifies its origin (call, voice memo, or
 shared text); orange outlines indicate review due and red outlines indicate
@@ -34,7 +36,7 @@ controls, including notification entry points.
 ## Observation contract
 
 [PipelineItem](../schema/PipelineItem.schema.json) is an additive version-2 wire
-model at `proposals/pipeline/<source_id>.json`. Existing capture/receipt and
+model at `proposals/pipeline/<source_id>.json`. Deploy the server first: a new phone manifest containing `capture_host` is rejected by older servers. Existing capture/receipt and
 review/verdict contracts keep their versions. Old observations are ignored by
 older clients; new clients retain the existing review-package fallback.
 

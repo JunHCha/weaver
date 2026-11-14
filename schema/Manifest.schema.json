@@ -76,6 +76,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "capture_host": {
+      "anyOf": [
+        {
+          "enum": [
+            "phone",
+            "mac",
+            "device"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capture Host"
+    },
     "capture_id": {
       "$ref": "#/$defs/CaptureId"
     },

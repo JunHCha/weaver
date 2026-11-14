@@ -1,5 +1,6 @@
 """Pipeline observations are durable, ordered and never expose uncommitted pages."""
 
+import json
 from datetime import UTC, datetime
 
 from weaver.runtime.progress import PipelineJournal
@@ -315,3 +316,14 @@ def test_custom_failure_limit_is_published_without_claiming_five(tmp_path):
     observed = PipelineItem.model_validate_json(path.read_bytes())
     assert observed.status == "apply_stopped"
     assert observed.apply_failure_limit == 1
+
+
+def test_unknown_hosts_are_omitted_from_projection(tmp_path):
+    journal = PipelineJournal(tmp_path / "state", tmp_path / "proposals")
+    item = journal.receive(source(), datetime.now(UTC))
+    path = tmp_path / "proposals" / "pipeline" / f"{item.source_id}.json"
+    assert "capture_hosts" not in json.loads(path.read_text())
+    journal.update(item.source_id, capture_hosts=["unknown"])
+    assert "capture_hosts" not in json.loads(path.read_text())
+    journal.update(item.source_id, capture_hosts=["mac", "unknown"])
+    assert json.loads(path.read_text())["capture_hosts"] == ["mac", "unknown"]

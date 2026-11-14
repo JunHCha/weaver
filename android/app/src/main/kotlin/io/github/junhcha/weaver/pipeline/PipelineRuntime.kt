@@ -45,7 +45,18 @@ data class MapItem(
     val packageId: String? = null,
     val packageRevision: Long? = null,
     val server: PipelineItem? = null,
+    val captureHosts: List<CaptureHost> = emptyList(),
 ) {
+    val captureLabels: List<String>
+        get() = if (server?.wikiEdit != null) emptyList() else (captureHosts.ifEmpty { listOf(CaptureHost.UNKNOWN) }).distinct().map {
+            when (it) {
+                CaptureHost.PHONE -> "수집: 이 폰"
+                CaptureHost.MAC -> "수집: Mac"
+                CaptureHost.DEVICE -> "수집: 별도 기기"
+                CaptureHost.UNKNOWN -> "수집: 알 수 없음"
+            }
+        }
+
     val needsReview: Boolean
         get() = node == MapNode.USER && status == "review"
 
@@ -143,7 +154,7 @@ object PipelineRuntime {
                 prefs.all
                     .filterKeys { it.endsWith(".source") }
                     .entries
-                    .associate { it.value.toString() to it.key.removeSuffix(".source") }
+                    .groupBy({ it.value.toString() }, { it.key.removeSuffix(".source") })
             val records = ReviewRuntime.records(context)
             val submitted = records.map { it.verdict.packageId to it.verdict.revision }.toSet()
             val observed =
@@ -172,6 +183,7 @@ object PipelineRuntime {
                             item.packageId,
                             item.packageRevision,
                             item,
+                            item.captureHosts,
                         )
                     }
                     .toMutableList()
@@ -186,7 +198,7 @@ object PipelineRuntime {
                 val sent = (pkg.packageId to pkg.revision) in submitted
                 observed.add(
                     MapItem(
-                        sourceCaptures[pkg.sourceId] ?: pkg.sourceId,
+                        sourceCaptures[pkg.sourceId]?.firstOrNull() ?: pkg.sourceId,
                         pkg.title.ifBlank { "검토할 문서" },
                         sourceLabel(pkg.sourceType),
                         if (sent) MapNode.LOOM else MapNode.USER,
@@ -199,7 +211,7 @@ object PipelineRuntime {
             }
             val captureIds =
                 observed.map { it.id }.toSet() +
-                    sourceCaptures.filterKeys { it in knownSources }.values
+                    sourceCaptures.filterKeys { it in knownSources }.values.flatten()
             CourierDatabase(context).use { db ->
                 db.captures().forEach { capture ->
                     if (capture.manifest.captureId in captureIds) return@forEach
@@ -222,6 +234,7 @@ object PipelineRuntime {
                             if (accepted) "working"
                             else if (capture.state == "PENDING") "pending" else "waiting",
                             times,
+                            captureHosts = listOf(if (capture.state == "PENDING") CaptureHost.PHONE else capture.manifest.captureHost?.let { CaptureHost.valueOf(it.name) } ?: CaptureHost.UNKNOWN),
                         )
                     )
                 }

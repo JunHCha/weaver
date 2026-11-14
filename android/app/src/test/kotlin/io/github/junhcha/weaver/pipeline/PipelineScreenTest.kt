@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 @Config(sdk=[36],qualifiers="w1200dp-h800dp-land")
 class PipelineScreenTest {
     @get:Rule val compose=createAndroidComposeRule<ComponentActivity>()
-    private val review=MapItem("cap-1","가상 승인 항목","통화",MapNode.USER,"review",mapOf(Stage.REVIEW to "2026-11-12T01:00:00Z"),"package-1",1)
+    private val review=MapItem("cap-1","가상 승인 항목","통화",MapNode.USER,"review",mapOf(Stage.REVIEW to "2026-11-12T01:00:00Z"),"package-1",1, captureHosts=listOf(CaptureHost.PHONE, CaptureHost.MAC))
     @Test fun mapKeepsSixNodeTargetsAndUserPanelContainsOnlyApprovalCards() {
         compose.setContent {
             var selected by remember { mutableStateOf<MapNode?>(null) }
@@ -27,6 +27,7 @@ class PipelineScreenTest {
         compose.onNodeWithContentDescription("You 노드").performClick()
         compose.onNodeWithText("엮은 내용을 확인하고 승인해 주세요").assertIsDisplayed()
         compose.onNodeWithText("가상 처리 중").assertDoesNotExist()
+        compose.onNodeWithText("수집: 이 폰 · 수집: Mac").assertExists()
         compose.onNodeWithText("가상 승인 항목").performClick()
         compose.onNodeWithText("승인하러 가기").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("승인 후 시작").assertExists()

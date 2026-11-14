@@ -223,6 +223,7 @@ internal fun PipelineContent(
                 Column(Modifier.widthIn(max = 300.dp).clickable { bubble = null }.padding(18.dp)) {
                     Text(item.title, style = MaterialTheme.typography.titleSmall)
                     Text(item.stateLabel, style = MaterialTheme.typography.bodySmall)
+                    Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
                     Text("눌러서 닫기", style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -308,7 +309,7 @@ private fun PipelineMap(
             val pixelScale = with(density) { mapWidth.toPx() } / 1000f
             Canvas(
                 Modifier.fillMaxSize().semantics {
-                    contentDescription = "폰, Mac, Obsidian vault의 3열 2행 데이터 흐름 지도"
+                    contentDescription = "공통 수집 역할에서 Mac과 폰, Obsidian vault로 이어지는 데이터 흐름 지도"
                 }
             ) {
                 val k = size.width / 1000f
@@ -336,7 +337,7 @@ private fun PipelineMap(
                             )
                         )
                     }
-                region(rectPath(20f, 30f, 220f, 430f))
+                region(rectPath(20f, 270f, 220f, 190f))
                 region(
                     Path().apply {
                         moveTo(350 * k, 30 * k)
@@ -350,7 +351,7 @@ private fun PipelineMap(
                     }
                 )
                 region(rectPath(640f, 270f, 240f, 190f))
-                label("폰", 38f, 54f, 12f, k)
+                label("폰", 38f, 294f, 12f, k)
                 label("Mac", 350f, 54f, 12f, k)
                 label("Obsidian vault", 660f, 294f, 12f, k)
                 edge(listOf(Offset(170f, 120f), Offset(398f, 120f)), k)

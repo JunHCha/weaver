@@ -1,5 +1,7 @@
 package io.github.junhcha.weaver.schema
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -79,6 +81,7 @@ data class PipelineWikiEdit(
     }
 }
 
+@OptIn(ExperimentalSerializationApi::class)
 /** Additive v2 observation, not a review package or an instruction to execute work. */
 @Serializable
 data class PipelineItem(
@@ -100,6 +103,7 @@ data class PipelineItem(
     @SerialName("apply_failure_limit") val applyFailureLimit: Long,
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("wiki_edit") val wikiEdit: PipelineWikiEdit? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("capture_hosts") val captureHosts: List<CaptureHost> = emptyList(),
 ) {
     init {
         Rules.schemaVersion(schemaVersion, 2)

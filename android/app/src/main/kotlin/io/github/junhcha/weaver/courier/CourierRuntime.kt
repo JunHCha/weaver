@@ -144,7 +144,7 @@ object CourierRuntime {
             check(temp.renameTo(staged))
             val existing = try {
                 val manifest = Manifest(1, id, kind, channel, staged.name, sha, size,
-                    Instant.now().toString(), occurredAt, Manifest.Hints(counterpart))
+                    Instant.now().toString(), occurredAt, Manifest.Hints(counterpart), ManifestCaptureHost.PHONE)
                 check(WeaverCodec.encode(manifest).toByteArray().size <= CourierRules.maxJson) { "too_large" }
                 CourierDatabase(context).use { it.prepare(original.toString(), manifest, staged) }
             } catch (error: Exception) { staged.delete(); throw error }

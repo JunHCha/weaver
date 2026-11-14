@@ -292,3 +292,21 @@ def test_approved_schedule_contract():
     ):
         with pytest.raises(ValidationError):
             ApprovedSchedule.model_validate(data | invalid)
+
+
+def test_capture_host_contract():
+    manifest = model_named("Manifest")
+    data = example("Manifest")
+    assert manifest.model_validate(data).capture_host is None
+    for host in ("phone", "mac", "device"):
+        assert (
+            manifest.model_validate(data | {"capture_host": host}).capture_host == host
+        )
+    with pytest.raises(ValidationError):
+        manifest.model_validate(data | {"capture_host": "unknown"})
+    item = model_named("PipelineItem")
+    data = example("PipelineItem")
+    assert item.model_validate(data).capture_hosts == []
+    assert item.model_validate(data | {"capture_hosts": ["phone", "unknown"]})
+    with pytest.raises(ValidationError):
+        item.model_validate(data | {"capture_hosts": ["other"]})

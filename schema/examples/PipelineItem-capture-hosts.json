@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "revision": 6,
+  "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "package_id": "pkg_example",
+  "package_revision": 1,
+  "source_type": "share_text",
+  "title": "가상 항목 · 참고 글",
+  "location": "wiki",
+  "status": "done",
+  "apply_failure_limit": 5,
+  "stage_times": {
+    "수집": "2026-01-01T09:00:00+09:00",
+    "전송": "2026-01-01T09:01:00+09:00",
+    "정리": "2026-01-01T09:02:00+09:00",
+    "질문": "2026-01-01T09:02:00+09:00",
+    "검토": "2026-01-01T09:02:00+09:00",
+    "반영": "2026-01-01T09:05:00+09:00",
+    "wiki갱신": "2026-01-01T09:06:00+09:00"
+  },
+  "history": [
+    "spinner",
+    "loom",
+    "user",
+    "loom",
+    "fabric",
+    "wiki"
+  ],
+  "threads": [
+    {
+      "thread_id": "thr_example",
+      "kind": "기록",
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "path": "wiki/pages/예시.md",
+      "updated_at": "2026-01-01T09:06:00+09:00",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "digest": {
+    "path": "wiki/Digest/2026/01/2026-01-01.md",
+    "updated_at": "2026-01-01T09:06:00+09:00",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "updated_at": "2026-01-01T09:06:00+09:00",
+  "wiki_edit": null,
+  "capture_hosts": [
+    "mac",
+    "phone",
+    "unknown"
+  ]
+}

@@ -524,3 +524,55 @@ def test_rollback_failure_does_not_mask_original_error(store):
         with store._write() as conn:
             conn.execute("ROLLBACK")  # SQLite already rolled back (e.g. SQLITE_FULL)
             raise Original()
+
+
+def test_capture_hosts_are_preserved_per_capture_and_after_restart(open_store, dirs):
+    store = open_store()
+    first = manifest(capture_host="phone")
+    second = manifest(capture_id=CAP2, capture_host="mac")
+    third = manifest(capture_id=CAP3)
+    source = store.put(first, outbox_file(dirs["outbox"], first, TEXT))
+    for item in (second, third):
+        assert store.put(item, outbox_file(dirs["outbox"], item, TEXT)) == source
+    assert [c.capture_host for c in open_store().captures_for(source.source_id)] == [
+        "phone",
+        "mac",
+        None,
+    ]
+
+
+def test_v1_index_migrates_unknown_hosts(open_store, dirs):
+    import sqlite3
+
+    store = open_store()
+    item = manifest()
+    source = store.put(item, outbox_file(dirs["outbox"], item, TEXT))
+    with sqlite3.connect(dirs["archive"] / "index.sqlite3") as db:
+        db.execute("ALTER TABLE captures DROP COLUMN capture_host")
+        db.execute("PRAGMA user_version = 1")
+    restarted = open_store()
+    assert restarted.captures_for(source.source_id)[0].capture_host is None
+
+
+def test_progress_recovers_all_distinct_capture_hosts(open_store, dirs, tmp_path):
+    from weaver.runtime.progress import PipelineJournal, PipelinePublisher
+
+    store = open_store()
+    first = manifest(capture_host="phone")
+    source = store.put(first, outbox_file(dirs["outbox"], first, TEXT))
+    journal = PipelineJournal(tmp_path / "journal", tmp_path / "proposals")
+    publisher = PipelinePublisher(journal, store, None, None, tmp_path / "proposals")
+    assert publisher.receive(source).capture_hosts == ["phone"]
+    for item in (
+        manifest(capture_id=CAP2, capture_host="mac"),
+        manifest(capture_id=CAP3),
+    ):
+        store.put(item, outbox_file(dirs["outbox"], item, TEXT))
+    publisher = PipelinePublisher(
+        journal, open_store(), None, None, tmp_path / "proposals"
+    )
+    assert publisher.receive(source).capture_hosts == ["mac", "phone", "unknown"]
+    data = json.loads(
+        (tmp_path / "proposals" / "pipeline" / f"{source.source_id}.json").read_text()
+    )
+    assert data["capture_hosts"] == ["mac", "phone", "unknown"]
