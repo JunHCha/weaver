@@ -237,7 +237,7 @@ class Compiler:
                 t
                 for t in all_threads
                 if tag in t.tags
-                and t.kind not in ("태그정정", "거절")
+                and t.kind not in ("태그정정", "거절", "실행")
                 and t.thread_id not in retracted
                 and t.retracts is None
             ]

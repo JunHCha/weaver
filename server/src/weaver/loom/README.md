@@ -20,9 +20,10 @@ into Fabric Threads. It never appends a fact the user did not approve.
      and recorded with `actor=human`.
    - `reject`: a content-free rejection Thread is appended.
 3. Schedules are `field=schedule` Threads with a `{start, end, timezone}` value.
-   `schedules.approved_schedules` projects them from a complete Fabric snapshot
-   into `ApprovedSchedule` files; a schedule stays blocked by its request until
-   an active decision resolves it, and a retraction becomes a tombstone.
+   `schedules.approved_schedules` judges them against a complete Fabric snapshot:
+   a schedule stays blocked by its request until an active decision resolves it,
+   and a retracted schedule is marked retracted. The Action engine
+   (`weaver.action`) turns that judgement into calendar commands.
 
 ## Durability
 

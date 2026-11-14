@@ -79,7 +79,7 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                     wikiLinks(body, vault).forEach { link -> WikiText(body.substring(link.start, link.end), vault) }
                 }
             }
-            CalendarPanel(p.packageId)
+            CalendarPanel()
             record?.let {
                 Text(it.status.reviewLabel())
                 if (it.status in setOf(ReviewStatus.ERROR, ReviewStatus.PENDING))

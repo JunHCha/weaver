@@ -23,6 +23,13 @@ class CourierRulesTest {
         assertFalse(CourierRules.phoneTemporary("decisions", ".pkg_0123456789abcdef.json.0123456789abcdef.tmp"))
     }
 
+    @Test fun phoneRemovesOnlyItsOwnActionResultTemporaries() {
+        val temp = ".act_0123456789abcdef0123456789abcdef.json.0123456789abcdef.tmp"
+        assertTrue(CourierRules.phoneTemporary(CourierRules.ACTION_RESULTS, temp))
+        assertFalse(CourierRules.phoneTemporary(CourierRules.ACTIONS, temp)) // the PC owns this folder's files
+        assertFalse(CourierRules.phoneTemporary(CourierRules.ACTION_RESULTS, ".act_zz.json.0123456789abcdef.tmp"))
+    }
+
     @Test fun reviewFileNamesCarryOpaquePackageIds() {
         val match = CourierRules.revision.matchEntire("pkg_0123456789abcdef.r12.json")!!
         assertEquals(listOf("pkg_0123456789abcdef", "12"), match.groupValues.drop(1))

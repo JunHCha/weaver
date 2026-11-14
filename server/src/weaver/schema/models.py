@@ -50,6 +50,13 @@ type Ref = Annotated[
     Field(json_schema_extra={"not": {"pattern": r"[\r\n]"}}),
 ]
 type NonEmpty = Annotated[str, StringConstraints(strict=True, pattern=r"\S")]
+type ActionId = Annotated[
+    str,
+    StringConstraints(
+        strict=True, pattern=r"^act_[0-9a-f]{32}$", min_length=36, max_length=36
+    ),
+]
+type ActionKind = Literal["calendar.register", "calendar.update", "calendar.remove"]
 type Revision = Annotated[StrictInt, Field(ge=1)]
 type Offset = Annotated[StrictInt, Field(ge=0)]
 type Digest = Annotated[
@@ -235,8 +242,35 @@ class ScheduleValue(Contract):
         return self
 
 
+class ExecutionValue(Contract):
+    """The recorded result of one Action, carried by a ``실행`` Thread."""
+
+    action_id: ActionId
+    action: ActionKind
+    outcome: Literal["completed", "failed"]
+    external_id: NonEmpty | None
+    error: NonEmpty | None
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if self.outcome == "completed" and (
+            self.external_id is None or self.error is not None
+        ):
+            raise ValueError("a completed action needs external_id and no error")
+        if self.outcome == "failed" and (
+            self.external_id is not None or self.error is None
+        ):
+            raise ValueError("a failed action needs an error and no external_id")
+        return self
+
+
 class ThreadDraft(Contract):
-    """An approved or human-authored fact before a sink assigns its sequence."""
+    """An approved or human-authored fact before a sink assigns its sequence.
+
+    A ``실행`` Thread is different: the system records what an Action did and
+    points at the Thread it executed with ``executes``. It is not a business
+    fact, so Fabric readers skip it unless they ask for executions.
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -252,7 +286,17 @@ class ThreadDraft(Contract):
                         ("요청", "direction", "string", "null"),
                         ("태그정정", "correction", "object", "null"),
                         ("거절", "content", "null", "string"),
+                        ("실행", "executes", "string", "null"),
                     ]
+                ]
+                + [
+                    {
+                        "if": {"properties": {"kind": {"const": "실행"}}},
+                        "then": {"properties": {"actor": {"const": "system"}}},
+                        "else": {
+                            "properties": {"actor": {"enum": ["ai_approved", "human"]}}
+                        },
+                    }
                 ]
                 + [
                     {
@@ -265,7 +309,7 @@ class ThreadDraft(Contract):
     )
 
     thread_id: NonEmpty
-    kind: Literal["요청", "결정", "일정", "기록", "태그정정", "거절"]
+    kind: Literal["요청", "결정", "일정", "기록", "태그정정", "거절", "실행"]
     content: NonEmpty | None
     occurred_at: Timestamp
     recorded_at: Timestamp
@@ -273,12 +317,13 @@ class ThreadDraft(Contract):
     field: Literal["deadline", "schedule", "assignees", "status"] | None
     value: JsonValue
     source_id: SourceId
-    actor: Literal["ai_approved", "human"]
+    actor: Literal["ai_approved", "human", "system"]
     direction: Literal["받음", "보냄"] | None
     resolves: NonEmpty | None
     retracts: NonEmpty | None
     correction: TagCorrection | None
     blocked_by: NonEmpty | None = None
+    executes: NonEmpty | None = None
 
     @model_validator(mode="after")
     def validate_kind(self) -> Self:
@@ -294,6 +339,19 @@ class ThreadDraft(Contract):
             raise ValueError("only decisions can resolve requests")
         if (self.content is None) != (self.kind == "거절"):
             raise ValueError("content is absent exactly for rejections")
+        if (self.executes is not None) != (self.kind == "실행"):
+            raise ValueError("executes is required exactly for executions")
+        if (self.actor == "system") != (self.kind == "실행"):
+            raise ValueError("actor system is allowed exactly for executions")
+        if self.kind == "실행":
+            if (
+                self.field is not None
+                or self.retracts is not None
+                or self.blocked_by is not None
+                or self.tags
+            ):
+                raise ValueError("an execution carries only its result value")
+            ExecutionValue.model_validate(self.value)
         return self
 
 
@@ -347,16 +405,85 @@ class EventSummary(Version2):
     created_at: Timestamp
 
 
-class ApprovedSchedule(Version2, ScheduleValue):
-    """A published schedule from an approved summary and a Fabric thread."""
+class CalendarPayload(ScheduleValue):
+    """The calendar event an Action creates, changes to, or removes."""
 
-    revision: Revision = 1
-    retracted: bool = False
-    package_id: NonEmpty
-    thread_id: NonEmpty
     title: NonEmpty
-    blocked_by: NonEmpty | None
-    summary_id: Digest
+
+
+class Action(Version2):
+    """One command for the phone, published as ``actions/<action_id>.json``.
+
+    ``external_id`` names the calendar event the phone created earlier and is
+    required exactly for ``calendar.update`` and ``calendar.remove``.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "if": {"properties": {"kind": {"const": "calendar.register"}}},
+            "then": {"properties": {"external_id": {"type": "null"}}},
+            "else": {"properties": {"external_id": {"type": "string"}}},
+        }
+    )
+
+    action_id: ActionId
+    kind: ActionKind
+    thread_id: NonEmpty
+    seq: Annotated[StrictInt, Field(ge=1)]
+    input_version: Revision
+    payload: CalendarPayload
+    external_id: NonEmpty | None
+
+    @model_validator(mode="after")
+    def validate_target(self) -> Self:
+        if (self.external_id is None) != (self.kind == "calendar.register"):
+            raise ValueError("external_id is required exactly for update and remove")
+        return self
+
+
+class ActionResult(Version2):
+    """The phone's final report for one Action, ``action-results/<action_id>.json``.
+
+    ``attempts`` counts executions on the phone. ``error`` is a short code
+    (``[a-z_]+``), never event content.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "if": {"properties": {"outcome": {"const": "completed"}}},
+            "then": {
+                "properties": {
+                    "external_id": {"type": "string"},
+                    "error": {"type": "null"},
+                }
+            },
+            "else": {
+                "properties": {
+                    "external_id": {"type": "null"},
+                    "error": {"type": "string"},
+                }
+            },
+        }
+    )
+
+    action_id: ActionId
+    outcome: Literal["completed", "failed"]
+    external_id: NonEmpty | None
+    attempts: Revision
+    finished_at: Timestamp
+    error: NonEmpty | None
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if self.outcome == "completed" and (
+            self.external_id is None or self.error is not None
+        ):
+            raise ValueError("a completed action needs external_id and no error")
+        if self.outcome == "failed" and (
+            self.external_id is not None or self.error is None
+        ):
+            raise ValueError("a failed action needs an error and no external_id")
+        return self
 
 
 type Stage = Literal["수집", "전송", "정리", "질문", "검토", "반영", "wiki갱신"]
@@ -578,7 +705,6 @@ SHARED_MODELS = (
     Receipt,
     Source,
     Script,
-    ApprovedSchedule,
     Thread,
     ThreadDraft,
     EventSummary,
@@ -587,4 +713,6 @@ SHARED_MODELS = (
     Verdict,
     Alert,
     PipelineItem,
+    Action,
+    ActionResult,
 )

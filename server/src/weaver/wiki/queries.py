@@ -65,7 +65,7 @@ def render_pages(
         for t in threads
         if t.thread_id not in retracted
         and t.retracts is None
-        and t.kind not in ("태그정정", "거절")
+        and t.kind not in ("태그정정", "거절", "실행")
         and t.occurred_at <= now
     ]
     resolved = {t.resolves for t in active if t.resolves}

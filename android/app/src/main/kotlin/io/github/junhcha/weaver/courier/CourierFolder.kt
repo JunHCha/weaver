@@ -20,6 +20,10 @@ data class CourierEntry(val name: String, val modifiedAt: Long, val regular: Boo
 
 object CourierRules {
     val folders = listOf("outbox", "receipts", "proposals", "decisions")
+    /** Action path: the PC publishes `actions/<action_id>.json`, the phone answers in `action-results/`. */
+    const val ACTIONS = "actions"
+    const val ACTION_RESULTS = "action-results"
+    val actionFolders = listOf(ACTIONS, ACTION_RESULTS)
     const val maxJson = 1 shl 20
     const val temporaryAge = 10 * 60 * 1000L
     const val cleanupWait = 15 * 60 * 1000L
@@ -34,9 +38,9 @@ object CourierRules {
         name.none { it == '/' || it == '\\' || it.isISOControl() }
     fun phoneTemporary(folder: String, name: String): Boolean = ownTemporary(name) && (
         (folder == "outbox" && name.startsWith(".cap_")) ||
-        folder == "decisions" || name.startsWith(".probe-")
+        folder == "decisions" || folder == ACTION_RESULTS || name.startsWith(".probe-")
     )
     fun ownTemporary(name: String) = Regex(
-        "\\.(?:cap_$ulid\\.[A-Za-z0-9_-]+|[A-Za-z0-9_-]+\\.r[1-9][0-9]*\\.json|probe-[0-9a-f-]{36}\\.(?:txt|bin))\\.[0-9a-f]{16}\\.tmp",
+        "\\.(?:cap_$ulid\\.[A-Za-z0-9_-]+|[A-Za-z0-9_-]+\\.r[1-9][0-9]*\\.json|act_[0-9a-f]{32}\\.json|probe-[0-9a-f-]{36}\\.(?:txt|bin))\\.[0-9a-f]{16}\\.tmp",
     ).matches(name)
 }

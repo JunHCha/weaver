@@ -439,12 +439,12 @@ def test_wiki_config_rejects_invalid_values(tmp_path):
             load_config(config_file, init_directories=True)
 
 
-def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
+def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_path):
     import json
     from datetime import UTC, datetime
 
     from weaver.fabric import FabricStore, ThreadQuery
-    from weaver.schema import ApprovedSchedule, ThreadDraft
+    from weaver.schema import Action, ActionResult, ThreadDraft
 
     class ScheduleLlm(FakeLlm):
         def generate_json(self, task, system, user, schema):
@@ -496,6 +496,11 @@ def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
         + '\n[time]\ntimezone = "America/New_York"\n'
     )
     config = load_config(config_file, init_directories=True)
+
+    def tick(runtime):
+        runtime._last_run.clear()  # maintenance jobs are interval-gated
+        runtime._tick(threading.Event())
+
     runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
     package, _ = runtime.processor.drafts.create(
         "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문"
@@ -513,25 +518,13 @@ def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
             }
         )
     )
-    runtime._tick(threading.Event())
+    tick(runtime)
     fabric = FabricStore.from_config(config)
     request, schedule = fabric.entries(ThreadQuery())
-    path = config.courier.proposals / "schedules" / f"{schedule.thread_id}.json"
-    result = ApprovedSchedule.model_validate_json(path.read_text())
-    assert (result.package_id, result.blocked_by, result.timezone, result.revision) == (
-        package.package_id,
-        request.thread_id,
-        "America/New_York",
-        1,
-    )
-    assert (
-        config.archive_root
-        / "summaries"
-        / result.summary_id[:2]
-        / f"{result.summary_id}.json"
-    ).exists()
-    runtime._tick(threading.Event())
-    assert ApprovedSchedule.model_validate_json(path.read_text()).revision == 1
+    actions = config.sync_root / "actions"
+    # Blocked by an open request: nothing is published, and no legacy file either.
+    assert not actions.exists() or list(actions.iterdir()) == []
+    assert not (config.courier.proposals / "schedules").exists()
     now = datetime.now(UTC)
     fabric.append(
         [
@@ -553,17 +546,46 @@ def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
             )
         ]
     )
-    runtime._tick(threading.Event())
-    result = ApprovedSchedule.model_validate_json(path.read_text())
-    assert result.blocked_by is None and result.revision == 2
+    tick(runtime)
+    (path,) = actions.iterdir()
+    action = Action.model_validate_json(path.read_text())
+    assert (action.kind, action.thread_id, action.seq) == (
+        "calendar.register",
+        schedule.thread_id,
+        schedule.seq,
+    )
+    assert action.payload.title == "회의"
+    assert action.payload.timezone == "America/New_York"
+    # The phone's result becomes a 실행 Thread; a restart replays it harmlessly.
+    result = ActionResult(
+        schema_version=2,
+        action_id=action.action_id,
+        outcome="completed",
+        external_id="content://calendar/events/7",
+        attempts=1,
+        finished_at=now,
+        error=None,
+    )
+    results = config.sync_root / "action-results"
+    results.mkdir()
+    (results / f"{action.action_id}.json").write_text(result.model_dump_json())
+    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    tick(runtime)
+    (recorded,) = fabric.entries(ThreadQuery(kind="실행"))
+    assert recorded.executes == schedule.thread_id and recorded.actor == "system"
+    assert list(actions.iterdir()) == [] and list(results.iterdir()) == []
+    (results / f"{action.action_id}.json").write_text(result.model_dump_json())
+    tick(runtime)
+    assert len(fabric.entries(ThreadQuery(kind="실행"))) == 1
+    withdrawal_time = datetime.now(UTC)
     fabric.append(
         [
             ThreadDraft(
                 thread_id="withdrawal",
                 kind="기록",
                 content="취소",
-                occurred_at=now,
-                recorded_at=now,
+                occurred_at=withdrawal_time,
+                recorded_at=withdrawal_time,
                 tags=[],
                 field=None,
                 value=None,
@@ -576,10 +598,11 @@ def test_runtime_publishes_schedule_and_recomputes_after_resolution(tmp_path):
             )
         ]
     )
-    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
-    runtime._tick(threading.Event())
-    result = ApprovedSchedule.model_validate_json(path.read_text())
-    assert result.retracted and result.revision == 3
+    tick(runtime)
+    (path,) = actions.iterdir()
+    remove = Action.model_validate_json(path.read_text())
+    assert remove.kind == "calendar.remove"
+    assert remove.external_id == "content://calendar/events/7"
 
 
 def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path):

@@ -148,3 +148,41 @@ def test_source_links_are_normalized(tmp_path):
         source_link=lambda _: unicodedata.normalize("NFD", "summaries/한글"),
     )
     assert "[[summaries/한글]]" in pages["열린 요청.md"]
+
+
+def execution(key, executes, at):
+    """A 실행 Thread: the result of an Action, not a business fact."""
+    return ThreadDraft(
+        thread_id=key,
+        kind="실행",
+        content="calendar.register completed",
+        occurred_at=at,
+        recorded_at=at,
+        tags=[],
+        field=None,
+        value={
+            "action_id": "act_" + "a" * 32,
+            "action": "calendar.register",
+            "outcome": "completed",
+            "external_id": "content://calendar/events/7",
+            "error": None,
+        },
+        source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        actor="system",
+        direction=None,
+        resolves=None,
+        retracts=None,
+        correction=None,
+        executes=executes,
+    )
+
+
+def test_query_pages_do_not_list_executions(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    now = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    add(fabric, 1, at=now)
+    before = render_pages(fabric, context, now=now, inactive_days=1)
+    fabric.append([execution("exe_1", "1", now)])
+    assert render_pages(fabric, context, now=now, inactive_days=1) == before
+    assert "calendar.register" not in "".join(before.values())

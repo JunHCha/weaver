@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "action_id": "act_fedcba9876543210fedcba9876543210",
+  "kind": "calendar.update",
+  "thread_id": "thr_fedcba9876543210",
+  "seq": 4,
+  "input_version": 2,
+  "payload": {
+    "start": "2026-11-13T10:00:00+09:00",
+    "end": "2026-11-13T11:00:00+09:00",
+    "timezone": "Asia/Seoul",
+    "title": "주간 점검 회의"
+  },
+  "external_id": "content://com.android.calendar/events/42"
+}

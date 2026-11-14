@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "ActionId": {
+      "maxLength": 36,
+      "minLength": 36,
+      "pattern": "^act_[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "ActionKind": {
+      "enum": [
+        "calendar.register",
+        "calendar.update",
+        "calendar.remove"
+      ],
+      "type": "string"
+    },
+    "CalendarPayload": {
+      "additionalProperties": false,
+      "description": "The calendar event an Action creates, changes to, or removes.",
+      "properties": {
+        "end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "timezone": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "title": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "timezone",
+        "title"
+      ],
+      "title": "CalendarPayload",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:Action",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One command for the phone, published as ``actions/<action_id>.json``.\n\n``external_id`` names the calendar event the phone created earlier and is\nrequired exactly for ``calendar.update`` and ``calendar.remove``.",
+  "else": {
+    "properties": {
+      "external_id": {
+        "type": "string"
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "calendar.register"
+      }
+    }
+  },
+  "properties": {
+    "action_id": {
+      "$ref": "#/$defs/ActionId"
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "input_version": {
+      "$ref": "#/$defs/Revision"
+    },
+    "kind": {
+      "$ref": "#/$defs/ActionKind"
+    },
+    "payload": {
+      "$ref": "#/$defs/CalendarPayload"
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "seq": {
+      "minimum": 1,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "thread_id": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "schema_version",
+    "action_id",
+    "kind",
+    "thread_id",
+    "seq",
+    "input_version",
+    "payload",
+    "external_id"
+  ],
+  "then": {
+    "properties": {
+      "external_id": {
+        "type": "null"
+      }
+    }
+  },
+  "title": "Action",
+  "type": "object"
+}

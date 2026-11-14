@@ -1,19 +1,32 @@
-"""Project approved schedule files from a complete Fabric snapshot."""
+"""Judge which approved schedules stand, from a complete Fabric snapshot.
 
-import os
-import tempfile
-from pathlib import Path
+The result feeds the Action engine (``weaver.action``), which turns it into
+``calendar.register``, ``calendar.update`` and ``calendar.remove`` commands.
+"""
 
-from weaver.schema import ApprovedSchedule, ScheduleValue, Thread
+from dataclasses import dataclass
+
+from weaver.schema import ScheduleValue, Thread
+
+
+@dataclass(frozen=True)
+class ApprovedSchedule:
+    """One schedule Thread with its current standing."""
+
+    thread: Thread
+    value: ScheduleValue
+    title: str
+    retracted: bool
+    blocked_by: str | None
 
 
 def approved_schedules(
-    package_id: str, summary_id: str, selected: list[Thread], snapshot: list[Thread]
+    selected: list[Thread], snapshot: list[Thread]
 ) -> list[ApprovedSchedule]:
-    """Build schedules, retaining a block unless an active decision resolves it.
+    """Judge schedules, retaining a block unless an active decision resolves it.
 
-    The caller supplies the threads extracted from the approved summary and the
-    complete current snapshot, including requests and retractions.
+    The caller supplies the schedule threads to judge and the complete current
+    snapshot, including requests and retractions.
     """
     retracted = {thread.retracts for thread in snapshot if thread.retracts}
     active = [
@@ -27,63 +40,15 @@ def approved_schedules(
             continue
         if thread.retracts is not None:
             continue
-        value = ScheduleValue.model_validate(thread.value)
         result.append(
             ApprovedSchedule(
-                schema_version=2,
-                retracted=thread.thread_id in retracted,
-                package_id=package_id,
-                summary_id=summary_id,
-                thread_id=thread.thread_id,
+                thread=thread,
+                value=ScheduleValue.model_validate(thread.value),
                 title=thread.content or "",
-                start=value.start,
-                end=value.end,
-                timezone=value.timezone,
+                retracted=thread.thread_id in retracted,
                 blocked_by=thread.blocked_by
                 if thread.blocked_by in open_requests
                 else None,
             )
         )
     return result
-
-
-def write_approved_schedules(root: Path, schedules: list[ApprovedSchedule]) -> None:
-    """Atomically replace each schedule file under the Courier root.
-
-    Revisions increase when the content changes; retractions remain as tombstones.
-    """
-    directory = root / "proposals" / "schedules"
-    directory.mkdir(parents=True, exist_ok=True)
-    for schedule in schedules:
-        name = schedule.thread_id
-        if (
-            name in {".", ".."}
-            or any(c in name for c in "/\\")
-            or any(ord(c) < 32 for c in name)
-        ):
-            raise ValueError("unsafe thread_id")
-        target = directory / f"{name}.json"
-        if target.exists():
-            previous = ApprovedSchedule.model_validate_json(
-                target.read_text(encoding="utf-8")
-            )
-            if previous.thread_id != name:
-                raise ValueError("schedule thread_id mismatch")
-            if previous.model_dump(exclude={"revision"}) == schedule.model_dump(
-                exclude={"revision"}
-            ):
-                continue
-            schedule = schedule.model_copy(update={"revision": previous.revision + 1})
-        else:
-            schedule = schedule.model_copy(update={"revision": 1})
-        fd, temporary = tempfile.mkstemp(
-            prefix=".schedule-", suffix=".tmp", dir=directory
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(schedule.model_dump_json())
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, target)
-        finally:
-            Path(temporary).unlink(missing_ok=True)

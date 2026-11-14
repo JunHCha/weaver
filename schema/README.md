@@ -32,14 +32,15 @@ omit newly defaulted fields. All data is synthetic.
 | `Verdict` | phone → server | 2 | `approve`, `edit`, `feedback` or `reject` for one exact package revision. |
 | `EventSummary` | server | 2 | The approved, content-addressed summary document. |
 | `ThreadDraft`, `Thread` | server | - | A Fabric row before and after `seq` is assigned. |
-| `ApprovedSchedule` | server → phone | 2 | A schedule projected from Fabric for calendar registration. |
+| `Action` | server → phone | 2 | One calendar command (`calendar.register`, `calendar.update`, `calendar.remove`) as `actions/<action_id>.json`. |
+| `ActionResult` | phone → server | 2 | The final result of one Action as `action-results/<action_id>.json`. |
 | `PipelineItem` | server → phone | 2 | Durable source location, transitions, stage times and committed Thread/wiki results. |
 | `Alert` | server → phone | 2 | A notice that a newly approved schedule moved an approved one. |
 
 ## Common rules
 
 - Capture files (`Manifest`, `Receipt`, `Source`, `Script`) carry integer
-  `schema_version: 1`; review, summary, schedule, alert and pipeline files carry `2`.
+  `schema_version: 1`; review, summary, action, alert and pipeline files carry `2`.
   Consumers reject any other version, and the server rejects versions older than
   the current ones without migrating data. Fabric rows carry no version key; the
   Fabric database itself is versioned.
@@ -65,15 +66,42 @@ with one of its choices. `stage` and `stage_times` show the processing steps
 
 ## Threads
 
-Kinds are `요청`, `결정`, `일정`, `기록` plus two system rows, `태그정정` (a tag
-correction naming its target Thread) and `거절` (no content). Only requests carry
+Kinds are `요청`, `결정`, `일정`, `기록` plus three system rows, `태그정정` (a tag
+correction naming its target Thread), `거절` (no content) and `실행` (the result of
+an Action, see below). Only requests carry
 `direction` (`받음`, `보냄`). `field` is one of `deadline`, `schedule`,
 `assignees`, `status`, and `value` is arbitrary JSON, except that `schedule`
 requires `{start, end, timezone}` with an IANA timezone and `end` after `start`.
-`actor` is `ai_approved` or `human`. A request stays open until a `결정` Thread
+`actor` is `ai_approved` or `human`, or `system` for `실행` Threads only. A request stays open until a `결정` Thread
 names it in `resolves`; a schedule may name the request that blocks it in
 `blocked_by`. Approval records these facts and never authorizes executing a
 request.
+
+## Actions and 실행 Threads
+
+`Thread.kind` is a fact and lives in Fabric; `Action.kind` is a command and lives
+in the Action outbox. A command is never a Thread kind.
+
+`actions/<action_id>.json` carries one `Action`: `action_id` (`act_` plus 32 hex
+characters, derived from the idempotency key), `kind`, the source Thread
+(`thread_id`, `seq`), `input_version` (1 for a first registration, then one more
+for each later change of the same event), the event `payload` (`title`, `start`,
+`end`, `timezone`) and `external_id`, the calendar event the phone created
+earlier. `external_id` is `null` for `calendar.register` and set for the other
+two. The phone runs an Action by itself once a target calendar is chosen and
+answers with `action-results/<action_id>.json`: `outcome` `completed` (with
+`external_id`) or `failed` (with a short `[a-z_]+` `error` code and no
+`external_id`), the `attempts` it used and `finished_at`. The phone reports only
+final results; waiting and retrying stay on the phone.
+
+The server turns a result into one `실행` Thread: `thread_id` `exe_<hex>`,
+`executes` naming the Thread the Action came from, `actor` `system`, no tags, no
+`field`, and `value` `{action_id, action, outcome, external_id, error}`. Its
+`occurred_at` and `recorded_at` are the phone's `finished_at`, so replaying the
+same result is byte-identical and Fabric accepts it as the same row. `executes`
+is separate from `resolves`, which still means only that a decision resolves a
+request. Fabric readers skip `실행` Threads unless they ask for them, so wiki,
+Digest, query pages and the data-flow map never treat them as business facts.
 
 ## Script
 

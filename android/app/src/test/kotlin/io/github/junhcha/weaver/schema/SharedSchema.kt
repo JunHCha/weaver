@@ -31,12 +31,13 @@ object SharedSchema {
         "Receipt" to Receipt.serializer(),
         "ReviewPackage" to ReviewPackage.serializer(),
         "Verdict" to Verdict.serializer(),
-        "ApprovedSchedule" to ApprovedSchedule.serializer(),
+        "Action" to Action.serializer(),
+        "ActionResult" to ActionResult.serializer(),
         "Alert" to Alert.serializer(),
         "PipelineItem" to PipelineItem.serializer(),
     )
 
-    /** Capture files carry schema_version 1; review, schedule and alert files carry 2. */
+    /** Capture files carry schema_version 1; review, action and alert files carry 2. */
     fun version(model: String): Long = if (model in setOf("Manifest", "Receipt")) 1L else 2L
 
     fun schemaText(model: String): String = File(dir, "$model.schema.json").readText()

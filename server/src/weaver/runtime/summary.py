@@ -10,7 +10,6 @@ from typing import Protocol
 from weaver.archive import ArchiveStore
 from weaver.courier.atomic import write_json_atomic
 from weaver.fabric import Fabric, ThreadQuery
-from weaver.loom.schedules import approved_schedules, write_approved_schedules
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import Prepared, SummaryReview
 from weaver.loom.summary_state import SummaryState
@@ -189,44 +188,40 @@ class AlertDetector(Protocol):
     def published(self, alert: Alert) -> None: ...
 
 
-class SchedulePublisher:
-    """Reproject approved schedules and change alerts from the full log each tick."""
+class ObservationPublisher:
+    """Each tick: change alerts for newly approved schedules, then observations.
+
+    Calendar commands are not published here; the Action engine
+    (``weaver.action``) derives them from Fabric.
+    """
 
     def __init__(
         self,
-        root: Path,
         fabric: Fabric,
         state: SummaryState,
         alerts: tuple[AlertDetector, AlertSink] | None = None,
         progress: PipelinePublisher | None = None,
     ) -> None:
-        self.root, self.fabric, self.state, self.alerts = root, fabric, state, alerts
+        self.fabric, self.state, self.alerts = fabric, state, alerts
         self.progress = progress
 
     def publish(self) -> None:
-        with self.state.connect() as db:
-            rows = db.execute(
-                "SELECT id, prepared FROM reviews WHERE stage='APPLIED'"
-            ).fetchall()
-        snapshot = self.fabric.entries(ThreadQuery())
-        by_id = {thread.thread_id: thread for thread in snapshot}
-        schedules = []
-        approvals = []
-        for package_id, raw in rows:
-            prepared = Prepared.model_validate_json(raw)
-            if prepared.summary is None:
-                continue
-            selected = [
-                by_id[t.thread_id] for t in prepared.threads if t.thread_id in by_id
-            ]
-            approvals.append((package_id, selected))
-            schedules.extend(
-                approved_schedules(
-                    package_id, prepared.summary.summary_id, selected, snapshot
-                )
-            )
-        write_approved_schedules(self.root, schedules)
         if self.alerts is not None:
+            with self.state.connect() as db:
+                rows = db.execute(
+                    "SELECT id, prepared FROM reviews WHERE stage='APPLIED'"
+                ).fetchall()
+            snapshot = self.fabric.entries(ThreadQuery())
+            by_id = {thread.thread_id: thread for thread in snapshot}
+            approvals = []
+            for package_id, raw in rows:
+                prepared = Prepared.model_validate_json(raw)
+                if prepared.summary is None:
+                    continue
+                selected = [
+                    by_id[t.thread_id] for t in prepared.threads if t.thread_id in by_id
+                ]
+                approvals.append((package_id, selected))
             self._alert(approvals, snapshot)
         if self.progress is not None:
             self.progress.publish()
@@ -234,7 +229,7 @@ class SchedulePublisher:
     def _alert(
         self, approvals: list[tuple[str, list[Thread]]], snapshot: list[Thread]
     ) -> None:
-        """Auxiliary: a failure is logged by type only and never blocks schedules."""
+        """Auxiliary: a failure is logged by type only and never blocks the tick."""
         assert self.alerts is not None
         detector, sink = self.alerts
         for package_id, selected in approvals:

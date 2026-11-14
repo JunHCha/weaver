@@ -7,6 +7,7 @@ import com.networknt.schema.SpecificationVersion
 import java.io.File
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,17 +27,43 @@ class ReviewContractTest {
         SharedSchema.models.keys.forEach { assertTrue(it, File(SharedSchema.dir, "examples/$it.json").isFile) }
     }
 
+    private val payload = CalendarPayload("2026-01-01T09:00:00+09:00", null, "Asia/Seoul", "회의")
+    private val actionId = "act_0123456789abcdef0123456789abcdef"
+
     @Test
-    fun approvedScheduleRoundTripAndInvalidValues() {
-        val value = ApprovedSchedule(
-            2, "package-1", "thread-1", "회의", "2026-01-01T09:00:00+09:00", null,
-            "Asia/Seoul", null, "a".repeat(64),
-        )
-        val text = WeaverCodec.encode(value)
-        assertTrue(valid("ApprovedSchedule", text))
-        assertTrue(WeaverCodec.decode<ApprovedSchedule>(text) is DecodeResult.Ok)
-        assertTrue(runCatching { value.copy(timezone = "No/Such_Zone") }.isFailure)
-        assertTrue(runCatching { value.copy(end = "2025-01-01T00:00:00Z") }.isFailure)
+    fun actionRoundTripAndInvalidValues() {
+        val register = Action(2, actionId, ActionKind.REGISTER, "thread-1", 1, 1, payload, null)
+        val update = register.copy(kind = ActionKind.UPDATE, externalId = "content://com.android.calendar/events/7")
+        listOf(register, update, update.copy(kind = ActionKind.REMOVE)).forEach {
+            val text = WeaverCodec.encode(it)
+            assertTrue(valid("Action", text))
+            assertEquals(DecodeResult.Ok(it), WeaverCodec.decode<Action>(text))
+        }
+        // The schema and the model agree that only register has no target event yet.
+        assertFalse(valid("Action", WeaverCodec.encode(update).replace("\"kind\":\"calendar.update\"", "\"kind\":\"calendar.register\"")))
+        assertFalse(valid("Action", WeaverCodec.encode(register).replace("\"external_id\":null", "\"external_id\":\"x\"")))
+        listOf(
+            { register.copy(externalId = "x") }, { update.copy(externalId = null) }, { register.copy(actionId = "act_zz") },
+            { register.copy(seq = 0) }, { register.copy(payload = payload.copy(timezone = "No/Such_Zone")) },
+            { register.copy(payload = payload.copy(end = "2025-01-01T00:00:00Z")) }, { register.copy(payload = payload.copy(title = " ")) },
+        ).forEach { assertTrue(runCatching { it() }.isFailure) }
+    }
+
+    @Test
+    fun actionResultRoundTripAndInvalidValues() {
+        val done = ActionResult(2, actionId, ActionResult.Outcome.COMPLETED, "content://com.android.calendar/events/7", 1, "2026-01-01T00:00:00Z", null)
+        val failed = ActionResult(2, actionId, ActionResult.Outcome.FAILED, null, 5, "2026-01-01T00:00:00Z", "provider_error")
+        listOf(done, failed).forEach {
+            val text = WeaverCodec.encode(it)
+            assertTrue(valid("ActionResult", text))
+            assertEquals(DecodeResult.Ok(it), WeaverCodec.decode<ActionResult>(text))
+        }
+        assertFalse(valid("ActionResult", WeaverCodec.encode(done).replace("\"external_id\":\"content://com.android.calendar/events/7\"", "\"external_id\":null")))
+        assertFalse(valid("ActionResult", WeaverCodec.encode(failed).replace("\"error\":\"provider_error\"", "\"error\":null")))
+        listOf(
+            { done.copy(externalId = null) }, { done.copy(error = "x") }, { failed.copy(externalId = "x") },
+            { failed.copy(error = null) }, { done.copy(attempts = 0) }, { done.copy(finishedAt = "2026-01-01T00:00:00") },
+        ).forEach { assertTrue(runCatching { it() }.isFailure) }
     }
 
     @Test

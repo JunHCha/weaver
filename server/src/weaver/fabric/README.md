@@ -10,6 +10,11 @@ a `seq` bookmark and read `ThreadQuery(after_seq=...)`.
   ID raises `ThreadConflict`. References (`resolves`, `blocked_by`, `retracts`,
   tag-correction `target`) must name existing rows, requests where required, and
   may not form a cycle. Triggers reject UPDATE, DELETE and replacement.
+- `executes` names the Thread an Action executed and may not point at another
+  `실행`, a tag correction or a rejection. A `실행` Thread records an Action's
+  result (`actor=system`), not a business fact: `entries()` skips it unless the
+  query sets `include_executions` or asks for `kind="실행"`, and `state()`,
+  `contact_statistics()` and the wiki code ignore it too.
 - `entries(query)` returns rows ordered by occurrence time. Tags are the
   effective tags: tag corrections are applied without changing the original row.
 - `state.project(tag, threads)` computes the current `deadline`, `schedule` and

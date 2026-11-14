@@ -44,8 +44,8 @@ class SafCourierFolder(private val resolver: ContentResolver, val tree: Uri) : C
     }
 
     private fun directory(folder: String): Uri {
-        require(folder in CourierRules.folders || folder in listOf("proposals/schedules", "proposals/pipeline"))
-        val parent = if (folder in listOf("proposals/schedules", "proposals/pipeline")) directory("proposals") else root()
+        require(folder in CourierRules.folders || folder in CourierRules.actionFolders || folder == "proposals/pipeline")
+        val parent = if (folder == "proposals/pipeline") directory("proposals") else root()
         val leaf = folder.substringAfterLast('/')
         val found = children(parent).filter { it.name == leaf }
         check(found.size <= 1) { "duplicate_directory" }

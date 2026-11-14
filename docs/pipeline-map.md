@@ -126,3 +126,66 @@ Capture observations omit the new optional fields on the wire so existing strict
 v2 apps can still read them. Older apps skip Wiki-origin observations; updated apps
 accept old capture observations without the new defaults. Use an updated Android
 build to see the new route and detail tabs.
+
+## Action outbox and calendar execution
+
+Approved schedules reach the calendar through the Action path, not through a
+file the user taps. `Thread.kind` is a fact and lives in Fabric; `Action.kind` is
+a command and lives in the Action outbox (`state_root/action-outbox.sqlite3`,
+`weaver.action`). A command is never a Thread kind.
+
+1. The Action engine reads Fabric by a durable `seq` cursor. When there are new
+   rows it judges the schedules with `loom.schedules.approved_schedules` (blocked
+   by an open request, retracted, resolved) and enqueues what is still needed. The
+   enqueue and the cursor commit are one SQLite transaction, and a unique
+   idempotency key (`<kind>:<event>:<position>`) makes a replay or a rewound cursor
+   a no-op. A new schedule becomes `calendar.register`; a later schedule of the
+   same event with another time becomes `calendar.update`; retracting every live
+   schedule of an event becomes `calendar.remove`. An event is a chain of schedule
+   Threads with the same title (case and spaces folded) and at least one shared
+   tag; unlike the alert detector, untagged Threads never join, so an automatic
+   change cannot move an unrelated event that only has the same name. A blocked
+   schedule is held and never executed; blocking does not remove an event that
+   already exists.
+2. Actions of one event run in order. The server publishes `actions/<action_id>.json`
+   only for the next one, with the calendar event ID once the register is done.
+3. The phone executes by itself in the Courier worker. The target calendar is
+   chosen once in the app; until then Actions wait and nothing is written. The
+   fsynced pending marker and the recovery rules of the earlier manual
+   registration are kept (`CalendarJournal`): an ambiguous or unreadable calendar
+   never produces a second event. Transient failures retry with backoff, five
+   attempts in all, then the Action is given up. Missing calendar permission or a
+   removed calendar is a wait, not a failure. The app shows each Action's state
+   and has no registration button.
+4. The phone reports only a final result in `action-results/<action_id>.json`.
+   The server appends one `실행` Thread (`executes` names the Thread the Action
+   came from, `actor` is `system`) and then updates the outbox. Replaying a result
+   is idempotent, so a crash between the two steps only repeats harmless work.
+   The outbox is derived: a lost outbox is rebuilt from Fabric, and an Action whose
+   `실행` Thread exists comes back already finished, so it does not run twice.
+   Intermediate edits of an event are not replayed from history on a rebuild.
+5. `실행` Threads are not business facts. Fabric readers skip them unless asked;
+   wiki, Digest, query pages and this map list only facts.
+
+### Rollout and coexistence with older apps
+
+Deploy the **server first**, then update the phone app.
+
+- The new server stops writing `proposals/schedules/` and removes the files it
+  wrote there. It publishes Actions in two new top-level Courier folders,
+  `actions/` and `action-results/`, which older apps never open.
+- An outbox created beside legacy schedule files starts after everything already
+  approved (its baseline is the Fabric head at that moment). Schedules approved
+  before the upgrade are not registered automatically, because the old manual flow
+  may already have put them in the calendar. A fresh install has no baseline.
+- Older phone app with the new server: review, alerts and this map keep working
+  and nothing is rejected. The app finds no schedules, so it offers no
+  registration until it is updated. Old apps read only the six existing Thread
+  kinds on this map, and the `실행` Thread is never listed there.
+- New phone app with an older server: it finds no `actions/` files and does nothing.
+  The old server's `proposals/schedules/` files are ignored.
+- Only one phone should run the executor; ownership across several devices is not
+  decided yet.
+
+The ADR-039 first step stops here. A human moving or deleting an event in the
+calendar is not detected, and to-do and reminder Actions are not defined yet.

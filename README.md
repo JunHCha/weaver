@@ -29,14 +29,15 @@ flowchart TB
   subgraph phone["Phone · Android"]
     shepherd["Shepherd<br/>Share call script text, KakaoTalk, text"]
     review["Final review, once<br/>Approve · Edit text · Feedback · Reject"]
-    calendar["Calendar registration<br/>User-triggered"]
+    calendar["Calendar executor<br/>Automatic; you pick the calendar once"]
   end
 
   subgraph sync["Sync · Courier / Syncthing"]
     outbox["outbox/<br/>Captures + payloads"]
     receipts["receipts/<br/>Archive acknowledgements"]
-    proposals["proposals/<br/>Review packages, approved schedules, alerts"]
+    proposals["proposals/<br/>Review packages, alerts"]
     decisions["decisions/<br/>Verdicts"]
+    actions["actions/ · action-results/<br/>Calendar commands and their results"]
   end
 
   subgraph mac["Mac server · Local processing and storage"]
@@ -49,6 +50,8 @@ flowchart TB
     llm["LlmClient<br/>Anthropic API or Claude CLI"]
     fabric[("Fabric<br/>Append-only log with seq")]
     alerts["Alert detector<br/>Moved approved schedules"]
+    engine["Action engine<br/>Fabric seq cursor → outbox"]
+    actionbox[("Action outbox<br/>Commands and execution state")]
     wiki["Wiki<br/>Body by LLM, frontmatter by code"]
     digest["Digest + query pages<br/>Day · week · month, open requests"]
   end
@@ -73,7 +76,10 @@ flowchart TB
   wiki -- "Meaningful edits as human Threads" --> fabric
   fabric --> proposals
   fabric --> alerts --> proposals
-  proposals -- "Approved schedules" --> calendar
+  fabric -- "Schedules" --> engine --> actionbox --> actions
+  actions -- "register / update / remove" --> calendar
+  calendar -- "Result" --> actions
+  actions -- "실행 Thread" --> fabric
 
   classDef capture fill:#dbeafe,stroke:#2563eb,color:#172554
   classDef transport fill:#fef3c7,stroke:#b45309,color:#451a03
@@ -81,10 +87,10 @@ flowchart TB
   classDef human fill:#fce7f3,stroke:#be185d,color:#500724
   classDef stored fill:#dcfce7,stroke:#15803d,color:#052e16
   class shepherd capture
-  class outbox,receipts,proposals,decisions transport
-  class spinner,draft,apply,llm,alerts,wiki,digest process
+  class outbox,receipts,proposals,decisions,actions transport
+  class spinner,draft,apply,llm,alerts,engine,wiki,digest process
   class review,calendar human
-  class archive,summaries,fabric,vault stored
+  class archive,summaries,fabric,actionbox,vault stored
 ```
 
 Call input is manually shared Galaxy recording transcript text (ADR-028).
@@ -98,6 +104,8 @@ It does not authorize execution of requests found in the source material.
 | Event summary | The single document Loom drafts for one source (the review unit). The approved text is stored by its content hash. |
 | Verdict | The review result for one exact revision: approve, edit the text, natural-language feedback, or reject. |
 | Thread | One row of the Fabric log: an occurrence time, one sentence of content, tags, a kind (request, decision, schedule, record), source and actor. |
+| Action | A command for the outside world (today: `calendar.register`, `calendar.update`, `calendar.remove`). It lives in the Action outbox, not in Fabric, because its execution state changes. |
+| 실행 Thread | The recorded result of an Action (done, or given up, with the calendar event ID). It points at the Thread it executed with `executes`, and wiki, Digest and the data-flow map do not treat it as a business fact. |
 | Fabric | The append-only log of approved or human-written Threads. The store assigns a monotonic `seq`; consumers read from a `seq` bookmark. Corrections add rows (a tag correction, a rejection) instead of rewriting history. |
 | Wiki | The vault pages compiled from Fabric: the LLM writes each page body, code writes the frontmatter. |
 | Digest | Generated day, week and month summaries with links back to their sources. |

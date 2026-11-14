@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "ActionId": {
+      "maxLength": 36,
+      "minLength": 36,
+      "pattern": "^act_[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:ActionResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The phone's final report for one Action, ``action-results/<action_id>.json``.\n\n``attempts`` counts executions on the phone. ``error`` is a short code\n(``[a-z_]+``), never event content.",
+  "else": {
+    "properties": {
+      "error": {
+        "type": "string"
+      },
+      "external_id": {
+        "type": "null"
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "outcome": {
+        "const": "completed"
+      }
+    }
+  },
+  "properties": {
+    "action_id": {
+      "$ref": "#/$defs/ActionId"
+    },
+    "attempts": {
+      "$ref": "#/$defs/Revision"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finished_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "outcome": {
+      "enum": [
+        "completed",
+        "failed"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "action_id",
+    "outcome",
+    "external_id",
+    "attempts",
+    "finished_at",
+    "error"
+  ],
+  "then": {
+    "properties": {
+      "error": {
+        "type": "null"
+      },
+      "external_id": {
+        "type": "string"
+      }
+    }
+  },
+  "title": "ActionResult",
+  "type": "object"
+}
