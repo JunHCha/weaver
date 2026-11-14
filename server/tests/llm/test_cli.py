@@ -417,3 +417,18 @@ def test_claude_call_summary_has_shared_count_and_no_body(
     assert "test.call claude_cli succeeded" in lines[0]
     assert "in=? out=? (today 1/30)" in lines[0]
     assert "private-reply" not in caplog.text and SECRET_PROMPT not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "rejection,error",
+    [
+        (ok(is_error=True, result="Claude usage limit reached"), UsageLimited),
+        (ok(is_error=True, result="x", api_error_status=429), RateLimited),
+    ],
+)
+def test_provider_limit_refunds_daily_call(tmp_path, fake_claude, rejection, error):
+    client, runner, _ = make(tmp_path, fake_claude, rejection, ok(), cap=1)
+    with pytest.raises(error):
+        client.generate_text("t.x", "s", "u")
+    assert client.generate_text("t.x", "s", "u") == "ok"
+    assert len(runner.calls) == 2

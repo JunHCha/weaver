@@ -193,3 +193,35 @@ def test_human_typo_after_partial_write_invalidates_cached_batch(tmp_path, monke
     assert "사람 표현 유지" in page.read_text()
     with sqlite3.connect(compiler.state_path) as db:
         assert db.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 1
+
+
+def test_invalid_batch_is_suppressed_until_snapshot_changes(tmp_path, caplog):
+    _, fabric, llm, compiler = setup(tmp_path)
+    llm.transform = lambda data: (
+        data | {"excluded_threads": [{"thread_id": "secret", "reason": "private"}]}
+    )
+    with pytest.raises(ValueError):
+        compiler.run()
+    compiler.run()
+    assert len(llm.calls) == 1
+    assert "private" not in caplog.text
+    fabric.append([draft("three", ["new"])])
+    with pytest.raises(ValueError):
+        compiler.run()
+    assert len(llm.calls) == 2
+
+
+def test_validation_reason_is_specific_and_redacted(tmp_path, caplog):
+    _, _, llm, compiler = setup(tmp_path)
+
+    def invalid(data):
+        data["pages"][0]["body"] += "[[private secret]]"
+        return data
+
+    llm.transform = invalid
+    with pytest.raises(ValueError):
+        compiler.run()
+    with sqlite3.connect(compiler.state_path) as db:
+        reason = db.execute("SELECT reason FROM batch_failures").fetchone()[0]
+    assert "wiki batch contains an unknown link" in reason
+    assert "private secret" not in reason + caplog.text
