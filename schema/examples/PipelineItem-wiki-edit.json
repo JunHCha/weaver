@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "revision": 6,
+  "capture_id": null,
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "package_id": null,
+  "package_revision": null,
+  "source_type": "wiki_edit",
+  "title": "보안장비 점검",
+  "location": "wiki",
+  "status": "done",
+  "apply_failure_limit": 5,
+  "stage_times": {
+    "반영": "2026-11-13T09:00:00+09:00",
+    "wiki갱신": "2026-11-13T09:01:00+09:00"
+  },
+  "history": [
+    "wiki",
+    "fabric",
+    "wiki"
+  ],
+  "threads": [
+    {
+      "thread_id": "wiki:example:0",
+      "kind": "기록",
+      "content": "마감을 11월 19일로 변경"
+    }
+  ],
+  "pages": [
+    {
+      "path": "Weaver/pages/보안장비 점검.md",
+      "updated_at": "2026-11-13T09:01:00+09:00",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "digest": null,
+  "updated_at": "2026-11-13T09:01:00+09:00",
+  "wiki_edit": {
+    "path": "Weaver/pages/보안장비 점검.md",
+    "base_rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "new_rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "detected_at": "2026-11-13T08:30:00+09:00",
+    "ready_at": null,
+    "state": "published",
+    "changes": [
+      {
+        "field": "deadline",
+        "before": "2026-11-16",
+        "after": "2026-11-19"
+      }
+    ]
+  }
+}

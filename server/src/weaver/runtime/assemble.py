@@ -126,6 +126,7 @@ def build_runtime(
             config.state_root,
             ZoneInfo(config.wiki.timezone),
             summaries,
+            journal=progress.journal,
         )
         maintenance.append(
             MaintenanceTask("wiki", config.wiki.interval_seconds, job.run)

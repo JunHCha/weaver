@@ -19,17 +19,33 @@
     "반영": "2026-01-01T09:05:00+09:00",
     "wiki갱신": "2026-01-01T09:06:00+09:00"
   },
-  "history": ["spinner", "loom", "user", "loom", "fabric", "wiki"],
-  "threads": [{"thread_id": "thr_example", "kind": "기록"}],
-  "pages": [{
-    "path": "wiki/pages/예시.md",
-    "updated_at": "2026-01-01T09:06:00+09:00",
-    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }],
+  "history": [
+    "spinner",
+    "loom",
+    "user",
+    "loom",
+    "fabric",
+    "wiki"
+  ],
+  "threads": [
+    {
+      "thread_id": "thr_example",
+      "kind": "기록",
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "path": "wiki/pages/예시.md",
+      "updated_at": "2026-01-01T09:06:00+09:00",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
   "digest": {
     "path": "wiki/Digest/2026/01/2026-01-01.md",
     "updated_at": "2026-01-01T09:06:00+09:00",
     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
-  "updated_at": "2026-01-01T09:06:00+09:00"
+  "updated_at": "2026-01-01T09:06:00+09:00",
+  "wiki_edit": null
 }

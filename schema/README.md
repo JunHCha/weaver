@@ -15,8 +15,9 @@ uv run --project server python -m weaver.schema.export --output schema
 uv run --project server pytest server/tests/schema -q
 ```
 
-`examples/<Model>.json` is the minimum complete shape of each model. All data is
-synthetic.
+`examples/<Model>.json` and named variants show canonical serialized shapes,
+including defaults used for exact Kotlin round trips. Earlier observations may
+omit newly defaulted fields. All data is synthetic.
 
 ## Models
 
@@ -118,3 +119,15 @@ daily Digest can concern an older occurrence day even when updated today; only a
 basename matching today's `YYYY-MM-DD.md` is labelled today's Digest. The map's
 "today" update filtering uses the phone's local date. Wiki publication follows
 its existing maintenance interval; the next observation tick exposes new output.
+
+### Wiki edit observations
+
+`source_type: "wiki_edit"` requires `capture_id: null`, null package fields and
+`wiki_edit` metadata. The metadata carries a safe vault-relative path, base/new
+Git revisions, observed/ready timestamps, state (`settling`, `recorded`,
+`published`, `unchanged`) and changes (`field`, nullable string `before`/`after`).
+Only Wiki/Fabric locations and history are valid, history starts at Wiki, and
+stage_times is limited to the existing wire keys `반영` and `wiki갱신`.
+No capture or review milestones are synthesized. Thread summaries can include
+optional `content`; old capture projections omit it and `wiki_edit` to preserve
+strict v2 readers. See `examples/PipelineItem-wiki-edit.json`.

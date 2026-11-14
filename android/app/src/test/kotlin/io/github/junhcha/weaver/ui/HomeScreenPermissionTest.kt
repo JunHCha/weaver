@@ -38,7 +38,7 @@ class HomeScreenPermissionTest {
         Feature.entries.forEach { assertTrue("$it must start denied", !it.isGranted(context)) }
 
         compose.onNodeWithText("내 데이터 흐름").assertExists()
-        compose.onNodeWithText("수확·설정").performClick()
+        compose.onNodeWithText("수집·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("권한 없음").assertCountEquals(Feature.entries.size)
         compose.onAllNodesWithText("권한 요청").assertCountEquals(Feature.entries.size)
@@ -53,7 +53,7 @@ class HomeScreenPermissionTest {
         compose.activityRule.scenario.recreate()
 
         compose.onNodeWithText("내 데이터 흐름").assertExists()
-        compose.onNodeWithText("수확·설정").performClick()
+        compose.onNodeWithText("수집·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("허용됨").assertCountEquals(2)
         compose.onAllNodesWithText("권한 없음").assertCountEquals(1)

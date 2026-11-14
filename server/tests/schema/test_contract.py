@@ -73,6 +73,8 @@ def test_all_top_level_keys_are_required_even_if_nullable(model):
         )
         else set()
     )
+    if model.__name__ == "PipelineItem":
+        defaults.add("wiki_edit")
     for key in payload:
         if key in defaults:
             continue

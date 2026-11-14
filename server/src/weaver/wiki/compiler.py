@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import sqlite3
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.schema import TagCorrection, ThreadDraft
 from weaver.wiki.generation import GenerationCache, fingerprint
+from weaver.wiki.links import summary_path
+from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
 from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore, normalize_path
 
 
@@ -70,6 +73,7 @@ class Compiler:
                 db.execute("INSERT INTO bookmark VALUES (0)")
 
         self.cache = GenerationCache(state_path)
+        self.on_progress: Callable[[], None] | None = None
 
     def bookmark(self) -> int:
         """Return the last fully applied sequence."""
@@ -84,9 +88,7 @@ class Compiler:
             if row is None:
                 result = self.llm.generate_json(
                     "wiki.human_edit",
-                    "Extract meaningful body changes and tag corrections; ignore typos, "
-                    "formatting, and frontmatter field changes. A correction target must "
-                    "be an existing thread ID from the supplied log.",
+                    HUMAN_EDIT_PROMPT,
                     json.dumps(
                         {
                             "diff": edit.diff,
@@ -140,7 +142,15 @@ class Compiler:
                         )
                     )
 
-                tag = normalize_path(Path(edit.path).stem)
+                state_tag = edit.frontmatter_after.get("state_tag")
+                if not isinstance(state_tag, str) or not state_tag:
+                    state_tag = edit.frontmatter_before.get("state_tag")
+                tag = unicodedata.normalize(
+                    "NFC",
+                    state_tag
+                    if isinstance(state_tag, str) and state_tag
+                    else Path(edit.path).stem,
+                )
                 for change in result.changes:
                     make(change.content, change.tags, correction=change.correction)
                 for field in ("deadline", "schedule", "assignees", "status"):
@@ -165,6 +175,8 @@ class Compiler:
                 payload = row[0]
         self.fabric.append([ThreadDraft.model_validate(d) for d in json.loads(payload)])
         self.store.acknowledge(edit)
+        if self.on_progress is not None:
+            self.on_progress()
 
     def run(self) -> None:
         """Collect settled edits and advance only after every page is durable."""
@@ -235,17 +247,12 @@ class Compiler:
                     links.append(f"- {t.content}")
                     continue
                 summary = self.summary(t.source_id)
-                safe_title = summary.title.replace("/", "-").replace("\\", "-")
-                summary_path = normalize_path(
-                    f"summaries/{safe_title} {t.source_id}.md"
-                )
+                source_path = summary_path(summary.title, t.source_id)
                 try:
-                    self.store.read(summary_path)
+                    self.store.read(source_path)
                 except FileNotFoundError:
-                    self.store.write(
-                        summary_path, {}, summary.body, None, readonly=True
-                    )
-                links.append(f"- {t.content} [[{summary_path[:-3]}]]")
+                    self.store.write(source_path, {}, summary.body, None, readonly=True)
+                links.append(f"- {t.content} [[{source_path[:-3]}]]")
             payload = json.dumps({"page": body, "evidence": links}, ensure_ascii=False)
             generated = self.cache.get(
                 path,
@@ -289,12 +296,12 @@ class Compiler:
                 if kind in ("person", "organization", "project", "topic"):
                     pages.append(
                         Page(
-                            normalize_path(page_path.stem),
+                            unicodedata.normalize("NFC", page_path.stem),
                             cast(Kind, kind),
                             tuple(x for x in aliases if isinstance(x, str))
                             if isinstance(aliases, list)
                             else (),
-                            body.split("\n")[0],
+                            str(props.get("summary") or body.split("\n")[0]),
                         )
                     )
         self.context.sync_from_pages(pages)

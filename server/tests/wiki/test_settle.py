@@ -273,6 +273,27 @@ def test_decomposed_summary_links_and_page_names_across_consumers(tmp_path):
     class NoHumanLlm(Llm):
         def generate_json(self, task, system, user, schema):
             assert task != "wiki.human_edit"
+            if task == "wiki.compile_batch":
+                self.calls.append((task, user))
+                payload = json.loads(user)
+                return schema.model_validate(
+                    {
+                        "pages": [
+                            {
+                                "title": "계정잠금",
+                                "role": "operation",
+                                "summary": "계정잠금 운영",
+                                "thread_ids": [
+                                    t["thread_id"] for t in payload["threads"]
+                                ],
+                                "state_tag": None,
+                                "aliases": [],
+                                "body": "# 계정잠금\n\n운영 현황",
+                            }
+                        ],
+                        "excluded_threads": [],
+                    }
+                )
             return super().generate_json(task, system, user, schema)
 
     llm = NoHumanLlm()

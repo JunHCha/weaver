@@ -195,6 +195,9 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path):
     restarted._tick(threading.Event())
     observed = PipelineItem.model_validate_json(path.read_bytes())
     assert observed.location == "fabric" and observed.status == "done"
+    capture_wire = json.loads(path.read_text())
+    assert "wiki_edit" not in capture_wire
+    assert all("content" not in thread for thread in capture_wire["threads"])
     assert observed.threads[0].kind == "기록"
     assert "반영" in observed.stage_times
     store = WikiStore(config.vault_root, config.state_root, settle_seconds=0)
@@ -220,6 +223,14 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path):
     (store.root / "pages/예시.md").write_text("pending human edit")
     restarted.publisher.progress.publish()
     assert PipelineItem.model_validate_json(path.read_bytes()).pages == observed.pages
+
+    # A complete wiki rebuild removes old paths; preserve pending edits above,
+    # but do not keep links to files that no longer exist.
+    (store.root / "pages/예시.md").unlink()
+    store.write("pages/새 업무.md", {}, f"재생성 [[summary {package.source_id}]]", None)
+    restarted.publisher.progress.publish()
+    rebuilt = PipelineItem.model_validate_json(path.read_bytes())
+    assert {p.path for p in rebuilt.pages} == {"Weaver/pages/새 업무.md"}
 
 
 def test_output_path_contract_rejects_traversal_in_python_and_json_schema():

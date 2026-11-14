@@ -42,6 +42,7 @@
     ],
     "/$defs/PipelineStatus/type": "string",
     "/$defs/PipelineThread/additionalProperties": false,
+    "/$defs/PipelineThread/properties/content/type": "string",
     "/$defs/PipelineThread/properties/kind/enum": [
         "요청",
         "결정",
@@ -56,6 +57,81 @@
         "kind"
     ],
     "/$defs/PipelineThread/type": "object",
+    "/$defs/PipelineWikiChange/additionalProperties": false,
+    "/$defs/PipelineWikiChange/properties/after/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineWikiChange/properties/before/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineWikiChange/properties/field/enum": [
+        "body",
+        "deadline",
+        "schedule",
+        "assignees",
+        "status"
+    ],
+    "/$defs/PipelineWikiChange/properties/field/type": "string",
+    "/$defs/PipelineWikiChange/required": [
+        "field",
+        "before",
+        "after"
+    ],
+    "/$defs/PipelineWikiChange/type": "object",
+    "/$defs/PipelineWikiEdit/additionalProperties": false,
+    "/$defs/PipelineWikiEdit/properties/changes/type": "array",
+    "/$defs/PipelineWikiEdit/properties/detected_at/anyOf": [
+        {
+            "$ref": "#/$defs/Timestamp"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineWikiEdit/properties/new_rev/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineWikiEdit/properties/path/pattern": "^(?!/)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.)[^\\r\\n]+\\.md$",
+    "/$defs/PipelineWikiEdit/properties/ready_at/anyOf": [
+        {
+            "$ref": "#/$defs/Timestamp"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineWikiEdit/properties/state/enum": [
+        "settling",
+        "recorded",
+        "published",
+        "unchanged"
+    ],
+    "/$defs/PipelineWikiEdit/properties/state/type": "string",
+    "/$defs/PipelineWikiEdit/required": [
+        "path",
+        "base_rev",
+        "new_rev",
+        "detected_at",
+        "ready_at",
+        "state",
+        "changes"
+    ],
+    "/$defs/PipelineWikiEdit/type": "object",
     "/$defs/Revision/minimum": 1,
     "/$defs/Revision/type": "integer",
     "/$defs/SourceId/maxLength": 30,
@@ -79,6 +155,95 @@
     "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
     "/$defs/Timestamp/type": "string",
     "/additionalProperties": false,
+    "/allOf": [
+        {
+            "else": {
+                "properties": {
+                    "capture_id": {
+                        "not": {
+                            "type": "null"
+                        }
+                    },
+                    "wiki_edit": {
+                        "type": "null"
+                    }
+                }
+            },
+            "if": {
+                "properties": {
+                    "source_type": {
+                        "const": "wiki_edit"
+                    }
+                },
+                "required": [
+                    "source_type"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "capture_id": {
+                        "type": "null"
+                    },
+                    "history": {
+                        "items": {
+                            "enum": [
+                                "wiki",
+                                "fabric"
+                            ]
+                        },
+                        "minItems": 1,
+                        "prefixItems": [
+                            {
+                                "const": "wiki"
+                            }
+                        ]
+                    },
+                    "location": {
+                        "enum": [
+                            "wiki",
+                            "fabric"
+                        ]
+                    },
+                    "package_id": {
+                        "type": "null"
+                    },
+                    "package_revision": {
+                        "type": "null"
+                    },
+                    "stage_times": {
+                        "propertyNames": {
+                            "enum": [
+                                "반영",
+                                "wiki갱신"
+                            ]
+                        }
+                    },
+                    "status": {
+                        "enum": [
+                            "working",
+                            "done"
+                        ]
+                    },
+                    "wiki_edit": {
+                        "not": {
+                            "type": "null"
+                        }
+                    }
+                },
+                "required": [
+                    "wiki_edit"
+                ]
+            }
+        }
+    ],
+    "/properties/capture_id/anyOf": [
+        {
+            "$ref": "#/$defs/CaptureId"
+        },
+        {
+            "type": "null"
+        }
+    ],
     "/properties/digest/anyOf": [
         {
             "$ref": "#/$defs/PipelinePage"
@@ -107,11 +272,28 @@
     "/properties/pages/type": "array",
     "/properties/schema_version/const": 2,
     "/properties/schema_version/type": "integer",
+    "/properties/source_type/anyOf": [
+        {
+            "$ref": "#/$defs/Channel"
+        },
+        {
+            "const": "wiki_edit",
+            "type": "string"
+        }
+    ],
     "/properties/stage_times/additionalProperties": {
         "$ref": "#/$defs/Timestamp"
     },
     "/properties/stage_times/type": "object",
     "/properties/threads/type": "array",
+    "/properties/wiki_edit/anyOf": [
+        {
+            "$ref": "#/$defs/PipelineWikiEdit"
+        },
+        {
+            "type": "null"
+        }
+    ],
     "/required": [
         "schema_version",
         "revision",

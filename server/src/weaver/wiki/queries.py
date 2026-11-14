@@ -7,7 +7,9 @@ from weaver.context import ContextDictionary
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.fabric.state import project
 from weaver.schema import Thread
-from weaver.wiki.store import WikiStore, normalize_path
+from weaver.wiki.links import wikilink
+from weaver.wiki.snapshot import canonical_threads
+from weaver.wiki.store import WikiStore
 
 
 def _text(value: str) -> str:
@@ -21,8 +23,8 @@ def _text(value: str) -> str:
     )
 
 
-def _link(thread: Thread, source_link: Callable[[str], str]) -> str:
-    return f"[[{normalize_path(source_link(thread.source_id))}]]"
+def _link(thread: Thread, source_link: Callable[[str], str | None]) -> str:
+    return wikilink(source_link(thread.source_id))
 
 
 def _date(value: object, now: datetime) -> date | None:
@@ -47,7 +49,7 @@ def render_pages(
     *,
     now: datetime,
     inactive_days: int = 30,
-    source_link: Callable[[str], str] = lambda source_id: source_id,
+    source_link: Callable[[str], str | None] = lambda source_id: source_id,
 ) -> dict[str, str]:
     """Render pages from one snapshot; calendar boundaries use ``now``'s timezone.
 
@@ -56,7 +58,7 @@ def render_pages(
     """
     if now.utcoffset() is None or inactive_days < 0:
         raise ValueError("now must be timezone-aware and inactive_days nonnegative")
-    threads = fabric.entries(ThreadQuery())
+    threads = canonical_threads(fabric.entries(ThreadQuery()))
     retracted = {t.retracts for t in threads if t.retracts is not None}
     active = [
         t
@@ -83,6 +85,7 @@ def render_pages(
     tags = sorted({tag for t in active for tag in t.tags})
     start = now.date() - timedelta(days=now.weekday())
     due: list[tuple[date, str, str, Thread, int]] = []
+    seen_due: set[tuple[str, str, date]] = set()
     for tag in tags:
         state = project(tag, active)
         for field in ("deadline", "schedule"):
@@ -93,6 +96,16 @@ def render_pages(
             if day is None or not start <= day < start + timedelta(days=14):
                 continue
             source = next(t for t in active if t.thread_id == current.thread_id)
+            key = (source.thread_id, field, day)
+            if key in seen_due:
+                continue
+            seen_due.add(key)
+            labels = [
+                t
+                for t in source.tags
+                if t.casefold() not in {"todo", "확인", "진행", "완료"}
+            ]
+            label = " · ".join(labels) or ("요청" if source.kind == "요청" else "기록")
             dates = [
                 _date(t.value, now)
                 for t in active
@@ -103,7 +116,7 @@ def render_pages(
                 for a, b in zip(dates, dates[1:], strict=False)
                 if a is not None and b is not None and b > a
             )
-            due.append((day, tag, field, source, moves))
+            due.append((day, label, field, source, moves))
     deadlines = ["# 다가오는 마감", ""]
     for label, lower in (("이번 주", start), ("다음 주", start + timedelta(days=7))):
         deadlines.extend([f"## {label}", ""])
@@ -144,7 +157,7 @@ def write_pages(
     *,
     now: datetime,
     inactive_days: int = 30,
-    source_link: Callable[[str], str] = lambda source_id: source_id,
+    source_link: Callable[[str], str | None] = lambda source_id: source_id,
 ) -> None:
     """Write generated pages through WikiStore and register them as read-only."""
     for path, body in render_pages(

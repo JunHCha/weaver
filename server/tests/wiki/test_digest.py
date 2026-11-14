@@ -156,3 +156,24 @@ def test_invalid_evidence_does_not_advance_bookmark(tmp_path):
     llm.generate_json = original
     builder.update()
     assert wiki.read("Digest/2025/01/2025-01-01.md")[1]
+
+
+def test_request_with_deadline_appears_once_and_missing_source_is_not_linked(tmp_path):
+    fabric, wiki, _, builder = setup(tmp_path)
+    builder.source_link = lambda _: None
+    fabric.append(
+        [
+            draft(
+                "request",
+                datetime(2025, 1, 1, tzinfo=UTC),
+                kind="요청",
+                direction="받음",
+                field="deadline",
+                value="2025-01-01",
+            )
+        ]
+    )
+    builder.update()
+    body = wiki.read("Digest/2025/01/2025-01-01.md")[1]
+    assert body.split("## 요약")[0].count("request") == 1
+    assert "[[" not in body

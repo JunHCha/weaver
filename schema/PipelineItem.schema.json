@@ -72,6 +72,11 @@
     "PipelineThread": {
       "additionalProperties": false,
       "properties": {
+        "content": {
+          "default": "",
+          "title": "Content",
+          "type": "string"
+        },
         "kind": {
           "enum": [
             "요청",
@@ -93,6 +98,121 @@
         "kind"
       ],
       "title": "PipelineThread",
+      "type": "object"
+    },
+    "PipelineWikiChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "field": {
+          "enum": [
+            "body",
+            "deadline",
+            "schedule",
+            "assignees",
+            "status"
+          ],
+          "title": "Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "before",
+        "after"
+      ],
+      "title": "PipelineWikiChange",
+      "type": "object"
+    },
+    "PipelineWikiEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "base_rev": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/PipelineWikiChange"
+          },
+          "title": "Changes",
+          "type": "array"
+        },
+        "detected_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_rev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/NonEmpty",
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.)[^\\r\\n]+\\.md$"
+        },
+        "ready_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "settling",
+            "recorded",
+            "published",
+            "unchanged"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "base_rev",
+        "new_rev",
+        "detected_at",
+        "ready_at",
+        "state",
+        "changes"
+      ],
+      "title": "PipelineWikiEdit",
       "type": "object"
     },
     "Revision": {
@@ -129,13 +249,101 @@
   "$id": "urn:weaver:schema:PipelineItem",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "capture_id": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "wiki_edit": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "source_type": {
+            "const": "wiki_edit"
+          }
+        },
+        "required": [
+          "source_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capture_id": {
+            "type": "null"
+          },
+          "history": {
+            "items": {
+              "enum": [
+                "wiki",
+                "fabric"
+              ]
+            },
+            "minItems": 1,
+            "prefixItems": [
+              {
+                "const": "wiki"
+              }
+            ]
+          },
+          "location": {
+            "enum": [
+              "wiki",
+              "fabric"
+            ]
+          },
+          "package_id": {
+            "type": "null"
+          },
+          "package_revision": {
+            "type": "null"
+          },
+          "stage_times": {
+            "propertyNames": {
+              "enum": [
+                "반영",
+                "wiki갱신"
+              ]
+            }
+          },
+          "status": {
+            "enum": [
+              "working",
+              "done"
+            ]
+          },
+          "wiki_edit": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "wiki_edit"
+        ]
+      }
+    }
+  ],
   "description": "Durable observation, independent of short-lived review/receipt files.",
   "properties": {
     "apply_failure_limit": {
       "$ref": "#/$defs/Revision"
     },
     "capture_id": {
-      "$ref": "#/$defs/CaptureId"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureId"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "digest": {
       "anyOf": [
@@ -196,7 +404,16 @@
       "$ref": "#/$defs/SourceId"
     },
     "source_type": {
-      "$ref": "#/$defs/Channel"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Channel"
+        },
+        {
+          "const": "wiki_edit",
+          "type": "string"
+        }
+      ],
+      "title": "Source Type"
     },
     "stage_times": {
       "additionalProperties": {
@@ -224,6 +441,17 @@
     },
     "updated_at": {
       "$ref": "#/$defs/Timestamp"
+    },
+    "wiki_edit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PipelineWikiEdit"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

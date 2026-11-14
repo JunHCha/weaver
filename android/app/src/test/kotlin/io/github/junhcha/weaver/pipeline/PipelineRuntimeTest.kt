@@ -34,4 +34,27 @@ class PipelineRuntimeTest {
         assertEquals(listOf(MapNode.SPINNER,MapNode.LOOM,MapNode.USER),PipelineRuntime.visit(context,second).values.single())
         assertTrue(PipelineRuntime.visit(context,second).isEmpty())
     }
+    @Test fun wikiEditHasNoCaptureAndReplaysOnlyWikiFabricWiki() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val identity = "content://test/wiki-origin"
+        context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit().putString("tree", identity).commit()
+        val done = WeaverCodec.json.decodeFromString<PipelineItem>(File(System.getProperty("weaver.schemaDir"), "examples/PipelineItem-wiki-edit.json").readText())
+        val waiting = done.copy(revision = 1, location = PipelineLocation.WIKI, status = PipelineStatus.WORKING,
+            history = listOf(PipelineLocation.WIKI), stageTimes = emptyMap(), threads = emptyList(), pages = emptyList(),
+            wikiEdit = done.wikiEdit!!.copy(state = "settling"))
+        val inbox = CourierClient.Inbox(emptyList(), emptyList(), emptyList())
+        PipelineRuntime.observe(context, identity, inbox.copy(pipeline = listOf(waiting)))
+        val first = PipelineRuntime.snapshot(context)
+        assertEquals(done.sourceId, first.single().id)
+        assertEquals("Wiki 직접 수정", first.single().source)
+        assertFalse(first.single().needsReview)
+        assertNull(first.single().server!!.captureId)
+        assertTrue(PipelineRuntime.visit(context, first).isEmpty())
+        PipelineRuntime.observe(context, identity, inbox.copy(pipeline = listOf(done.copy(revision = 2))))
+        val updated = PipelineRuntime.snapshot(context)
+        assertEquals(listOf(MapNode.WIKI, MapNode.FABRIC, MapNode.WIKI), PipelineRuntime.visit(context, updated).values.single())
+        assertTrue(PipelineRuntime.visit(context, updated).isEmpty())
+        assertEquals("Wiki 갱신 완료", updated.single().stateLabel)
+    }
+
 }

@@ -45,4 +45,16 @@ class PipelineStoreTest {
         assertTrue(WeaverCodec.decode<PipelineItem>(WeaverCodec.encode(a)) is DecodeResult.Ok)
         assertTrue(WeaverCodec.decode<PipelineItem>(WeaverCodec.encode(a).replace("\"review\"", "\"unknown\"")) is DecodeResult.Invalid)
     }
+    @Test fun wikiEditOutputsAreCheckedForArrivalEvenOnLaterDays() {
+        val wiki = WeaverCodec.json.decodeFromString<PipelineItem>(java.io.File(System.getProperty("weaver.schemaDir"), "examples/PipelineItem-wiki-edit.json").readText())
+        assertEquals(wiki.pages, io.github.junhcha.weaver.ui.panelResultPages(listOf(wiki), java.time.LocalDate.of(2026, 12, 1)))
+    }
+
+    @Test fun olderCaptureObservationWithoutAddedDefaultsStillDecodes() {
+        val source = java.io.File(System.getProperty("weaver.schemaDir"), "examples/PipelineItem.json").readText()
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(source) as kotlinx.serialization.json.JsonObject
+        val old = kotlinx.serialization.json.JsonObject(root - "wiki_edit")
+        assertTrue(WeaverCodec.decode<PipelineItem>(old.toString()) is DecodeResult.Ok)
+    }
+
 }

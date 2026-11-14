@@ -23,7 +23,7 @@ enum class PipelineStatus {
 }
 
 @Serializable
-data class PipelineThread(@SerialName("thread_id") val threadId: String, val kind: String) {
+data class PipelineThread(@SerialName("thread_id") val threadId: String, val kind: String, val content: String = "") {
     init {
         Rules.nonEmpty(threadId, "thread_id")
         require(kind in setOf("요청", "결정", "일정", "기록", "태그정정", "거절"))
@@ -54,12 +54,37 @@ data class PipelinePage(
     }
 }
 
+@Serializable
+data class PipelineWikiChange(val field: String, val before: String?, val after: String?) {
+    init { require(field in setOf("body", "deadline", "schedule", "assignees", "status")) }
+}
+
+@Serializable
+data class PipelineWikiEdit(
+    val path: String,
+    @SerialName("base_rev") val baseRev: String,
+    @SerialName("new_rev") val newRev: String?,
+    @SerialName("detected_at") val detectedAt: String?,
+    @SerialName("ready_at") val readyAt: String?,
+    val state: String,
+    val changes: List<PipelineWikiChange>,
+) {
+    init {
+        PipelinePage(path, "2000-01-01T00:00:00Z", "0".repeat(64))
+        Rules.nonEmpty(baseRev, "base_rev")
+        newRev?.let { Rules.nonEmpty(it, "new_rev") }
+        detectedAt?.let { Rules.timestamp(it, "detected_at") }
+        readyAt?.let { Rules.timestamp(it, "ready_at") }
+        require(state in setOf("settling", "recorded", "published", "unchanged"))
+    }
+}
+
 /** Additive v2 observation, not a review package or an instruction to execute work. */
 @Serializable
 data class PipelineItem(
     @SerialName("schema_version") val schemaVersion: Int,
     val revision: Long,
-    @SerialName("capture_id") val captureId: String,
+    @SerialName("capture_id") val captureId: String?,
     @SerialName("source_id") val sourceId: String,
     @SerialName("package_id") val packageId: String?,
     @SerialName("package_revision") val packageRevision: Long?,
@@ -74,13 +99,24 @@ data class PipelineItem(
     val digest: PipelinePage?,
     @SerialName("apply_failure_limit") val applyFailureLimit: Long,
     @SerialName("updated_at") val updatedAt: String,
+    @SerialName("wiki_edit") val wikiEdit: PipelineWikiEdit? = null,
 ) {
     init {
         Rules.schemaVersion(schemaVersion, 2)
         Rules.revision(revision)
         Rules.revision(applyFailureLimit)
-        require(sourceType in setOf("call", "voice_memo", "kakao", "share_text"))
-        Rules.prefixedId("cap", captureId, "capture_id")
+        require(sourceType in setOf("call", "voice_memo", "kakao", "share_text", "wiki_edit"))
+        if (sourceType == "wiki_edit") {
+            require(captureId == null && wikiEdit != null && packageId == null && packageRevision == null)
+            require(location in setOf(PipelineLocation.WIKI, PipelineLocation.FABRIC))
+            require(status in setOf(PipelineStatus.WORKING, PipelineStatus.DONE))
+            require(history.firstOrNull() == PipelineLocation.WIKI)
+            require(history.all { it in setOf(PipelineLocation.WIKI, PipelineLocation.FABRIC) })
+            require(stageTimes.keys.all { it in setOf(Stage.APPLY, Stage.UPDATE_WIKI) })
+        } else {
+            require(wikiEdit == null)
+            Rules.prefixedId("cap", requireNotNull(captureId), "capture_id")
+        }
         Rules.prefixedId("src", sourceId, "source_id")
         packageId?.let { Rules.nonEmpty(it, "package_id") }
         packageRevision?.let(Rules::revision)

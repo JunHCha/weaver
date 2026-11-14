@@ -118,6 +118,7 @@ internal fun PipelineContent(
     claimAnimation: (String) -> Boolean = { true },
 ) {
     var bubble by remember { mutableStateOf<MapItem?>(null) }
+    var focusedItem by rememberSaveable { mutableStateOf<String?>(null) }
     val panelState = rememberSaveableStateHolder()
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Row(
@@ -135,7 +136,7 @@ internal fun PipelineContent(
                     TextButton(onClick = onReplay) { Text("다시 보기") }
                 }
             }
-            TextButton(onClick = onTools) { Text("수확·설정") }
+            TextButton(onClick = onTools) { Text("수집·설정") }
         }
         state.error?.let {
             Text(it, Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error)
@@ -153,8 +154,13 @@ internal fun PipelineContent(
                             state.paths,
                             replay + state.visitId * 1000000,
                             selected,
-                            { onSelect(it) },
-                            { bubble = it },
+                            { focusedItem = null; onSelect(it) },
+                            { item ->
+                                if (item.server?.wikiEdit != null) {
+                                    focusedItem = item.id
+                                    onSelect(item.node)
+                                } else bubble = item
+                            },
                             claimAnimation,
                         )
                     }
@@ -168,7 +174,7 @@ internal fun PipelineContent(
                     )
                     if (state.loaded && state.items.isEmpty())
                         Text(
-                            "아직 수확한 데이터가 없어요. 수확·설정에서 시작해 주세요.",
+                            "아직 수집한 데이터가 없어요. 수집·설정에서 시작해 주세요.",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(horizontal = 16.dp),
                         )
@@ -181,6 +187,7 @@ internal fun PipelineContent(
                             state.items,
                             { onSelect(null) },
                             Modifier.width(340.dp).fillMaxHeight(),
+                            focusedItemId = focusedItem,
                         )
                     }
                 }
@@ -193,6 +200,7 @@ internal fun PipelineContent(
                             state.items,
                             { onSelect(null) },
                             Modifier.fillMaxWidth().fillMaxHeight(.84f),
+                            focusedItemId = focusedItem,
                         )
                     }
                 }
@@ -234,9 +242,11 @@ private val centers =
     )
 private val ink = Color(0xff5f5bb6)
 private val line = Color(0xffaab6d6)
+internal val wikiEditColor = Color(0xff0a8278)
 
 private fun sourceColor(source: String) =
     when (source) {
+        "Wiki 직접 수정" -> wikiEditColor
         "통화" -> Color(0xff5b96d6)
         "음성 메모" -> Color(0xff56ad98)
         else -> Color(0xffd9af67)
@@ -262,6 +272,8 @@ private fun routePoints(path: List<MapNode>): List<Offset> = buildList {
             addAll(listOf(Offset(170f, 373f), Offset(285f, 373f), Offset(400f, 373f)))
         if (previous == MapNode.LOOM && node == MapNode.FABRIC)
             addAll(listOf(Offset(590f, 355f), Offset(590f, 120f)))
+        if (previous == MapNode.WIKI && node == MapNode.FABRIC)
+            addAll(listOf(Offset(925f, 355f), Offset(925f, 120f)))
         add(centers.getValue(node))
     }
 }
@@ -282,7 +294,7 @@ private fun PipelineMap(
         zoom = (zoom * z).coerceIn(1f, 3f)
         pan = if (zoom == 1f) Offset.Zero else pan + p
     }
-    Box(Modifier.aspectRatio(900f / 490f).clipToBounds().transformable(transform)) {
+    Box(Modifier.aspectRatio(1000f / 490f).clipToBounds().transformable(transform)) {
         BoxWithConstraints(
             Modifier.fillMaxSize().graphicsLayer {
                 scaleX = zoom
@@ -293,13 +305,13 @@ private fun PipelineMap(
         ) {
             val mapWidth = maxWidth
             val density = LocalDensity.current
-            val pixelScale = with(density) { mapWidth.toPx() } / 900f
+            val pixelScale = with(density) { mapWidth.toPx() } / 1000f
             Canvas(
                 Modifier.fillMaxSize().semantics {
                     contentDescription = "폰, Mac, Obsidian vault의 3열 2행 데이터 흐름 지도"
                 }
             ) {
-                val k = size.width / 900f
+                val k = size.width / 1000f
                 fun region(path: Path) {
                     drawPath(path, Color.White)
                     drawPath(
@@ -358,9 +370,12 @@ private fun PipelineMap(
                     ),
                     k,
                 )
-                label("짜 넣기 · 실", 590f, 237f, 10f, k, true)
+                label("Thread 기록", 590f, 237f, 10f, k, true)
                 edge(listOf(Offset(750f, 223f), Offset(750f, 307f)), k)
-                label("재단하기", 787f, 267f, 10f, k, true)
+                label("Wiki 갱신", 787f, 267f, 10f, k, true)
+                edge(listOf(Offset(790f, 355f), Offset(925f, 355f), Offset(925f, 120f), Offset(790f, 120f)), k, wikiEditColor)
+                label("사용자 수정", 925f, 224f, 10f, k, true)
+                label("Thread 반영", 925f, 242f, 10f, k, true)
                 for ((node, c) in centers) if (node != MapNode.COURIER) {
                     drawRoundRect(
                         if (selected == node) Color(0xfff4f2ff) else Color.White,
@@ -418,7 +433,7 @@ private fun PipelineMap(
                                 ((c.y - 38) * pixelScale).roundToInt(),
                             )
                         }
-                        .size(mapWidth * 76f / 900f)
+                        .size(mapWidth * 76f / 1000f)
                         .clickable { onSelect(node) }
                         .semantics { contentDescription = "${node.label} 노드" },
                     contentAlignment = Alignment.Center,
@@ -426,7 +441,7 @@ private fun PipelineMap(
                     Icon(
                         PipelineIcons.get(node),
                         null,
-                        Modifier.size(mapWidth * 44f / 900f),
+                        Modifier.size(mapWidth * 44f / 1000f),
                         tint = ink,
                     )
                 }
@@ -438,14 +453,14 @@ private fun PipelineMap(
                             ((y - 16) * pixelScale).roundToInt(),
                         )
                     }
-                    .size(mapWidth * 32f / 900f)
+                    .size(mapWidth * 32f / 1000f)
                     .background(Color(0xfff0effb), RoundedCornerShape(50)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     PipelineIcons.get(MapNode.COURIER),
-                    "심부름꾼",
-                    Modifier.size(mapWidth * 22f / 900f),
+                    "Courier",
+                    Modifier.size(mapWidth * 22f / 1000f),
                     tint = ink,
                 )
             }
@@ -539,8 +554,8 @@ private fun DrawScope.label(
     }
 }
 
-private fun DrawScope.edge(points: List<Offset>, k: Float) {
-    points.zipWithNext().forEach { (a, b) -> drawLine(line, a * k, b * k, 2 * k) }
+private fun DrawScope.edge(points: List<Offset>, k: Float, color: Color = line) {
+    points.zipWithNext().forEach { (a, b) -> drawLine(color, a * k, b * k, 2 * k) }
     val end = points.last()
     val d = (end - points[points.lastIndex - 1])
     val unit = d / d.getDistance()
@@ -554,7 +569,7 @@ private fun DrawScope.edge(points: List<Offset>, k: Float) {
             lineTo(b.x * k, b.y * k)
             close()
         },
-        line,
+        color,
     )
 }
 
@@ -566,7 +581,7 @@ private fun Legend() {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        for (source in listOf("통화", "음성 메모", "공유한 글")) Row(
+        for (source in listOf("통화", "음성 메모", "공유한 글", "Wiki 직접 수정")) Row(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.size(8.dp).background(sourceColor(source), RoundedCornerShape(2.dp)))

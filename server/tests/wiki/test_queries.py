@@ -110,6 +110,31 @@ def test_calendar_timezone_and_invalid_values(tmp_path):
     assert "나" not in page
 
 
+def test_missing_source_does_not_create_phantom_link(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    add(fabric, 1, kind="요청", direction="받음")
+    pages = render_pages(
+        fabric,
+        context,
+        now=datetime(2026, 11, 10, tzinfo=UTC),
+        source_link=lambda _: None,
+    )
+    assert "내용 1" in pages["열린 요청.md"]
+    assert "[[" not in pages["열린 요청.md"]
+
+
+def test_same_deadline_thread_with_multiple_tags_is_only_rendered_once(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    add(fabric, 1, field="deadline", value="2026-11-11", tags=["TODO", "확인"])
+    page = render_pages(fabric, context, now=datetime(2026, 11, 10, tzinfo=UTC))[
+        "다가오는 마감.md"
+    ]
+    assert page.count("내용 1") == 1
+    assert "TODO" not in page
+
+
 def test_source_links_are_normalized(tmp_path):
     import unicodedata
 

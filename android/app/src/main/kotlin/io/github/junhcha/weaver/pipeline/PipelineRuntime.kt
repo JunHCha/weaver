@@ -23,13 +23,13 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 enum class MapNode(val label: String, val subtitle: String) {
-    SHEPHERD("양치기", "데이터를 수확해요."),
-    COURIER("심부름꾼", "Mac이 가져가길 기다려요."),
-    SPINNER("물레", "여러 번 감아서 정리된 글로 남겨요."),
-    LOOM("베틀", "엮고 짜 넣어요."),
-    USER("나", "엮은 내용을 승인해요."),
-    FABRIC("천", "실이 시간순으로 쌓여요."),
-    WIKI("위키", "천을 재단해 wiki 페이지와 Digest로 지어요."),
+    SHEPHERD("Shepherd", "데이터를 모아요."),
+    COURIER("Courier", "Mac이 가져가길 기다려요."),
+    SPINNER("Spinner", "텍스트를 정리해요."),
+    LOOM("Loom", "검토한 내용을 반영해요."),
+    USER("You", "검토할 내용을 확인해요."),
+    FABRIC("Fabric", "Thread가 시간순으로 쌓여요."),
+    WIKI("Wiki", "Fabric을 종합해 페이지와 Digest를 만들어요."),
 }
 
 fun PipelineLocation.node(): MapNode = MapNode.valueOf(name)
@@ -53,21 +53,31 @@ data class MapItem(
         get() = status == "apply_stopped"
 
     val stateLabel: String
-        get() =
-            when (status) {
+        get() {
+            server?.wikiEdit?.let { edit ->
+                return when (edit.state) {
+                    "settling" -> if (edit.readyAt != null) "수정 감지 · 편집 안정 대기" else "수정 내용 확인 중"
+                    "recorded" -> "Fabric 반영 · Wiki 갱신 중"
+                    "published" -> "Wiki 갱신 완료"
+                    else -> "추가할 사실 없음 · 편집 이력 보관"
+                }
+            }
+            return when (status) {
                 "review" -> "엮은 내용을 확인해 주세요"
                 "apply_stopped" -> "반영 ${server?.applyFailureLimit ?: 5}회 실패로 멈췄어요"
                 "applying" -> "승인을 보냈어요 · Mac 반영 대기"
-                "done" -> if (node == MapNode.WIKI) "위키 결과를 만들었어요" else "천에 실을 저장했어요"
+                "done" -> if (node == MapNode.WIKI) "Wiki 결과를 만들었어요" else "Fabric에 Thread를 저장했어요"
                 "rejected" -> "거절한 항목이에요"
                 "waiting" -> "Mac이 가져가길 기다려요 · 할 일이 아니에요"
                 "pending" -> "폰에서 보내기 준비 중이에요"
                 else -> "${node.label}에서 처리하고 있어요"
             }
+        }
 }
 
 fun sourceLabel(value: String): String =
     when (value) {
+        "wiki_edit" -> "Wiki 직접 수정"
         "call" -> "통화"
         "fleece",
         "voice_memo" -> "음성 메모"
@@ -144,7 +154,7 @@ object PipelineRuntime {
                             item.status == PipelineStatus.REVIEW &&
                                 (item.packageId to item.packageRevision) in submitted
                         MapItem(
-                            item.captureId,
+                            item.captureId ?: item.sourceId,
                             item.title.ifBlank { "${sourceLabel(item.sourceType)} 항목" },
                             sourceLabel(item.sourceType),
                             if (sent) MapNode.LOOM else item.location.node(),
@@ -216,7 +226,9 @@ object PipelineRuntime {
                     )
                 }
             }
-            observed.sortedBy { it.id }
+            observed.sortedWith(compareBy<MapItem> { if (it.server?.wikiEdit != null) 0 else 1 }
+                .thenByDescending { if (it.server?.wikiEdit != null) it.server.updatedAt else "" }
+                .thenBy { it.id })
         }
 
     fun visit(context: Context, current: List<MapItem>): Map<String, List<MapNode>> {

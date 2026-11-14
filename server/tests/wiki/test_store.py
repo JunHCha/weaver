@@ -92,3 +92,13 @@ def test_new_human_page_and_ignored_paths(tmp_path: Path) -> None:
     assert "+hello" in edits[0].diff
     with pytest.raises(ValueError):
         WikiStore(tmp_path / "vault", tmp_path / "other", wiki_root="../escape")
+
+
+@pytest.mark.parametrize("digest", ["0b" + "a" * 62, "0e" + "1" * 62, "1" * 64])
+def test_internal_hash_remains_text_even_when_it_looks_numeric(tmp_path, digest):
+    store = WikiStore(tmp_path / "vault", tmp_path / "state", settle_seconds=0)
+    page = store.root / "hash.md"
+    page.write_text(f"---\n{HASH_KEY}: {digest}\n---\n본문\n")
+    props, body, _ = store.read("hash.md")
+    assert props[HASH_KEY] == digest
+    assert body == "본문\n"
