@@ -19,6 +19,7 @@ from weaver.llm.errors import (
     Refusal,
     SchemaMismatch,
     TransientError,
+    UsageLimited,
 )
 from weaver.runtime import (
     AlreadyRunning,
@@ -502,3 +503,67 @@ def test_usage_limited_never_becomes_failed(tmp_path):
         runtime._tick(stop)
         clock.now += CREDIT_RECHECK_SECONDS
     assert counts(tmp_path) == {"waiting_llm": 1}
+
+
+@pytest.mark.parametrize("error, delay", [(RateLimited(), 300), (UsageLimited(), 3600)])
+def test_wiki_maintenance_limit_disables_gate_until_recheck(tmp_path, error, delay):
+    calls = []
+
+    def run():
+        calls.append(1)
+        raise error
+
+    runtime, _, _, clock = make(tmp_path, maintenance=[MaintenanceTask("wiki", 0, run)])
+    runtime._run_maintenance()
+    clock.now += delay - 1
+    runtime._recheck_llm()
+    runtime._run_maintenance()
+    assert len(calls) == 1
+    assert runtime.gate.status.reason == error.code
+    clock.now += 1
+    runtime._recheck_llm()
+    runtime._run_maintenance()
+    assert len(calls) == 2
+
+
+def test_maintenance_value_error_log_is_redacted(tmp_path, caplog):
+    def run():
+        raise ValueError("private content")
+
+    runtime, _, _, _ = make(tmp_path, maintenance=[MaintenanceTask("wiki", 0, run)])
+    runtime._run_maintenance()
+    assert "ValueError validation_failed" in caplog.text
+    assert "private content" not in caplog.text
+
+
+def test_wiki_rate_limit_backoff_grows_caps_and_resets(tmp_path):
+    calls = []
+    fail = [True]
+
+    def run():
+        calls.append(1)
+        if fail[0]:
+            raise RateLimited()
+
+    runtime, _, _, clock = make(tmp_path, maintenance=[MaintenanceTask("wiki", 0, run)])
+    runtime._run_maintenance()
+    for delay in (300, 600, 1200, 2400, 3600, 3600):
+        clock.now += delay - 1
+        runtime._recheck_llm()
+        runtime._run_maintenance()
+        assert not runtime.gate.available
+        clock.now += 1
+        runtime._recheck_llm()
+        runtime._run_maintenance()
+    fail[0] = False
+    clock.now += 3600
+    runtime._recheck_llm()
+    runtime._run_maintenance()
+    fail[0] = True
+    runtime._run_maintenance()
+    clock.now += 299
+    runtime._recheck_llm()
+    assert not runtime.gate.available
+    clock.now += 1
+    runtime._recheck_llm()
+    assert runtime.gate.available

@@ -1,6 +1,7 @@
 """Compile a complete bounded Fabric snapshot into a coherent work wiki."""
 
 import json
+import logging
 import re
 import sqlite3
 import unicodedata
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from weaver.fabric import ThreadQuery
 from weaver.fabric.state import project
+from weaver.llm.errors import SchemaMismatch
 from weaver.schema import Thread
 from weaver.wiki.compiler import Compiler
 from weaver.wiki.generation import fingerprint
@@ -18,6 +20,8 @@ from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION, WORK_VAULT_RULES
 from weaver.wiki.snapshot import canonical_threads
 from weaver.wiki.store import HumanEditPending
+
+logger = logging.getLogger(__name__)
 
 
 def _nfc(value: str) -> str:
@@ -50,6 +54,27 @@ class WikiBatch(BaseModel):
     excluded_threads: list[ExcludedThread]
 
 
+_VALIDATION_REASONS = frozenset(
+    {
+        "invalid or duplicate wiki page title",
+        "wiki batch would discard an existing page",
+        "unknown wiki evidence thread",
+        "wiki state tag is unrelated to the page",
+        "wiki page must start with its title",
+        "wiki page must not duplicate managed metadata",
+        "wiki batch must use page links without unverified anchors",
+        "wiki batch contains an unknown link",
+        "wiki page links must use validated wikilinks",
+        "duplicate or assigned excluded thread",
+        "wiki batch does not account for all active threads",
+    }
+)
+
+
+class WikiValidationError(ValueError):
+    """A fixed, content-free batch validation reason."""
+
+
 class BatchCompiler(Compiler):
     """One corpus-level LLM call; validate the whole batch before writing pages."""
 
@@ -69,6 +94,10 @@ class BatchCompiler(Compiler):
                 "CREATE TABLE IF NOT EXISTS batches "
                 "(seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL, "
                 "result TEXT NOT NULL, bases TEXT NOT NULL, created_at TEXT NOT NULL)"
+            )
+
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS batch_failures (fingerprint TEXT PRIMARY KEY, reason TEXT NOT NULL)"
             )
 
     def _run(self) -> None:
@@ -134,7 +163,13 @@ class BatchCompiler(Compiler):
             "current_states": states,
         }
         snapshot = fingerprint({"corpus": corpus, "high": high, "prompt": BATCH_PROMPT})
+        failure_key = fingerprint(
+            {"snapshot": snapshot, "existing": {p: v[2] for p, v in existing.items()}}
+        )
         with sqlite3.connect(self.state_path) as db:
+            failed = db.execute(
+                "SELECT reason FROM batch_failures WHERE fingerprint=?", (failure_key,)
+            ).fetchone()
             row = db.execute(
                 "SELECT result, bases FROM batches WHERE seq=? AND fingerprint=?",
                 (high, snapshot),
@@ -153,6 +188,9 @@ class BatchCompiler(Compiler):
             assert row is not None
             result = WikiBatch.model_validate_json(row[0])
         else:
+            if failed:
+                logger.warning("wiki batch validation skipped: %s", failed[0])
+                return
             for path, (_, _, digest) in existing.items():
                 self.store.check_write(path, digest)
             payload = corpus | {
@@ -161,13 +199,32 @@ class BatchCompiler(Compiler):
                     for path, (props, body, _) in existing.items()
                 ]
             }
-            result = self.llm.generate_json(
-                "wiki.compile_batch",
-                BATCH_PROMPT,
-                json.dumps(payload, ensure_ascii=False),
-                WikiBatch,
-            )
-            self._validate(result, active, sources, existing)
+            try:
+                result = self.llm.generate_json(
+                    "wiki.compile_batch",
+                    BATCH_PROMPT,
+                    json.dumps(payload, ensure_ascii=False),
+                    WikiBatch,
+                )
+                self._validate(result, active, sources, existing)
+            except (ValueError, SchemaMismatch) as error:
+                reason = (
+                    "schema_mismatch"
+                    if isinstance(error, SchemaMismatch)
+                    else "invalid_batch"
+                )
+                if (
+                    isinstance(error, WikiValidationError)
+                    and str(error) in _VALIDATION_REASONS
+                ):
+                    reason += ": " + str(error)
+                with sqlite3.connect(self.state_path) as db:
+                    db.execute(
+                        "INSERT OR REPLACE INTO batch_failures VALUES (?, ?)",
+                        (failure_key, reason),
+                    )
+                logger.warning("wiki batch validation failed: %s", reason)
+                raise
             completed = {}
             with sqlite3.connect(self.state_path) as db:
                 db.execute(
@@ -263,25 +320,27 @@ class BatchCompiler(Compiler):
                 or page.title.casefold() in {"todo", "확인", "진행", "완료"}
                 or any(not a for a in page.aliases)
             ):
-                raise ValueError("invalid or duplicate wiki page title")
+                raise WikiValidationError("invalid or duplicate wiki page title")
             titles.add(page.title.casefold())
         page_paths = {f"pages/{p.title}" for p in result.pages}
         if not set(existing).issubset({p + ".md" for p in page_paths}):
-            raise ValueError("wiki batch would discard an existing page")
+            raise WikiValidationError("wiki batch would discard an existing page")
         covered = set()
         for page in result.pages:
             ids = set(page.thread_ids)
             if not ids.issubset(by_id):
-                raise ValueError("unknown wiki evidence thread")
+                raise WikiValidationError("unknown wiki evidence thread")
             if page.state_tag and not any(
                 page.state_tag in by_id[key].tags for key in ids
             ):
-                raise ValueError("wiki state tag is unrelated to the page")
+                raise WikiValidationError("wiki state tag is unrelated to the page")
             covered.update(ids)
             if not page.body.startswith(f"# {page.title}\n"):
-                raise ValueError("wiki page must start with its title")
+                raise WikiValidationError("wiki page must start with its title")
             if page.body.startswith("---") or "\n## 근거" in page.body:
-                raise ValueError("wiki page must not duplicate managed metadata")
+                raise WikiValidationError(
+                    "wiki page must not duplicate managed metadata"
+                )
             allowed = page_paths | {
                 str(sources[by_id[key].source_id]["path"]).removesuffix(".md")
                 for key in ids
@@ -289,21 +348,25 @@ class BatchCompiler(Compiler):
             }
             for link in re.findall(r"\[\[([^\]\n]+)\]\]", page.body):
                 if "#" in link.split("|", 1)[0]:
-                    raise ValueError(
+                    raise WikiValidationError(
                         "wiki batch must use page links without unverified anchors"
                     )
                 target = _nfc(link.split("|", 1)[0].split("#", 1)[0]).removesuffix(
                     ".md"
                 )
                 if target not in allowed:
-                    raise ValueError("wiki batch contains an unknown link")
+                    raise WikiValidationError("wiki batch contains an unknown link")
             if re.search(r"\]\([^)]*\.md(?:[)#])", page.body):
-                raise ValueError("wiki page links must use validated wikilinks")
+                raise WikiValidationError(
+                    "wiki page links must use validated wikilinks"
+                )
         excluded = [x.thread_id for x in result.excluded_threads]
         if len(excluded) != len(set(excluded)) or set(excluded) & covered:
-            raise ValueError("duplicate or assigned excluded thread")
+            raise WikiValidationError("duplicate or assigned excluded thread")
         if covered | set(excluded) != set(by_id):
-            raise ValueError("wiki batch does not account for all active threads")
+            raise WikiValidationError(
+                "wiki batch does not account for all active threads"
+            )
 
     def refresh_index(self) -> None:
         """Publish navigation from actual files, never from guessed link targets."""

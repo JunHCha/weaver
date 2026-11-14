@@ -331,12 +331,15 @@ class ClaudeCliClient:
             record["status"] = "succeeded"
             return result
         except LlmError as exc:
+            if isinstance(exc, (RateLimited, UsageLimited)) and "daily_day" in record:
+                self.ledger.refund_daily_call(record.pop("daily_day"))
             record["status"] = exc.code
             raise
         except Exception:
             record["status"] = LlmError.code
             raise LlmError() from None
         finally:
+            record.pop("daily_day", None)
             record["elapsed_seconds"] = time.monotonic() - started
             self.ledger.finish(call_id, record, 0)
 
@@ -358,6 +361,7 @@ class ClaudeCliClient:
         if not self.ledger.take_daily_call(day, self.config.max_cli_calls_per_day):
             logger.warning("Claude CLI daily call cap reached; call refused")
             raise UsageLimited()
+        record["daily_day"] = day
         self.workdir.mkdir(mode=0o700, exist_ok=True)
         record["attempts"] = 1
         attempt: dict[str, Any] = {"status": "pending", "usage": None}

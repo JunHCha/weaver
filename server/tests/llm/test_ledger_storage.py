@@ -72,3 +72,10 @@ def test_each_connection_enables_full_disk_flush(tmp_path):
             assert db.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
             assert db.execute("PRAGMA fullfsync").fetchone()[0] == 1
             assert db.execute("PRAGMA checkpoint_fullfsync").fetchone()[0] == 1
+
+
+def test_daily_refund_restores_capacity(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.db")
+    assert ledger.take_daily_call("2026-11-13", 1)
+    ledger.refund_daily_call("2026-11-13")
+    assert ledger.take_daily_call("2026-11-13", 1)

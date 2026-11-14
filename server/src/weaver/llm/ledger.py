@@ -127,6 +127,11 @@ class Ledger:
             )
         return True
 
+    def refund_daily_call(self, day: str) -> None:
+        """Return one rejected subscription call to its original day."""
+        with self._connect() as db:
+            db.execute("UPDATE cli_daily SET calls=MAX(calls-1, 0) WHERE day=?", (day,))
+
     def finish(self, call_id: str, record: dict[str, Any], charge: int) -> None:
         record["budget_held_usd"] = charge / NANO_USD
         with self._connect() as db:

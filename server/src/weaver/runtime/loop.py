@@ -44,6 +44,7 @@ from weaver.llm.errors import (
     InsufficientCredit,
     InvalidJson,
     MissingOutput,
+    RateLimited,
     Refusal,
     SchemaMismatch,
     UsageLimited,
@@ -62,6 +63,8 @@ MAX_RETRY_BACKOFF_SECONDS = 3600.0
 MAX_RETRY_ATTEMPTS = 20
 MAX_CONTRACT_FAILURES = 3
 LLM_RECHECK_SECONDS = 60.0
+WIKI_RATE_RECHECK_SECONDS = 300.0
+WIKI_RATE_MAX_RECHECK_SECONDS = 3600.0
 CREDIT_RECHECK_SECONDS = 3600.0
 RESUME_SLACK_SECONDS = 60.0
 LOCK_NAME = "weaver.lock"
@@ -201,6 +204,7 @@ class Runtime[S: HasSourceId]:
         self.consecutive_failures = 0
         self._last_run: dict[str, float] = {}
         self._last_llm_check: float | None = None
+        self._wiki_rate_failures = 0
         self._started_at = datetime.now(UTC).isoformat()
 
     # ---- process lifecycle -----------------------------------------------------
@@ -291,6 +295,11 @@ class Runtime[S: HasSourceId]:
             if self.gate.status.reason in _HOURLY_REASONS
             else LLM_RECHECK_SECONDS
         )
+        if self.gate.status.reason == RateLimited.code and self._wiki_rate_failures:
+            recheck = min(
+                WIKI_RATE_RECHECK_SECONDS * 2 ** min(self._wiki_rate_failures - 1, 4),
+                WIKI_RATE_MAX_RECHECK_SECONDS,
+            )
         if self._last_llm_check is not None and now - self._last_llm_check < recheck:
             return
         if self._last_llm_check is not None:  # the startup probe already ran
@@ -395,16 +404,32 @@ class Runtime[S: HasSourceId]:
     def _run_maintenance(self) -> None:
         now = self.clock()
         for task in self.maintenance:
+            if task.name == "wiki" and not self.gate.available:
+                continue
             last = self._last_run.get(task.name)
             if last is not None and now - last < task.interval_seconds:
                 continue
             self._last_run[task.name] = now
             try:
                 task.run()
+            except (*_LLM_OFF, RateLimited) as error:
+                if task.name == "wiki":
+                    if isinstance(error, RateLimited):
+                        self._wiki_rate_failures += 1
+                    self.gate.disable(error.code)
+                    self._last_llm_check = self.clock()
+                logger.warning("maintenance failed: %s %s", task.name, error.code)
             except Exception as error:
+                reason = " validation_failed" if isinstance(error, ValueError) else ""
                 logger.error(
-                    "maintenance failed: %s %s", task.name, type(error).__name__
+                    "maintenance failed: %s %s%s",
+                    task.name,
+                    type(error).__name__,
+                    reason,
                 )
+            else:
+                if task.name == "wiki":
+                    self._wiki_rate_failures = 0
 
     # ---- status ------------------------------------------------------------------
 
