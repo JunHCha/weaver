@@ -9,7 +9,11 @@ into Fabric Threads. It never appends a fact the user did not approve.
    are the only hints. The `ReviewPackage` revision 1 is journaled in
    `state_root/summary.sqlite3` and then published as `<package_id>.r1.json` in
    the Courier `proposals/` folder. Extra questions are appended to the body as
-   a list instead of being asked.
+   a list instead of being asked. A call Script at or below `revision_threshold`
+   also gets its speech segments corrected in that same call (changed segments
+   only; an invalid correction is dropped and the original is summarized). Longer
+   calls are corrected beforehand by Spinner (`spinner.revise`), so they take two
+   calls; long text channels take `loom.polish` plus the summary.
 2. The phone sends a `Verdict` for exactly one package revision.
    `SummaryReview.apply(package, script, verdict)` handles the three actions:
    - `approve`: answers and optional feedback are applied together (`loom.approve`), the final document is

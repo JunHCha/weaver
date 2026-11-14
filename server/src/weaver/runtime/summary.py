@@ -164,11 +164,17 @@ class SummaryProcessor:
             raise Interrupted()
         if self.progress is not None:
             self.progress.organized(source)
+        # Short calls are corrected inside the summary call; long ones already
+        # were (spinner.revise), so only the former passes its Script to Loom.
+        revised = source.channel == "call" and self.spinner.was_revised(source)
         package, _ = self.drafts.create(
             source.source_id,
             script.text,
             source.hints.counterpart,
             source_type=source.channel,
+            call=script if source.channel == "call" and not revised else None,
+            revised=revised,
+            on_revised=lambda corrected: self.spinner.save_revised(source, corrected),
         )
         if self.progress is not None:
             self.progress.observe_package(package)
