@@ -6,6 +6,7 @@ Missing historic stage times remain missing rather than being invented.
 """
 
 import hashlib
+import json
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from weaver.archive import ArchiveStore
-from weaver.courier.atomic import write_json_atomic
+from weaver.courier.atomic import write_bytes_atomic
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.loom.summary_review import Prepared
 from weaver.loom.summary_state import SummaryState
@@ -101,6 +102,25 @@ class PipelineJournal:
         self._write(item)
         return item
 
+    def receive_wiki_edit(self, item: PipelineItem) -> PipelineItem:
+        """Wiki-origin observations have no capture receipt or review package."""
+        if item.wiki_edit is None:
+            raise ValueError("expected Wiki edit observation")
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "INSERT OR IGNORE INTO items VALUES (?, ?)",
+                (item.source_id, item.model_dump_json()),
+            )
+        return self.get(item.source_id)
+
+    def wiki_edits(self) -> list[PipelineItem]:
+        with sqlite3.connect(self.path) as db:
+            items = [
+                PipelineItem.model_validate_json(row[0])
+                for row in db.execute("SELECT payload FROM items")
+            ]
+        return [item for item in items if item.wiki_edit is not None]
+
     def update(self, source_id: str, **changes: Any) -> PipelineItem:
         with sqlite3.connect(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
@@ -135,9 +155,15 @@ class PipelineJournal:
             raise OSError("pipeline projection directory is a symlink")
         self.directory.mkdir(parents=True, exist_ok=True)
         final = self.directory / f"{item.source_id}.json"
-        data = item.model_dump_json().encode()
+        payload = item.model_dump(mode="json")
+        if item.wiki_edit is None:
+            # Existing strict v2 clients continue to read capture observations.
+            payload.pop("wiki_edit", None)
+            for thread in payload["threads"]:
+                thread.pop("content", None)
+        data = json.dumps(payload, ensure_ascii=False).encode()
         if final.is_symlink() or not final.is_file() or final.read_bytes() != data:
-            write_json_atomic(final, item)
+            write_bytes_atomic(final, data)
 
     def publish(self) -> None:
         with sqlite3.connect(self.path) as db:
@@ -298,8 +324,15 @@ class PipelinePublisher:
         prior = {
             p.path: p for p in [*item.pages, *([item.digest] if item.digest else [])]
         }
-        pages_by_path = {p.path: p for p in item.pages}
+        pages_by_path = {
+            p.path: p
+            for p in item.pages
+            if (self.vault / p.path).is_file()
+            and not (self.vault / p.path).is_symlink()
+        }
         digest: PipelinePage | None = item.digest
+        if digest is not None and not (self.vault / digest.path).is_file():
+            digest = None
         prefix = self.wiki.root.relative_to(self.vault).as_posix()
         for relative, data, timestamp in self.wiki.published_pages():
             if source_id.encode() not in data and source_id not in relative:
@@ -324,6 +357,7 @@ class PipelinePublisher:
                 pages_by_path[path] = page
         pages = list(pages_by_path.values())
         if not pages and digest is None:
+            self.journal.update(source_id, pages=[], digest=None)
             return
         latest = max(p.updated_at for p in [*pages, *([digest] if digest else [])])
         self.journal.update(

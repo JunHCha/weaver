@@ -304,6 +304,31 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                         ],
                     }
                 )
+            if task == "wiki.compile_batch":
+                payload = json.loads(user)
+                self.compile_inputs.append(payload)
+                previous = "\n".join(p["body"] for p in payload["existing_pages"])
+                return schema.model_validate(
+                    {
+                        "pages": [
+                            {
+                                "title": "홍길동",
+                                "role": "person",
+                                "summary": "홍길동 관련 업무",
+                                "thread_ids": [
+                                    t["thread_id"] for t in payload["threads"]
+                                ],
+                                "state_tag": None,
+                                "aliases": [],
+                                "body": "# 홍길동\n\n위키 본문\n"
+                                + (
+                                    "사람의 수정\n" if "사람의 수정" in previous else ""
+                                ),
+                            }
+                        ],
+                        "excluded_threads": [],
+                    }
+                )
             if task == "wiki.digest":
                 return schema.model_validate(
                     {
@@ -385,7 +410,7 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
     job.run()
     threads = fabric.entries(ThreadQuery())
     assert len(threads) == 2 and threads[-1].actor == "human"
-    assert "사람의 수정" in client.compile_inputs[-1]["page"]
+    assert "사람의 수정" in client.compile_inputs[-1]["existing_pages"][0]["body"]
     assert "사람의 수정" in page.read_text()
     now[0] += 1801
     job.run()

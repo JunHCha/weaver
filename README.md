@@ -109,8 +109,8 @@ See the [JSON contracts](schema/README.md) for the wire formats and review rules
 
 ## Your data at a glance
 
-The Android first screen maps each item across **양치기 · 물레 · 베틀 · 천 · 위키**
-and **나**. Tap a node for its items or open **나** for pending approvals. Landscape
+The Android first screen maps each item across **Shepherd · Spinner · Loom · Fabric · Wiki**
+and **You**. Tap a node for its items or open **You** for pending approvals. Landscape
 windows keep the map beside a right panel; portrait windows use a bottom sheet.
 The map replays changes since the last visit once, with no live movement loop.
 
@@ -239,3 +239,19 @@ interval_seconds = 60
 
 The settle period protects recent human edits; pending pages are retried on a
 later wiki interval. Keep the state directory outside the wiki vault.
+
+Start at `Weaver/index.md`. Wiki generation reads the complete Fabric snapshot and
+approved summaries in one structured LLM call, organizing pages around projects,
+operations and reusable knowledge rather than creating a page for every tag.
+`schema.md` records the operating rules; `log.md` records the latest compilation
+sequence and any explicitly excluded evidence. Existing human page edits remain
+protected, and rebuilding the wiki does not re-extract or rewrite Fabric facts.
+
+Source summaries use Obsidian-safe filenames. When a source title changes, the
+server repairs links and retires its old summary copy and restoration record;
+pending human edits are preserved for a later retry.
+
+Wiki edits also appear on the map as teal items with a **Wiki → Fabric → Wiki**
+route and change/Thread/result details. They do not create capture receipts or
+approval tasks. The server reports committed updates; the Android app separately
+checks arrival in the phone's synchronized vault before opening a result.

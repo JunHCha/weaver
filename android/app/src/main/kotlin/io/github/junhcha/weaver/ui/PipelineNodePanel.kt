@@ -46,12 +46,17 @@ internal fun todayResults(
             results.mapNotNull { it.digest }.filter { todayDigest(it, today) })
         .distinctBy { it.path to it.sha256 }
 
+internal fun panelResultPages(results: List<PipelineItem>, today: LocalDate = LocalDate.now()): List<PipelinePage> =
+    (todayResults(results, today) + results.filter { it.wikiEdit != null }
+        .flatMap { it.pages + listOfNotNull(it.digest) }).distinctBy { it.path to it.sha256 }
+
 @Composable
 internal fun NodePanel(
     node: MapNode,
     items: List<MapItem>,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    focusedItemId: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -62,8 +67,9 @@ internal fun NodePanel(
     var refresh by remember { mutableIntStateOf(0) }
     var approval by rememberSaveable(node) { mutableStateOf<String?>(null) }
     val today = LocalDate.now()
-    val results = items.filter { it.node == MapNode.WIKI }.mapNotNull { it.server }
-    val pages = todayResults(results, today)
+    val results = items.filter { it.node == MapNode.WIKI }
+        .sortedBy { if (it.id == focusedItemId) 0 else 1 }.mapNotNull { it.server }
+    val pages = panelResultPages(results, today)
     LaunchedEffect(vault) {
         delay(300)
         withContext(Dispatchers.IO) { runCatching { VaultAccess.setName(context, vault) } }
@@ -118,8 +124,8 @@ internal fun NodePanel(
         }
         Text(
             when (node) {
-                MapNode.LOOM -> "승인 전에는 정리 문서와 질문을 최대 3개 만들어요. 승인 뒤에는 실을 뽑아 천에 기록해요."
-                MapNode.WIKI -> "오늘 만든 Digest와 항목별 wiki 페이지예요. 폰에 도착한 결과를 Obsidian에서 열어요."
+                MapNode.LOOM -> "승인 전에는 정리 문서와 질문을 최대 3개 만들어요. 승인 뒤에는 Thread를 추출해 Fabric에 기록해요."
+                MapNode.WIKI -> "오늘 만든 Digest와 항목별 Wiki 페이지예요. 폰에 도착한 결과를 Obsidian에서 열어요."
                 MapNode.USER -> "나에게 승인을 기다리는 항목만 모았어요."
                 else -> node.subtitle
             },
@@ -138,6 +144,10 @@ internal fun NodePanel(
                 PageLink(page, "오늘 Digest", availability, vault) { message = it }
             }
             results.forEach { result ->
+                if (result.wikiEdit != null) {
+                    WikiEditCard(result, availability, vault) { message = it }
+                    return@forEach
+                }
                 val todayPages = result.pages.filter { todayPage(it, today) }
                 if (todayPages.isNotEmpty()) {
                     HorizontalDivider()
@@ -146,7 +156,7 @@ internal fun NodePanel(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        result.threads.joinToString(" · ") { "실 · ${it.kind}" },
+                        result.threads.joinToString(" · ") { "Thread · ${threadKindLabel(it.kind)}" },
                         style = MaterialTheme.typography.labelSmall,
                     )
                     todayPages.forEach { page ->
@@ -198,8 +208,9 @@ internal fun NodePanel(
                     if (node == MapNode.USER) "지금 승인할 항목이 없어요" else "지금 여기 머무는 항목이 없어요",
                     style = MaterialTheme.typography.bodySmall,
                 )
-            here.forEach { item ->
-                if (node == MapNode.USER) ApprovalCard(item) { approval = item.packageId }
+            here.sortedBy { if (it.id == focusedItemId) 0 else 1 }.forEach { item ->
+                if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault) { message = it }
+                else if (node == MapNode.USER) ApprovalCard(item) { approval = item.packageId }
                 else {
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(
@@ -222,7 +233,7 @@ internal fun NodePanel(
                                 ?.takeIf { it.isNotEmpty() }
                                 ?.let { threads ->
                                     Text(
-                                        threads.joinToString(" · ") { "실 · ${it.kind}" },
+                                        threads.joinToString(" · ") { "Thread · ${threadKindLabel(it.kind)}" },
                                         style = MaterialTheme.typography.labelSmall,
                                     )
                                 }
@@ -240,7 +251,7 @@ internal fun NodePanel(
 }
 
 @Composable
-private fun PageLink(
+internal fun PageLink(
     page: PipelinePage,
     label: String,
     availability: Set<String>,
@@ -284,8 +295,8 @@ private fun stageName(stage: Stage) =
         Stage.ORGANIZE -> "정리"
         Stage.QUESTION -> "질문"
         Stage.REVIEW -> "승인 대기"
-        Stage.APPLY -> "천에 저장"
-        Stage.UPDATE_WIKI -> "위키 갱신"
+        Stage.APPLY -> "Fabric에 저장"
+        Stage.UPDATE_WIKI -> "Wiki 갱신"
     }
 
 @Composable

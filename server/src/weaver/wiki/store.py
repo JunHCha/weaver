@@ -9,12 +9,14 @@ import subprocess
 import tempfile
 import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import JsonValue
+
+from weaver.wiki.links import rewrite_links
 
 HASH_KEY = "weaver_content_sha256"
 
@@ -135,6 +137,19 @@ class HumanEdit:
     diff: str
     frontmatter_before: dict[str, JsonValue]
     frontmatter_after: dict[str, JsonValue]
+    detected_at: float | None = None
+    settled_at: float | None = None
+
+
+@dataclass(frozen=True)
+class WikiEditState:
+    path: str
+    base_rev: str
+    detected_at: float | None
+    ready_at: float | None
+    edit: HumanEdit | None
+    before: dict[str, JsonValue]
+    after: dict[str, JsonValue]
 
 
 def _hash(data: bytes) -> str:
@@ -186,7 +201,11 @@ def _properties(data: bytes) -> dict[str, JsonValue]:
         current = key
         sequence_allowed = not value.strip() or value.lstrip().startswith("#")
         sequence_indent = None
-        if key == "schedule" and value.strip().startswith("{"):
+        if key == HASH_KEY and re.fullmatch(r"[0-9a-f]{64}", value.strip()):
+            # SHA-256 is text even when a generated value resembles YAML's
+            # binary/scientific numeric spellings (for example, 0b...).
+            result[key] = value.strip()
+        elif key == "schedule" and value.strip().startswith("{"):
             parsed = json.loads(value)
             if not isinstance(parsed, dict) or any(
                 isinstance(v, (dict, list)) for v in parsed.values()
@@ -241,6 +260,7 @@ class WikiStore:
             )
         ):
             raise ValueError("invalid wiki root")
+        self.vault = vault
         self.root = vault
         for part in relative_root.parts:
             self.root = _disk_child(self.root, part)
@@ -269,7 +289,8 @@ class WikiStore:
         self.db_path = state_root / "wiki.sqlite3"
         with self._db() as db:
             db.executescript("""CREATE TABLE IF NOT EXISTS pages (path TEXT PRIMARY KEY, content BLOB NOT NULL, rev TEXT NOT NULL, readonly INTEGER NOT NULL, candidate TEXT, since REAL, mtime REAL);
-                CREATE TABLE IF NOT EXISTS pending (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);""")
+                CREATE TABLE IF NOT EXISTS pending (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS human_edits (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);""")
             # Keep an existing canonical baseline; legacy aliases must never
             # become new human edits. This transaction is safe to repeat.
             for (path,) in db.execute(
@@ -291,6 +312,19 @@ class WikiStore:
                     "UPDATE pending SET payload=? WHERE rev=?",
                     (json.dumps(edit, ensure_ascii=False), rev),
                 )
+
+            for rev, payload in db.execute(
+                "SELECT rev, payload FROM human_edits"
+            ).fetchall():
+                edit = json.loads(payload)
+                edit["path"] = normalize_path(edit["path"])
+                db.execute(
+                    "UPDATE human_edits SET payload=? WHERE rev=?",
+                    (json.dumps(edit, ensure_ascii=False), rev),
+                )
+            db.execute(
+                "INSERT OR IGNORE INTO human_edits SELECT rev, payload FROM pending"
+            )
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -340,7 +374,7 @@ class WikiStore:
             text=True,
         ).stdout.strip()
 
-    def _commit(self, path: str, data: bytes, author: str, message: str) -> str:
+    def _commit(self, path: str, data: bytes | None, author: str, message: str) -> str:
         path = normalize_path(path)
         # Commit the bytes that were verified, never a later version read by git.
         env = os.environ.copy()
@@ -374,8 +408,11 @@ class WikiStore:
                 )
 
             run("read-tree", "HEAD")
-            blob = run("hash-object", "-w", "--stdin", input_data=data)
-            run("update-index", "--add", "--cacheinfo", "100644", blob, path)
+            if data is None:
+                run("update-index", "--force-remove", "--", path)
+            else:
+                blob = run("hash-object", "-w", "--stdin", input_data=data)
+                run("update-index", "--add", "--cacheinfo", "100644", blob, path)
             run("commit", "--allow-empty", "-m", message)
             return run("rev-parse", "HEAD")
 
@@ -459,6 +496,54 @@ class WikiStore:
                 (path, data, rev, int(readonly), None),
             )
         return _hash(data)
+
+    def repair_links(self, replacements: Mapping[str, str]) -> int:
+        """Repair committed pages only; pending human edits are never absorbed."""
+        with self._db() as db:
+            rows = db.execute("SELECT path, content, readonly FROM pages").fetchall()
+        repaired = 0
+        for path, baseline, readonly in rows:
+            try:
+                props, body, base = self.read(path)
+                if base != _hash(baseline):
+                    continue
+                updated = rewrite_links(body, replacements)
+                if updated == body:
+                    continue
+                self.write(
+                    path,
+                    props,
+                    updated,
+                    base,
+                    readonly=bool(readonly),
+                    metadata="repair source links",
+                )
+                repaired += 1
+            except (FileNotFoundError, HumanEditPending):
+                continue
+        return repaired
+
+    def retire_summary(self, path: str, expected: str) -> None:
+        """Remove a superseded source copy from disk and restoration state."""
+        path = unicodedata.normalize("NFC", path)
+        if not path.startswith("summaries/"):
+            raise ValueError("only source summaries can be retired")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT content, readonly FROM pages WHERE path=?", (path,)
+            ).fetchone()
+        if row is not None and (not row[1] or _hash(row[0]) != expected):
+            raise HumanEditPending(path)
+        target = self._path(path)
+        if _hash(target.read_bytes()) != expected:
+            raise HumanEditPending(path)
+        self._commit(path, None, "weaver", "retire duplicate source summary")
+        # Forget before unlinking so an interrupted cleanup cannot resurrect it.
+        with self._db() as db:
+            db.execute("DELETE FROM pages WHERE path=?", (path,))
+        if _hash(target.read_bytes()) != expected:
+            raise HumanEditPending(path)
+        target.unlink()
 
     def published_pages(self) -> list[tuple[str, bytes, datetime]]:
         """Committed full-file versions only; pending human edits are not outputs."""
@@ -564,7 +649,9 @@ class WikiStore:
                             path, data, "human", f"human edit: {path}"
                         )
                         diff = self._git("diff", base_rev, new_rev, "--", path)
-                        edit = HumanEdit(path, base_rev, new_rev, diff, before, after)
+                        edit = HumanEdit(
+                            path, base_rev, new_rev, diff, before, after, since, now
+                        )
                         db.execute(
                             "UPDATE pages SET content=?, rev=?, candidate=NULL, since=NULL, mtime=? WHERE path=?",
                             (data, new_rev, stat.st_mtime, path),
@@ -573,12 +660,54 @@ class WikiStore:
                             "INSERT OR IGNORE INTO pending VALUES (?, ?)",
                             (new_rev, json.dumps(asdict(edit), ensure_ascii=False)),
                         )
+                        db.execute(
+                            "INSERT OR IGNORE INTO human_edits VALUES (?, ?)",
+                            (new_rev, json.dumps(asdict(edit), ensure_ascii=False)),
+                        )
                 except (FileNotFoundError, ValueError, UnicodeDecodeError):
                     continue
             pending = db.execute(
                 "SELECT payload FROM pending ORDER BY rowid"
             ).fetchall()
         return [HumanEdit(**json.loads(row[0])) for row in pending]
+
+    def edit_states(self) -> list[WikiEditState]:
+        """Read stable edit history and current candidates without advancing delivery."""
+        with self._db() as db:
+            history = db.execute(
+                "SELECT payload FROM human_edits ORDER BY rowid"
+            ).fetchall()
+            candidates = db.execute(
+                "SELECT path, content, rev, since FROM pages WHERE candidate IS NOT NULL AND readonly=0"
+            ).fetchall()
+        states = []
+        for (raw,) in history:
+            edit = HumanEdit(**json.loads(raw))
+            states.append(
+                WikiEditState(
+                    edit.path,
+                    edit.base_rev,
+                    edit.detected_at,
+                    None,
+                    edit,
+                    edit.frontmatter_before,
+                    edit.frontmatter_after,
+                )
+            )
+        for path, baseline, rev, since in candidates:
+            before, after = {}, {}
+            ready_at = None
+            try:
+                before = _properties(baseline)
+                target = self._path(path)
+                after = _properties(target.read_bytes())
+                ready_at = max(since or 0, target.stat().st_mtime) + self.settle_seconds
+            except (OSError, ValueError, UnicodeDecodeError):
+                pass  # Keep the observed edit pending when the file is temporarily unreadable.
+            states.append(
+                WikiEditState(path, rev, since, ready_at, None, before, after)
+            )
+        return states
 
     def acknowledge(self, edit: HumanEdit) -> None:
         """Stop delivering a previously confirmed edit; repeated calls are safe."""

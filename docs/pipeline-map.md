@@ -8,8 +8,8 @@ approve content, call a model, or request permission to a new folder.
 
 | Row | Phone | Mac | Output |
 | --- | --- | --- | --- |
-| Top | 양치기 (Shepherd) | 물레 (Spinner) | 천 (Fabric, on Mac) |
-| Bottom | 나 (review) | 베틀 (Loom) | 위키 (Obsidian vault) |
+| Top | Shepherd | Spinner | Fabric (on Mac) |
+| Bottom | You (review) | Loom | Wiki (Obsidian vault) |
 
 Dashed regions indicate places. Courier is an icon on the phone–Mac transport
 lines, rather than another storage node. The two review lines carry “엮은 내용”
@@ -97,3 +97,30 @@ retry and UI tests use synthetic data, fake models/providers and temporary vault
 Galaxy Fold and Syncthing transport validation on a real device remains separate
 from automated verification; no actual call or user-vault content belongs in tests,
 screenshots, issues or PR descriptions.
+
+## Wiki-origin edits
+
+Direct Wiki edits have teal blocks and a right-hand `Wiki → Fabric → Wiki` route.
+They use `source_type: "wiki_edit"`, `capture_id: null` and the optional `wiki_edit`
+metadata on PipelineItem. No capture, receipt, review request or review count is
+manufactured. English domain names are used on the map: Shepherd, Courier,
+Spinner, Loom, Fabric, Wiki, You and Thread; existing stored stage/kind values are
+unchanged.
+
+A pending edit stays at Wiki until its contents settle. Confirmed semantic or
+field changes move to Fabric only after their Thread IDs actually exist there.
+The result moves back to Wiki only after compilation has advanced and committed
+outputs are available. The details show changes, generated Threads and result
+links; phone arrival is still checked independently by hash. Historical Wiki-edit
+outputs are checked even when they were produced on an earlier day.
+
+The source ID identifies a path/base-revision edit round, so continued typing
+updates one waiting item. Reverting to the baseline or formatting-only edits close
+without a Fabric transition. Durable edit history, generation drafts and actual
+Fabric/output state recover failed observations; an observation failure does not
+roll back a fact. Missing old acknowledged edit history is not invented.
+
+Capture observations omit the new optional fields on the wire so existing strict
+v2 apps can still read them. Older apps skip Wiki-origin observations; updated apps
+accept old capture observations without the new defaults. Use an updated Android
+build to see the new route and detail tabs.

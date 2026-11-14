@@ -441,6 +441,7 @@ type PipelineStatus = Literal[
 class PipelineThread(Contract):
     thread_id: NonEmpty
     kind: Literal["요청", "결정", "일정", "기록", "태그정정", "거절"]
+    content: str = ""
 
 
 class PipelinePage(Contract):
@@ -469,15 +470,78 @@ class PipelinePage(Contract):
         return value
 
 
+class PipelineWikiChange(Contract):
+    field: Literal["body", "deadline", "schedule", "assignees", "status"]
+    before: str | None
+    after: str | None
+
+
+class PipelineWikiEdit(Contract):
+    path: NonEmpty = Field(
+        json_schema_extra={
+            "pattern": r"^(?!/)(?!.*\\)(?!.*//)(?!.*(?:^|/)\.)[^\r\n]+\.md$"
+        }
+    )
+    base_rev: NonEmpty
+    new_rev: NonEmpty | None
+    detected_at: Timestamp | None
+    ready_at: Timestamp | None
+    state: Literal["settling", "recorded", "published", "unchanged"]
+    changes: list[PipelineWikiChange]
+
+    @field_validator("path")
+    @classmethod
+    def safe_path(cls, value: str) -> str:
+        return PipelinePage.safe_path(value)
+
+
 class PipelineItem(Version2):
     """Durable observation, independent of short-lived review/receipt files."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"source_type": {"const": "wiki_edit"}},
+                        "required": ["source_type"],
+                    },
+                    "then": {
+                        "properties": {
+                            "capture_id": {"type": "null"},
+                            "package_id": {"type": "null"},
+                            "package_revision": {"type": "null"},
+                            "wiki_edit": {"not": {"type": "null"}},
+                            "location": {"enum": ["wiki", "fabric"]},
+                            "status": {"enum": ["working", "done"]},
+                            "history": {
+                                "minItems": 1,
+                                "prefixItems": [{"const": "wiki"}],
+                                "items": {"enum": ["wiki", "fabric"]},
+                            },
+                            "stage_times": {
+                                "propertyNames": {"enum": ["반영", "wiki갱신"]}
+                            },
+                        },
+                        "required": ["wiki_edit"],
+                    },
+                    "else": {
+                        "properties": {
+                            "capture_id": {"not": {"type": "null"}},
+                            "wiki_edit": {"type": "null"},
+                        }
+                    },
+                }
+            ]
+        }
+    )
+
     revision: Revision
-    capture_id: CaptureId
+    capture_id: CaptureId | None
     source_id: SourceId
     package_id: NonEmpty | None
     package_revision: Revision | None
-    source_type: Channel
+    source_type: Channel | Literal["wiki_edit"]
     title: str
     location: PipelineLocation
     status: PipelineStatus
@@ -488,6 +552,27 @@ class PipelineItem(Version2):
     pages: list[PipelinePage]
     digest: PipelinePage | None
     updated_at: Timestamp
+    wiki_edit: PipelineWikiEdit | None = None
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> "PipelineItem":
+        if self.source_type == "wiki_edit":
+            if (
+                self.capture_id is not None
+                or self.wiki_edit is None
+                or self.package_id is not None
+                or self.package_revision is not None
+                or self.location not in ("wiki", "fabric")
+                or self.status not in ("working", "done")
+                or not self.history
+                or self.history[0] != "wiki"
+                or any(node not in ("wiki", "fabric") for node in self.history)
+                or any(stage not in ("반영", "wiki갱신") for stage in self.stage_times)
+            ):
+                raise ValueError("invalid Wiki edit observation")
+        elif self.capture_id is None or self.wiki_edit is not None:
+            raise ValueError("capture observation requires a capture ID")
+        return self
 
 
 SHARED_MODELS = (

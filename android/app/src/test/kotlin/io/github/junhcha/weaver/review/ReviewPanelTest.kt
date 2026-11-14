@@ -152,7 +152,7 @@ class ReviewPanelTest {
         val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
         model.refresh()
         compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
-        compose.onNodeWithContentDescription("나 노드").performClick()
+        compose.onNodeWithContentDescription("You 노드").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
         compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()

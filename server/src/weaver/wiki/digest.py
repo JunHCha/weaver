@@ -8,13 +8,16 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 from weaver.fabric import ThreadQuery
 from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
 from weaver.schema import Thread
 from weaver.wiki.generation import GenerationCache
+from weaver.wiki.links import wikilink
+from weaver.wiki.prompts import DIGEST_PROMPT, RULES_VERSION
+from weaver.wiki.snapshot import canonical_threads
 from weaver.wiki.store import WikiStore, normalize_path
 
 
@@ -81,13 +84,16 @@ class DigestBuilder:
         llm: LlmClient,
         state_path: Path,
         timezone: ZoneInfo,
-        source_link: Callable[[str], str],
+        source_link: Callable[[str], str | None],
     ) -> None:
         self.fabric, self.wiki, self.llm = fabric, wiki, llm
         self.timezone = timezone
-        self.source_link: Callable[[str], str] = lambda source_id: normalize_path(
-            source_link(source_id)
-        )
+
+        def normalized_link(source_id: str) -> str | None:
+            target = source_link(source_id)
+            return normalize_path(target) if target is not None else None
+
+        self.source_link = normalized_link
         state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path = state_path
         with sqlite3.connect(state_path) as db:
@@ -104,7 +110,9 @@ class DigestBuilder:
         self, path: str, inputs: object, evidence: list[str], top: str = ""
     ) -> bool:
         path = normalize_path(path)
-        fingerprint = _digest(inputs)
+        fingerprint = _digest(
+            {"inputs": inputs, "rules": RULES_VERSION, "prompt": DIGEST_PROMPT}
+        )
         with sqlite3.connect(self.state_path) as db:
             row = db.execute(
                 "SELECT fingerprint FROM pages WHERE path=?", (path,)
@@ -116,7 +124,20 @@ class DigestBuilder:
         except FileNotFoundError:
             props, previous, base = {}, "", None
         self.wiki.check_write(path, base)
-        payload = {"inputs": inputs, "previous": previous, "evidence": evidence}
+        period = (
+            "weekly"
+            if "/Weekly/" in path
+            else "monthly"
+            if "/Monthly/" in path
+            else "daily"
+        )
+        payload = {
+            "inputs": inputs,
+            "previous": previous,
+            "evidence": evidence,
+            "period": period,
+            "path": path,
+        }
         body = self.cache.get(
             path,
             {
@@ -127,6 +148,7 @@ class DigestBuilder:
             },
             lambda: self._generate(payload, evidence, top),
         )
+        props["source_ids"] = list[JsonValue](evidence)
         self.wiki.write(path, props, body, base, metadata="digest update")
         with sqlite3.connect(self.state_path) as db:
             db.execute(
@@ -141,7 +163,7 @@ class DigestBuilder:
         result = (
             self.llm.generate_json(
                 "wiki.digest",
-                "각 문장에 제공된 출처 ID를 근거로 제시하고 기존 사람 수정을 반영하세요.",
+                DIGEST_PROMPT,
                 json.dumps(payload, ensure_ascii=False),
                 Summary,
             )
@@ -158,7 +180,7 @@ class DigestBuilder:
             ):
                 raise ValueError("digest sentence has invalid evidence")
             links = " ".join(
-                f"[[{self.source_link(item)}]]"
+                wikilink(self.source_link(item))
                 for item in dict.fromkeys(sentence.evidence)
             )
             lines.append(f"- {sentence.text} {links}")
@@ -172,7 +194,7 @@ class DigestBuilder:
         new = self.fabric.entries(ThreadQuery(after_seq=bookmark))
         if not new:
             return
-        threads = self.fabric.entries(ThreadQuery())
+        threads = canonical_threads(self.fabric.entries(ThreadQuery()))
         # Bound the snapshot to the batch, so a concurrent append is consumed next time.
         high = max(t.seq for t in new)
         threads = [t for t in threads if t.seq <= high]
@@ -230,9 +252,9 @@ class DigestBuilder:
             )
             requests = [t for t in items if t.kind == "요청"]
             top_lines = ["## 마감·일정과 새 요청"]
-            for t in [*due, *requests]:
+            for t in {t.thread_id: t for t in [*due, *requests]}.values():
                 top_lines.append(
-                    f"- {t.field or '요청'}: {t.content} ({t.value if t.field else t.direction}) [[{self.source_link(t.source_id)}]]"
+                    f"- {t.field or '요청'}: {t.content} ({t.value if t.field else t.direction}) {wikilink(self.source_link(t.source_id))}"
                 )
             top = "\n".join(top_lines) + "\n\n## 요약\n"
             evidence = sorted({t.source_id for t in [*items, *due]})

@@ -47,8 +47,7 @@ class SchemaContractTest {
         SharedSchema.models.forEach { (model, serializer) ->
             SharedSchema.examples(model).forEach { file ->
                 val example = Json.parseToJsonElement(file.readText())
-                val required = SharedSchema.schemaJson(model)["required"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet()
-                objectKeyPaths(example).filter { it.size > 1 || it.single() in required }.forEach { path ->
+                requiredKeyPaths(example, SharedSchema.schemaJson(model)).forEach { path ->
                     val mutated = removeAt(example, path).toString()
                     val where = "${file.name} without ${path.joinToString("/")}"
                     assertFalse("$where must fail the schema", SharedSchema.errors(model, mutated).isEmpty())
@@ -56,6 +55,36 @@ class SchemaContractTest {
                 }
             }
         }
+    }
+
+    /** Defaults and map entries are optional, including inside nested wire objects. */
+    private fun requiredKeyPaths(value: JsonElement, root: JsonObject): List<List<String>> {
+        val defs = root["\$defs"]?.jsonObject.orEmpty()
+        fun resolve(input: JsonObject): JsonObject {
+            input["\$ref"]?.jsonPrimitive?.content?.let { return resolve(defs.getValue(it.substringAfterLast('/')).jsonObject) }
+            input["anyOf"]?.jsonArray?.let { branches ->
+                return resolve(branches.first { it.jsonObject["type"]?.jsonPrimitive?.content != "null" }.jsonObject)
+            }
+            return input
+        }
+        fun visit(node: JsonElement, schema: JsonObject, path: List<String>): List<List<String>> {
+            val shape = resolve(schema)
+            return when (node) {
+                is JsonObject -> {
+                    val required = shape["required"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty()
+                    val properties = shape["properties"]?.jsonObject.orEmpty()
+                    node.flatMap { (key, child) ->
+                        val at = path + key
+                        val nested = properties[key] as? JsonObject ?: shape["additionalProperties"] as? JsonObject
+                        (if (key in required) listOf(at) else emptyList()) +
+                            (nested?.let { visit(child, it, at) } ?: emptyList())
+                    }
+                }
+                is JsonArray -> (shape["items"] as? JsonObject)?.let { item -> node.withIndex().flatMap { (index, child) -> visit(child, item, path + index.toString()) } }.orEmpty()
+                else -> emptyList()
+            }
+        }
+        return visit(value, root, emptyList())
     }
 
     @Test
