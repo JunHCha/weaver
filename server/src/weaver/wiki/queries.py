@@ -7,7 +7,7 @@ from weaver.context import ContextDictionary
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.fabric.state import project
 from weaver.schema import Thread
-from weaver.wiki.store import WikiStore
+from weaver.wiki.store import WikiStore, normalize_path
 
 
 def _text(value: str) -> str:
@@ -22,7 +22,7 @@ def _text(value: str) -> str:
 
 
 def _link(thread: Thread, source_link: Callable[[str], str]) -> str:
-    return f"[[{source_link(thread.source_id)}]]"
+    return f"[[{normalize_path(source_link(thread.source_id))}]]"
 
 
 def _date(value: object, now: datetime) -> date | None:

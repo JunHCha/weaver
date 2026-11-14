@@ -12,7 +12,7 @@ from weaver.llm.types import LlmClient
 from weaver.wiki.compiler import Compiler
 from weaver.wiki.digest import DigestBuilder
 from weaver.wiki.queries import write_pages
-from weaver.wiki.store import HumanEditPending, WikiStore
+from weaver.wiki.store import HumanEditPending, WikiStore, normalize_path
 
 from .summary import SummaryLookup
 
@@ -57,7 +57,7 @@ class WikiJob:
             title = self.lookup.title(source_id).replace("/", "-").replace("\\", "-")
         except (ValueError, LookupError, FileNotFoundError):
             return source_id
-        return f"summaries/{title} {source_id}"
+        return normalize_path(f"summaries/{title} {source_id}")
 
     def _copy_summaries(self) -> None:
         for source_id in {

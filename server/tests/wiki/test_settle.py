@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -252,3 +253,49 @@ def test_preflight_hash_mismatch_does_not_modify_page(tmp_path):
     with pytest.raises(HumanEditPending):
         store.write("page.md", {}, "generated", base)
     assert target.read_text() == "human content"
+
+
+def test_decomposed_summary_links_and_page_names_across_consumers(tmp_path):
+    clock = [2_000_000_000.0]
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", clock=lambda: clock[0])
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    title = "한글 요약"
+    nfd_title = unicodedata.normalize("NFD", title)
+
+    class Lookup:
+        def title(self, source_id):
+            return nfd_title
+
+        def __call__(self, source_id):
+            return Summary(nfd_title, "summary")
+
+    class NoHumanLlm(Llm):
+        def generate_json(self, task, system, user, schema):
+            assert task != "wiki.human_edit"
+            return super().generate_json(task, system, user, schema)
+
+    llm = NoHumanLlm()
+    item = thread("first", ["계정잠금"]).model_copy(update={"actor": "ai_approved"})
+    fabric.append([item])
+    job = WikiJob(store, fabric, context, llm, tmp_path, ZoneInfo("UTC"), Lookup())
+    job.run()
+    link = f"summaries/{title} {item.source_id}"
+    assert job.source_link(item.source_id) == link
+    assert f"[[{link}]]" in store.read("pages/계정잠금.md")[1]
+    assert f"[[{link}]]" in store.read("Digest/2025/01/2025-01-01.md")[1]
+
+    # Force the spelling returned by directory enumeration on both platforms.
+    for target in list(store.root.rglob("*.md")):
+        target.rename(target.with_name(unicodedata.normalize("NFD", target.name)))
+    stamp(store, clock[0])
+    calls = len(llm.calls)
+    for _ in range(3):
+        clock[0] += 1801
+        job.run()
+    assert len(llm.calls) == calls
+    assert context.candidates("계정잠금")[0].name == "계정잠금"
+    with sqlite3.connect(store.db_path) as db:
+        paths = [row[0] for row in db.execute("SELECT path FROM pages")]
+        assert all(unicodedata.is_normalized("NFC", path) for path in paths)
+        assert len(paths) == len(set(paths))

@@ -15,7 +15,7 @@ from weaver.fabric.store import Fabric
 from weaver.llm.types import LlmClient
 from weaver.schema import Thread
 from weaver.wiki.generation import GenerationCache
-from weaver.wiki.store import WikiStore
+from weaver.wiki.store import WikiStore, normalize_path
 
 
 class Sentence(BaseModel):
@@ -84,7 +84,10 @@ class DigestBuilder:
         source_link: Callable[[str], str],
     ) -> None:
         self.fabric, self.wiki, self.llm = fabric, wiki, llm
-        self.timezone, self.source_link = timezone, source_link
+        self.timezone = timezone
+        self.source_link: Callable[[str], str] = lambda source_id: normalize_path(
+            source_link(source_id)
+        )
         state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path = state_path
         with sqlite3.connect(state_path) as db:
@@ -100,15 +103,16 @@ class DigestBuilder:
     def _write(
         self, path: str, inputs: object, evidence: list[str], top: str = ""
     ) -> bool:
+        path = normalize_path(path)
         fingerprint = _digest(inputs)
         with sqlite3.connect(self.state_path) as db:
             row = db.execute(
                 "SELECT fingerprint FROM pages WHERE path=?", (path,)
             ).fetchone()
-        if row and row[0] == fingerprint and (self.wiki.root / path).exists():
-            return False
         try:
             props, previous, base = self.wiki.read(path)
+            if row and row[0] == fingerprint:
+                return False
         except FileNotFoundError:
             props, previous, base = {}, "", None
         self.wiki.check_write(path, base)
