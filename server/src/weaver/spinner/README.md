@@ -6,7 +6,8 @@ and SHA-256, and decodes UTF-8 without newline conversion.
 
 - `text/kakao`: existing `parse_kakao` adapter, no revision.
 - `text/share_text`: original complete text and one Segment, no revision.
-- `text/call`: uses the built-in `GalaxyCallParser` for Galaxy scripts (#56), then an
+- `text/call`: uses the built-in `GalaxyCallParser` for Galaxy scripts (#56), then, only when the text is longer than
+  `revision_threshold` (default 0 = always; runtime: Loom's 30000), an
   injected `Reviser` (production: `LlmReviser(client)`). The manifest's
   `hints.counterpart` becomes `ReviseHints.counterpart`. Only speech Segments
   (speaker present, nonblank text) are sent to the LLM; headers, notice, title,
@@ -15,6 +16,8 @@ and SHA-256, and decodes UTF-8 without newline conversion.
   like Segment; `revision_to_thread` restores original separators instead of
   joining with `\n` and rejects changed structural Segments.
 - `fleece` and unused channels fail explicitly. STT is deferred by ADR-028.
+  Calls at or below the threshold stay parsed: Loom corrects their segments in
+  the same call as the summary and stores the result with `Spinner.save_revised`.
   `TextSpinner` likewise refuses call scripts rather than treating them as prose.
 
 ```python
