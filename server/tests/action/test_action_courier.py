@@ -112,7 +112,7 @@ def test_crash_between_the_fabric_append_and_the_outbox_update_recovers(
 def test_failed_result_is_recorded_and_followers_are_skipped(rig):
     rig.add(schedule("s1"))
     rig.job.run()
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
     rig.job.run()
     register, update = rig.actions()
     rig.report(register, "failed", error="manual_review")
@@ -131,7 +131,7 @@ def test_update_and_remove_are_offered_with_the_created_event(rig):
     rig.add(schedule("s1"))
     rig.job.run()
     rig.report(rig.actions()[0])
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
     rig.job.run()
     update = rig.actions()[1]
     wire = Action.model_validate_json(

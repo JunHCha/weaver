@@ -177,6 +177,24 @@
         "properties": {
           "kind": {
             "not": {
+              "const": "일정"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "updates": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "not": {
               "const": "결정"
             }
           }
@@ -332,6 +350,17 @@
     },
     "thread_id": {
       "$ref": "#/$defs/NonEmpty"
+    },
+    "updates": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "value": {
       "$ref": "#/$defs/JsonValue"

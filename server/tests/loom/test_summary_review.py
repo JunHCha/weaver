@@ -594,3 +594,115 @@ def test_prepared_legacy_feedback_is_recovered_without_llm(tmp_path: Path) -> No
     assert (review.proposals / "pkg.r2.diff").read_text() == "diff"
     with review.state.connect() as db:
         assert db.execute("SELECT stage FROM reviews").fetchone()[0] == "APPLIED"
+
+
+def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> None:
+    import json
+
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.schema import ThreadDraft
+
+    value = {
+        "start": "2026-01-02T09:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    seeded = [
+        ThreadDraft(
+            thread_id=key,
+            kind=kind,
+            content=key,
+            occurred_at=NOW,
+            recorded_at=NOW,
+            tags=["홍길동"],
+            field="schedule" if kind == "일정" else None,
+            value=value if kind == "일정" else None,
+            source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            actor="ai_approved",
+            direction=None,
+            resolves=None,
+            retracts=None,
+            correction=None,
+        )
+        for key, kind in (("old", "일정"), ("note", "기록"))
+    ]
+    fabric.append(seeded)
+
+    class Llm(FakeLlm):
+        link: str | None = None
+        kind = "일정"
+        seen: dict[str, object] = {}
+        calls_made: list[int] = []
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            assert "existing_schedules" in system and "updates" in system
+            self.seen = json.loads(user)
+            self.calls_made.append(1)
+            self.calls_made[:] = self.calls_made
+            plan = self.kind == "일정"
+            return schema.model_validate(
+                {
+                    "body": f"회의를 옮긴다 {len(self.calls_made)}",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": self.kind,
+                            "content": "회의",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": ["홍길동"],
+                            "field": "schedule" if plan else None,
+                            "value": {
+                                "start": "2026-01-03T09:00:00+09:00",
+                                "end": None,
+                                "timezone": "Asia/Seoul",
+                            }
+                            if plan
+                            else None,
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                            "blocked_by_index": None,
+                            "updates": self.link,
+                        }
+                    ],
+                }
+            )
+
+    llm = Llm()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        fabric,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    for n, (link, kind, expected) in enumerate(
+        [
+            ("old", "일정", "old"),
+            ("missing", "일정", None),
+            ("note", "일정", None),
+            ("old", "기록", None),
+            (None, "일정", None),
+        ]
+    ):
+        llm.link, llm.kind = link, kind
+        pkg = package().model_copy(update={"package_id": f"pkg{n}"})
+        review.approve(
+            pkg, "원문", verdict.model_copy(update={"package_id": f"pkg{n}"}), now=NOW
+        )
+        assert (
+            max(fabric.entries(ThreadQuery()), key=lambda t: t.seq).updates == expected
+        )
+    assert [s["id"] for s in llm.seen["existing_schedules"]][:1] == ["old"]

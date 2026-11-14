@@ -27,7 +27,9 @@ into Fabric Threads. It never appends a fact the user did not approve.
    `schedules.approved_schedules` judges them against a complete Fabric snapshot:
    a schedule stays blocked by its request until an active decision resolves it,
    and a retracted schedule is marked retracted. The Action engine
-   (`weaver.action`) turns that judgement into calendar commands.
+   (`weaver.action`) turns that judgement into calendar commands. A schedule that
+   the approved document describes as a change of a standing schedule carries
+   `updates` (the model sees `existing_schedules`); an unfounded link is dropped.
 
 ## Durability
 

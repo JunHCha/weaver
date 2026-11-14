@@ -139,12 +139,14 @@ a command and lives in the Action outbox (`state_root/action-outbox.sqlite3`,
    by an open request, retracted, resolved) and enqueues what is still needed. The
    enqueue and the cursor commit are one SQLite transaction, and a unique
    idempotency key (`<kind>:<event>:<position>`) makes a replay or a rewound cursor
-   a no-op. A new schedule becomes `calendar.register`; a later schedule of the
-   same event with another time becomes `calendar.update`; retracting every live
-   schedule of an event becomes `calendar.remove`. An event is a chain of schedule
-   Threads with the same title (case and spaces folded) and at least one shared
-   tag; unlike the alert detector, untagged Threads never join, so an automatic
-   change cannot move an unrelated event that only has the same name. A blocked
+   a no-op. A new schedule becomes `calendar.register`; a schedule that names an
+   earlier one in `updates` and carries another time becomes `calendar.update` of
+   that event; retracting every live schedule of an event becomes `calendar.remove`.
+   The link is explicit: at approval the `loom.approve` call is shown the
+   standing schedules and sets `updates` only when the document says a schedule
+   is a change of one of them. A link to a Thread that does not exist or is not a
+   schedule is dropped and the schedule is registered as new. Titles and tags are
+   never compared, so two similar meetings stay two events. A blocked
    schedule is held and never executed; blocking does not remove an event that
    already exists.
 2. Actions of one event run in order. The server publishes `actions/<action_id>.json`

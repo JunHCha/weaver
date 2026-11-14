@@ -95,7 +95,9 @@ def test_blocked_update_is_held_until_resolved(rig):
     rig.engine.run()
     rig.add(
         request("r1"),
-        schedule("s2", start="2026-12-02T10:00:00+09:00", blocked_by="r1"),
+        schedule(
+            "s2", start="2026-12-02T10:00:00+09:00", blocked_by="r1", updates="s1"
+        ),
     )
     assert rig.engine.run() == 0
     rig.add(decision("d1", "r1"))
@@ -126,20 +128,22 @@ def test_retracting_a_registered_schedule_becomes_remove(rig):
 def test_changed_time_becomes_update_not_a_second_event(rig):
     rig.add(schedule("s1"))
     rig.engine.run()
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
     assert rig.engine.run() == 1
     register, update = rig.actions()
     assert update.kind == "calendar.update" and update.thread_id == "s2"
     assert update.input_version == 2
     assert update.payload.start.isoformat() == "2026-12-03T10:00:00+09:00"
     # Saying the same thing again changes nothing.
-    rig.add(schedule("s3", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s3", start="2026-12-03T10:00:00+09:00", updates="s2"))
     assert rig.engine.run() == 0
     assert register.lineage == update.lineage
 
 
 def test_retracting_the_change_restores_the_earlier_value(rig):
-    rig.add(schedule("s1"), schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(
+        schedule("s1"), schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1")
+    )
     rig.engine.run()
     assert rig.kinds() == ["calendar.register"]  # both arrived in one pass: one event
     assert rig.actions()[0].payload.start.isoformat() == "2026-12-03T10:00:00+09:00"
@@ -150,18 +154,41 @@ def test_retracting_the_change_restores_the_earlier_value(rig):
     assert restore.payload.start.isoformat() == "2026-12-01T10:00:00+09:00"
 
 
-def test_same_title_without_a_shared_tag_is_another_event(rig):
-    rig.add(schedule("s1", tags=()))
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", tags=()))
-    rig.add(schedule("s3", start="2026-12-04T10:00:00+09:00", tags=("김철수",)))
+def test_same_title_and_tags_without_a_link_are_two_events(rig):
+    rig.add(schedule("s1"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
     rig.engine.run()
-    assert rig.kinds() == ["calendar.register"] * 3
+    assert rig.kinds() == ["calendar.register"] * 2
+    assert len({a.lineage for a in rig.actions()}) == 2
+
+
+def test_an_explicit_link_makes_one_update_and_the_event_id_is_kept(rig):
+    rig.add(schedule("s1"))
+    rig.job.run()
+    register = rig.actions()[0]
+    rig.report(register)
+    rig.job.run()
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
+    rig.job.run()
+    assert rig.kinds() == ["calendar.register", "calendar.update"]
+    (action, event) = rig.outbox.dispatchable(0)[0]
+    assert action.kind == "calendar.update"
+    assert event == "content://calendar/events/7"
+
+
+def test_a_chain_of_links_stays_one_event(rig):
+    rig.add(schedule("s1"))
+    rig.add(schedule("s2", start="2026-12-02T10:00:00+09:00", updates="s1"))
+    rig.add(schedule("s3", start="2026-12-03T10:00:00+09:00", updates="s2"))
+    rig.engine.run()
+    assert rig.kinds() == ["calendar.register"]
+    assert rig.actions()[0].thread_id == "s3"
 
 
 def test_actions_of_one_event_run_in_order_with_the_event_id(rig):
     rig.add(schedule("s1"))
     rig.engine.run()
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
     rig.engine.run()
     register, update = rig.actions()
     offered = rig.outbox.dispatchable(0)
@@ -182,7 +209,7 @@ def test_actions_of_one_event_run_in_order_with_the_event_id(rig):
 def test_failed_register_skips_followers_and_is_not_retried_forever(rig):
     rig.add(schedule("s1"))
     rig.engine.run()
-    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00"))
+    rig.add(schedule("s2", start="2026-12-03T10:00:00+09:00", updates="s1"))
     rig.engine.run()
     register, update = rig.actions()
     rig.outbox.finish(

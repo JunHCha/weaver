@@ -41,6 +41,7 @@ def schedule(
     start: str = "2026-12-01T10:00:00+09:00",
     tags: tuple[str, ...] = ("홍길동",),
     blocked_by: str | None = None,
+    updates: str | None = None,
 ) -> ThreadDraft:
     return draft(
         key,
@@ -50,6 +51,7 @@ def schedule(
         field="schedule",
         value={"start": start, "end": None, "timezone": "Asia/Seoul"},
         blocked_by=blocked_by,
+        updates=updates,
     )
 
 

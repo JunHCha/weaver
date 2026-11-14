@@ -268,7 +268,9 @@ class ThreadDraft(Contract):
     """An approved or human-authored fact before a sink assigns its sequence.
 
     A ``실행`` Thread is different: the system records what an Action did and
-    points at the Thread it executed with ``executes``. It is not a business
+    points at the Thread it executed with ``executes``. A schedule can name the
+    earlier schedule it changes with ``updates``; that explicit link, and no
+    guess from titles or tags, is what turns a schedule into a calendar update. It is not a business
     fact, so Fabric readers skip it unless they ask for executions.
     """
 
@@ -300,6 +302,12 @@ class ThreadDraft(Contract):
                 ]
                 + [
                     {
+                        "if": {"properties": {"kind": {"not": {"const": "일정"}}}},
+                        "then": {"properties": {"updates": {"type": "null"}}},
+                    }
+                ]
+                + [
+                    {
                         "if": {"properties": {"kind": {"not": {"const": "결정"}}}},
                         "then": {"properties": {"resolves": {"type": "null"}}},
                     }
@@ -324,6 +332,7 @@ class ThreadDraft(Contract):
     correction: TagCorrection | None
     blocked_by: NonEmpty | None = None
     executes: NonEmpty | None = None
+    updates: NonEmpty | None = None
 
     @model_validator(mode="after")
     def validate_kind(self) -> Self:
@@ -339,6 +348,10 @@ class ThreadDraft(Contract):
             raise ValueError("only decisions can resolve requests")
         if (self.content is None) != (self.kind == "거절"):
             raise ValueError("content is absent exactly for rejections")
+        if self.updates is not None and (
+            self.kind != "일정" or self.field != "schedule" or self.value is None
+        ):
+            raise ValueError("only a schedule with a value can update a schedule")
         if (self.executes is not None) != (self.kind == "실행"):
             raise ValueError("executes is required exactly for executions")
         if (self.actor == "system") != (self.kind == "실행"):

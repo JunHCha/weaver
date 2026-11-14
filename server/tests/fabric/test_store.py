@@ -312,3 +312,27 @@ def test_executions_are_hidden_unless_asked_and_must_point_at_a_fact(tmp_path):
         store.append([execution("exe_3", "exe_1", datetime(2025, 1, 3, tzinfo=UTC))])
     with pytest.raises(ThreadConflict):
         store.append([done.model_copy(update={"content": "calendar.register failed"})])
+
+
+def test_updates_must_point_at_a_schedule_and_only_schedules_may_carry_it(tmp_path):
+    from weaver.fabric import InvalidReference
+
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    value = {
+        "start": "2026-12-01T10:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+
+    def sched(key, **changes):
+        return draft(key, kind="일정", field="schedule", value=value, **changes)
+
+    store.append([sched("s1"), draft("note")])
+    assert store.append([sched("s2", updates="s1")])[0].seq == 3
+    for target in ("missing", "note", "s9"):
+        with pytest.raises(InvalidReference):
+            store.append([sched("s3", updates=target)])
+    with pytest.raises(ValueError):
+        draft("x", updates="s1")
+    with pytest.raises(ValueError):
+        draft("x", kind="일정", updates="s1")

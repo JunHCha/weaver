@@ -169,6 +169,7 @@ class FabricStore:
                 ("retracts", item.retracts),
                 ("correction", item.correction.target if item.correction else None),
                 ("executes", item.executes),
+                ("updates", item.updates),
             ]
             for field, target_id in refs:
                 if target_id is None:
@@ -191,6 +192,8 @@ class FabricStore:
                     target.kind == "거절" or target.retracts is not None
                 ):
                     raise InvalidReference("retracts: invalid target")
+                if field == "updates" and target.kind != "일정":
+                    raise InvalidReference("updates: target is not a schedule")
                 if field == "executes" and target.kind in ("실행", "태그정정", "거절"):
                     raise InvalidReference("executes: target is not a business fact")
         remaining = {key: set(value) for key, value in edges.items()}

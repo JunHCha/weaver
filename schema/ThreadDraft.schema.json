@@ -177,6 +177,24 @@
         "properties": {
           "kind": {
             "not": {
+              "const": "일정"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "updates": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "not": {
               "const": "결정"
             }
           }
@@ -191,7 +209,7 @@
       }
     }
   ],
-  "description": "An approved or human-authored fact before a sink assigns its sequence.\n\nA ``실행`` Thread is different: the system records what an Action did and\npoints at the Thread it executed with ``executes``. It is not a business\nfact, so Fabric readers skip it unless they ask for executions.",
+  "description": "An approved or human-authored fact before a sink assigns its sequence.\n\nA ``실행`` Thread is different: the system records what an Action did and\npoints at the Thread it executed with ``executes``. A schedule can name the\nearlier schedule it changes with ``updates``; that explicit link, and no\nguess from titles or tags, is what turns a schedule into a calendar update. It is not a business\nfact, so Fabric readers skip it unless they ask for executions.",
   "properties": {
     "actor": {
       "enum": [
@@ -327,6 +345,17 @@
     },
     "thread_id": {
       "$ref": "#/$defs/NonEmpty"
+    },
+    "updates": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "value": {
       "$ref": "#/$defs/JsonValue"

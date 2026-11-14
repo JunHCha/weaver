@@ -5,18 +5,15 @@ an open request, retracted, resolved). This module only maps that outcome to
 commands:
 
 - a new schedule becomes ``calendar.register``;
-- a later schedule for the same event with another value becomes
-  ``calendar.update``;
+- a schedule that names an earlier one in ``updates`` and carries another value
+  becomes ``calendar.update`` of that event;
 - a retraction of every live schedule of an event becomes ``calendar.remove``.
 
-An event is a lineage of schedule Threads. A later Thread joins the lineage of
-the latest earlier Thread with the same title (case and space folded) that
-shares at least one tag. Unlike the alert detector, untagged Threads never
-join: an automatic calendar change must not move an unrelated event that only
-has the same name.
+An event is a chain of schedule Threads linked by ``updates``. Titles and tags
+are never compared: without the explicit link a schedule is always a new event.
 
 A blocked schedule is held, never executed. Blocking does not remove an event
-the phone already created, as before. Actions of one lineage are numbered; the
+the phone already created, as before. Actions of one event are numbered; the
 key ``<kind>:<lineage>:<position>`` makes each logical operation unique.
 """
 
@@ -30,35 +27,18 @@ from weaver.schema.models import ActionKind
 from .outbox import ActionRecord, NewAction, execution_thread_id
 
 
-def _title(thread: Thread) -> str:
-    return " ".join((thread.content or "").casefold().split())
-
-
-def same_event(earlier: Thread, later: Thread) -> bool:
-    return (
-        _title(earlier) == _title(later)
-        and bool(earlier.tags)
-        and bool(set(earlier.tags) & set(later.tags))
-    )
-
-
 def lineages(judged: list[ApprovedSchedule]) -> dict[str, list[ApprovedSchedule]]:
-    """Group schedules by event, keyed by the root Thread, in sequence order."""
+    """Group schedules by event, keyed by the root Thread, in sequence order.
+
+    A schedule joins another's event only when it names that schedule in
+    ``updates`` (the Loom approval records this when it says the schedule is a
+    change of an existing one). Otherwise it is a new event, however alike the
+    titles and tags are.
+    """
     groups: dict[str, list[ApprovedSchedule]] = {}
     owner: dict[str, str] = {}
     for item in sorted(judged, key=lambda s: s.thread.seq):
-        earlier = [
-            e
-            for e in judged
-            if e.thread.seq < item.thread.seq
-            and e.thread.thread_id in owner
-            and same_event(e.thread, item.thread)
-        ]
-        root = (
-            owner[max(earlier, key=lambda e: e.thread.seq).thread.thread_id]
-            if earlier
-            else item.thread.thread_id
-        )
+        root = owner.get(item.thread.updates or "", item.thread.thread_id)
         owner[item.thread.thread_id] = root
         groups.setdefault(root, []).append(item)
     return groups

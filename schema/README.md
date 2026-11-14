@@ -74,7 +74,10 @@ an Action, see below). Only requests carry
 requires `{start, end, timezone}` with an IANA timezone and `end` after `start`.
 `actor` is `ai_approved` or `human`, or `system` for `실행` Threads only. A request stays open until a `결정` Thread
 names it in `resolves`; a schedule may name the request that blocks it in
-`blocked_by`. Approval records these facts and never authorizes executing a
+`blocked_by`. A schedule may also name, in `updates`, the earlier schedule it changes
+(schedules only; the target must be a schedule). That explicit link is the only
+thing that turns a schedule into a calendar update; without it a schedule is a
+new event. Approval records these facts and never authorizes executing a
 request.
 
 ## Actions and 실행 Threads
