@@ -48,8 +48,13 @@ class WikiJob:
             store, fabric, context, client, state / "wiki-compiler.sqlite3", lookup
         )
         self.digest = DigestBuilder(
-            fabric, store, client, state / "wiki-digest.sqlite3", zone, self.source_link
+            store,
+            state / "wiki-digest.sqlite3",
+            zone,
+            self.source_link,
+            lambda error: self._deferred("digest", error),
         )
+        self.compiler.digest = self.digest
         self._waiting: dict[str, tuple[str, float | None]] = {}
         self.observer = (
             WikiEditPublisher(journal, store, self.compiler, fabric, store.vault)
@@ -170,13 +175,12 @@ class WikiJob:
             self._deferred("compiler", error)
             return
         self._waiting.pop("compiler", None)
+        if not self.digest.pending:
+            self._waiting.pop("digest", None)
         try:
             self._copy_summaries()
-            self.digest.update()
         except HumanEditPending as error:
             self._deferred("digest", error)
-        else:
-            self._waiting.pop("digest", None)
         with sqlite3.connect(self.state_path) as db:
             row = db.execute("SELECT seq FROM bookmark WHERE id=1").fetchone()
             new = self.fabric.entries(ThreadQuery(after_seq=row[0] if row else 0))

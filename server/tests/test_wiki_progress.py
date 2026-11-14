@@ -43,6 +43,7 @@ class Client:
                     }
                 ],
                 "excluded_threads": [],
+                "digests": [],
             }
         )
 

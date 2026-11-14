@@ -111,3 +111,33 @@ def test_discovery_covers_new_call_without_a_model_list():
             module,
         )
     ) == [module.ApprovedResponse]
+
+
+def test_wiki_batch_schema_includes_digest_evidence():
+    from weaver.wiki.batch import WikiBatch
+
+    schema = openai_schema(WikiBatch)
+    assert "digests" in schema["properties"]
+    batch = WikiBatch.model_validate(
+        {
+            "pages": [
+                {
+                    "title": "업무",
+                    "role": "operation",
+                    "summary": "요약",
+                    "thread_ids": ["t"],
+                    "state_tag": None,
+                    "aliases": [],
+                    "body": "# 업무\n",
+                }
+            ],
+            "excluded_threads": [],
+            "digests": [
+                {
+                    "path": "Digest/2025/01/2025-01-01.md",
+                    "sentences": [{"text": "진행", "evidence": ["source"]}],
+                }
+            ],
+        }
+    )
+    assert batch.digests[0].sentences[0].evidence == ["source"]
