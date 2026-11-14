@@ -121,6 +121,7 @@ class Hints(Contract):
 
 
 class Manifest(Versioned):
+    capture_host: Literal["phone", "mac", "device"] | None = None
     capture_id: CaptureId
     kind: Kind
     channel: Channel
@@ -547,6 +548,9 @@ class PipelineItem(Version2):
     digest: PipelinePage | None
     updated_at: Timestamp
     wiki_edit: PipelineWikiEdit | None = None
+    capture_hosts: list[Literal["phone", "mac", "device", "unknown"]] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def validate_origin(self) -> "PipelineItem":

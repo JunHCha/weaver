@@ -156,6 +156,17 @@ internal fun NodePanel(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
+                        (result.captureHosts.ifEmpty { listOf(CaptureHost.UNKNOWN) }).joinToString(" · ") { host ->
+                            when (host) {
+                                CaptureHost.PHONE -> "수집: 이 폰"
+                                CaptureHost.MAC -> "수집: Mac"
+                                CaptureHost.DEVICE -> "수집: 별도 기기"
+                                CaptureHost.UNKNOWN -> "수집: 알 수 없음"
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
                         result.threads.joinToString(" · ") { "Thread · ${threadKindLabel(it.kind)}" },
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -222,6 +233,7 @@ internal fun NodePanel(
                                 "${item.source} · ${item.stateLabel}",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
                             if (item.stopped)
                                 Text(
                                     "Mac에서 Weaver 로그를 확인해 주세요. 문제를 고친 뒤 다시 시도할 수 있어요.",
@@ -309,6 +321,7 @@ internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
         ) {
             Text(item.title, style = MaterialTheme.typography.titleSmall)
             Text("${item.source} · ${item.stateLabel}", style = MaterialTheme.typography.bodySmall)
+            Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 stepNames.forEachIndexed { index, name ->
                     Column(

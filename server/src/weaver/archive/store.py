@@ -53,7 +53,7 @@ from .ulid import new_source_id
 INDEX_NAME = "index.sqlite3"
 INDEX_LOCK = ".index.lock"
 PAYLOADS = "payloads"
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 # Own copy temporaries older than this are crash leftovers.
 STALE_TEMPORARY_SECONDS = 600.0
 _CHUNK = 1 << 20
@@ -73,7 +73,8 @@ _SCHEMA = (
         source_id TEXT NOT NULL REFERENCES sources(source_id),
         sha256 TEXT NOT NULL,
         manifest_json TEXT NOT NULL,
-        receipt_json TEXT NOT NULL
+        receipt_json TEXT NOT NULL,
+        capture_host TEXT
     )""",
     "CREATE INDEX captures_by_source ON captures(source_id, seq)",
 )
@@ -109,6 +110,7 @@ class CaptureRecord:
 
     manifest: Manifest
     receipt: Receipt
+    capture_host: str | None = None
 
 
 def _utc_now() -> datetime:
@@ -215,7 +217,7 @@ class ArchiveStore:
         self.get(source_id)
         with self._read() as conn:
             rows = conn.execute(
-                "SELECT manifest_json, receipt_json FROM captures"
+                "SELECT manifest_json, receipt_json, capture_host FROM captures"
                 " WHERE source_id = ? ORDER BY seq",
                 (source_id,),
             ).fetchall()
@@ -223,8 +225,9 @@ class ArchiveStore:
             CaptureRecord(
                 Manifest.model_validate_json(manifest),
                 Receipt.model_validate_json(receipt),
+                host,
             )
-            for manifest, receipt in rows
+            for manifest, receipt, host in rows
         ]
 
     def source_for_capture(self, capture_id: str) -> str | None:
@@ -442,14 +445,15 @@ class ArchiveStore:
             ).model_dump_json()
             conn.execute(
                 "INSERT INTO captures"
-                " (capture_id, source_id, sha256, manifest_json, receipt_json)"
-                " VALUES (?, ?, ?, ?, ?)",
+                " (capture_id, source_id, sha256, manifest_json, receipt_json, capture_host)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     manifest.capture_id,
                     source.source_id,
                     manifest.sha256,
                     manifest.model_dump_json(),
                     receipt,
+                    manifest.capture_host,
                 ),
             )
         return source, receipt.encode("utf-8")
@@ -522,6 +526,9 @@ class ArchiveStore:
                 if version == 0:
                     for statement in _SCHEMA:
                         conn.execute(statement)
+                    conn.execute(f"PRAGMA user_version = {INDEX_VERSION}")
+                elif version == 1:
+                    conn.execute("ALTER TABLE captures ADD COLUMN capture_host TEXT")
                     conn.execute(f"PRAGMA user_version = {INDEX_VERSION}")
                 elif version != INDEX_VERSION:
                     raise ArchiveError("unknown archive index version")

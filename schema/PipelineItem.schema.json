@@ -335,6 +335,19 @@
     "apply_failure_limit": {
       "$ref": "#/$defs/Revision"
     },
+    "capture_hosts": {
+      "items": {
+        "enum": [
+          "phone",
+          "mac",
+          "device",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "title": "Capture Hosts",
+      "type": "array"
+    },
     "capture_id": {
       "anyOf": [
         {

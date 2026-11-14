@@ -236,6 +236,14 @@
             }
         }
     ],
+    "/properties/capture_hosts/items/enum": [
+        "phone",
+        "mac",
+        "device",
+        "unknown"
+    ],
+    "/properties/capture_hosts/items/type": "string",
+    "/properties/capture_hosts/type": "array",
     "/properties/capture_id/anyOf": [
         {
             "$ref": "#/$defs/CaptureId"

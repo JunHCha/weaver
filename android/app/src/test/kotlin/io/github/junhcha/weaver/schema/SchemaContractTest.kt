@@ -25,6 +25,23 @@ import org.junit.Test
  */
 class SchemaContractTest {
     @Test
+    fun captureHostsAcceptKnownValuesAndRejectInvalidValues() {
+        val manifest = Json.parseToJsonElement(SharedSchema.examples("Manifest").first().readText()).jsonObject
+        for (host in listOf("phone", "mac", "device")) {
+            val text = JsonObject(manifest + ("capture_host" to JsonPrimitive(host))).toString()
+            assertTrue(SharedSchema.errors("Manifest", text).isEmpty())
+            assertTrue(WeaverCodec.decode<Manifest>(text) is DecodeResult.Ok)
+        }
+        val bad = JsonObject(manifest + ("capture_host" to JsonPrimitive("unknown"))).toString()
+        assertFalse(SharedSchema.errors("Manifest", bad).isEmpty())
+        assertTrue(WeaverCodec.decode<Manifest>(bad) is DecodeResult.Invalid)
+        val item = Json.parseToJsonElement(SharedSchema.examples("PipelineItem").first().readText()).jsonObject
+        val hosts = JsonObject(item + ("capture_hosts" to JsonArray(listOf(JsonPrimitive("mac"), JsonPrimitive("unknown"))))).toString()
+        assertTrue(SharedSchema.errors("PipelineItem", hosts).isEmpty())
+        assertTrue(WeaverCodec.decode<PipelineItem>(hosts) is DecodeResult.Ok)
+    }
+
+    @Test
     fun examplesDecodeAndReencodeToSchemaValidIdenticalJson() {
         SharedSchema.models.forEach { (model, serializer) ->
             SharedSchema.examples(model).forEach { file ->

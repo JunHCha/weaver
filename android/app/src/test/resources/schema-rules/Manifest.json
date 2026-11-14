@@ -48,6 +48,19 @@
     "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
     "/$defs/Timestamp/type": "string",
     "/additionalProperties": false,
+    "/properties/capture_host/anyOf": [
+        {
+            "enum": [
+                "phone",
+                "mac",
+                "device"
+            ],
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
     "/properties/occurred_at/anyOf": [
         {
             "$ref": "#/$defs/Timestamp"
