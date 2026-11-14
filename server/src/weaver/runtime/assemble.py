@@ -29,7 +29,7 @@ from .summary import ReviewAdapter, SchedulePublisher, SummaryLookup, SummaryPro
 from .wiki import WikiJob
 
 # Part of Spinner's cache key: bump when runtime wiring changes Script output.
-CONFIGURATION_VERSION = "weaver.runtime.v2"
+CONFIGURATION_VERSION = "weaver.runtime.v3"
 
 
 @dataclass
@@ -97,14 +97,15 @@ def build_runtime(
         on_apply_stopped=progress.stopped,
     )
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
+    drafts = SummaryDrafts(
+        client, context, config.courier.proposals, state_root=config.state_root
+    )
     spinner = Spinner.from_config(
         archive,
         config,
         configuration_version=CONFIGURATION_VERSION,
         reviser=LlmReviser(client),
-    )
-    drafts = SummaryDrafts(
-        client, context, config.courier.proposals, state_root=config.state_root
+        revision_threshold=drafts.revision_threshold,
     )
     processor = SummaryProcessor(spinner, drafts, gate, progress)
 

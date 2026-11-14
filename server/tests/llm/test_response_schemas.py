@@ -141,3 +141,16 @@ def test_wiki_batch_schema_includes_digest_evidence():
         }
     )
     assert batch.digests[0].sentences[0].evidence == ["source"]
+
+
+def test_call_draft_schema_is_discovered_with_required_segments():
+    from weaver.loom.summary import CallDraftResponse, DraftResponse
+
+    assert CallDraftResponse in discovered_schemas()
+    wire = openai_schema(CallDraftResponse)
+    assert "segments" in wire["required"]
+    assert set(wire["$defs"]["EditedSegment"]["required"]) == {
+        "segment_id",
+        "text",
+    }
+    assert "segments" not in openai_schema(DraftResponse)["properties"]

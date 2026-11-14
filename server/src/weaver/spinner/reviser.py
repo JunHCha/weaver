@@ -10,6 +10,7 @@ SDK calls or content logging live here.
 
 import hashlib
 import json
+from collections.abc import Mapping
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Annotated, Literal, Protocol, Self
 
@@ -227,6 +228,54 @@ def _rebuild(revision: Revision, original: Script) -> Script:
     )
 
 
+def _revision_segments(thread: Script) -> list[RevisionSegment]:
+    _validate_thread_segments(thread)
+    try:
+        return [
+            RevisionSegment(
+                segment_id=s.segment_id,
+                start=s.start_ms / 1000 if s.start_ms is not None else None,
+                end=s.end_ms / 1000 if s.end_ms is not None else None,
+                speaker=s.speaker,
+                text=thread.text[s.start_char : s.end_char],
+            )
+            for s in thread.segments
+        ]
+    except ValidationError:
+        # input_value would carry conversation text; keep only a code.
+        raise RevisionError("unrepresentable_segment") from None
+
+
+def revisable_segments(thread: Script) -> list[RevisionSegment]:
+    """Speech segments an LLM may edit, in Script order."""
+    return [
+        revised
+        for revised, s in zip(_revision_segments(thread), thread.segments, strict=True)
+        if _revisable(s, revised.text)
+    ]
+
+
+def apply_edits(original: Script, edits: Mapping[str, str]) -> Script:
+    """Rebuild `original` with changed speech text; any bad edit raises RevisionError.
+
+    Unknown or structural segment ids and blank text are rejected, so a partial
+    model answer can never alter structure. Messages carry codes only.
+    """
+    segments = _revision_segments(original)
+    editable = {s.segment_id for s in revisable_segments(original)}
+    if not edits.keys() <= editable:
+        raise RevisionError("segment_identity")
+    revision = Revision(
+        segments=[
+            s.model_copy(update={"text": edits[s.segment_id]})
+            if s.segment_id in edits
+            else s
+            for s in segments
+        ]
+    )
+    return revision_to_thread(revision, original)
+
+
 class LlmReviser:
     def __init__(
         self, client: LlmClient, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
@@ -247,21 +296,7 @@ class LlmReviser:
         return f"{PROMPT_VERSION}:{prompt}:{model}"
 
     def revise(self, thread: Script, hints: ReviseHints) -> str:
-        _validate_thread_segments(thread)
-        try:
-            original = [
-                RevisionSegment(
-                    segment_id=s.segment_id,
-                    start=s.start_ms / 1000 if s.start_ms is not None else None,
-                    end=s.end_ms / 1000 if s.end_ms is not None else None,
-                    speaker=s.speaker,
-                    text=thread.text[s.start_char : s.end_char],
-                )
-                for s in thread.segments
-            ]
-        except ValidationError:
-            # input_value would carry conversation text; keep only a code.
-            raise RevisionError("unrepresentable_segment") from None
+        original = _revision_segments(thread)
         speech = [
             revised
             for revised, s in zip(original, thread.segments, strict=True)

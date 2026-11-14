@@ -65,12 +65,15 @@ class Spinner:
         timezone: ZoneInfo | None = None,
         parsers: Mapping[str, TextParser] | None = None,
         reviser: Reviser | None = None,
+        revision_threshold: int = 0,
         settings: SpinnerSettings | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if not configuration_version.strip():
             raise ValueError("configuration_version must be nonempty")
+        if revision_threshold < 0:
+            raise ValueError("revision_threshold must not be negative")
         state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = (state_root / "spinner.sqlite3").resolve()
         self._store = store
@@ -78,6 +81,9 @@ class Spinner:
         self._parsers: dict[str, TextParser] = {"call": GalaxyCallParser()}
         self._parsers.update(parsers or {})
         self._reviser = reviser
+        # Calls at most this long skip revision here: Loom corrects them while
+        # summarizing, in the same LLM call.
+        self._threshold = revision_threshold
         fingerprint = json.dumps(
             [
                 configuration_version,
@@ -90,6 +96,7 @@ class Spinner:
                     for channel, parser in self._parsers.items()
                 ),
                 getattr(reviser, "version", None),
+                revision_threshold,
             ],
             ensure_ascii=True,
             separators=(",", ":"),
@@ -128,6 +135,7 @@ class Spinner:
         configuration_version: str,
         parsers: Mapping[str, TextParser] | None = None,
         reviser: Reviser | None = None,
+        revision_threshold: int = 0,
     ) -> "Spinner":
         return cls(
             store,
@@ -137,6 +145,7 @@ class Spinner:
             settings=config.spinner.retry,
             parsers=parsers,
             reviser=reviser,
+            revision_threshold=revision_threshold,
         )
 
     @contextmanager
@@ -315,6 +324,28 @@ class Spinner:
         )
         return revision_to_thread(parse_revision(serialized), parsed)
 
+    def was_revised(self, source: Source) -> bool:
+        """Whether this version's revision step committed for the source."""
+        with self._lock(), self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM attempts WHERE source_id=? AND version=? "
+                "AND stage='revise' AND status='succeeded' LIMIT 1",
+                (source.source_id, self._version),
+            ).fetchone()
+        return row is not None
+
+    def save_revised(self, source: Source, script: Script) -> None:
+        """Replace the stored result with a Script corrected elsewhere (by Loom)."""
+        script = Script.model_validate(script.model_dump())
+        if (script.source_id, script.channel, script.occurred_at) != (
+            source.source_id,
+            source.channel,
+            source.occurred_at,
+        ):
+            raise SpinnerError("thread_provenance_mismatch")
+        with self._lock(), self._connect() as db:
+            self._save_result(db, source, script, "thread")
+
     def spin(self, source: Source, *, reprocess: bool = False) -> Script:
         """Return only a committed complete Script, preserving failed checkpoints."""
         with self._lock():
@@ -328,7 +359,7 @@ class Spinner:
         if source.channel == "call":
             if "call" not in self._parsers:
                 raise SpinnerError("call_parser_not_configured")
-            if self._reviser is None:
+            if self._reviser is None and self._threshold == 0:
                 raise SpinnerError("call_reviser_not_configured")
         key = (source.source_id, self._version)
         with self._connect() as db:
@@ -362,7 +393,7 @@ class Spinner:
                         field="parsed",
                     )
                 result = parsed
-                if source.channel == "call":
+                if source.channel == "call" and len(parsed.text) > self._threshold:
                     result = self._run(
                         source,
                         attempt,
