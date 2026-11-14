@@ -1,5 +1,6 @@
 """Runtime adapters for the durable summary review workflow."""
 
+import json
 import logging
 import threading
 from collections.abc import Sequence
@@ -68,6 +69,20 @@ class ReviewAdapter:
         self.review = review
         self.lookup = lookup
         self.progress = progress
+        self._recover_legacy_feedback()
+
+    def _recover_legacy_feedback(self) -> None:
+        # Only already-prepared legacy decisions may bypass the current contract.
+        with self.review.state.connect() as db:
+            rows = db.execute(
+                "SELECT id, revision, verdict FROM reviews WHERE stage='PREPARED'"
+            ).fetchall()
+        for package_id, revision, raw in rows:
+            data = json.loads(raw)
+            if data.get("action") != "feedback":
+                continue
+            package, script = self.review.state.load_package(package_id, revision)
+            self.review.apply(package, script, Verdict.model_construct(**data))
 
     def latest_rev(self, package_id: str) -> int | None:
         with self.review.state.connect() as db:
@@ -89,7 +104,7 @@ class ReviewAdapter:
                 "SELECT verdict FROM reviews WHERE id=? AND revision=?",
                 (verdict.package_id, verdict.revision),
             ).fetchone()
-        if row is not None and Verdict.model_validate_json(row[0]) != verdict:
+        if row is not None and json.loads(row[0]) != verdict.model_dump(mode="json"):
             raise ValueError("conflicting verdict")
 
     def apply(self, verdict: Verdict) -> None:

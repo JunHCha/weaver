@@ -113,18 +113,19 @@ class ReviewPanelTest {
         assertEquals("장소는 추후 확정", verdict.feedback)
     }
 
-    @Test fun feedbackKeepsEditedSummaryWithoutApproving() {
+    @Test fun feedbackAndEditedSummaryAreSubmittedTogether() {
         val (context, p) = prepare { it.copy(questions = emptyList()) }
         render { ReviewPanel(p.packageId) {} }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("요약 본문").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("요약 본문").performTextReplacement("사람이 수정한 요약")
         compose.onNodeWithText("최종 검토").performScrollTo().performClick()
         compose.onNodeWithText("추가 피드백 (선택)").performScrollTo().performTextReplacement("날짜를 더 확인해 주세요")
-        compose.onNodeWithText("피드백 반영 요청").performScrollTo().performClick()
+        compose.onNodeWithText("수정 제출").performScrollTo().performClick()
         compose.waitUntil(10_000) { ReviewRuntime.records(context).isNotEmpty() }
         val verdict = ReviewRuntime.records(context).single().verdict
-        assertEquals(Verdict.Action.FEEDBACK, verdict.action)
+        assertEquals(Verdict.Action.EDIT, verdict.action)
         assertEquals("사람이 수정한 요약", verdict.editedBody)
+        assertEquals("날짜를 더 확인해 주세요", verdict.feedback)
     }
 
     @Test fun rejectAndEditNeedTheirOwnInputAndQueueOneVerdict() {

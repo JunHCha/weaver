@@ -37,7 +37,7 @@ class ReviewRuntimeTest {
             }
             override fun delete(folder: String, name: String): Unit = error("unexpected remote deletion")
         }
-        val verdict = ReviewDraft.verdict(p, listOf("홍길동"), Verdict.Action.FEEDBACK, "", "Synthetic instruction")
+        val verdict = ReviewDraft.verdict(p, listOf("홍길동"), Verdict.Action.APPROVE, "", "Synthetic instruction")
         val store = ReviewStore(File(AppStorage.exchangeDir(context), "reviews"))
         store.queue(folder, p, verdict)
         assertEquals(verdict, ReviewStore(File(AppStorage.exchangeDir(context), "reviews")).records().single().verdict)

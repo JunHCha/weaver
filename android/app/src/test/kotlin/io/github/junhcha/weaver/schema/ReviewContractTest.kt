@@ -66,7 +66,7 @@ class ReviewContractTest {
     @Test
     fun verdictActionsRoundTripAndRejectInvalidBranches() {
         val base = Verdict(2, "package-1", 1, Verdict.Action.APPROVE, emptyList(), null, null)
-        listOf(base, base.copy(action = Verdict.Action.EDIT, editedBody = "수정"), base.copy(action = Verdict.Action.FEEDBACK, feedback = "의견"), base.copy(action = Verdict.Action.REJECT)).forEach {
+        listOf(base, base.copy(action = Verdict.Action.EDIT, editedBody = "수정"), base.copy(feedback = "의견"), base.copy(action = Verdict.Action.REJECT)).forEach {
             val text = json.encodeToString(it)
             assertTrue(valid("Verdict", text))
             assertTrue(json.decodeFromString<Verdict>(text) == it)

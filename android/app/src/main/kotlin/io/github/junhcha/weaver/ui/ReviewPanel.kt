@@ -120,10 +120,10 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                 OutlinedTextField(value = feedback, onValueChange = { feedback = it }, enabled = enabled,
                     label = { Text("추가 피드백 (선택)") }, modifier = Modifier.fillMaxWidth())
                 Text("모든 답변과 피드백을 한 번에 보냅니다.", style = MaterialTheme.typography.bodySmall)
-                val actions = listOf(Verdict.Action.APPROVE, Verdict.Action.FEEDBACK, Verdict.Action.REJECT)
+                val actions = listOf(Verdict.Action.APPROVE, Verdict.Action.REJECT)
                 actions.forEach { requestedAction ->
                     val action = if (requestedAction == Verdict.Action.APPROVE && body != p.draftBody) Verdict.Action.EDIT else requestedAction
-                    OutlinedButton(enabled = enabled && (requestedAction != Verdict.Action.FEEDBACK || feedback.isNotBlank()), onClick = {
+                    OutlinedButton(enabled = enabled, onClick = {
                         busy = true; error = null
                         scope.launch {
                             val result = withContext(Dispatchers.IO) { runCatching {
@@ -136,7 +136,7 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                         }
                     }) { Text(when (requestedAction) {
                         Verdict.Action.APPROVE -> if (body != p.draftBody) "수정 제출" else "승인"; Verdict.Action.EDIT -> "수정 제출"
-                        Verdict.Action.FEEDBACK -> "피드백 반영 요청"; Verdict.Action.REJECT -> "거절"
+                        Verdict.Action.REJECT -> "거절"
                     }) }
                 }
             }

@@ -197,15 +197,11 @@ def test_conflicting_verdict_and_package_are_rejected(tmp_path: Path) -> None:
     assert len(sink.drafts) == 1
 
 
-def test_edit_feedback_reject_and_replay(tmp_path: Path) -> None:
+def test_edit_reject_and_replay(tmp_path: Path) -> None:
     class Llm(FakeLlm):
         def generate_json[T: BaseModel](
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
-            if task == "loom.feedback":
-                return schema.model_validate(
-                    {"patches": [{"before": "결정했다", "after": "논의했다"}]}
-                )
             data = super().generate_json(task, system, user, schema).model_dump()
             data["corrections"] = []
             return schema.model_validate(data)
@@ -229,22 +225,14 @@ def test_edit_feedback_reject_and_replay(tmp_path: Path) -> None:
         edited_body=None,
         feedback=None,
     )
-    feedback = Verdict.model_validate(
-        base | {"action": "feedback", "feedback": "표현 수정"}
-    )
-    revised = make().apply(package(), "원문", feedback, now=NOW)
-    assert isinstance(revised, ReviewPackage)
-    assert revised.revision == 2 and revised.draft_body == "홍길돈이 논의했다."
-    assert make().apply(package(), "원문", feedback, now=NOW) == revised
-    assert "-홍길돈이 결정했다." in (tmp_path / "proposals/pkg.r2.diff").read_text()
     edit = Verdict.model_validate(
-        base | {"revision": 2, "action": "edit", "edited_body": "사람이 수정한 본문"}
+        base | {"action": "edit", "edited_body": "사람이 수정한 본문"}
     )
-    summary = make().apply(revised, "원문", edit, now=NOW)
+    summary = make().apply(package(), "원문", edit, now=NOW)
     assert summary.body == "사람이 수정한 본문"
     assert sink.drafts[0].actor == "human"
     published = ReviewPackage.model_validate_json(
-        (tmp_path / "proposals/pkg.r2.json").read_text()
+        (tmp_path / "proposals/pkg.r1.json").read_text()
     )
     assert published.stage == "반영" and "반영" in published.stage_times
     other = package().model_copy(update={"package_id": "other"})
@@ -294,59 +282,6 @@ def test_fabric_lost_response_replays_same_batch(tmp_path: Path) -> None:
         == "thr_"
         + __import__("hashlib").sha256(f"{summary.summary_id}:0".encode()).hexdigest()
     )
-
-
-def test_feedback_publication_failure_replays_prepared_revision(
-    tmp_path: Path, monkeypatch
-) -> None:
-    import pytest
-
-    import weaver.loom.summary_review as module
-
-    class FeedbackLlm(FakeLlm):
-        calls = 0
-
-        def generate_json[T: BaseModel](
-            self, task: str, system: str, user: str, schema: type[T]
-        ) -> T:
-            self.calls += 1
-            return schema.model_validate(
-                {"patches": [{"before": "결정했다", "after": "논의했다"}]}
-            )
-
-    llm = FeedbackLlm()
-    sink = FakeSink()
-    review = SummaryReview(
-        llm,
-        ContextDictionary(tmp_path / "state"),
-        sink,
-        tmp_path / "archive",
-        state_root=tmp_path / "state",
-        proposals=tmp_path / "proposals",
-    )
-    verdict = Verdict(
-        schema_version=2,
-        package_id="pkg",
-        revision=1,
-        action="feedback",
-        answers=[],
-        edited_body=None,
-        feedback="표현 수정",
-    )
-    original = module.write_json_atomic
-
-    def fail(*args, **kwargs):
-        raise OSError("publication interrupted")
-
-    monkeypatch.setattr(module, "write_json_atomic", fail)
-    with pytest.raises(OSError):
-        review.apply(package(), "원문", verdict, now=NOW)
-    monkeypatch.setattr(module, "write_json_atomic", original)
-    result = review.apply(package(), "원문", verdict, now=NOW)
-    assert isinstance(result, ReviewPackage) and result.revision == 2
-    assert llm.calls == 1
-    assert review.state.load_package("pkg", 2) == (result, "원문")
-    assert (tmp_path / "proposals/pkg.r2.diff").is_file()
 
 
 def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
@@ -551,45 +486,6 @@ def test_freeform_answers_and_feedback_use_one_approval_request(tmp_path: Path) 
     assert len(payload["questions"]) == 3
 
 
-def test_feedback_request_includes_collected_answers(tmp_path: Path) -> None:
-    import json
-
-    class RecordingLlm(FakeLlm):
-        calls: list[str] = []
-
-        def generate_json[T: BaseModel](
-            self, task: str, system: str, user: str, schema: type[T]
-        ) -> T:
-            assert task == "loom.feedback"
-            self.calls.append(user)
-            return schema.model_validate({"patches": []})
-
-    llm = RecordingLlm()
-    review = SummaryReview(
-        llm,
-        ContextDictionary(tmp_path / "state"),
-        FakeSink(),
-        tmp_path / "archive",
-        state_root=tmp_path / "state",
-    )
-    verdict = Verdict(
-        schema_version=2,
-        package_id="pkg",
-        revision=1,
-        action="feedback",
-        answers=["직접 입력한 이름"],
-        feedback="수정",
-        edited_body="직접 수정한 본문",
-    )
-    result = review.apply(package(), "원문", verdict, now=NOW)
-    assert isinstance(result, ReviewPackage)
-    assert result.draft_body == "직접 수정한 본문"
-    assert result.revision == 2
-    assert json.loads(llm.calls[0])["body"] == "직접 수정한 본문"
-    assert len(llm.calls) == 1
-    assert json.loads(llm.calls[0])["answers"] == verdict.answers
-
-
 def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> None:
     class ExtractionLlm(FakeLlm):
         def generate_json[T: BaseModel](
@@ -651,3 +547,50 @@ def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
     assert len(sink.drafts) == 1
     assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]
     assert context.candidates("원문에 없음") == []
+
+
+def test_prepared_legacy_feedback_is_recovered_without_llm(tmp_path: Path) -> None:
+    import json
+
+    from weaver.runtime.summary import ReviewAdapter
+
+    class NoLlm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            raise AssertionError("recovery must not call the LLM")
+
+    review = SummaryReview(
+        NoLlm(),
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    old = package()
+    revised = old.model_copy(update={"revision": 2, "draft_body": "수정된 본문"})
+    review.state.save_package(old, "원문")
+    verdict = {
+        "schema_version": 2,
+        "package_id": "pkg",
+        "revision": 1,
+        "action": "feedback",
+        "answers": [],
+        "edited_body": None,
+        "feedback": "수정",
+    }
+    prepared = {
+        "package": revised.model_dump(mode="json"),
+        "diff": "diff",
+        "applied_at": NOW.isoformat(),
+    }
+    with review.state.connect() as db:
+        db.execute(
+            "INSERT INTO reviews VALUES (?, ?, ?, ?, 'PREPARED')",
+            ("pkg", 1, json.dumps(verdict), json.dumps(prepared)),
+        )
+    ReviewAdapter(review, None)  # type: ignore[arg-type]
+    assert review.state.load_package("pkg", 2) == (revised, "원문")
+    assert (review.proposals / "pkg.r2.diff").read_text() == "diff"
+    with review.state.connect() as db:
+        assert db.execute("SELECT stage FROM reviews").fetchone()[0] == "APPLIED"

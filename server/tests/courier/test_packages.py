@@ -116,7 +116,7 @@ def test_conflicting_resynced_verdict_is_reported(courier, paths, revisions, dec
 
 
 def test_every_verdict_action_round_trips_through_the_schema():
-    for action in ("approve", "edit", "feedback", "reject"):
+    for action in ("approve", "edit", "reject"):
         payload = verdict_for(action=action)
         assert_schema_valid("Verdict", payload)
         Verdict.model_validate(payload)

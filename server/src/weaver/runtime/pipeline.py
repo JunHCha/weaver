@@ -1,7 +1,7 @@
 """LLM availability for the runtime: the status probe and the gated client.
 
 Without a usable key the runtime still archives and parses Sources; work that
-needs the LLM (call revision, drafting, feedback, approval) is reported as
+needs the LLM (call revision, drafting, approval) is reported as
 ``waiting_llm`` and retried when the gate is re-probed.
 """
 

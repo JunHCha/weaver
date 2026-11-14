@@ -21,14 +21,13 @@ data class Verdict(
         editedBody?.let { Rules.nonEmpty(it, "edited_body") }
         feedback?.let { Rules.nonEmpty(it, "feedback") }
         require(action != Action.EDIT || editedBody != null)
-        require(editedBody == null || action in setOf(Action.EDIT, Action.FEEDBACK))
-        require(action != Action.FEEDBACK || feedback != null)
+        require(editedBody == null || action == Action.EDIT)
         require(action != Action.REJECT || feedback == null)
     }
 
     @Serializable
     enum class Action {
         @SerialName("approve") APPROVE, @SerialName("edit") EDIT,
-        @SerialName("feedback") FEEDBACK, @SerialName("reject") REJECT,
+        @SerialName("reject") REJECT,
     }
 }

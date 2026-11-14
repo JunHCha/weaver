@@ -11,15 +11,13 @@ into Fabric Threads. It never appends a fact the user did not approve.
    the Courier `proposals/` folder. Extra questions are appended to the body as
    a list instead of being asked.
 2. The phone sends a `Verdict` for exactly one package revision.
-   `SummaryReview.apply(package, script, verdict)` handles the four actions:
-   - `approve`: the answers are applied (`loom.approve`), the final document is
+   `SummaryReview.apply(package, script, verdict)` handles the three actions:
+   - `approve`: answers and optional feedback are applied together (`loom.approve`), the final document is
      stored as a content-addressed `EventSummary` (`archive_root/summaries/<digest prefix>/`),
      and the Threads extracted from it are appended to Fabric. Only corrections
      the reviewer chose are learned into the context dictionary.
    - `edit`: the reviewer's text is the document; only its facts are extracted
      and recorded with `actor=human`.
-   - `feedback`: targeted patches (`loom.feedback`, `summary_patch`) produce the
-     next revision and a diff file; nothing is regenerated from scratch.
    - `reject`: a content-free rejection Thread is appended.
 3. Schedules are `field=schedule` Threads with a `{start, end, timezone}` value.
    `schedules.approved_schedules` projects them from a complete Fabric snapshot
