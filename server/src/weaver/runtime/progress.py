@@ -284,10 +284,11 @@ class PipelinePublisher:
             "stage_times": current.stage_times | package.stage_times,
         }
         if review is not None and review[0] == "APPLIED":
-            verdict = Verdict.model_validate_json(review[1])
-            prepared = Prepared.model_validate_json(review[2])
-            if verdict.action == "feedback":
+            raw_verdict = json.loads(review[1])
+            if raw_verdict.get("action") == "feedback":
                 return  # new revision was journaled atomically by SummaryReview
+            verdict = Verdict.model_validate(raw_verdict)
+            prepared = Prepared.model_validate_json(review[2])
             if prepared.applied_at is not None:
                 values["stage_times"]["반영"] = prepared.applied_at
             threads = [

@@ -227,7 +227,7 @@ class SchemaContractTest {
         listOf(
             base,
             base.copy(action = Verdict.Action.EDIT, editedBody = "수정"),
-            base.copy(action = Verdict.Action.FEEDBACK, feedback = "다시 정리"),
+            base.copy(feedback = "다시 정리"),
             base.copy(action = Verdict.Action.REJECT),
         ).forEach {
             assertEquals(it.action.name, emptyList<String>(), SharedSchema.errors("Verdict", WeaverCodec.encode(it)))
@@ -241,7 +241,6 @@ class SchemaContractTest {
             { approve.copy(action = Verdict.Action.REJECT, feedback = "x") },
             { approve.copy(editedBody = "x") },
             { approve.copy(action = Verdict.Action.EDIT) },
-            { approve.copy(action = Verdict.Action.FEEDBACK) },
             { approve.copy(revision = 0) },
             { approve.copy(schemaVersion = 1) },
             { approve.copy(packageId = " ") },

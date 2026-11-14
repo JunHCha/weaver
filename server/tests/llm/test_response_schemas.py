@@ -107,7 +107,7 @@ def test_discovery_covers_new_call_without_a_model_list():
     ) == [module.ApprovedResponse]
     assert list(
         response_schemas(
-            "llm.generate_json(task='new-task', system='', user='', schema=FeedbackResponse)",
+            "llm.generate_json(task='new-task', system='', user='', schema=ApprovedResponse)",
             module,
         )
-    ) == [module.FeedbackResponse]
+    ) == [module.ApprovedResponse]

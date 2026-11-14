@@ -67,7 +67,7 @@ def verdict_for(package_id=PKG, revision=1, action="approve"):
         action=action,
         answers=[],
         edited_body="수정 본문" if action == "edit" else None,
-        feedback="이름을 고쳐 주세요" if action == "feedback" else None,
+        feedback=None,
     ).model_dump(mode="json")
 
 

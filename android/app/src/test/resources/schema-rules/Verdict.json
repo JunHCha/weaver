@@ -9,22 +9,6 @@
             "if": {
                 "properties": {
                     "action": {
-                        "const": "feedback"
-                    }
-                }
-            },
-            "then": {
-                "properties": {
-                    "feedback": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        {
-            "if": {
-                "properties": {
-                    "action": {
                         "const": "reject"
                     }
                 }
@@ -76,7 +60,6 @@
     "/properties/action/enum": [
         "approve",
         "edit",
-        "feedback",
         "reject"
     ],
     "/properties/action/type": "string",

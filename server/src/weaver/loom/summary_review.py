@@ -1,6 +1,5 @@
 """Materialize approved event summaries and their extracted Threads."""
 
-import difflib
 import hashlib
 import json
 import logging
@@ -15,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from weaver.context import ContextDictionary, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.llm.types import LlmClient
-from weaver.loom.summary_patch import Patch, apply_patches
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import (
     EventSummary,
@@ -104,12 +102,6 @@ class ApprovedResponse(BaseModel):
     threads: list[ExtractedThread]
 
 
-class FeedbackResponse(BaseModel):
-    """Targeted replacements proposed for reviewer feedback."""
-
-    patches: list[Patch]
-
-
 class Prepared(BaseModel):
     """Stable side-effect payload retained across retries."""
 
@@ -192,7 +184,7 @@ class SummaryReview:
                     (package.package_id, package.revision),
                 ).fetchone()
             if row is not None:
-                if Verdict.model_validate_json(row[0]) != verdict:
+                if json.loads(row[0]) != verdict.model_dump(mode="json"):
                     raise ValueError("conflicting verdict")
                 prepared = Prepared.model_validate_json(row[1])
                 if row[2] == "APPLIED":
@@ -275,41 +267,6 @@ class SummaryReview:
         replaces: str | None,
     ) -> Prepared:
         timestamp = now or datetime.now(UTC)
-        if verdict.action == "feedback":
-            base_body = verdict.edited_body or package.draft_body
-            response = self.llm.generate_json(
-                "loom.feedback",
-                "요청한 변경만 원문 부분 교체 목록으로 작성한다.",
-                json.dumps(
-                    {
-                        "body": base_body,
-                        "feedback": verdict.feedback,
-                        "questions": [q.model_dump() for q in package.questions],
-                        "answers": verdict.answers,
-                    },
-                    ensure_ascii=False,
-                ),
-                FeedbackResponse,
-            )
-            body = apply_patches(base_body, response.patches)
-            revised = package.model_copy(
-                update={
-                    "revision": package.revision + 1,
-                    "draft_body": body,
-                    "stage": "검토",
-                    "stage_times": package.stage_times
-                    | {"정리": timestamp, "질문": timestamp, "검토": timestamp},
-                }
-            )
-            diff = "\n".join(
-                difflib.unified_diff(
-                    package.draft_body.splitlines(),
-                    body.splitlines(),
-                    fromfile="previous",
-                    tofile="revised",
-                )
-            )
-            return Prepared(package=revised, diff=diff + "\n" if diff else "")
         if verdict.action == "reject":
             key = hashlib.sha256(
                 f"{package.package_id}:{package.revision}:reject".encode()

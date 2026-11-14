@@ -236,14 +236,11 @@ def test_verdict_action_requires_appropriate_input():
     data = example("Verdict")
     assert Verdict.model_validate(data)
     assert Verdict.model_validate(data | {"action": "edit", "edited_body": "수정"})
-    assert Verdict.model_validate(
-        data | {"action": "feedback", "feedback": "더 자세히"}
-    )
     assert Verdict.model_validate(data | {"action": "reject"})
     assert Verdict.model_validate(data | {"feedback": "더 자세히"})
     for invalid in (
         {"action": "edit"},
-        {"action": "feedback"},
+        {"action": "feedback", "feedback": "더 자세히"},
         {"action": "reject", "feedback": "더 자세히"},
         {"action": "reject", "edited_body": "수정"},
     ):

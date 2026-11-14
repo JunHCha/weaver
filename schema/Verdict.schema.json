@@ -17,22 +17,6 @@
       "if": {
         "properties": {
           "action": {
-            "const": "feedback"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "feedback": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "action": {
             "const": "reject"
           }
         }
@@ -87,7 +71,6 @@
       "enum": [
         "approve",
         "edit",
-        "feedback",
         "reject"
       ],
       "title": "Action",

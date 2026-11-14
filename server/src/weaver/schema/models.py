@@ -383,10 +383,6 @@ class Verdict(Version2):
         json_schema_extra={
             "allOf": [
                 {
-                    "if": {"properties": {"action": {"const": "feedback"}}},
-                    "then": {"properties": {"feedback": {"type": "string"}}},
-                },
-                {
                     "if": {"properties": {"action": {"const": "reject"}}},
                     "then": {"properties": {"feedback": {"type": "null"}}},
                 },
@@ -404,7 +400,7 @@ class Verdict(Version2):
 
     package_id: NonEmpty
     revision: Revision
-    action: Literal["approve", "edit", "feedback", "reject"]
+    action: Literal["approve", "edit", "reject"]
     answers: list[NonEmpty]
     edited_body: NonEmpty | None
     feedback: NonEmpty | None
@@ -414,9 +410,7 @@ class Verdict(Version2):
         if self.action == "edit" and self.edited_body is None:
             raise ValueError("edited_body is required for edit")
         if self.action in {"approve", "reject"} and self.edited_body is not None:
-            raise ValueError("edited_body is accepted only for edit or feedback")
-        if self.action == "feedback" and self.feedback is None:
-            raise ValueError("feedback is required for feedback")
+            raise ValueError("edited_body is accepted only for edit")
         if self.action == "reject" and self.feedback is not None:
             raise ValueError("feedback is not accepted for reject")
         return self

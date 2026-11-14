@@ -99,7 +99,7 @@ class ReviewTest {
     @Test fun disappearanceIsOnlyInferredAndNeverRepublishes() {
         val folder = Folder(); val p = review(); folder.put(p)
         val store = ReviewStore(temporary.newFolder())
-        store.queue(folder, p, verdict(p, Verdict.Action.FEEDBACK))
+        store.queue(folder, p, verdict(p, Verdict.Action.APPROVE))
         assertTrue(store.synchronize(folder))
         folder.files.remove("decisions/${p.packageId}.r${p.revision}.json")
         assertTrue(store.synchronize(folder))
