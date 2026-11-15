@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Base.Theme.Weaver.Navigation" parent="Base.Theme.Weaver">
+        <item name="android:navigationBarColor">@color/weaver_bg</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.Weaver" parent="Base.Theme.Weaver.Navigation" />
+</resources>
