@@ -28,7 +28,7 @@ internal fun kindBackground(kind: WeaverTokens.Kind): Color =
     else kind.color.copy(alpha = kind.tintPercent / 100).compositeOver(WeaverTokens.surface)
 
 @Composable
-internal fun KindCard(kind: String? = null, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+internal fun KindCard(modifier: Modifier = Modifier, kind: String? = null, content: @Composable ColumnScope.() -> Unit) {
     val style = threadKindStyle(kind)
     Surface(
         modifier = modifier.fillMaxWidth(), color = kindBackground(style),
@@ -49,7 +49,7 @@ internal fun List<PipelineThread>.cardKind(): String? = map { it.kind }.distinct
 @Composable
 internal fun ThreadRows(threads: List<PipelineThread>) {
     threads.forEach { thread ->
-        KindCard(thread.kind) {
+        KindCard(kind = thread.kind) {
             Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Thread · ${threadKindLabel(thread.kind)}", style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
                 if (thread.content.isNotBlank()) Text(thread.content, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)

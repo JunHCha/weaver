@@ -219,7 +219,7 @@ internal fun NodePanel(
                 if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault) { message = it }
                 else if (node == MapNode.USER) ApprovalCard(item) { approval = item.packageId }
                 else {
-                    KindCard(item.server?.threads?.cardKind()) {
+                    KindCard(kind = item.server?.threads?.cardKind()) {
                         Column(
                             Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -307,7 +307,7 @@ private fun stageName(stage: Stage) =
 @Composable
 internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
     var expanded by rememberSaveable(item.id, item.packageRevision) { mutableStateOf(false) }
-    KindCard(item.server?.threads?.cardKind()) {
+    KindCard(kind = item.server?.threads?.cardKind()) {
         Column(
             Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),

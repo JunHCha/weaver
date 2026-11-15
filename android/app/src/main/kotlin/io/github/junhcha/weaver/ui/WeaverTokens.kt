@@ -122,22 +122,33 @@ object WeaverTokens {
 
     fun number(path: String): Float = values.getValue(path).toFloat()
     private fun color(path: String): Color = Color((0xFF000000L or values.getValue(path).removePrefix("#").toLong(16)).toInt())
-    val bg: Color get() = color("color.bg")
-    val surface: Color get() = color("color.surface")
-    val line: Color get() = color("color.line")
-    val ink: Color get() = color("color.ink")
-    val muted: Color get() = color("color.muted")
-    val indigo: Color get() = color("color.indigo")
-    val thread: Color get() = color("color.thread")
-    val hover: Color get() = color("color.hover.hex").copy(alpha = number("color.hover.alpha"))
-    val selected: Color get() = color("color.selected.hex").copy(alpha = number("color.selected.alpha"))
+    val bg: Color = color("color.bg")
+    val surface: Color = color("color.surface")
+    val line: Color = color("color.line")
+    val ink: Color = color("color.ink")
+    val muted: Color = color("color.muted")
+    val indigo: Color = color("color.indigo")
+    val thread: Color = color("color.thread")
+    val hover: Color = color("color.hover.hex").copy(alpha = number("color.hover.alpha"))
+    val selected: Color = color("color.selected.hex").copy(alpha = number("color.selected.alpha"))
 
     data class Kind(val color: Color, val tintPercent: Float, val dashed: Boolean)
-    fun kind(name: String): Kind = Kind(color("color.kind.$name.hex"),
-        number("color.kind.$name.tintPercent"), values.getValue("color.kind.$name.band") == "dashed")
-    val request: Kind get() = kind("request")
-    val decision: Kind get() = kind("decision")
-    val schedule: Kind get() = kind("schedule")
-    val record: Kind get() = kind("record")
-    val hollow: Kind get() = kind("hollow")
+    val request: Kind = Kind(color("color.kind.request.hex"),
+        number("color.kind.request.tintPercent"), values.getValue("color.kind.request.band") == "dashed")
+    val decision: Kind = Kind(color("color.kind.decision.hex"),
+        number("color.kind.decision.tintPercent"), values.getValue("color.kind.decision.band") == "dashed")
+    val schedule: Kind = Kind(color("color.kind.schedule.hex"),
+        number("color.kind.schedule.tintPercent"), values.getValue("color.kind.schedule.band") == "dashed")
+    val record: Kind = Kind(color("color.kind.record.hex"),
+        number("color.kind.record.tintPercent"), values.getValue("color.kind.record.band") == "dashed")
+    val hollow: Kind = Kind(color("color.kind.hollow.hex"),
+        number("color.kind.hollow.tintPercent"), values.getValue("color.kind.hollow.band") == "dashed")
+    fun kind(name: String): Kind = when (name) {
+        "request" -> request
+        "decision" -> decision
+        "schedule" -> schedule
+        "record" -> record
+        "hollow" -> hollow
+        else -> error("Unknown kind: $name")
+    }
 }

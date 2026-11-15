@@ -33,7 +33,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
     val outputs = item.pages + listOfNotNull(item.digest)
     val arrived = outputs.isNotEmpty() && vault.isNotBlank() &&
         outputs.all { it.path + ":" + it.sha256 in availability }
-    KindCard(item.threads.cardKind()) {
+    KindCard(kind = item.threads.cardKind()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
             Text(item.title, style = MaterialTheme.typography.titleMedium)

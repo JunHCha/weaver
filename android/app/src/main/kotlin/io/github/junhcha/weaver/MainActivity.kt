@@ -2,8 +2,10 @@ package io.github.junhcha.weaver
 
 import android.content.Intent
 import android.database.ContentObserver
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +44,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
         showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
         showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
         setContent { HomeScreen(showPending.value, showInbox.value) }

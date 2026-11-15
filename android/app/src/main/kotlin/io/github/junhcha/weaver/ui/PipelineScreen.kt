@@ -578,13 +578,7 @@ private fun Legend() {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        for (source in listOf("통화", "음성 메모", "공유한 글", "Wiki 직접 수정")) Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(8.dp).background(sourceColor(source), RoundedCornerShape(2.dp)))
-            Spacer(Modifier.width(3.dp))
-            Text(source, style = MaterialTheme.typography.labelSmall)
-        }
+        Text("수집 경로: 통화 · 음성 메모 · 공유한 글 · Wiki 직접 수정", style = MaterialTheme.typography.labelSmall)
         Text("치자색: 내 차례 · 홍색: 멈춤", style = MaterialTheme.typography.labelSmall)
     }
 }

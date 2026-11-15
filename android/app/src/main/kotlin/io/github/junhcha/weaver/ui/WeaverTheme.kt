@@ -25,7 +25,7 @@ internal val weaverColorScheme = lightColorScheme(
     surfaceTint = WeaverTokens.indigo,
     inverseSurface = WeaverTokens.ink, inverseOnSurface = WeaverTokens.surface,
     error = WeaverTokens.thread, onError = WeaverTokens.surface,
-    errorContainer = WeaverTokens.thread.copy(alpha = WeaverTokens.request.tintPercent / 100).compositeOver(WeaverTokens.surface),
+    errorContainer = WeaverTokens.thread.copy(alpha = 0.06f).compositeOver(WeaverTokens.surface),
     onErrorContainer = WeaverTokens.ink,
     outline = WeaverTokens.muted, outlineVariant = WeaverTokens.line, scrim = WeaverTokens.ink,
     surfaceBright = WeaverTokens.surface, surfaceDim = WeaverTokens.bg,
