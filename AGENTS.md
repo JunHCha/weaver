@@ -24,6 +24,21 @@ Tests must not access real LLMs, speech models, or user vaults.
 Local setup rationale is in `docs/guides/server-development.md`; domain decisions
 are in `docs/domain/decisions/` (these shared local folders are not committed).
 
+## Web
+
+Node 22 and pnpm 10.4 are required. Run from the repository root:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web lint
+pnpm --dir web typecheck
+pnpm --dir web test
+pnpm --dir web build
+```
+
+Run the read-only UI with `pnpm --dir web build && uv run --project server python -m weaver.app web`.
+For development, start the server and `pnpm --dir web dev` (API proxy to loopback).
+
 ## Android
 
 Requires JDK 21 and an Android SDK with `platforms;android-36` (set `ANDROID_HOME` or

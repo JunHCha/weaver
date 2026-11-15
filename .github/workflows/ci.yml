@@ -163,11 +163,33 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  web:
+    name: Web (lint, types, tests, export)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web lint
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web test
+      - run: pnpm --dir web build
+
   ci-result:
     # Always evaluate every verification job, including skipped/failed/cancelled jobs.
     name: CI result
     if: always()
-    needs: [server, server-macos, android]
+    needs: [server, server-macos, android, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -176,6 +198,7 @@ jobs:
           SERVER: ${{ needs.server.result }}
           SERVER_MACOS: ${{ needs.server-macos.result }}
           ANDROID: ${{ needs.android.result }}
+          WEB: ${{ needs.web.result }}
         run: |
           set -euo pipefail
           fail=0
@@ -189,4 +212,5 @@ jobs:
           check server "$SERVER"
           check android "$ANDROID"
           check server-macos "$SERVER_MACOS"
+          check web "$WEB"
           exit "$fail"

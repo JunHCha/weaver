@@ -222,6 +222,34 @@ def status(config: ConfigOption = None, llm: LlmOption = None) -> None:
     typer.echo(f"\nlog: {settings.log_root / 'weaver.log'}")
 
 
+@cli.command()
+def web(
+    config: ConfigOption = None,
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    host: str = "127.0.0.1",
+    static_dir: Annotated[Path | None, typer.Option(envvar="WEAVER_WEB_DIR")] = None,
+) -> None:
+    """Serve the read-only web UI on loopback only."""
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        raise typer.BadParameter("host must be loopback (127.0.0.1, ::1, localhost)")
+    import uvicorn
+
+    from weaver.web import create_app
+
+    settings = _load(config)
+    if static_dir is None:
+        candidate = Path(__file__).resolve().parents[3] / "web" / "out"
+        if candidate.is_dir():
+            static_dir = candidate
+    if static_dir is None:
+        typer.echo(
+            "Warning: web/out missing; API only. Run pnpm --dir web build.", err=True
+        )
+    elif not static_dir.is_dir():
+        raise typer.BadParameter("static-dir must be an existing directory")
+    uvicorn.run(create_app(settings, static_dir), host=host, port=port)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Invoke the CLI, retaining a return code for successful programmatic calls."""
     try:

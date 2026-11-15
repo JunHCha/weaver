@@ -41,3 +41,10 @@ signing.env
 
 # Generated local evaluation/test reports
 /reports/
+
+# Web build artifacts
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo
+.playwright-mcp/
