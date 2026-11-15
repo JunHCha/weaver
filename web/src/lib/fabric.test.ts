@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   groupKeys,
+  highlightedSegments,
+  focusLayout,
   selectFocus,
   packColumns,
   weftPath,
@@ -131,4 +133,68 @@ it("formats schedules without a known end", () => {
       open_requests: ["a"],
     })[0],
   ).toEqual(["일정", "11/20 09:00–—"]);
+});
+
+it("highlights only the two previous and two following chronological segments", () => {
+  expect([
+    ...highlightedSegments(
+      rows.map((t) => t.thread_id),
+      "5",
+    ),
+  ]).toEqual([3, 4, 5, 6]);
+  expect([
+    ...highlightedSegments(
+      rows.map((t) => t.thread_id),
+      "0",
+    ),
+  ]).toEqual([0, 1]);
+  expect([
+    ...highlightedSegments(
+      rows.map((t) => t.thread_id),
+      "missing",
+    ),
+  ]).toEqual([]);
+});
+it("lays out focused groups independently of FLIP animation and preserves top alignment", () => {
+  const lanes = [
+    { key: "A", count: 12, none: false },
+    { key: "프로젝트 없음", count: 1, none: true },
+  ];
+  const all = focusLayout(
+    rows,
+    lanes,
+    () => ["A"],
+    null,
+    false,
+    1000,
+    {},
+    false,
+  );
+  const focused = focusLayout(
+    rows,
+    lanes,
+    () => ["A"],
+    "7",
+    false,
+    1000,
+    {},
+    false,
+  );
+  expect(all.cards[0].y).toBe(4);
+  expect(focused.cards[0].id).toBe("3");
+  expect(focused.cards[0].y).toBe(4);
+  expect(focused.cards).toHaveLength(9);
+  expect(focused.lanes[1].collapsed).toBe(true);
+  expect(
+    focusLayout(
+      rows,
+      lanes,
+      () => ["프로젝트 없음"],
+      null,
+      true,
+      1000,
+      {},
+      false,
+    ).cards,
+  ).toEqual([]);
 });

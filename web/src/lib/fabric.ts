@@ -105,3 +105,115 @@ export function pulseDurations(lengths: number[]): number[] {
   const scale = (6000 - floorBudget) / (sum - floorBudget);
   return durations.map((ms) => 200 + (ms - 200) * scale);
 }
+
+export function highlightedSegments(
+  order: string[],
+  id: string | null,
+): Set<number> {
+  const index = id ? order.indexOf(id) : -1;
+  return new Set(
+    index < 0
+      ? []
+      : order
+          .slice(0, -1)
+          .flatMap((_, i) => (i >= index - 2 && i <= index + 1 ? [i] : [])),
+  );
+}
+export interface Lane {
+  key: string;
+  count: number;
+  none: boolean;
+}
+export interface PlacedCard {
+  key: string;
+  id: string;
+  lane: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface BoardLayout {
+  lanes: (Lane & {
+    x: number;
+    width: number;
+    collapsed: boolean;
+    visible: number;
+  })[];
+  cards: PlacedCard[];
+  width: number;
+  height: number;
+}
+export function focusLayout(
+  rows: Fact[],
+  lanes: Lane[],
+  groups: (t: Fact) => string[],
+  focus: string | null,
+  collapsed: boolean,
+  viewport: number,
+  heights: Record<string, number>,
+  single: boolean,
+): BoardLayout {
+  const selected = selectFocus(rows, focus);
+  const visible = rows.filter((t) => !selected || selected.has(t.thread_id));
+  const counts = lanes.map(
+    (l) => visible.filter((t) => groups(t).includes(l.key)).length,
+  );
+  const strips = lanes.map((l, i) => (l.none && collapsed) || counts[i] === 0);
+  const closed = strips.filter(Boolean).length;
+  const width = single
+    ? Math.min(720, viewport - 96)
+    : Math.max(
+        190,
+        Math.min(
+          300,
+          Math.floor(
+            (viewport - 48 - (lanes.length - 1) * 56 - closed * 44) /
+              Math.max(1, lanes.length - closed),
+          ),
+        ),
+      );
+  let x = single ? Math.max(48, Math.floor((viewport - width) / 2)) : 24;
+  const placedLanes = lanes.map((l, i) => {
+    const lane = {
+      ...l,
+      x,
+      width: strips[i] ? 44 : width,
+      collapsed: strips[i],
+      visible: counts[i],
+    };
+    x += lane.width + (single ? 0 : 56);
+    return lane;
+  });
+  const items = visible.map((t) => ({
+    t,
+    lanes: groups(t)
+      .map((k) => lanes.findIndex((l) => l.key === k))
+      .filter((i) => i >= 0 && !strips[i])
+      .sort((a, b) => a - b),
+  }));
+  const packed = packColumns(
+    items.map(({ t, lanes }) => ({
+      lanes,
+      heights: lanes.map((i) => heights[`${t.thread_id}:${i}`] || 100),
+    })),
+    lanes.length,
+  );
+  const cards = items.flatMap(({ t, lanes }, index) =>
+    lanes.map((lane, copy) => ({
+      key: `${t.thread_id}:${lane}`,
+      id: t.thread_id,
+      lane,
+      x: placedLanes[lane].x,
+      y: packed.positions[index][copy],
+      width: placedLanes[lane].width,
+      height: heights[`${t.thread_id}:${lane}`] || 100,
+    })),
+  );
+  return {
+    lanes: placedLanes,
+    cards,
+    width: Math.max(viewport, x - (single ? 0 : 56) + 24),
+    height: Math.max(4, ...packed.bottoms) + 60,
+  };
+}

@@ -67,7 +67,7 @@ button {
   flex-direction: column;
   gap: 2px;
 }
-.nav button {
+.nav a {
   all: unset;
   box-sizing: border-box;
   cursor: pointer;
@@ -79,15 +79,15 @@ button {
   font-size: 15px;
   color: var(--ink);
 }
-.nav button:hover {
+.nav a:hover {
   background: var(--hover);
 }
-.nav button[aria-current="page"] {
+.nav a[aria-current="page"] {
   background: var(--sel-bg);
   color: var(--indigo);
   font-weight: 600;
 }
-.nav button:focus-visible {
+.nav a:focus-visible {
   outline: 2px solid var(--indigo);
   outline-offset: 2px;
 }
@@ -703,10 +703,9 @@ select {
 }
 .lrow {
   display: grid;
-  grid-template-columns: var(--gw) 100px 84px minmax(
-      240px,
-      1fr
-    ) 160px 56px 150px 76px 66px 48px;
+  grid-template-columns:
+    var(--gw) 100px 84px minmax(240px, 1fr)
+    160px 56px 150px 76px 66px 48px;
   align-items: center;
   height: 34px;
   border-bottom: 1px solid var(--line);
@@ -1325,4 +1324,22 @@ pre.json {
   border-radius: 6px;
   font-size: 13px;
   z-index: 99;
+}
+
+@keyframes flip-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.card.ghost {
+  animation: flip-fade-out 120ms linear forwards;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.ghost {
+    animation: none;
+  }
 }

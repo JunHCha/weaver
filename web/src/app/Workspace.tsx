@@ -1,23 +1,64 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api, type FabricData, type Stage, type Status } from "../lib/api";
+import { AppShell } from "../components/AppShell";
+import { FabricScreen } from "../components/FabricScreen";
+import { OpsScreen } from "../components/OpsScreen";
 import styles from "./Workspace.module.css";
-export default function Workspace() {
-  const host = useRef<HTMLDivElement>(null);
+export default function Workspace({
+  screen = "fabric",
+}: {
+  screen?: "fabric" | Stage;
+}) {
+  const [data, setData] = useState<FabricData | null>(null),
+    [error, setError] = useState(false),
+    [retry, setRetry] = useState(0);
   useEffect(() => {
-    let disposed = false;
-    let cleanup: (() => void) | undefined;
-    import("../lib/renderer").then(async ({ start }) => {
-      if (!disposed && host.current) cleanup = await start(host.current);
-      if (disposed) cleanup?.();
-    });
-    return () => {
-      disposed = true;
-      cleanup?.();
-    };
-  }, []);
+    const controller = new AbortController();
+    setError(false);
+    api
+      .fabric(controller.signal)
+      .then(setData)
+      .catch(() => {
+        if (!controller.signal.aborted) setError(true);
+      });
+    return () => controller.abort();
+  }, [retry]);
+  const onStatus = useCallback(
+    (status: Status) => setData((old) => (old ? { ...old, status } : old)),
+    [],
+  );
   return (
-    <div className={styles.workspace} ref={host}>
-      <p role="status">불러오는 중…</p>
+    <div className={styles.workspace}>
+      {error ? (
+        <div className="empty" role="alert">
+          서버에 연결할 수 없습니다.{" "}
+          <code>uv run --project server python -m weaver.app web</code>으로
+          서버를 시작하세요.
+          <button type="button" onClick={() => setRetry(retry + 1)}>
+            다시 시도
+          </button>
+        </div>
+      ) : !data ? (
+        <p role="status">불러오는 중…</p>
+      ) : (
+        <AppShell
+          screen={screen}
+          count={data.threads.length}
+          waiting={data.status.loom.waiting_review}
+        >
+          {screen === "fabric" ? (
+            <FabricScreen data={data} />
+          ) : (
+            <OpsScreen
+              key={screen}
+              stage={screen}
+              status={data.status}
+              onStatus={onStatus}
+            />
+          )}
+        </AppShell>
+      )}
     </div>
   );
 }
