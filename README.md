@@ -263,3 +263,12 @@ Wiki edits also appear on the map as teal items with a **Wiki → Fabric → Wik
 route and change/Thread/result details. They do not create capture receipts or
 approval tasks. The server reports committed updates; the Android app separately
 checks arrival in the phone's synchronized vault before opening a result.
+
+### 서버 웹 UI
+
+`pnpm --dir web install --frozen-lockfile && pnpm --dir web build` 후
+`uv run --project server python -m weaver.app web --config /path/to/config.toml`을
+실행하면 `http://127.0.0.1:8765`에서 Fabric·Spinner·Loom을 읽기 전용으로
+확인할 수 있습니다. `weaver web`은 loopback 호스트만 허용하며 쓰기 API가
+없습니다. `--port`, `--static-dir` 또는 `WEAVER_WEB_DIR`로 포트와 정적 파일
+위치를 지정할 수 있고, 빌드가 없으면 경고와 함께 API만 제공합니다.

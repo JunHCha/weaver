@@ -1,0 +1,95 @@
+import type { TagState } from "./fabric";
+export type JsonValue =
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type Kind =
+  "요청" | "결정" | "일정" | "기록" | "태그정정" | "거절" | "실행";
+export type Stage = "spinner" | "loom";
+export interface Thread {
+  thread_id: string;
+  seq: number;
+  kind: Kind;
+  content: string | null;
+  occurred_at: string;
+  recorded_at: string;
+  tags: string[];
+  field: "deadline" | "schedule" | "assignees" | "status" | null;
+  value: JsonValue;
+  source_id: string;
+  actor: "human" | "ai_approved" | "system";
+  direction: "받음" | "보냄" | null;
+  resolves: string | null;
+  retracts: string | null;
+  updates: string | null;
+  blocked_by: string | null;
+  executes: string | null;
+  correction: { target: string; add: string[]; remove: string[] } | null;
+}
+export interface Tag {
+  name: string;
+  kind: "project" | "person" | "organization" | "topic" | null;
+}
+export interface SourceView {
+  id: string;
+  kind: string;
+  status: string;
+  updated_at: string;
+  stage_times: Record<string, string>;
+}
+export interface LogLine {
+  ts: string;
+  lv: string;
+  lg: string;
+  msg: string;
+  src: string | null;
+}
+export type Status = Record<
+  Stage,
+  { last_activity: string | null; waiting_review: number }
+>;
+export interface FabricData {
+  threads: Thread[];
+  tags: Tag[];
+  states: Record<string, TagState>;
+  sources: SourceView[];
+  status: Status;
+}
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch("/api" + path, { signal });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  return response.json() as Promise<T>;
+}
+export const api = {
+  threads: (signal?: AbortSignal) =>
+    get<Thread[]>("/threads?include_executions=true", signal),
+  tags: (signal?: AbortSignal) => get<Tag[]>("/tags", signal),
+  states: (signal?: AbortSignal) =>
+    get<Record<string, TagState>>("/states", signal),
+  sources: (stage: Stage, signal?: AbortSignal) =>
+    get<SourceView[]>("/sources?stage=" + stage, signal),
+  status: (signal?: AbortSignal) => get<Status>("/status", signal),
+  logs: (stage: Stage, level: string, source: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ component: stage });
+    if (level) params.set("level", level);
+    if (source) params.set("source_id", source);
+    return get<LogLine[]>("/logs?" + params, signal);
+  },
+  async fabric(signal?: AbortSignal): Promise<FabricData> {
+    const [threads, tags, states, spinner, loom, status] = await Promise.all([
+      api.threads(signal),
+      api.tags(signal),
+      api.states(signal),
+      api.sources("spinner", signal),
+      api.sources("loom", signal),
+      api.status(signal),
+    ]);
+    return {
+      threads,
+      tags,
+      states,
+      status,
+      sources: [
+        ...new Map([...spinner, ...loom].map((s) => [s.id, s])).values(),
+      ],
+    };
+  },
+};

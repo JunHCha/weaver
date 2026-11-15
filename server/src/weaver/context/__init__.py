@@ -82,6 +82,7 @@ class ContextDictionary:
     """SQLite dictionary stored under state_root; each operation is atomic."""
 
     def __init__(self, state_root: Path) -> None:
+        self._readonly = False
         state_root.mkdir(parents=True, exist_ok=True)
         self._path = state_root / "context.sqlite3"
         with self._connect() as db:
@@ -108,10 +109,29 @@ class ContextDictionary:
             elif version != _VERSION:
                 raise SchemaVersionError("unsupported context database version")
 
+    @classmethod
+    def open_readonly(cls, path: Path) -> "ContextDictionary":
+        """Reuse dictionary queries without initialization or write transactions."""
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        dictionary = cls.__new__(cls)
+        dictionary._path = path.resolve()
+        dictionary._readonly = True
+        return dictionary
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self._path, timeout=30)
+        db = (
+            sqlite3.connect(f"{self._path.as_uri()}?mode=ro", uri=True, timeout=0.1)
+            if self._readonly
+            else sqlite3.connect(self._path, timeout=30)
+        )
         try:
+            if (
+                self._readonly
+                and db.execute("PRAGMA user_version").fetchone()[0] != _VERSION
+            ):
+                raise SchemaVersionError("unsupported context database version")
             with db:
                 yield db
         finally:

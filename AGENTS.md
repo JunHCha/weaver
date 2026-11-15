@@ -24,6 +24,22 @@ Tests must not access real LLMs, speech models, or user vaults.
 Local setup rationale is in `docs/guides/server-development.md`; domain decisions
 are in `docs/domain/decisions/` (these shared local folders are not committed).
 
+## Web
+
+Node 22 and pnpm 10.4 are required. Run from the repository root:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web tokens:check
+pnpm --dir web lint
+pnpm --dir web typecheck
+pnpm --dir web test
+pnpm --dir web build
+```
+
+Run the read-only UI with `pnpm --dir web build && uv run --project server python -m weaver.app web`.
+For development, start the server and `pnpm --dir web dev` (API proxy to loopback).
+
 ## Android
 
 Requires JDK 21 and an Android SDK with `platforms;android-36` (set `ANDROID_HOME` or
@@ -49,6 +65,8 @@ manual `workflow_dispatch` or a release tag push matching `v*`. PRs, branch push
 (including main) and schedules do not trigger CI. Every run includes server checks
 on Ubuntu and macOS arm64 with Python 3.12, the pinned uv and `server/uv.lock`
 (plus a check that `weaver.schema.export` matches committed `schema/*.schema.json`),
+a web job on Ubuntu with Node 22 (locked pnpm install, token freshness,
+lint, types, tests and static export),
 and Android `./gradlew --no-daemon lint testDebugUnitTest assembleDebug`.
 The macOS job checks compatibility, not M1 STT performance. `CI result` always
 runs and fails if any verification job is skipped, failed or cancelled; do not
