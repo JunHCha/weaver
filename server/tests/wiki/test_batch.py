@@ -433,3 +433,44 @@ def test_executions_are_not_knowledge_and_trigger_no_new_batch(tmp_path):
     assert len(llm.calls) == 1
     assert compiler.bookmark() == 2
     assert all("exe_1" not in json.dumps(call[1]) for call in llm.calls)
+
+
+def test_managed_evidence_is_not_fed_back_to_next_batch(tmp_path):
+    store, fabric, llm, compiler = setup(tmp_path)
+    compiler.run()
+    assert "\n## 근거\n" in store.read("pages/네트워크 운영.md")[1]
+    fabric.append([draft("three", ["네트워크"])])
+    llm.transform = lambda data: data["pages"][0]["thread_ids"].append("three") or data
+    compiler.run()
+    existing = llm.calls[-1][1]["existing_pages"]
+    assert existing and all("## 근거" not in page["body"] for page in existing)
+    assert compiler.bookmark() == 3
+
+
+def test_echoed_trailing_evidence_section_is_dropped_not_fatal(tmp_path):
+    store, _, llm, compiler = setup(tmp_path)
+
+    def echo(data):
+        data["pages"][0]["body"] += "\n## 근거\n- [[summaries/옛 출처]]\n"
+        return data
+
+    llm.transform = echo
+    compiler.run()
+    body = store.read("pages/네트워크 운영.md")[1]
+    assert body.count("## 근거") == 1
+    assert "옛 출처" not in body
+    assert compiler.bookmark() == 2
+
+
+def test_evidence_heading_inside_body_is_still_rejected(tmp_path):
+    store, _, llm, compiler = setup(tmp_path)
+
+    def middle(data):
+        body = data["pages"][0]["body"]
+        data["pages"][0]["body"] = body + "\n## 근거\n- 수동\n\n## 다음\n내용\n"
+        return data
+
+    llm.transform = middle
+    with pytest.raises(ValueError):
+        compiler.run()
+    assert compiler.bookmark() == 0
