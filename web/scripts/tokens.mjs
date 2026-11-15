@@ -87,8 +87,15 @@ export function generate() {
     "\n}\n"
   );
 }
-if (process.argv[1] === fileURLToPath(import.meta.url))
-  writeFileSync(
-    new URL("../src/styles/tokens.css", import.meta.url),
-    generate(),
-  );
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const output = new URL("../src/styles/tokens.css", import.meta.url);
+  const generated = generate();
+  if (process.argv.includes("--check")) {
+    if (readFileSync(output, "utf8") !== generated) {
+      process.stderr.write(
+        "tokens.css differs from design/tokens.json; run node scripts/tokens.mjs\n",
+      );
+      process.exitCode = 1;
+    }
+  } else writeFileSync(output, generated);
+}

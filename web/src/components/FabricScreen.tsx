@@ -1,5 +1,5 @@
 import { useKeyboardNavigation } from "../hooks/keyboard";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FabricData, Thread } from "../lib/api";
 import { groupKeys, tagKinds, type Fact, type Lane } from "../lib/fabric";
 import { kinds, relations } from "../lib/presentation";
@@ -29,7 +29,25 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
           .includes(f.query.toLowerCase())),
   );
 }
-export function FabricScreen({ data }: { data: FabricData }) {
+function RefreshAge({ at }: { at: number | null }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return at === null ? null : (
+    <span className="mut refresh-age">
+      {Math.max(0, Math.floor((now - at) / 1000))}초 전 갱신
+    </span>
+  );
+}
+export function FabricScreen({
+  data,
+  refreshedAt = null,
+}: {
+  data: FabricData;
+  refreshedAt?: number | null;
+}) {
   const [filters, setFilters] = useState<Filters>(initialFilters),
     [selected, setSelected] = useState<string | null>(null),
     [focusId, setFocus] = useState<string | null>(null),
@@ -46,13 +64,24 @@ export function FabricScreen({ data }: { data: FabricData }) {
     () => Object.fromEntries(data.tags.map((t) => [t.name, t.kind])),
     [data.tags],
   );
+  const sourcesById = useMemo(
+    () => new Map(data.sources.map((source) => [source.id, source])),
+    [data.sources],
+  );
+  const sourceTimes = useMemo(() => {
+    const result = new Map<string, string>();
+    data.threads.forEach((thread) => {
+      if (!result.has(thread.source_id))
+        result.set(thread.source_id, thread.occurred_at);
+    });
+    return result;
+  }, [data.threads]);
   const sourceLabel = useCallback(
     (id: string) => {
-      const source = data.sources.find((s) => s.id === id),
-        thread = data.threads.find((t) => t.source_id === id);
-      return `${source?.kind || "출처"} ${(source?.updated_at || thread?.occurred_at || "").slice(5, 10).replace("-", "/")}`;
+      const source = sourcesById.get(id);
+      return `${source?.kind || "출처"} ${(source?.updated_at || sourceTimes.get(id) || "").slice(5, 10).replace("-", "/")}`;
     },
-    [data.sources, data.threads],
+    [sourcesById, sourceTimes],
   );
   const groups = useCallback(
     (t: Fact) => groupKeys(t, filters.group, tagKindsByName, sourceLabel),
@@ -117,7 +146,7 @@ export function FabricScreen({ data }: { data: FabricData }) {
           <div className="pagehead">
             <h1>Fabric</h1>
             <span className="count" id="cnt">
-              Thread <b>{rows.length}</b>개
+              Thread <b>{rows.length}</b>개 <RefreshAge at={refreshedAt} />
             </span>
           </div>
           <FabricToolbar

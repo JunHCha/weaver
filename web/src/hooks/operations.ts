@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   api,
   type LogLine,
@@ -6,6 +6,7 @@ import {
   type Stage,
   type Status,
 } from "../lib/api";
+import { useVisiblePolling } from "./visiblePolling";
 export function useOperations(
   stage: Stage,
   level: string,
@@ -16,34 +17,28 @@ export function useOperations(
     [logs, setLogs] = useState<LogLine[]>([]),
     [error, setError] = useState(false);
   useEffect(() => {
-    const controller = new AbortController();
-    let pending = false;
-    const load = async () => {
-      if (pending) return;
-      pending = true;
+    setLogs([]);
+    setError(false);
+  }, [stage, level, source]);
+  const load = useCallback(
+    async (signal: AbortSignal) => {
       try {
         const [list, lines, nextStatus] = await Promise.all([
-          api.sources(stage, controller.signal),
-          api.logs(stage, level, source, controller.signal),
-          api.status(controller.signal),
+          api.sources(stage, signal),
+          api.logs(stage, level, source, signal),
+          api.status(signal),
         ]);
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         setSources(list);
         setLogs(lines);
         onStatus(nextStatus);
         setError(false);
       } catch {
-        if (!controller.signal.aborted) setError(true);
-      } finally {
-        pending = false;
+        if (!signal.aborted) setError(true);
       }
-    };
-    load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      controller.abort();
-      clearInterval(timer);
-    };
-  }, [stage, level, source, onStatus]);
+    },
+    [stage, level, source, onStatus],
+  );
+  useVisiblePolling(load, 5000);
   return { sources, logs, error };
 }

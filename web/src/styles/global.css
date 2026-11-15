@@ -1343,3 +1343,8 @@ pre.json {
     animation: none;
   }
 }
+
+.refresh-age {
+  margin-left: 10px;
+  font-size: 12px;
+}

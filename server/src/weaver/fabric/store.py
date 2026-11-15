@@ -85,6 +85,7 @@ class FabricStore:
     """SQLite log; each write is serialized in a single immediate transaction."""
 
     def __init__(self, path: Path) -> None:
+        self._readonly = False
         self.path = path.resolve()
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with self._connect() as db:
@@ -116,10 +117,31 @@ class FabricStore:
         """Use the configured private state directory."""
         return cls(config.state_root / "fabric.sqlite3")
 
+    @classmethod
+    def open_readonly(cls, path: Path) -> "FabricStore":
+        """Open existing state without initialization, DDL or permission changes."""
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        store = cls.__new__(cls)
+        store.path = path.resolve()
+        store._readonly = True
+        return store
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        db = (
+            sqlite3.connect(
+                f"{self.path.as_uri()}?mode=ro",
+                uri=True,
+                timeout=0.1,
+                isolation_level=None,
+            )
+            if self._readonly
+            else sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        )
         try:
+            if self._readonly and db.execute("PRAGMA user_version").fetchone()[0] != 2:
+                raise SchemaVersionError("unsupported Fabric database version")
             yield db
         finally:
             if db.in_transaction:

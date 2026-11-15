@@ -10,7 +10,8 @@
     "build": "next build",
     "lint": "eslint src scripts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "tokens:check": "node scripts/tokens.mjs --check"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",

@@ -4,6 +4,7 @@ import { api, type FabricData, type Stage, type Status } from "../lib/api";
 import { AppShell } from "../components/AppShell";
 import { FabricScreen } from "../components/FabricScreen";
 import { OpsScreen } from "../components/OpsScreen";
+import { useVisiblePolling } from "../hooks/visiblePolling";
 import styles from "./Workspace.module.css";
 export default function Workspace({
   screen = "fabric",
@@ -12,18 +13,44 @@ export default function Workspace({
 }) {
   const [data, setData] = useState<FabricData | null>(null),
     [error, setError] = useState(false),
-    [retry, setRetry] = useState(0);
+    [retry, setRetry] = useState(0),
+    [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     setError(false);
     api
       .fabric(controller.signal)
-      .then(setData)
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          setData(value);
+          setRefreshedAt(Date.now());
+        }
+      })
       .catch(() => {
         if (!controller.signal.aborted) setError(true);
       });
     return () => controller.abort();
   }, [retry]);
+  const refresh = useCallback(async (signal: AbortSignal) => {
+    try {
+      const [threads, tags, states] = await Promise.all([
+        api.threads(signal),
+        api.tags(signal),
+        api.states(signal),
+      ]);
+      if (signal.aborted) return;
+      setData((old) => (old ? { ...old, threads, tags, states } : old));
+      setRefreshedAt(Date.now());
+    } catch {
+      /* Keep the last successful snapshot and its refresh age. */
+    }
+  }, []);
+  useVisiblePolling(
+    refresh,
+    30000,
+    screen === "fabric" && data !== null,
+    false,
+  );
   const onStatus = useCallback(
     (status: Status) => setData((old) => (old ? { ...old, status } : old)),
     [],
@@ -48,7 +75,7 @@ export default function Workspace({
           waiting={data.status.loom.waiting_review}
         >
           {screen === "fabric" ? (
-            <FabricScreen data={data} />
+            <FabricScreen data={data} refreshedAt={refreshedAt} />
           ) : (
             <OpsScreen
               key={screen}

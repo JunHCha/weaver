@@ -1,5 +1,10 @@
-"""Read-only local HTTP views of Fabric and runtime observations."""
+"""Read-only local HTTP views of Fabric and runtime observations.
 
+Normal SQLite WAL sidecars (-wal/-shm) are an exception to file creation;
+the web command sets umask 077 and never modifies original main database files.
+"""
+
+import logging
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -8,18 +13,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, ValidationError
 from starlette.exceptions import HTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import Scope
 
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
+from weaver.context import SchemaVersionError as ContextSchemaError
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.fabric.state import project
+from weaver.fabric.store import SchemaVersionError as FabricSchemaError
 from weaver.schema import PipelineItem, Thread
+
+logger = logging.getLogger(__name__)
 
 Stage = Literal["spinner", "loom"]
 _LOG = re.compile(
@@ -49,8 +59,15 @@ def _rows(path: Path, sql: str) -> list[tuple[object, ...]]:
     """Read runtime databases without creating files, migrating or chmodding."""
     if not path.is_file():
         return []
-    with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as db:
-        return list(db.execute(sql))
+    try:
+        with closing(
+            sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=0.1)
+        ) as db:
+            return list(db.execute(sql))
+    except sqlite3.OperationalError as error:
+        if str(error).startswith("no such table:"):
+            return []
+        raise
 
 
 def sources(
@@ -67,7 +84,11 @@ def sources(
     for (raw,) in _rows(
         config.state_root / "pipeline.sqlite3", "SELECT payload FROM items"
     ):
-        item = PipelineItem.model_validate_json(str(raw))
+        try:
+            item = PipelineItem.model_validate_json(str(raw))
+        except ValidationError:
+            logger.warning("invalid pipeline observation skipped")
+            continue
         if item.source_type == "wiki_edit":
             continue
         if stage == "loom" and "loom" not in item.history:
@@ -186,17 +207,43 @@ class ExportFiles(StaticFiles):
         except HTTPException as error:
             if error.status_code != 404:
                 raise
-        if Path(path).suffix or path == "api" or path.startswith("api/"):
+        if path == "api" or path.startswith("api/"):
             raise HTTPException(404)
         root = Path(str(self.directory)).resolve()
         page = (root / f"{path.rstrip('/')}.html").resolve()
         if not page.is_relative_to(root):
             raise HTTPException(404)
-        return FileResponse(page if page.is_file() else root / "index.html")
+        if not Path(path).suffix and page.is_file():
+            return FileResponse(page)
+        not_found = root / "404.html"
+        if not_found.is_file():
+            return FileResponse(not_found, status_code=404)
+        raise HTTPException(404)
 
 
 def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="weaver", docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["127.0.0.1", "localhost", "[::1]"],
+        www_redirect=False,
+    )
+
+    @app.exception_handler(FabricSchemaError)
+    @app.exception_handler(ContextSchemaError)
+    async def schema_error(_request: Request, _error: Exception) -> JSONResponse:
+        return JSONResponse(
+            {
+                "detail": "Unsupported state database schema; update Weaver before viewing this state."
+            },
+            status_code=503,
+        )
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def state_unavailable(_request: Request, _error: Exception) -> JSONResponse:
+        return JSONResponse(
+            {"detail": "State database is temporarily unavailable."}, status_code=503
+        )
 
     def snapshot(include_executions: bool = False) -> list[Thread]:
         if not (config.state_root / "fabric.sqlite3").is_file():
@@ -208,9 +255,9 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
                     "recorded_at": t.recorded_at.astimezone(config.time.zone),
                 }
             )
-            for t in FabricStore.from_config(config).entries(
-                ThreadQuery(include_executions=include_executions)
-            )
+            for t in FabricStore.open_readonly(
+                config.state_root / "fabric.sqlite3"
+            ).entries(ThreadQuery(include_executions=include_executions))
         ]
 
     @app.get("/api/threads")
@@ -221,7 +268,7 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
     def tags() -> list[dict[str, str | None]]:
         names = sorted({tag for thread in snapshot(True) for tag in thread.tags})
         context = (
-            ContextDictionary(config.state_root)
+            ContextDictionary.open_readonly(config.state_root / "context.sqlite3")
             if (config.state_root / "context.sqlite3").is_file()
             else None
         )
@@ -269,13 +316,9 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
             logs = read_logs(config, stage, limit=1)
             times = [datetime.fromisoformat(item.updated_at) for item in rows]
             times.extend(
-                datetime.strptime(line.ts, "%Y-%m-%d %H:%M:%S,%f").replace(
-                    tzinfo=config.time.zone
-                )
+                datetime.strptime(line.ts, "%Y-%m-%d %H:%M:%S,%f").astimezone()
                 if "," in line.ts
-                else datetime.strptime(line.ts, "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=config.time.zone
-                )
+                else datetime.strptime(line.ts, "%Y-%m-%d %H:%M:%S").astimezone()
                 for line in logs
             )
             latest = max(times, default=None)

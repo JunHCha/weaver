@@ -232,6 +232,9 @@ def web(
     """Serve the read-only web UI on loopback only."""
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise typer.BadParameter("host must be loopback (127.0.0.1, ::1, localhost)")
+    import os
+
+    os.umask(0o077)
     import uvicorn
 
     from weaver.web import create_app
