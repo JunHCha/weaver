@@ -29,6 +29,31 @@ def _nfc(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+_EVIDENCE_HEADING = "\n## 근거\n"
+# Bump when validation rules change so recorded failures are retried once.
+_VALIDATOR_VERSION = 2
+
+
+def _strip_managed_evidence(body: str) -> str:
+    """Drop the code-managed trailing evidence list, keeping any text after it.
+
+    Only the last evidence heading and the "- " lines right below it are
+    removed, and only when no other section follows; anything a person wrote
+    after the list stays in the body.
+    """
+    index = body.rfind(_EVIDENCE_HEADING)
+    if index < 0:
+        return body
+    rest = body[index + len(_EVIDENCE_HEADING) :].splitlines(keepends=True)
+    if any(line.startswith("## ") for line in rest):
+        return body
+    while rest and rest[0].startswith("- "):
+        rest.pop(0)
+    kept = "".join(rest).strip()
+    head = body[:index].rstrip() + "\n"
+    return head + "\n" + kept + "\n" if kept else head
+
+
 class WikiPage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -169,7 +194,11 @@ class BatchCompiler(Compiler):
         }
         snapshot = fingerprint({"corpus": corpus, "high": high, "prompt": BATCH_PROMPT})
         failure_key = fingerprint(
-            {"snapshot": snapshot, "existing": {p: v[2] for p, v in existing.items()}}
+            {
+                "snapshot": snapshot,
+                "existing": {p: v[2] for p, v in existing.items()},
+                "validator": _VALIDATOR_VERSION,
+            }
         )
         with sqlite3.connect(self.state_path) as db:
             failed = db.execute(
@@ -210,7 +239,13 @@ class BatchCompiler(Compiler):
             payload = corpus | {
                 "digest_targets": [target.payload() for target in digest_targets],
                 "existing_pages": [
-                    {"path": path, "body": body, "properties": props}
+                    # The evidence section is written by code; the model must
+                    # not see it, or it echoes it back as page content.
+                    {
+                        "path": path,
+                        "body": _strip_managed_evidence(body),
+                        "properties": props,
+                    }
                     for path, (props, body, _) in existing.items()
                 ],
             }
@@ -362,6 +397,9 @@ class BatchCompiler(Compiler):
             covered.update(ids)
             if not page.body.startswith(f"# {page.title}\n"):
                 raise WikiValidationError("wiki page must start with its title")
+            # A trailing echo of the managed section is dropped, not fatal;
+            # code rewrites it from the page's evidence threads.
+            page.body = _strip_managed_evidence(page.body)
             if page.body.startswith("---") or "\n## 근거" in page.body:
                 raise WikiValidationError(
                     "wiki page must not duplicate managed metadata"
