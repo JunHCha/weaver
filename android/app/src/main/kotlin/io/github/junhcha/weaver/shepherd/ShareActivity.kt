@@ -1,5 +1,6 @@
 package io.github.junhcha.weaver.shepherd
 
+import io.github.junhcha.weaver.ui.WeaverTheme
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,8 +36,8 @@ class ShareActivity : ComponentActivity() {
             ?: Channel.SHARE_TEXT
         callId = savedInstanceState?.getString("callId")
         setContent {
-            MaterialTheme {
-                Surface(Modifier.fillMaxSize()) {
+            WeaverTheme {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.systemBarsPadding().padding(24.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("공유 텍스트 확인", style = MaterialTheme.typography.headlineSmall)

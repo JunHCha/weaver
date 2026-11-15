@@ -166,10 +166,7 @@ internal fun NodePanel(
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
-                    Text(
-                        result.threads.joinToString(" · ") { "Thread · ${threadKindLabel(it.kind)}" },
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                    ThreadRows(result.threads)
                     todayPages.forEach { page ->
                         PageLink(
                             page,
@@ -223,7 +220,7 @@ internal fun NodePanel(
                 if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault) { message = it }
                 else if (node == MapNode.USER) ApprovalCard(item) { approval = item.packageId }
                 else {
-                    OutlinedCard(Modifier.fillMaxWidth()) {
+                    KindCard(item.server?.threads?.cardKind()) {
                         Column(
                             Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -244,10 +241,7 @@ internal fun NodePanel(
                                 ?.threads
                                 ?.takeIf { it.isNotEmpty() }
                                 ?.let { threads ->
-                                    Text(
-                                        threads.joinToString(" · ") { "Thread · ${threadKindLabel(it.kind)}" },
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
+                                    ThreadRows(threads)
                                 }
                         }
                     }
@@ -314,7 +308,7 @@ private fun stageName(stage: Stage) =
 @Composable
 internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
     var expanded by rememberSaveable(item.id, item.packageRevision) { mutableStateOf(false) }
-    OutlinedCard(Modifier.fillMaxWidth()) {
+    KindCard(item.server?.threads?.cardKind()) {
         Column(
             Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -342,7 +336,7 @@ internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
                                 Modifier.size(10.dp)
                                     .background(
                                         if (index < 2) MaterialTheme.colorScheme.primary
-                                        else if (index == 2) Color(0xffd78a26)
+                                        else if (index == 2) WeaverTokens.request.color
                                         else MaterialTheme.colorScheme.outlineVariant,
                                         CircleShape,
                                     )
