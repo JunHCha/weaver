@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
@@ -27,6 +27,11 @@ export function DetailPanel({
   onPick: (id: string) => void;
 }) {
   const [toast, setToast] = useState("");
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 1600);
+    return () => clearTimeout(timer);
+  }, [toast]);
   if (!t)
     return <aside className="panel" id="panel" aria-label="Thread 상세" />;
   const relation = relations(threads),
@@ -221,7 +226,7 @@ export function DetailPanel({
           </div>
         </div>
         {toast && (
-          <div role="status" className="copy-status">
+          <div role="status" className="toast">
             {toast}
           </div>
         )}

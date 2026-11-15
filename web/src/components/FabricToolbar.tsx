@@ -61,7 +61,18 @@ function Menu({
         <Icon name="chev" size={11} />
       </button>
       {open && (
-        <div className="pop" role="group">
+        <div
+          className="pop"
+          role="group"
+          onChange={() => setOpen(false)}
+          onClick={(event) => {
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.closest(".foot button")
+            )
+              setOpen(false);
+          }}
+        >
           {children}
         </div>
       )}
