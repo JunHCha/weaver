@@ -7,7 +7,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, Protocol, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -138,193 +138,35 @@ class Prepared(BaseModel):
     new_entries: list[NewEntry] = []
 
 
-class SummaryReview:
-    """Approve one package using the model and a ThreadSink boundary."""
+class DictionaryReader(Protocol):
+    def snapshot(self) -> DictionarySnapshot: ...
+
+
+class ApprovalExtractor:
+    """Prepare the current approval extraction without any persistent writes."""
 
     def __init__(
         self,
         llm: LlmClient,
-        context: ContextDictionary,
+        context: DictionaryReader,
         sink: ThreadSink,
-        archive: Path,
         *,
-        state_root: Path,
-        proposals: Path | None = None,
         timezone: str = "Asia/Seoul",
     ) -> None:
+        self.llm, self.context, self.sink = llm, context, sink
         self.timezone = ZoneInfo(timezone).key
-        self.llm = llm
-        self.context = context
-        self.sink = sink
-        self.archive = archive
-        self.state = SummaryState(state_root)
-        self.proposals = proposals or state_root / "proposals"
 
-    def approve(
+    def prepare(
         self,
         package: ReviewPackage,
         script: str,
         verdict: Verdict,
         *,
-        now: datetime | None = None,
-        replaces: str | None = None,
-    ) -> EventSummary:
-        """Apply an approval and return its archived summary."""
-        if verdict.action != "approve":
-            raise ValueError("verdict does not approve this revision")
-        result = self.apply(package, script, verdict, now=now, replaces=replaces)
-        assert isinstance(result, EventSummary)
-        return result
-
-    def apply(
-        self,
-        package: ReviewPackage,
-        script: str,
-        verdict: Verdict,
-        *,
-        now: datetime | None = None,
-        replaces: str | None = None,
-    ) -> EventSummary | ReviewPackage | None:
-        """Apply one verdict, replaying durable side effects safely after interruption."""
-        if not re.fullmatch(r"[a-zA-Z0-9_-]+", package.package_id):
-            raise ValueError("invalid package id")
-        if (package.package_id, package.revision) != (
-            verdict.package_id,
-            verdict.revision,
-        ):
-            raise ValueError("verdict does not match this revision")
-        if verdict.action == "approve" and len(verdict.answers) != len(
-            package.questions
-        ):
-            raise ValueError(
-                "answers must include one nonblank answer for each question"
-            )
-        if len(verdict.answers) > len(package.questions):
-            raise ValueError("too many answers")
-        with self.state.lock():
-            self.state.save_package(package, script)
-            with self.state.connect() as db:
-                row = db.execute(
-                    "SELECT verdict, prepared, stage FROM reviews WHERE id=? AND revision=?",
-                    (package.package_id, package.revision),
-                ).fetchone()
-            if row is not None:
-                if json.loads(row[0]) != verdict.model_dump(mode="json"):
-                    raise ValueError("conflicting verdict")
-                prepared = Prepared.model_validate_json(row[1])
-                if row[2] == "APPLIED":
-                    return prepared.summary or prepared.package
-            else:
-                timestamp = now or datetime.now(UTC)
-                prepared = self._prepare_action(
-                    package, script, verdict, timestamp, replaces
-                )
-                prepared.applied_at = timestamp
-                with self.state.connect() as db:
-                    db.execute(
-                        "INSERT INTO reviews VALUES (?, ?, ?, ?, 'PREPARED')",
-                        (
-                            package.package_id,
-                            package.revision,
-                            verdict.model_dump_json(),
-                            prepared.model_dump_json(),
-                        ),
-                    )
-            if prepared.summary is not None:
-                target = (
-                    self.archive
-                    / prepared.summary.summary_id[:2]
-                    / f"{prepared.summary.summary_id}.json"
-                )
-                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                if target.exists():
-                    if (
-                        EventSummary.model_validate_json(target.read_bytes())
-                        != prepared.summary
-                    ):
-                        raise ValueError("summary archive conflict")
-                else:
-                    write_json_atomic(target, prepared.summary)
-            for entry in prepared.new_entries:
-                self.context.add_entry(
-                    entry.name,
-                    entry.kind,
-                    tuple(entry.aliases),
-                    human_edited=False,
-                    drop_conflicting_aliases=True,
-                )
-            if prepared.threads:
-                self.sink.append(prepared.threads)
-            for correction in prepared.corrections:
-                self.context.learn(
-                    correction.observed, correction.canonical, correction.kind
-                )
-            self.proposals.mkdir(parents=True, exist_ok=True)
-            finished = package.model_copy(
-                update={
-                    "stage": "반영",
-                    "stage_times": package.stage_times
-                    | {"반영": prepared.applied_at or datetime.now(UTC)},
-                }
-            )
-            # Use the journaled time for deterministic publication on replay.
-            if prepared.package is not None:
-                self.state.save_package(prepared.package, script)
-                write_bytes_atomic(
-                    self.proposals
-                    / f"{package.package_id}.r{prepared.package.revision}.diff",
-                    prepared.diff.encode(),
-                )
-                write_json_atomic(
-                    self.proposals
-                    / f"{package.package_id}.r{prepared.package.revision}.json",
-                    prepared.package,
-                )
-            write_json_atomic(
-                self.proposals / f"{package.package_id}.r{package.revision}.json",
-                finished,
-            )
-            with self.state.connect() as db:
-                db.execute(
-                    "UPDATE reviews SET stage='APPLIED' WHERE id=? AND revision=?",
-                    (package.package_id, package.revision),
-                )
-            return prepared.summary or prepared.package
-
-    def _prepare_action(
-        self,
-        package: ReviewPackage,
-        script: str,
-        verdict: Verdict,
-        now: datetime | None,
-        replaces: str | None,
+        now: datetime,
     ) -> Prepared:
-        timestamp = now or datetime.now(UTC)
-        if verdict.action == "reject":
-            key = hashlib.sha256(
-                f"{package.package_id}:{package.revision}:reject".encode()
-            ).hexdigest()
-            return Prepared(
-                threads=[
-                    ThreadDraft(
-                        thread_id=f"thr_{key}",
-                        kind="거절",
-                        content=None,
-                        occurred_at=timestamp,
-                        recorded_at=timestamp,
-                        tags=[],
-                        field=None,
-                        value=None,
-                        source_id=package.source_id,
-                        actor="human",
-                        direction=None,
-                        resolves=None,
-                        retracts=None,
-                        correction=None,
-                    )
-                ]
-            )
-        return self._prepare(package, script, verdict, timestamp, replaces)
+        if verdict.action not in ("approve", "edit"):
+            raise ValueError("only approved reviews can be extracted")
+        return self._prepare(package, script, verdict, now, None)
 
     def _tag_context(self, snapshot: DictionarySnapshot, script: str) -> dict[str, Any]:
         """Bound prompt hints; full snapshot still validates every returned tag."""
@@ -596,3 +438,190 @@ class SummaryReview:
             corrections=corrections,
             new_entries=new_entries,
         )
+
+
+class SummaryReview(ApprovalExtractor):
+    """Approve one package using the model and a ThreadSink boundary."""
+
+    def __init__(
+        self,
+        llm: LlmClient,
+        context: ContextDictionary,
+        sink: ThreadSink,
+        archive: Path,
+        *,
+        state_root: Path,
+        proposals: Path | None = None,
+        timezone: str = "Asia/Seoul",
+    ) -> None:
+        super().__init__(llm, context, sink, timezone=timezone)
+        self.context: ContextDictionary = context
+        self.archive = archive
+        self.state = SummaryState(state_root)
+        self.proposals = proposals or state_root / "proposals"
+
+    def approve(
+        self,
+        package: ReviewPackage,
+        script: str,
+        verdict: Verdict,
+        *,
+        now: datetime | None = None,
+        replaces: str | None = None,
+    ) -> EventSummary:
+        """Apply an approval and return its archived summary."""
+        if verdict.action != "approve":
+            raise ValueError("verdict does not approve this revision")
+        result = self.apply(package, script, verdict, now=now, replaces=replaces)
+        assert isinstance(result, EventSummary)
+        return result
+
+    def apply(
+        self,
+        package: ReviewPackage,
+        script: str,
+        verdict: Verdict,
+        *,
+        now: datetime | None = None,
+        replaces: str | None = None,
+    ) -> EventSummary | ReviewPackage | None:
+        """Apply one verdict, replaying durable side effects safely after interruption."""
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", package.package_id):
+            raise ValueError("invalid package id")
+        if (package.package_id, package.revision) != (
+            verdict.package_id,
+            verdict.revision,
+        ):
+            raise ValueError("verdict does not match this revision")
+        if verdict.action == "approve" and len(verdict.answers) != len(
+            package.questions
+        ):
+            raise ValueError(
+                "answers must include one nonblank answer for each question"
+            )
+        if len(verdict.answers) > len(package.questions):
+            raise ValueError("too many answers")
+        with self.state.lock():
+            self.state.save_package(package, script)
+            with self.state.connect() as db:
+                row = db.execute(
+                    "SELECT verdict, prepared, stage FROM reviews WHERE id=? AND revision=?",
+                    (package.package_id, package.revision),
+                ).fetchone()
+            if row is not None:
+                if json.loads(row[0]) != verdict.model_dump(mode="json"):
+                    raise ValueError("conflicting verdict")
+                prepared = Prepared.model_validate_json(row[1])
+                if row[2] == "APPLIED":
+                    return prepared.summary or prepared.package
+            else:
+                timestamp = now or datetime.now(UTC)
+                prepared = self._prepare_action(
+                    package, script, verdict, timestamp, replaces
+                )
+                prepared.applied_at = timestamp
+                with self.state.connect() as db:
+                    db.execute(
+                        "INSERT INTO reviews VALUES (?, ?, ?, ?, 'PREPARED')",
+                        (
+                            package.package_id,
+                            package.revision,
+                            verdict.model_dump_json(),
+                            prepared.model_dump_json(),
+                        ),
+                    )
+            if prepared.summary is not None:
+                target = (
+                    self.archive
+                    / prepared.summary.summary_id[:2]
+                    / f"{prepared.summary.summary_id}.json"
+                )
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if target.exists():
+                    if (
+                        EventSummary.model_validate_json(target.read_bytes())
+                        != prepared.summary
+                    ):
+                        raise ValueError("summary archive conflict")
+                else:
+                    write_json_atomic(target, prepared.summary)
+            for entry in prepared.new_entries:
+                self.context.add_entry(
+                    entry.name,
+                    entry.kind,
+                    tuple(entry.aliases),
+                    human_edited=False,
+                    drop_conflicting_aliases=True,
+                )
+            if prepared.threads:
+                self.sink.append(prepared.threads)
+            for correction in prepared.corrections:
+                self.context.learn(
+                    correction.observed, correction.canonical, correction.kind
+                )
+            self.proposals.mkdir(parents=True, exist_ok=True)
+            finished = package.model_copy(
+                update={
+                    "stage": "반영",
+                    "stage_times": package.stage_times
+                    | {"반영": prepared.applied_at or datetime.now(UTC)},
+                }
+            )
+            # Use the journaled time for deterministic publication on replay.
+            if prepared.package is not None:
+                self.state.save_package(prepared.package, script)
+                write_bytes_atomic(
+                    self.proposals
+                    / f"{package.package_id}.r{prepared.package.revision}.diff",
+                    prepared.diff.encode(),
+                )
+                write_json_atomic(
+                    self.proposals
+                    / f"{package.package_id}.r{prepared.package.revision}.json",
+                    prepared.package,
+                )
+            write_json_atomic(
+                self.proposals / f"{package.package_id}.r{package.revision}.json",
+                finished,
+            )
+            with self.state.connect() as db:
+                db.execute(
+                    "UPDATE reviews SET stage='APPLIED' WHERE id=? AND revision=?",
+                    (package.package_id, package.revision),
+                )
+            return prepared.summary or prepared.package
+
+    def _prepare_action(
+        self,
+        package: ReviewPackage,
+        script: str,
+        verdict: Verdict,
+        now: datetime | None,
+        replaces: str | None,
+    ) -> Prepared:
+        timestamp = now or datetime.now(UTC)
+        if verdict.action == "reject":
+            key = hashlib.sha256(
+                f"{package.package_id}:{package.revision}:reject".encode()
+            ).hexdigest()
+            return Prepared(
+                threads=[
+                    ThreadDraft(
+                        thread_id=f"thr_{key}",
+                        kind="거절",
+                        content=None,
+                        occurred_at=timestamp,
+                        recorded_at=timestamp,
+                        tags=[],
+                        field=None,
+                        value=None,
+                        source_id=package.source_id,
+                        actor="human",
+                        direction=None,
+                        resolves=None,
+                        retracts=None,
+                        correction=None,
+                    )
+                ]
+            )
+        return self._prepare(package, script, verdict, timestamp, replaces)

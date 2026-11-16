@@ -311,3 +311,19 @@ def test_wiki_deletion_preserves_renamed_learned_corrections(tmp_path: Path) -> 
     assert store.resolve("원본") is None
     with sqlite3.connect(tmp_path / "context.sqlite3") as db:
         assert db.execute("SELECT count(*) FROM edited").fetchone() == (0,)
+
+
+def test_automatic_alias_respects_human_removal_and_does_not_freeze_wiki(tmp_path):
+    store = ContextDictionary(tmp_path)
+    store.sync_from_pages([Page("자동별칭", "topic")])
+    assert not store.add_alias("자동별칭", "짧은이름", human_edited=False).human_edited
+    store.remove_alias("자동별칭", "짧은이름")
+    assert store.add_alias("자동별칭", "짧은이름", human_edited=False).human_edited
+    assert store.resolve("짧은이름") is None
+    store.sync_from_pages([Page("자동별칭", "project", summary="변경")])
+    store = ContextDictionary(tmp_path)
+    assert store.resolve("자동별칭").kind == "project"
+    assert store.resolve("짧은이름") is None
+    store.add_entry("별도", "person", ("이미있음",))
+    with pytest.raises(ValueError, match="collision"):
+        store.add_alias("자동별칭", "이미있음", human_edited=False)

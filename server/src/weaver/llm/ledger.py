@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from weaver.readonly import connect_snapshot
+
 from .errors import BudgetExceeded
 
 logger = logging.getLogger(__name__)
@@ -196,3 +198,26 @@ class Ledger:
                 json.loads(row[0])
                 for row in db.execute("SELECT record FROM llm_calls ORDER BY rowid")
             ]
+
+
+class MemoryLedger(Ledger):
+    """Dry-run accounting with existing budget/cap reservations copied read-only.
+
+    New calls still obey the configured caps during this invocation, but never
+    update the persistent ledger. No SQLite temporary files are used.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._memory = sqlite3.connect(":memory:")
+        if path.is_file():
+            source = connect_snapshot(path)
+            try:
+                source.backup(self._memory)
+            finally:
+                source.close()
+        super().__init__(path)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        with self._memory:
+            yield self._memory

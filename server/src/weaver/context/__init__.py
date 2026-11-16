@@ -169,6 +169,7 @@ class _Edit:
     removed: tuple[str, ...] = ()
     human_edited: bool = True
     origin_wiki: bool = False
+    automatic_aliases: tuple[str, ...] = ()
 
 
 def _decode_edit(payload: str) -> _Edit:
@@ -184,8 +185,8 @@ def _decode_edit(payload: str) -> _Edit:
             human_edited=data["human_edited"],
             origin_wiki=data["source"] == "wiki",
         )
-    for field in ("bases", "added", "removed"):
-        data[field] = tuple(data[field])
+    for field in ("bases", "added", "removed", "automatic_aliases"):
+        data[field] = tuple(data.get(field, ()))
     return _Edit(**data)
 
 
@@ -324,6 +325,24 @@ class ContextDictionary:
                 source="wiki" if bases else "learn",
                 human_edited=edit.human_edited,
             )
+        # Automatic aliases never freeze wiki fields or mark a human edit.
+        for key, edit in edits.items():
+            if key in entries:
+                entry = entries[key]
+                removed = {_key(a) for a in edit.removed}
+                entries[key] = replace(
+                    entry,
+                    aliases=tuple(
+                        sorted(
+                            set(entry.aliases)
+                            | {
+                                a
+                                for a in edit.automatic_aliases
+                                if _key(a) not in removed and _key(a) != key
+                            }
+                        )
+                    ),
+                )
         entries = {
             k: replace(e, misrecognitions=tuple(corrections.get(k, ())))
             for k, e in entries.items()
@@ -393,7 +412,9 @@ class ContextDictionary:
             if _key(prior.name) in own_keys
             for alias in prior.aliases
         }
-        new_aliases = set(map(_key, edit.added)) - prior_aliases
+        new_aliases = (
+            set(map(_key, (*edit.added, *edit.automatic_aliases))) - prior_aliases
+        )
         prior_name = any(_key(e.name) == _key(edit.name) for e in snapshot.entries)
         for other in snapshot.entries:
             if _key(other.name) in own_keys:
@@ -491,10 +512,35 @@ class ContextDictionary:
                 replace(self._edit_for(entry, edits), kind=kind, human_edited=True),
             )
 
-    def add_alias(self, name: str, alias: str) -> ContextEntry:
+    def add_alias(
+        self, name: str, alias: str, *, human_edited: bool = True
+    ) -> ContextEntry:
         with self._writing() as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             edit = self._edit_for(entry, edits)
+            if not human_edited:
+                if not alias.strip():
+                    raise ValueError("alias must be nonempty")
+                owner = snapshot.resolve(alias)
+                if owner:
+                    if owner.name != entry.name:
+                        raise ValueError("dictionary name or alias collision")
+                    return entry
+                if _key(alias) in {_key(a) for a in edit.removed}:
+                    return entry
+                # _save's collision check covers ordinary aliases; check the
+                # automatic proposal above before retaining it separately.
+                return self._save(
+                    db,
+                    snapshot,
+                    replace(
+                        edit,
+                        human_edited=entry.human_edited,
+                        automatic_aliases=tuple(
+                            sorted(set(edit.automatic_aliases) | {_nfc(alias)})
+                        ),
+                    ),
+                )
             edit = replace(
                 edit,
                 added=tuple(sorted(set(edit.added) | {_nfc(alias)})),
@@ -524,6 +570,11 @@ class ContextDictionary:
             edit = replace(
                 edit,
                 bases=tuple(dict.fromkeys((*edit.bases, *source_edit.bases))),
+                automatic_aliases=tuple(
+                    sorted(
+                        set(edit.automatic_aliases) | set(source_edit.automatic_aliases)
+                    )
+                ),
                 kind=b.kind,
                 added=tuple(
                     sorted(set((*edit.added, *source_edit.added, a.name)) - {b.name})

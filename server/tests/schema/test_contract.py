@@ -346,3 +346,10 @@ def test_capture_host_contract():
     assert item.model_validate(data | {"capture_hosts": ["phone", "unknown"]})
     with pytest.raises(ValidationError):
         item.model_validate(data | {"capture_hosts": ["other"]})
+
+
+def test_system_retraction_thread_contract():
+    data = example("Thread") | {"actor": "system", "retracts": "thr_old"}
+    assert Thread.model_validate(data).retracts == "thr_old"
+    with pytest.raises(ValidationError):
+        Thread.model_validate(data | {"retracts": None})
