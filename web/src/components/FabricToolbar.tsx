@@ -143,7 +143,9 @@ export function FabricToolbar({
                 onChange({
                   ...f,
                   kinds: toggle(f.kinds, kind),
-                  executions: kind === "실행" ? true : f.executions,
+                  executions: ["실행", "태그정정"].includes(kind)
+                    ? true
+                    : f.executions,
                 })
               }
             />
@@ -219,7 +221,7 @@ export function FabricToolbar({
       />
       <Toggle
         id="t-exec"
-        label="실행 기록 포함"
+        label="실행·태그정정 포함"
         on={f.executions}
         onChange={() => onChange({ ...f, executions: !f.executions })}
       />

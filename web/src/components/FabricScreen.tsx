@@ -14,11 +14,19 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
     week = new Date(now);
   week.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   week.setHours(0, 0, 0, 0);
+  const metadata = new Set(
+    threads
+      .filter((t) => ["실행", "태그정정"].includes(t.kind))
+      .map((t) => t.thread_id),
+  );
+  const visible = (t: Thread) =>
+    f.executions ||
+    (!metadata.has(t.thread_id) && !metadata.has(t.retracts || ""));
   const matching = threads.filter(
     (t) =>
       (f.retractions ||
         (!t.retracts && !relation.retracted.has(t.thread_id))) &&
-      (f.executions || t.kind !== "실행") &&
+      visible(t) &&
       (!f.kinds.length || f.kinds.includes(t.kind)) &&
       (!f.tags.length || t.tags.some((tag) => f.tags.includes(tag))) &&
       (f.period !== "week" || Date.parse(t.occurred_at) >= week.getTime()) &&
@@ -37,9 +45,10 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
   );
   return threads.filter(
     (t) =>
-      ids.has(t.thread_id) ||
-      targets.has(t.thread_id) ||
-      (!!t.retracts && ids.has(t.retracts)),
+      visible(t) &&
+      (ids.has(t.thread_id) ||
+        targets.has(t.thread_id) ||
+        (!!t.retracts && ids.has(t.retracts))),
   );
 }
 function RefreshAge({ at }: { at: number | null }) {
@@ -98,15 +107,17 @@ export function FabricScreen({
     },
     [sourcesById, sourceTimes],
   );
+  const threadsById = useMemo(
+    () => new Map(data.threads.map((t) => [t.thread_id, t])),
+    [data.threads],
+  );
   const groups = useCallback(
     (t: Fact) => {
-      const row = data.threads.find((row) => row.thread_id === t.thread_id);
-      const target = row?.retracts
-        ? data.threads.find((t) => t.thread_id === row.retracts)
-        : undefined;
+      const row = threadsById.get(t.thread_id);
+      const target = row?.retracts ? threadsById.get(row.retracts) : undefined;
       return groupKeys(target || t, filters.group, tagKindsByName, sourceLabel);
     },
-    [filters.group, tagKindsByName, sourceLabel, data.threads],
+    [filters.group, tagKindsByName, sourceLabel, threadsById],
   );
   const lanes = useMemo<Lane[]>(() => {
     const counts = new Map<string, number>();

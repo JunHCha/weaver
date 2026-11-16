@@ -241,10 +241,6 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
             status_code=503,
         )
 
-    @app.exception_handler(ValueError)
-    async def invalid_edit(_request: Request, error: ValueError) -> JSONResponse:
-        return JSONResponse({"detail": str(error)}, status_code=422)
-
     @app.exception_handler(sqlite3.OperationalError)
     async def state_unavailable(_request: Request, _error: Exception) -> JSONResponse:
         return JSONResponse(

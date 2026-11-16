@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   editing,
@@ -13,9 +14,10 @@ import {
   type FabricData,
   type Thread,
 } from "../lib/api";
+import { initialFilters } from "./FabricToolbar";
 import { TagEditor } from "./TagEditor";
 import { DictionaryScreen } from "./DictionaryScreen";
-import { FabricScreen } from "./FabricScreen";
+import { FabricScreen, filteredThreads } from "./FabricScreen";
 const entry: DictionaryEntry = {
   name: "알파",
   kind: "project",
@@ -124,6 +126,7 @@ describe("dictionary screen", () => {
     fireEvent.change(screen.getByLabelText("사전 검색"), {
       target: { value: "" },
     });
+    fireEvent.click(within(row).getByRole("button", { name: "알파 편집" }));
     fireEvent.change(within(row).getByLabelText("알파 이름"), {
       target: { value: "새 이름" },
     });
@@ -177,6 +180,7 @@ describe("dictionary screen", () => {
     vi.spyOn(editing, "entry").mockRejectedValue(new Error("이름 충돌"));
     render(<DictionaryScreen />);
     await screen.findByRole("article", { name: "알파" });
+    fireEvent.click(screen.getByRole("button", { name: "알파 편집" }));
     fireEvent.change(screen.getByLabelText("알파 종류"), {
       target: { value: "topic" },
     });
@@ -237,4 +241,110 @@ it("hides retraction pairs by default and places retractions under the target in
       n.getAttribute("data-id"),
     ),
   ).toEqual(["two"]);
+});
+
+it("keeps dictionary rows compact and expands only one with Enter, click and Escape", async () => {
+  vi.spyOn(editing, "dictionary").mockResolvedValue([
+    entry,
+    { ...entry, name: "베타", aliases: [] },
+  ]);
+  const user = userEvent.setup();
+  render(<DictionaryScreen />);
+  const first = await screen.findByRole("button", { name: "알파 편집" });
+  expect(screen.queryByLabelText("알파 이름")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("베타 이름")).not.toBeInTheDocument();
+  first.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByLabelText("알파 이름")).toBeInTheDocument();
+  const second = screen.getByRole("button", { name: "베타 편집" });
+  await user.click(second);
+  expect(screen.queryByLabelText("알파 이름")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("베타 이름")).toBeInTheDocument();
+  screen.getByLabelText("베타 새 별칭").focus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByLabelText("베타 이름")).not.toBeInTheDocument();
+  expect(second).toHaveFocus();
+});
+
+it("preserves the expanded row and its DOM when aliases change", async () => {
+  vi.spyOn(editing, "dictionary")
+    .mockResolvedValueOnce([entry])
+    .mockResolvedValue([{ ...entry, aliases: ["Alpha", "새 별칭"] }]);
+  vi.spyOn(editing, "alias").mockResolvedValue();
+  render(<DictionaryScreen />);
+  fireEvent.click(await screen.findByRole("button", { name: "알파 편집" }));
+  const input = screen.getByLabelText("알파 새 별칭");
+  fireEvent.change(input, { target: { value: "새 별칭" } });
+  fireEvent.click(screen.getByRole("button", { name: "별칭 추가" }));
+  await screen.findByRole("button", { name: "새 별칭 별칭 삭제" });
+  expect(screen.getByLabelText("알파 새 별칭")).toBe(input);
+  expect(input).toHaveValue("");
+});
+
+it("hides tag corrections in both default views and shows target history with time, delta and actor", async () => {
+  vi.spyOn(editing, "dictionary").mockResolvedValue([entry]);
+  const correction: Thread = {
+    ...thread,
+    thread_id: "correction",
+    seq: 2,
+    kind: "태그정정",
+    content: "태그 수정",
+    tags: [],
+    correction: { target: "one", add: ["새 태그"], remove: ["이전 태그"] },
+  };
+  const data: FabricData = {
+    threads: [thread, correction],
+    tags: [{ name: "알파", kind: "project" }],
+    states: {},
+    sources: [],
+    status: {
+      spinner: { last_activity: null, waiting_review: 0 },
+      loom: { last_activity: null, waiting_review: 0 },
+    },
+  };
+  render(<FabricScreen data={data} />);
+  expect(
+    screen.queryByRole("article", { name: "태그정정 태그 수정" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("article", { name: "기록 원래 기록" }));
+  const history = screen.getByRole("list", { name: "태그 변경 이력" });
+  expect(history).toHaveTextContent("11/16 12:00");
+  expect(history).toHaveTextContent("+새 태그");
+  expect(history).toHaveTextContent("−이전 태그");
+  expect(history).toHaveTextContent("직접 작성");
+  fireEvent.click(screen.getByRole("button", { name: "로그" }));
+  expect(
+    [...document.querySelectorAll(".lrow[data-id]")].map((n) =>
+      n.getAttribute("data-id"),
+    ),
+  ).toEqual(["one"]);
+  fireEvent.click(screen.getByRole("button", { name: "실행·태그정정 포함" }));
+  expect(
+    [...document.querySelectorAll(".lrow[data-id]")].map((n) =>
+      n.getAttribute("data-id"),
+    ),
+  ).toEqual(["one", "correction"]);
+});
+
+it("keeps corrections and their retractions hidden when only the retraction toggle is on", () => {
+  const correction: Thread = {
+    ...thread,
+    thread_id: "meta",
+    kind: "태그정정",
+    correction: { target: "one", add: [], remove: [] },
+  };
+  const undo = { ...thread, thread_id: "undo-meta", retracts: "meta" };
+  const rows = [thread, correction, undo];
+  expect(
+    filteredThreads(rows, { ...initialFilters, retractions: true }).map(
+      (t) => t.thread_id,
+    ),
+  ).toEqual(["one"]);
+  expect(
+    filteredThreads(rows, {
+      ...initialFilters,
+      retractions: true,
+      executions: true,
+    }).map((t) => t.thread_id),
+  ).toEqual(["one", "meta", "undo-meta"]);
 });

@@ -1,22 +1,65 @@
 """Authenticated loopback edits using the existing transactional stores."""
 
 import secrets
+import sqlite3
 import unicodedata
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import closing, contextmanager, nullcontext
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, DictionarySnapshot
 from weaver.fabric import FabricStore, ThreadQuery
+from weaver.runtime.loop import AlreadyRunning, InstanceLock
 from weaver.schema import TagCorrection, Thread, ThreadDraft
 
+MAX_BODY_BYTES = 65536
 TagKind = Literal["project", "person", "organization", "topic"]
+Name = Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class EditRoute(APIRoute):
+    """Bound write bodies before parsing and translate only edit validation failures."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def bounded(request: Request) -> Response:
+            if request.method in {"POST", "PATCH", "DELETE"}:
+                body = bytearray()
+                async for chunk in request.stream():
+                    if len(body) + len(chunk) > MAX_BODY_BYTES:
+                        raise HTTPException(
+                            413, "요청 본문은 64 KiB를 넘을 수 없습니다."
+                        )
+                    body.extend(chunk)
+
+                async def receive() -> dict[str, Any]:
+                    return {
+                        "type": "http.request",
+                        "body": bytes(body),
+                        "more_body": False,
+                    }
+
+                request = Request(request.scope, receive)
+                try:
+                    return await handler(request)
+                except ValueError:
+                    raise HTTPException(
+                        422,
+                        "사전 편집 값을 확인하세요. 이름 또는 별칭이 충돌할 수 있습니다.",
+                    ) from None
+            return await handler(request)
+
+        return bounded
 
 
 class Input(BaseModel):
@@ -24,22 +67,52 @@ class Input(BaseModel):
 
 
 class TagEdit(Input):
-    add: list[str] = Field(default_factory=list)
-    remove: list[str] = Field(default_factory=list)
-    kinds: dict[str, TagKind] = Field(default_factory=dict)
+    add: list[Name] = Field(default_factory=list, max_length=100)
+    remove: list[Name] = Field(default_factory=list, max_length=100)
+    kinds: dict[Name, TagKind] = Field(default_factory=dict, max_length=100)
 
 
 class EntryEdit(Input):
-    name: str | None = None
+    entry: Name
+    name: Name | None = None
     kind: TagKind | None = None
 
 
 class AliasEdit(Input):
-    alias: str
+    entry: Name
+    alias: Name
 
 
 class MergeEdit(Input):
-    target: str
+    entry: Name
+    target: Name
+
+
+@contextmanager
+def writable_dictionary(config: ServerConfig) -> Iterator[ContextDictionary]:
+    path = config.state_root / "context.sqlite3"
+    version = None
+    if path.is_file():
+        with closing(
+            sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=0.1)
+        ) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+    # Hold the instance lock across a v1 upgrade, so a v1 daemon cannot start
+    # between the version check and migration. v2 edits use SQLite transactions.
+    lock = (
+        InstanceLock(config.state_root / "weaver.lock")
+        if version == 1
+        else nullcontext()
+    )
+    try:
+        with lock:
+            yield ContextDictionary(config.state_root)
+    except AlreadyRunning:
+        raise HTTPException(
+            503,
+            "이전 사전을 사용하는 데몬이 실행 중입니다. 데몬을 종료한 뒤 다시 시도하세요.",
+            headers={"Retry-After": "1"},
+        ) from None
 
 
 def dictionary_snapshot(config: ServerConfig) -> DictionarySnapshot:
@@ -69,7 +142,7 @@ def canonical_threads(config: ServerConfig, rows: list[Thread]) -> list[Thread]:
 
 
 def editing_router(config: ServerConfig) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(route_class=EditRoute)
     token = secrets.token_urlsafe(32)
 
     def authorize(request: Request) -> None:
@@ -178,14 +251,9 @@ def editing_router(config: ServerConfig) -> APIRouter:
             raise HTTPException(404, "Thread를 찾을 수 없습니다.")
         if target.kind == "실행":
             raise HTTPException(422, "실행 기록의 태그는 편집할 수 없습니다.")
-        if not edit.add and not edit.remove:
-            raise HTTPException(422, "변경할 태그가 필요합니다.")
         if any(not name.strip() for name in edit.add + edit.remove):
             raise HTTPException(422, "태그 이름은 비어 있을 수 없습니다.")
         snapshot = dictionary_snapshot(config)
-        for name in edit.add:
-            if snapshot.resolve(name) is None and name not in edit.kinds:
-                raise HTTPException(422, "새 태그에는 종류가 필요합니다.")
 
         def resolved_name(name: str) -> str:
             entry = snapshot.resolve(name)
@@ -195,23 +263,29 @@ def editing_router(config: ServerConfig) -> APIRouter:
             map(resolved_name, edit.remove)
         ):
             raise HTTPException(422, "같은 태그를 동시에 추가하고 삭제할 수 없습니다.")
-        dictionary = ContextDictionary(config.state_root)
-        additions = [
-            (
-                snapshot.resolve(name)
-                or dictionary.add_entry(name, edit.kinds[name], human_edited=True)
-            ).name
-            for name in edit.add
-        ]
-        latest = dictionary.snapshot()
-
-        def canonical(name: str) -> str:
-            entry = latest.resolve(name)
-            return entry.name if entry else unicodedata.normalize("NFC", name)
-
-        removals = {canonical(name) for name in edit.remove}
-        if removals.intersection(map(canonical, additions)):
-            raise HTTPException(422, "같은 태그를 동시에 추가하고 삭제할 수 없습니다.")
+        effective = set(map(resolved_name, target.tags))
+        add_names = list(
+            dict.fromkeys(
+                name for name in edit.add if resolved_name(name) not in effective
+            )
+        )
+        remove_names = {resolved_name(name) for name in edit.remove} & effective
+        if not add_names and not remove_names:
+            return target.model_copy(
+                update={"tags": list(dict.fromkeys(map(resolved_name, target.tags)))}
+            )
+        for name in add_names:
+            if snapshot.resolve(name) is None and name not in edit.kinds:
+                raise HTTPException(422, "새 태그에는 종류가 필요합니다.")
+        with writable_dictionary(config) as dictionary:
+            additions = [
+                (
+                    snapshot.resolve(name)
+                    or dictionary.add_entry(name, edit.kinds[name], human_edited=True)
+                ).name
+                for name in add_names
+            ]
+        removals = [name for name in target.tags if resolved_name(name) in remove_names]
         now = datetime.now(UTC)
         draft = ThreadDraft(
             thread_id="thr_" + uuid4().hex,
@@ -230,46 +304,39 @@ def editing_router(config: ServerConfig) -> APIRouter:
             correction=TagCorrection(
                 target=thread_id,
                 add=additions,
-                remove=[name for name in target.tags if canonical(name) in removals],
+                remove=removals,
             ),
         )
         return FabricStore(path).append([draft])[0]
 
-    @router.patch("/api/dictionary/{name}", dependencies=writes)
-    def edit_entry(name: str, edit: EntryEdit) -> dict[str, str]:
-        dictionary = ContextDictionary(config.state_root)
-        if edit.name is None and edit.kind is None:
-            raise HTTPException(422, "변경할 이름 또는 종류가 필요합니다.")
-        # Pydantic validates both fields before either transactional edit.
-        entry = dictionary.resolve(name)
+    @router.patch("/api/dictionary", dependencies=writes)
+    def edit_entry(edit: EntryEdit) -> dict[str, str]:
+        entry = dictionary_snapshot(config).resolve(edit.entry)
         if entry is None:
-            raise ValueError("unknown entry")
-        if edit.name is not None:
-            entry = dictionary.rename(name, edit.name)
-        if edit.kind is not None:
-            entry = dictionary.set_kind(entry.name, edit.kind)
+            raise HTTPException(404, "사전 항목을 찾을 수 없습니다.")
+        # Keep each request to one public, atomic dictionary transaction.
+        if (edit.name is None) == (edit.kind is None):
+            raise HTTPException(422, "이름 또는 종류 중 하나만 변경하세요.")
+        with writable_dictionary(config) as dictionary:
+            if edit.name is not None:
+                entry = dictionary.rename(edit.entry, edit.name)
+            elif edit.kind is not None:
+                entry = dictionary.set_kind(edit.entry, edit.kind)
         return {"name": entry.name}
 
-    @router.post("/api/dictionary/{name}/aliases", dependencies=writes)
-    def add_alias(name: str, edit: AliasEdit) -> dict[str, str]:
-        return {
-            "name": ContextDictionary(config.state_root)
-            .add_alias(name, edit.alias)
-            .name
-        }
+    @router.post("/api/dictionary/aliases", dependencies=writes)
+    def add_alias(edit: AliasEdit) -> dict[str, str]:
+        with writable_dictionary(config) as dictionary:
+            return {"name": dictionary.add_alias(edit.entry, edit.alias).name}
 
-    @router.delete("/api/dictionary/{name}/aliases", dependencies=writes)
-    def remove_alias(name: str, edit: AliasEdit) -> dict[str, str]:
-        return {
-            "name": ContextDictionary(config.state_root)
-            .remove_alias(name, edit.alias)
-            .name
-        }
+    @router.delete("/api/dictionary/aliases", dependencies=writes)
+    def remove_alias(edit: AliasEdit) -> dict[str, str]:
+        with writable_dictionary(config) as dictionary:
+            return {"name": dictionary.remove_alias(edit.entry, edit.alias).name}
 
-    @router.post("/api/dictionary/{name}/merge", dependencies=writes)
-    def merge(name: str, edit: MergeEdit) -> dict[str, str]:
-        return {
-            "name": ContextDictionary(config.state_root).merge(name, edit.target).name
-        }
+    @router.post("/api/dictionary/merge", dependencies=writes)
+    def merge(edit: MergeEdit) -> dict[str, str]:
+        with writable_dictionary(config) as dictionary:
+            return {"name": dictionary.merge(edit.entry, edit.target).name}
 
     return router

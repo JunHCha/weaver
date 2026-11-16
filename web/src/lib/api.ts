@@ -150,13 +150,12 @@ export const editing = {
   tags: (id: string, edit: TagEdit) =>
     write(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
   entry: (name: string, edit: { name?: string; kind?: TagKind }) =>
-    write(`/dictionary/${encodeURIComponent(name)}`, "PATCH", edit),
+    write("/dictionary", "PATCH", { entry: name, ...edit }),
   alias: (name: string, alias: string, remove = false) =>
-    write(
-      `/dictionary/${encodeURIComponent(name)}/aliases`,
-      remove ? "DELETE" : "POST",
-      { alias },
-    ),
+    write("/dictionary/aliases", remove ? "DELETE" : "POST", {
+      entry: name,
+      alias,
+    }),
   merge: (name: string, target: string) =>
-    write(`/dictionary/${encodeURIComponent(name)}/merge`, "POST", { target }),
+    write("/dictionary/merge", "POST", { entry: name, target }),
 };

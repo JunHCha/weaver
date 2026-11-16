@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
+  mdhm,
   fieldLabel,
   kindClass,
   kindStyle,
@@ -160,6 +161,41 @@ export function DetailPanel({
             </Fragment>
           ))}
         </dl>
+        <div className="sec tag-history">
+          <h3>태그 변경 이력</h3>
+          {threads.filter((row) => row.correction?.target === t.thread_id)
+            .length ? (
+            <ul aria-label="태그 변경 이력">
+              {threads
+                .filter((row) => row.correction?.target === t.thread_id)
+                .map((row) => (
+                  <li key={row.thread_id}>
+                    <time dateTime={row.recorded_at}>
+                      {mdhm(row.recorded_at)}
+                    </time>
+                    <span>
+                      {row.correction?.add.map((name) => (
+                        <span className="tag-added" key={name}>
+                          +{name}{" "}
+                        </span>
+                      ))}
+                      {row.correction?.remove.map((name) => (
+                        <span className="mut" key={name}>
+                          −{name}{" "}
+                        </span>
+                      ))}
+                    </span>
+                    <span className="mut">
+                      {actorLabel[row.actor]}
+                      {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <span className="mut">태그 변경 이력이 없습니다</span>
+          )}
+        </div>
         <div className="sec">
           <h3>값</h3>
           <pre className="json">
