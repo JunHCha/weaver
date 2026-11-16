@@ -412,6 +412,10 @@ def _replace(
 ) -> None:
     ids = {t.thread_id: _id(f"{plan.key}:new:{i}") for i, t in enumerate(drafts)}
     old_schedules = [t for t in plan.old if t.kind == "일정" and t.value is not None]
+    superseded = {t.updates for t in old_schedules if t.updates}
+    # Mapping/effects describe standing events, while plan.old still retracts
+    # every historical active fact in the same source's update chains.
+    old_schedules = [t for t in old_schedules if t.thread_id not in superseded]
     available = old_schedules.copy()
     for draft in drafts:
         data = draft.model_dump()
@@ -593,6 +597,21 @@ def _reviews(
             )
             selected.setdefault(source_id, (package, script, verdict))
         except (ValueError, TypeError, AttributeError) as error:
+            if source_id.startswith("package:"):
+                # A malformed latest package must never silently select an
+                # older revision of the same source. Recover provenance from
+                # its already journaled extraction, without trusting its text.
+                try:
+                    prepared = Prepared.model_validate_json(raw_prepared)
+                    origins = {t.source_id for t in prepared.threads}
+                    if prepared.summary:
+                        origins.add(prepared.summary.source_id)
+                    if len(origins) == 1:
+                        source_id = origins.pop()
+                    else:
+                        report.valid = False
+                except ValueError:
+                    report.valid = False
             broken.add(source_id)
             report.sources.append(
                 SourcePlan(
@@ -633,7 +652,12 @@ def reextract(
         )
         blocked = _removed_aliases(root)
     except (OSError, ValueError, sqlite3.Error) as error:
-        report.errors.append(f"state: {type(error).__name__}")
+        reason = (
+            str(error)
+            if isinstance(error, ValueError) and "다시 계획" in str(error)
+            else type(error).__name__
+        )
+        report.errors.append(f"state: {reason}")
         report.valid = False
         return _seal(report)
     selected, extracted_ids = _reviews(root, report, source)
@@ -669,7 +693,19 @@ def reextract(
             if revision
             else []
         )
-        plan = _saved(root, key) or SourcePlan(source_id=source_id, key=key, old=old)
+        try:
+            plan = _saved(root, key) or SourcePlan(
+                source_id=source_id, key=key, old=old
+            )
+        except (ValueError, TypeError, OSError, sqlite3.Error) as error:
+            report.sources.append(
+                SourcePlan(
+                    source_id=source_id,
+                    key=key,
+                    error=f"journal: {type(error).__name__}",
+                )
+            )
+            continue
         guard_targets = (
             [
                 t
@@ -708,12 +744,16 @@ def reextract(
         baseline = 0
         outbox_path = root / "action-outbox.sqlite3"
         if outbox_path.exists():
-            # Read the same meta key as ActionOutbox without initializing it.
-            with closing(_read(outbox_path)) as db:
-                row = db.execute(
-                    "SELECT value FROM meta WHERE key='baseline'"
-                ).fetchone()
-                baseline = int(row[0]) if row else 0
+            try:
+                with closing(_read(outbox_path)) as db:
+                    row = db.execute(
+                        "SELECT value FROM meta WHERE key='baseline'"
+                    ).fetchone()
+                    baseline = int(row[0]) if row else 0
+            except (ValueError, OSError, sqlite3.Error) as error:
+                report.errors.append(f"Action baseline: {type(error).__name__}")
+                report.valid = False
+                return _seal(report)
         for plan in pending:
             try:
                 now = datetime.now(UTC)

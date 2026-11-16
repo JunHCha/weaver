@@ -410,3 +410,49 @@ def test_corrupt_package_json_is_source_local(tmp_path):
     report = reextract(tmp_path, tmp_path / "wiki", FakeLlm())
     assert any(p.error for p in report.sources)
     assert next(p for p in report.sources if p.source_id == OTHER).new
+
+
+def test_corrupt_latest_package_never_falls_back_to_old_revision(tmp_path):
+    from weaver.loom.summary_review import Prepared
+    from weaver.loom.summary_state import SummaryState
+    from weaver.schema import Verdict
+
+    seed(tmp_path)
+    state = SummaryState(tmp_path)
+    package, script = state.load_package("pkg", 1)
+    second = package.model_copy(update={"revision": 2})
+    state.save_package(second, script)
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=2,
+        action="approve",
+        answers=[],
+        edited_body=None,
+        feedback=None,
+    )
+    with state.connect() as db:
+        db.execute(
+            "INSERT INTO reviews VALUES ('pkg', 2, ?, ?, 'APPLIED')",
+            (
+                verdict.model_dump_json(),
+                Prepared(threads=[draft("latest")]).model_dump_json(),
+            ),
+        )
+        db.execute("UPDATE packages SET package='bad-json' WHERE revision=2")
+    report = reextract(tmp_path, tmp_path / "wiki", FakeLlm())
+    plans = [p for p in report.sources if p.source_id == SOURCE]
+    assert plans and all(p.error and not p.batch for p in plans)
+
+
+def test_baseline_chain_preview_has_one_maintained_event(tmp_path):
+    seed(tmp_path, old=draft("root", kind="일정", field="schedule", value=SLOT))
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append(
+        [draft("latest", kind="일정", field="schedule", value=SLOT, updates="root")]
+    )
+    ActionOutbox(tmp_path / "action-outbox.sqlite3").initialize(1)
+    report = reextract(tmp_path, tmp_path / "wiki", FakeLlm(schedule=True))
+    assert len(report.sources[0].calendar_effects) == 1
+    assert report.sources[0].calendar_effects[0].effect == "유지"
+    assert report.sources[0].new[0].updates == "latest"
