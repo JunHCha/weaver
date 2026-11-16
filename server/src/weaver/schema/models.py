@@ -7,6 +7,7 @@ fail closed. IDs use canonical uppercase Crockford ULIDs (first digit at most 7)
 """
 
 import re
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Literal, Protocol, Self, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -223,6 +224,11 @@ class TagCorrection(Contract):
     remove: list[NonEmpty]
     add: list[NonEmpty]
 
+    @field_validator("remove", "add")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(unicodedata.normalize("NFC", tag) for tag in value))
+
 
 class ScheduleValue(Contract):
     """Structured times of a schedule, with an explicit IANA timezone."""
@@ -333,6 +339,16 @@ class ThreadDraft(Contract):
     blocked_by: NonEmpty | None = None
     executes: NonEmpty | None = None
     updates: NonEmpty | None = None
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str | None) -> str | None:
+        return unicodedata.normalize("NFC", value) if value is not None else None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(unicodedata.normalize("NFC", tag) for tag in value))
 
     @model_validator(mode="after")
     def validate_kind(self) -> Self:

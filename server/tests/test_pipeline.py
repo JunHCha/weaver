@@ -87,6 +87,7 @@ def runtime_capture(tmp_path, failure_limit=5):
                 return schema.model_validate(
                     {
                         "body": "가상 요약",
+                        "new_entries": [{"name": "예시", "kind": "topic"}],
                         "corrections": [],
                         "threads": [
                             {

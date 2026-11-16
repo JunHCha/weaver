@@ -31,6 +31,13 @@ into Fabric Threads. It never appends a fact the user did not approve.
    the approved document describes as a change of a standing schedule carries
    `updates` (the model sees `existing_schedules`); an unfounded link is dropped.
 
+Approval receives up to 500 dictionary entries (`name`, `kind`, `aliases`) and
+all distinct existing Fabric tags. Tags resolve to canonical dictionary names;
+unknown tags must be declared in `new_entries` with a supported kind and optional
+aliases. Unresolved tags and conflicting proposals are dropped with content-free
+warnings. New entries are journaled and inserted before Fabric append, so retries
+reuse the same canonical tags without overwriting later human dictionary edits.
+
 ## Durability
 
 Every verdict is journaled with its prepared side effects (`Prepared`) before

@@ -17,6 +17,7 @@ class FakeLlm:
     ) -> T:
         return schema.model_validate(
             {
+                "new_entries": [{"name": "홍길동", "kind": "person"}],
                 "body": "홍길동이 결정했다.",
                 "corrections": [
                     {"observed": "홍길돈", "canonical": "홍길동", "kind": "person"}
@@ -706,3 +707,110 @@ def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> 
             max(fabric.entries(ThreadQuery()), key=lambda t: t.seq).updates == expected
         )
     assert [s["id"] for s in llm.seen["existing_schedules"]][:1] == ["old"]
+
+
+def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> None:
+    import json
+    import unicodedata
+
+    import pytest
+
+    from weaver.fabric import FabricStore, ThreadQuery
+
+    context = ContextDictionary(tmp_path / "state")
+    context.add_entry("표준", "project", ("Alias",))
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="existing",
+                kind="기록",
+                content="기존",
+                occurred_at=NOW,
+                recorded_at=NOW,
+                tags=["기존태그"],
+                field=None,
+                value=None,
+                source_id=SOURCE,
+                actor="human",
+                direction=None,
+                resolves=None,
+                retracts=None,
+                correction=None,
+            )
+        ]
+    )
+
+    class DictionaryLlm(FakeLlm):
+        calls = 0
+
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            self.calls += 1
+            prompt = json.loads(user)
+            assert prompt["dictionary"] == [
+                {"name": "표준", "kind": "project", "aliases": ["Alias"]}
+            ]
+            assert prompt["existing_tags"] == ["기존태그"]
+            assert "new_entries" in system
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["new_entries"] = [
+                {
+                    "name": unicodedata.normalize("NFD", "새사람"),
+                    "kind": "person",
+                    "aliases": ["NewAlias"],
+                },
+                {"name": "충돌", "kind": "topic", "aliases": ["ALIAS"]},
+            ]
+            data["corrections"] = []
+            data["threads"][0]["tags"] = [
+                "ALIAS",
+                "표준",
+                "newalias",
+                "비공개미확인태그",
+            ]
+            return schema.model_validate(data)
+
+    class InterruptedSink:
+        failed = False
+
+        def entries(self, query):
+            return fabric.entries(query)
+
+        def append(self, drafts):
+            assert context.resolve("새사람") is not None
+            result = fabric.append(drafts)
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("synthetic lost response")
+            return result
+
+    llm, sink = DictionaryLlm(), InterruptedSink()
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review = SummaryReview(
+        llm, context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    with pytest.raises(RuntimeError):
+        review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    context.set_kind("새사람", "organization")
+    review = SummaryReview(
+        llm, context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    assert llm.calls == 1
+    assert fabric.entries(ThreadQuery())[-1].tags == ["표준", "새사람"]
+    assert len(context.list_entries()) == 2
+    assert context.resolve("NewAlias").human_edited
+    assert context.kind_of("새사람") == "organization"
+    assert "dropped unresolved approval tag" in caplog.text
+    assert "비공개미확인태그" not in caplog.text

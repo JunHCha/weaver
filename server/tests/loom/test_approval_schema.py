@@ -14,6 +14,7 @@ from weaver.loom.summary_review import ApprovedResponse
 @pytest.fixture
 def response():
     return {
+        "new_entries": [],
         "body": "Approved facts",
         "corrections": [],
         "threads": [
@@ -85,3 +86,15 @@ def test_transformed_schema_keeps_kind_and_field_constraints(
     if kind == "일정":
         thread["blocked_by_index"] = 0
         validator.validate(response)
+
+
+@pytest.mark.parametrize("transform", [anthropic.transform_schema, openai_schema])
+def test_new_dictionary_entry_contract(response, transform):
+    validator = Draft202012Validator(transform(ApprovedResponse))
+    response["new_entries"] = [{"name": "표준", "kind": "project", "aliases": ["별칭"]}]
+    validator.validate(response)
+    ApprovedResponse.model_validate(response)
+    response["new_entries"][0]["kind"] = "arbitrary"
+    assert not validator.is_valid(response)
+    with pytest.raises(ValidationError):
+        ApprovedResponse.model_validate(response)

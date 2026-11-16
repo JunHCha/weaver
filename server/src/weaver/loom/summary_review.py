@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
@@ -97,10 +98,20 @@ type ExtractedThread = (
 )
 
 
+class NewEntry(BaseModel):
+    """A canonical tag proposed together with its dictionary classification."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: NonEmpty
+    kind: Kind
+    aliases: list[NonEmpty] = Field(default_factory=list)
+
+
 class ApprovedResponse(BaseModel):
     """Final answer-applied text, reviewer corrections, and extracted facts."""
 
     body: str
+    new_entries: list[NewEntry] = Field(default_factory=list)
     corrections: list[Correction]
     threads: list[ExtractedThread]
 
@@ -114,6 +125,7 @@ class Prepared(BaseModel):
     applied_at: datetime | None = None
     threads: list[ThreadDraft] = []
     corrections: list[Correction] = []
+    new_entries: list[NewEntry] = []
 
 
 class SummaryReview:
@@ -223,6 +235,10 @@ class SummaryReview:
                         raise ValueError("summary archive conflict")
                 else:
                     write_json_atomic(target, prepared.summary)
+            for entry in prepared.new_entries:
+                self.context.add_entry(
+                    entry.name, entry.kind, tuple(entry.aliases), human_edited=False
+                )
             if prepared.threads:
                 self.sink.append(prepared.threads)
             for correction in prepared.corrections:
@@ -296,6 +312,15 @@ class SummaryReview:
             )
         return self._prepare(package, script, verdict, timestamp, replaces)
 
+    def _existing_tags(self) -> list[str]:
+        entries = getattr(self.sink, "entries", None)
+        if not callable(entries):
+            return []
+        threads: list[Thread] = entries(ThreadQuery())
+        return sorted(
+            {unicodedata.normalize("NFC", tag) for t in threads for tag in t.tags}
+        )
+
     def _schedules(self) -> tuple[set[str], list[Thread]]:
         """Schedule Threads already in Fabric: every valid link target, and the
         ones still standing (shown to the model). A sink that cannot be read
@@ -329,6 +354,11 @@ class SummaryReview:
                 else "검토 답과 추가 피드백을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
             )
             + (
+                " tags는 관련 프로젝트·사람·조직·주제의 사전 표준 이름만 쓴다."
+                " dictionary의 aliases는 표준 name으로 바꾼다. 기존 태그도 사전으로 확인한다."
+                " 사전에 없는 이름은 new_entries에 name, kind(person/organization/project/topic),"
+                " 선택적 aliases와 함께 반환한 경우에만 태그로 쓸 수 있다."
+                " TODO나 확인 같은 작업 상태를 태그로 만들지 않는다."
                 " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
                 " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
                 " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
@@ -354,6 +384,11 @@ class SummaryReview:
             ),
             json.dumps(
                 {
+                    "dictionary": [
+                        {"name": e.name, "kind": e.kind, "aliases": e.aliases}
+                        for e in self.context.list_entries(limit=500)
+                    ],
+                    "existing_tags": self._existing_tags(),
                     "timezone": self.timezone,
                     "existing_schedules": [
                         {
@@ -395,9 +430,47 @@ class SummaryReview:
             "thr_" + hashlib.sha256(f"{digest}:{index}".encode()).hexdigest()
             for index in range(len(response.threads))
         ]
+        # Validate proposals without mutating the real dictionary until PREPARED
+        # is durable. First declaration owns a spelling; existing names win.
+        new_entries: list[NewEntry] = []
+        proposed_names: dict[str, str] = {}
+        for entry in response.new_entries:
+            canonical = unicodedata.normalize("NFC", entry.name)
+            if self.context.resolve(canonical):
+                continue
+            key = canonical.casefold()
+            if key in proposed_names:
+                continue
+            aliases = [unicodedata.normalize("NFC", a) for a in entry.aliases]
+            if any(
+                self.context.resolve(a) or a.casefold() in proposed_names
+                for a in aliases
+            ):
+                logger.warning("dropped conflicting dictionary proposal")
+                continue
+            new_entries.append(
+                NewEntry(name=canonical, kind=entry.kind, aliases=aliases)
+            )
+            for label in (canonical, *aliases):
+                proposed_names[label.casefold()] = canonical
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
+            tags: list[str] = []
+            for tag in thread.tags:
+                resolved_entry = self.context.resolve(tag)
+                canonical_tag = (
+                    resolved_entry.name
+                    if resolved_entry
+                    else proposed_names.get(
+                        unicodedata.normalize("NFC", tag).casefold()
+                    )
+                )
+                if canonical_tag is None:
+                    logger.warning("dropped unresolved approval tag")
+                elif canonical_tag not in tags:
+                    tags.append(canonical_tag)
+            data["tags"] = tags
             updates = thread.updates
             if updates is not None and (
                 thread.kind != "일정" or thread.value is None or updates not in known
@@ -474,4 +547,9 @@ class SummaryReview:
                 len(proposed) - len(corrections),
                 len(proposed),
             )
-        return Prepared(summary=summary, threads=drafts, corrections=corrections)
+        return Prepared(
+            summary=summary,
+            threads=drafts,
+            corrections=corrections,
+            new_entries=new_entries,
+        )

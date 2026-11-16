@@ -120,3 +120,21 @@ def test_existing_decomposed_wiki_root_and_symlink_guard(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="symlink"):
         store.write("연결/escape.md", {}, "must not write", None)
     assert list(outside.iterdir()) == []
+
+
+def test_nfd_path_and_text_without_real_edit_produces_no_thread(tmp_path: Path) -> None:
+    """11/12 regression: decomposition alone must never publish a human edit."""
+    store = WikiStore(tmp_path / "vault", tmp_path / "state")
+    store.write(NFC, {}, "한글 본문", None)
+    original = store.root / NFC
+    data = original.read_text()
+    decomposed = store.root / NFD
+    if original != decomposed:
+        decomposed.parent.mkdir(parents=True, exist_ok=True)
+        original.rename(decomposed)
+    decomposed.write_text(unicodedata.normalize("NFD", data))
+    os.utime(decomposed, (10000, 10000))
+    assert store.scan(10000) == []
+    assert store.scan(11801) == []
+    with sqlite3.connect(store.db_path) as db:
+        assert db.execute("SELECT count(*) FROM pending").fetchone() == (0,)

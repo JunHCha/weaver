@@ -7,7 +7,7 @@ from pydantic import ValidationError
 # Error messages and locations can themselves contain user data (custom
 # validators, dict keys, extra fields). Only static vocabulary reaches logs.
 _FIELDS = frozenset(
-    "body corrections threads observed canonical kind content occurred_at tags "
+    "new_entries name aliases body corrections threads observed canonical kind content occurred_at tags "
     "field value direction resolves retracts blocked_by_index updates start end timezone "
     "add remove thread_id recorded_at source_id actor correction blocked_by".split()
 )
