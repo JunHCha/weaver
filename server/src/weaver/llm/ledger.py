@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from weaver.readonly import connect_snapshot
+
 from .errors import BudgetExceeded
 
 logger = logging.getLogger(__name__)
@@ -208,7 +210,7 @@ class MemoryLedger(Ledger):
     def __init__(self, path: Path) -> None:
         self._memory = sqlite3.connect(":memory:")
         if path.is_file():
-            source = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+            source = connect_snapshot(path)
             try:
                 source.backup(self._memory)
             finally:

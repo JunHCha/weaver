@@ -12,7 +12,8 @@ from weaver.app import cli
 from weaver.context import ContextDictionary
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.ledger import Ledger, MemoryLedger
-from weaver.loom.reextract import reextract, render
+from weaver.loom.reextract import apply_report, render
+from weaver.loom.reextract import reextract as plan_reextract
 from weaver.loom.summary_review import Prepared
 from weaver.loom.summary_state import SummaryState
 from weaver.runtime import InstanceLock
@@ -142,12 +143,18 @@ def hashes(root):
     }
 
 
+def reextract(root, wiki, llm, *, apply=False, **kwargs):
+    # Integration helper explicitly separates planning from model-free apply.
+    report = plan_reextract(root, wiki, llm, **kwargs)
+    return apply_report(root, report) if apply else report
+
+
 def test_preview_is_readonly_and_shows_full_diff(tmp_path):
     seed(tmp_path)
     ContextDictionary(tmp_path)
     wiki = tmp_path / "wiki"
-    wiki.mkdir()
-    (wiki / "Weaver.md").write_text(
+    (wiki / "pages").mkdir(parents=True)
+    (wiki / "pages" / "Weaver.md").write_text(
         '---\nkind: project\naliases: ["위버"]\n---\n# Weaver\n'
     )
     before = hashes(tmp_path)
@@ -238,7 +245,7 @@ def test_atomic_append_failure_replays_prepared_batch(tmp_path, monkeypatch):
         )
         == 1
     )
-    assert not (tmp_path / "context.sqlite3").exists()
+    assert ContextDictionary(tmp_path).resolve("Weaver")  # additions precede Fabric
     monkeypatch.setattr(FabricStore, "append", original)
     calls = llm.calls.copy()
     retry = reextract(tmp_path, tmp_path / "wiki", llm, apply=True)
@@ -307,6 +314,7 @@ def test_cli_noninteractive_apply_requires_yes_and_daemon_lock(tmp_path, monkeyp
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
         llm=None,
+        wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
@@ -333,6 +341,7 @@ def test_cli_json_preview_uses_fake_client(tmp_path, monkeypatch):
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
         llm=None,
+        wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
@@ -401,8 +410,10 @@ def test_old_edit_revisions_are_retracted_and_new_links_are_remapped(tmp_path):
 def test_dictionary_bootstrap_preserves_wiki_title_and_short_alias(tmp_path):
     seed(tmp_path)
     wiki = tmp_path / "wiki"
-    wiki.mkdir()
-    (wiki / "프로젝트 긴 제목.md").write_text("---\nkind: project\n---\n본문\n")
+    (wiki / "pages").mkdir(parents=True)
+    (wiki / "pages" / "프로젝트 긴 제목.md").write_text(
+        "---\nkind: project\n---\n본문\n"
+    )
 
     class WikiLlm(FakeLlm):
         def generate_json[T: BaseModel](
@@ -423,6 +434,9 @@ def test_dictionary_bootstrap_preserves_wiki_title_and_short_alias(tmp_path):
                 )
             return super().generate_json(task, system, user, schema)
 
+    FabricStore(tmp_path / "fabric.sqlite3").append(
+        [draft("wiki_name_use", actor="human", tags=["프로젝트"])]
+    )
     llm = WikiLlm()
     report = reextract(tmp_path, wiki, llm, apply=True)
     assert llm.calls.count("loom.reextract_bootstrap") == 1
@@ -441,13 +455,14 @@ def test_json_apply_reports_partial_failure_with_nonzero_exit(tmp_path, monkeypa
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
         llm=None,
+        wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
     monkeypatch.setattr(
         llm, "create_client", lambda *args, **kwargs: FakeLlm(fail_body="문서")
     )
-    result = CliRunner().invoke(cli, ["reextract", "--apply", "--yes", "--json"])
+    result = CliRunner().invoke(cli, ["reextract", "--json"])
     assert result.exit_code == 1
     assert json.loads(result.stdout)["sources"][0]["error"] == "RuntimeError"
 

@@ -73,6 +73,16 @@ def _intent(records: list[ActionRecord]) -> _Intent:
     return _Intent(present, payload, last)
 
 
+def baseline_schedule_ids(snapshot: list[Thread], baseline: int) -> set[str]:
+    """An update/re-extraction inherits the activation baseline of its root."""
+    schedules = [t for t in snapshot if t.kind == "일정"]
+    excluded = {t.thread_id for t in schedules if t.seq <= baseline}
+    for thread in sorted(schedules, key=lambda t: t.seq):
+        if thread.updates in excluded:
+            excluded.add(thread.thread_id)
+    return excluded
+
+
 def derive_calendar_actions(
     snapshot: list[Thread],
     history: Callable[[str], list[ActionRecord]],
@@ -87,7 +97,12 @@ def derive_calendar_actions(
     ``executions`` maps a ``실행`` Thread id to the Thread, so an Action that was
     already executed is enqueued as finished instead of running twice.
     """
-    selected = [t for t in snapshot if t.kind == "일정" and t.seq > baseline]
+    baseline_ids = baseline_schedule_ids(snapshot, baseline)
+    selected = [
+        t
+        for t in snapshot
+        if t.kind == "일정" and t.seq > baseline and t.thread_id not in baseline_ids
+    ]
     judged = approved_schedules(selected, snapshot)
     needed: list[NewAction] = []
     for root, members in lineages(judged).items():

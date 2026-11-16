@@ -59,44 +59,78 @@ digest and index, and `FabricStore.append` is idempotent by `thread_id`.
 
 ## Re-extract saved approvals
 
-`uv run --project server python -m weaver.app reextract --config CONFIG` previews
-canonical-tag migration from the stored APPLIED approve/edit packages, Scripts
-and Verdicts. `--llm` overrides the configured backend, `--source SOURCE_ID`
-limits the source, and `--json` emits the complete structured report on stdout
-(operational notices go to stderr). Each source shows old/new kind, content,
-tags and field/value, proposed dictionary entries and human tag corrections.
-Rejected reviews are excluded. When a source has multiple applied revisions,
-the newest revision is extracted and all prior active extraction Threads of
-that source are replaced; independent human facts receive tag corrections only.
+Stop the resident daemon and other SQLite writers before planning. The command
+reads only `(wiki.vault_root or vault_root)/wiki.folder/pages/*.md`, matching
+WikiStore assembly. Unrelated vault notes, summaries, queries, Digest files,
+symlinks and page bodies never enter bootstrap. Malformed page metadata is
+reported and skipped. Bootstrap has one shared 200-entry / 32 KiB UTF-8 JSON
+budget (plus fixed instructions) and makes at most one model call. TODO, 확인,
+확인필요 and TBD are explicitly removed even if old compiler-generated wiki
+pages made them resolve as dictionary entries. Only proposed names/aliases
+actually used by a planned tag are applied; unresolved independent human tags
+are retained rather than silently deleted.
 
-Preview opens Fabric, context and summary databases read-only, and never creates
-a journal, archive, dictionary entry, log file or persistent LLM ledger. The
-normal `loom.approve` prompt/validation runs through `ApprovalExtractor`, using
-an in-memory dictionary seeded from existing Fabric tags and wiki page titles
-(frontmatter aliases retained, source-summary copies excluded). A single
-`loom.reextract_bootstrap` call can propose canonical names and obvious short
-wiki aliases; meaningless tags such as TODO/확인 are omitted.
+```sh
+uv run --project server python -m weaver.app reextract --config CONFIG --plan-out /outside/state/reextract-plan.json
+uv run --project server python -m weaver.app reextract --config CONFIG --apply --plan /outside/state/reextract-plan.json --yes
+```
 
-LLM calls can still be billed. API preview has no local response cache and copies
-existing budget/cap reservations to an in-memory ledger. Subscription clients
-retain their own authentication/cache behavior (`~/.claude` or `~/.codex`, or
-their configured locations); Codex's existing temporary schema/output protocol
-files are cleaned after each call. Preview puts CLI scratch work in the system
-temporary directory, never a new Weaver state directory. CLI daily accounting
-is also in memory, so repeated previews do not persist usage reservations.
+`--config`/`--llm` behave like run, `--source SOURCE_ID` limits planning, and
+`--json` keeps the full report on stdout with notices on stderr. Preview shows
+old/new kind, content, tags, field/value, dictionary name/alias operations,
+human tag corrections and per-schedule calendar effects. It opens immutable
+read-only snapshots, never creating WAL/SHM, ledgers, archives or dictionary
+entries. An active, uncheckpointed SQLite journal is refused with a stop/re-plan
+instruction. `--plan-out` is the sole optional preview write: a private 0600
+file outside state_root containing the exact reviewed facts and operations.
 
-Stop the resident daemon and copy the entire `state_root` before applying.
-`--apply` prints a `cp -a` backup instruction, takes the same `weaver.lock` as the
-daemon for the whole operation, and requires `--yes` without a TTY. It writes
-private `reextract.sqlite3` plans before each source's atomic Fabric append:
-content-free system retractions and replacement facts share that transaction.
-Dictionary additions follow using `add_entry(human_edited=False)` and replay
-idempotently after interruption. Completed sources are skipped without LLM
-calls, failed prepared sources replay their exact IDs/timestamps, and other
-sources can finish if one fails (the command exits nonzero for any failure).
-`RUN_KEY` plus source/package/revision/index derives replacement IDs; deliberately
-bump `RUN_KEY` in a future migration to request a new extraction.
+LLM calls during planning can be billed. API preview has no local response
+cache; existing budget/cap reservations are copied to an in-memory ledger.
+Subscription clients retain their own auth/cache behavior (`~/.claude`,
+`~/.codex` or configured paths); Codex's existing temporary schema/output
+protocol files are created in the system temporary directory and removed after
+the call. No Weaver CLI work directory is created. Repeated previews do not
+persist accounting reservations.
 
-An equivalent replacement schedule links to one old schedule via `updates` when
-start/end instants match. The existing Action engine then preserves the calendar
-event lineage: wording can cause an update, but never a remove/register pair.
+Apply requires `--plan PATH` and has no LLM client or model calls. After printing
+a `cp -a state_root state_root.backup` instruction, it takes the daemon's
+`weaver.lock` and verifies the saved Fabric head plus dictionary, summary and
+Action outbox fingerprints. Changed inputs are refused before any data-store
+write; re-plan and review again. `--yes` is required without a TTY. Never edit
+the exported plan: its integrity digest is checked when loading it.
+
+Each private journal unit persists the exact source batch, then adds dictionary
+entries and automatic aliases before atomically appending system retractions
+and new facts to Fabric. A failure can leave unused dictionary proposals, but
+cannot append facts with missing dictionary entries. Completed sources are
+skipped; normal failures checkpoint the actual state and replay exact IDs and
+timestamps. If a process dies between side effects and checkpoint, the original
+plan fails closed; re-planning recovers the prepared batch from the journal.
+`--discard-plan --yes` clears pending units without deleting Fabric facts or
+undoing dictionary edits (already appended batches become completed markers).
+Take a new plan afterward. Future deliberate migrations must bump `RUN_KEY`.
+
+Rejected reviews are excluded. The newest applied revision per source is
+extracted with the existing `loom.approve` prompt through `ApprovalExtractor`;
+all its active historical extraction Threads are replaced. Independent human
+facts receive tag corrections only. `prepared.corrections` are intentionally
+**not** passed to `context.learn`: this migration changes facts/tags, not the
+reviewer's speech-correction history. Corrupt reviews are isolated to their
+source; missing summary state and page errors are reported without tracebacks.
+Any reported error makes the CLI exit nonzero, even if other sources finish.
+
+A source referenced by an active external/human Thread through resolves,
+blocked_by, updates, executes, retracts or correction.target is skipped in full:
+`외부 참조로 건너뜀` lists the referencing seqs in text and JSON. This includes
+human retractions of historical facts and later schedule updates from another
+source, so they cannot be undone by migration. A source's own old schedules
+are excluded from the approval model's existing_schedules; only server-side
+old/new slot mapping sets updates.
+
+Equal-slot replacements preserve calendar lineage. A chain rooted at or below
+the Action activation baseline stays excluded, including changed slots; changed
+legacy slots are listed as `캘린더 수동 확인 필요` for manual reconciliation.
+Other schedules show 유지, update, remove+register, register or remove according
+to the same Action derivation used by the engine. Review these effects before
+applying. The next daemon start may cause the wiki compiler to recompile pages
+whose tags changed, making additional LLM calls and incurring their normal cost.

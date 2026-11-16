@@ -134,33 +134,59 @@ def reextract(
     config: ConfigOption = None,
     llm: LlmOption = None,
     apply: Annotated[
-        bool,
-        typer.Option("--apply", help="Apply replacements after backing up state_root"),
+        bool, typer.Option("--apply", help="Apply a saved plan without LLM calls")
     ] = False,
     source: Annotated[
-        str | None, typer.Option("--source", help="Only this source ID")
+        str | None, typer.Option("--source", help="Plan only this source ID")
     ] = None,
     json_output: Annotated[
         bool, typer.Option("--json", help="Machine-readable report")
     ] = False,
     yes: Annotated[
-        bool, typer.Option("--yes", help="Confirm apply (required without a TTY)")
+        bool,
+        typer.Option("--yes", help="Confirm apply/discard; required without a TTY"),
+    ] = False,
+    plan_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--plan-out",
+            help="Save exact preview outside state_root (only preview write)",
+        ),
+    ] = None,
+    plan: Annotated[
+        Path | None, typer.Option("--plan", help="Previously reviewed plan to apply")
+    ] = None,
+    discard: Annotated[
+        bool,
+        typer.Option(
+            "--discard-plan", help="Clear pending journal units; keeps committed facts"
+        ),
     ] = False,
 ) -> None:
-    """Re-extract saved approved reviews; defaults to a read-only preview.
+    """Preview saved approvals, or apply a fingerprinted plan with no model.
 
-    LLM calls may incur charges. API previews keep accounting in memory;
-    subscription CLI backends retain their own auth/cache and scratch behavior.
+    API previews use memory accounting; CLI auth/cache and temporary protocol
+    files retain their normal behavior. Apply requires --plan PATH.
     """
+    import json
+    import sqlite3
     from contextlib import nullcontext
 
     from weaver.llm import create_client
+    from weaver.loom.reextract import (
+        apply_report,
+        discard_plan,
+        load_plan,
+        render,
+        save_plan,
+        wiki_root,
+    )
     from weaver.loom.reextract import reextract as execute
-    from weaver.loom.reextract import render
     from weaver.runtime import AlreadyRunning, InstanceLock
 
     settings = _load(config, llm=llm)
-    if apply:
+    mutation = apply or discard
+    if mutation:
         import shlex
 
         root = shlex.quote(str(settings.state_root))
@@ -170,38 +196,72 @@ def reextract(
         )
         if not yes:
             if not sys.stdin.isatty():
-                typer.echo("Error: non-interactive --apply requires --yes", err=True)
+                typer.echo(
+                    "Error: non-interactive apply/discard requires --yes", err=True
+                )
                 raise typer.Exit(2)
-            if not typer.confirm("state_root 백업을 완료했으며 재추출을 적용합니까?"):
+            if not typer.confirm("state_root 백업을 완료했으며 변경을 적용합니까?"):
                 raise typer.Exit(2)
     else:
         typer.echo(
-            "미리보기: Weaver 상태·사전·원장은 쓰지 않습니다. LLM 호출은 과금될 수 있으며 CLI 자체 인증/캐시·임시 작업 파일은 사용할 수 있습니다.",
+            "미리보기: Weaver 상태·사전·원장을 쓰지 않으며 --plan-out만 선택한 파일에 씁니다; LLM 과금 및 CLI 자체 인증/캐시·임시 파일 동작은 유지됩니다.",
             err=True,
         )
     try:
         with (
             InstanceLock(settings.state_root / "weaver.lock")
-            if apply
+            if mutation
             else nullcontext()
         ):
-            report = execute(
-                settings.state_root,
-                settings.vault_root,
-                create_client(
-                    settings.llm, state_root=settings.state_root, dry_run=not apply
-                ),
-                apply=apply,
-                source=source,
-                timezone=settings.time.timezone,
-            )
+            if discard:
+                if apply or plan or plan_out:
+                    raise ValueError(
+                        "--discard-plan은 --apply/--plan/--plan-out과 함께 사용할 수 없습니다"
+                    )
+                count = discard_plan(settings.state_root, source)
+                typer.echo(
+                    json.dumps({"discarded": count})
+                    if json_output
+                    else f"대기 계획 {count}개 정리; 반영된 Thread는 유지됩니다. 다시 계획하십시오."
+                )
+                return
+            if apply:
+                if plan is None or plan_out is not None or source is not None:
+                    raise ValueError(
+                        "--apply --plan PATH 필요 (--source/--plan-out 제외)"
+                    )
+                report = apply_report(settings.state_root, load_plan(plan))
+            else:
+                if plan is not None:
+                    raise ValueError("--plan에는 --apply가 필요합니다")
+                report = execute(
+                    settings.state_root,
+                    wiki_root(settings),
+                    create_client(
+                        settings.llm, state_root=settings.state_root, dry_run=True
+                    ),
+                    source=source,
+                    timezone=settings.time.timezone,
+                )
+                if plan_out:
+                    save_plan(plan_out, settings.state_root, report)
     except AlreadyRunning:
         typer.echo(
-            "Error: resident daemon holds weaver.lock; stop it before --apply", err=True
+            "Error: resident daemon holds weaver.lock; stop it before apply/discard",
+            err=True,
         )
         raise typer.Exit(3) from None
+    except (ValueError, OSError, sqlite3.Error) as error:
+        message = str(error) if isinstance(error, ValueError) else type(error).__name__
+        typer.echo(
+            json.dumps({"error": message}, ensure_ascii=False)
+            if json_output
+            else f"Error: {message}",
+            err=not json_output,
+        )
+        raise typer.Exit(2) from None
     typer.echo(report.model_dump_json() if json_output else render(report))
-    if any(item.error for item in report.sources):
+    if report.errors or any(item.error for item in report.sources):
         raise typer.Exit(1)
 
 

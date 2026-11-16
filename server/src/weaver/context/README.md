@@ -28,7 +28,7 @@ Public API for CLI and web callers:
   creates the entry, so Fabric append can proceed. A now-occupied canonical name
   returns the existing entry instead.
 - `rename(name, new_name)` retains the old name as an alias. `set_kind(name, kind)`,
-  `add_alias(name, alias)`, `remove_alias(name, alias)` and `merge(source, target)`
+  `add_alias(name, alias, human_edited=True)`, `remove_alias(name, alias)` and `merge(source, target)`
   return the updated entry and mark it `human_edited`. Every edit reads and writes
   within one `BEGIN IMMEDIATE` transaction. Merge retains the target kind,
   combined aliases and learned corrections.
@@ -46,3 +46,12 @@ Public API for CLI and web callers:
 `sync_from_pages` replaces the wiki snapshot; `learn` retains latest
 observed-spelling ownership. Renames/merges do not rewrite historical Fabric
 tags, so follow-up tools should resolve those tags through the dictionary.
+
+Automatic alias insertion uses `add_alias(name, alias, human_edited=False)`.
+It preserves the existing human-edit flag, follows subsequent wiki kind/summary
+changes, and cannot restore an alias a human explicitly removed. Collisions
+still raise ValueError. Alias-only automatic payloads use an optional
+`automatic_aliases` field in v2 edited rows; readers must use this updated
+implementation after applying such aliases. Existing v1/v2 payloads without
+that field remain readable. Normal add_entry retry semantics are unchanged;
+callers must explicitly add aliases to an already existing canonical entry.
