@@ -288,6 +288,7 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                 return schema.model_validate(
                     {
                         "body": "요약",
+                        "new_entries": [{"name": "홍길동", "kind": "person"}],
                         "corrections": [],
                         "threads": [
                             {
@@ -459,6 +460,7 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
                 return schema.model_validate(
                     {
                         "body": "요약",
+                        "new_entries": [{"name": "홍길동", "kind": "person"}],
                         "corrections": [],
                         "threads": [
                             base
@@ -624,6 +626,7 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
             return schema.model_validate(
                 {
                     "body": "요약",
+                    "new_entries": [{"name": "홍길동", "kind": "person"}],
                     "corrections": [],
                     "threads": [
                         {

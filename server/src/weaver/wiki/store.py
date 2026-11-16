@@ -607,7 +607,9 @@ class WikiStore:
                         continue
                     data = target.read_bytes()
                     digest = _hash(data)
-                    if digest == _hash(baseline):
+                    if normalize_path(data.decode("utf-8")) == normalize_path(
+                        baseline.decode("utf-8")
+                    ):
                         db.execute(
                             "UPDATE pages SET candidate=NULL, since=NULL, mtime=? WHERE path=?",
                             (stat.st_mtime, path),
@@ -638,7 +640,9 @@ class WikiStore:
                                     blob,
                                 ]
                             )
-                            if committed == data:
+                            if normalize_path(
+                                committed.decode("utf-8")
+                            ) == normalize_path(data.decode("utf-8")):
                                 db.execute(
                                     "UPDATE pages SET content=?, rev=?, candidate=NULL, since=NULL, mtime=? WHERE path=?",
                                     (data, head, stat.st_mtime, path),

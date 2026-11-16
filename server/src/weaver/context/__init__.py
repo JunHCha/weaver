@@ -1,22 +1,26 @@
-"""Local context dictionary for selecting names relevant to a transcript.
+"""Canonical tag dictionary and transcript name candidates.
 
-Wiki sync replaces the complete wiki snapshot atomically; learned corrections
-survive wiki updates and deletions. No legacy entity data is imported.
+Wiki snapshots and learned corrections retain their v1 tables. Version 2 adds
+durable edits and hidden source names; initialization upgrades v1 in place.
+Explicit edits take precedence over later wiki snapshots.
 """
 
+import json
+import logging
+import os
 import re
 import sqlite3
 import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 Kind = Literal["person", "organization", "project", "topic"]
 Source = Literal["learn", "wiki", "contact"]
 _KINDS = {"person", "organization", "project", "topic"}
-_VERSION = 1
+_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -31,7 +35,7 @@ class Page:
 
 @dataclass(frozen=True)
 class ContextEntry:
-    """A prompt candidate, with its active Wiki and learned contributions."""
+    """Canonical entry with aliases, speech hints and explicit-edit provenance."""
 
     name: str
     kind: Kind
@@ -39,10 +43,19 @@ class ContextEntry:
     misrecognitions: tuple[str, ...] = ()
     summary: str = ""
     source: Source = "wiki"
+    human_edited: bool = False
 
 
 class SchemaVersionError(RuntimeError):
     """The stored dictionary is not a supported schema version."""
+
+
+def _nfc(value: str) -> str:
+    return unicodedata.normalize("NFC", value)
+
+
+def _key(value: str) -> str:
+    return _nfc(value).casefold()
 
 
 def _validate(name: str, kind: Kind) -> None:
@@ -78,117 +91,23 @@ def _score(label: str, tokens: list[str]) -> int | None:
     return best
 
 
-class ContextDictionary:
-    """SQLite dictionary stored under state_root; each operation is atomic."""
+class DictionarySnapshot:
+    """One immutable dictionary read; resolve arbitrarily many labels without I/O."""
 
-    def __init__(self, state_root: Path) -> None:
-        self._readonly = False
-        state_root.mkdir(parents=True, exist_ok=True)
-        self._path = state_root / "context.sqlite3"
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                if db.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table'"
-                ).fetchone():
-                    raise SchemaVersionError("unversioned context database")
-                db.execute(
-                    "CREATE TABLE wiki (name TEXT PRIMARY KEY, kind TEXT NOT NULL, summary TEXT NOT NULL)"
-                )
-                db.execute(
-                    "CREATE TABLE wiki_alias (name TEXT NOT NULL, alias TEXT NOT NULL, PRIMARY KEY(name, alias))"
-                )
-                db.execute(
-                    "CREATE TABLE learned (name TEXT PRIMARY KEY, kind TEXT NOT NULL)"
-                )
-                db.execute(
-                    "CREATE TABLE corrections (observed TEXT PRIMARY KEY, name TEXT NOT NULL)"
-                )
-                db.execute(f"PRAGMA user_version = {_VERSION}")
-            elif version != _VERSION:
-                raise SchemaVersionError("unsupported context database version")
+    def __init__(self, entries: list[ContextEntry]) -> None:
+        self.entries = tuple(entries)
+        self._names = {_key(e.name): e for e in entries}
+        self._aliases: dict[str, ContextEntry] = {}
+        for entry in entries:
+            for alias in entry.aliases:
+                self._aliases.setdefault(_key(alias), entry)
 
-    @classmethod
-    def open_readonly(cls, path: Path) -> "ContextDictionary":
-        """Reuse dictionary queries without initialization or write transactions."""
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        dictionary = cls.__new__(cls)
-        dictionary._path = path.resolve()
-        dictionary._readonly = True
-        return dictionary
+    def list_entries(self) -> list[ContextEntry]:
+        return list(self.entries)
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = (
-            sqlite3.connect(f"{self._path.as_uri()}?mode=ro", uri=True, timeout=0.1)
-            if self._readonly
-            else sqlite3.connect(self._path, timeout=30)
-        )
-        try:
-            if (
-                self._readonly
-                and db.execute("PRAGMA user_version").fetchone()[0] != _VERSION
-            ):
-                raise SchemaVersionError("unsupported context database version")
-            with db:
-                yield db
-        finally:
-            db.close()
-
-    def learn(self, observed: str, canonical: str, kind: Kind) -> None:
-        """Record a correction; the latest correction owns a conflicting spelling."""
-        _validate(canonical, kind)
-        if not observed.strip():
-            raise ValueError("observed must be nonempty")
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                "INSERT INTO learned VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET kind=excluded.kind",
-                (canonical, kind),
-            )
-            if observed != canonical:
-                db.execute(
-                    "INSERT INTO corrections VALUES (?, ?) ON CONFLICT(observed) DO UPDATE SET name=excluded.name",
-                    (observed, canonical),
-                )
-
-    def sync_from_pages(self, pages: list[Page]) -> None:
-        """Replace the complete Wiki snapshot; missing pages are removed."""
-        names: set[str] = set()
-        for page in pages:
-            _validate(page.name, page.kind)
-            if page.name in names or any(not alias.strip() for alias in page.aliases):
-                raise ValueError("duplicate page or empty alias")
-            names.add(page.name)
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("DELETE FROM wiki_alias")
-            db.execute("DELETE FROM wiki")
-            for page in pages:
-                db.execute(
-                    "INSERT INTO wiki VALUES (?, ?, ?)",
-                    (page.name, page.kind, page.summary),
-                )
-                db.executemany(
-                    "INSERT INTO wiki_alias VALUES (?, ?)",
-                    [(page.name, alias) for alias in set(page.aliases)],
-                )
-
-    def kind_of(self, name: str) -> Kind | None:
-        """Return the exact canonical name's kind, preferring its wiki entry."""
-        with self._connect() as db:
-            row = db.execute(
-                "SELECT kind FROM (SELECT kind, 0 AS priority FROM wiki WHERE name=? "
-                "UNION ALL SELECT kind, 1 AS priority FROM learned WHERE name=?) "
-                "ORDER BY priority LIMIT 1",
-                (name, name),
-            ).fetchone()
-        if row is None:
-            return None
-        kind: Kind = row[0]
-        return kind
+    def resolve(self, name: str) -> ContextEntry | None:
+        key = _key(name)
+        return self._names.get(key) or self._aliases.get(key)
 
     def candidates(
         self, text: str, contact_name: str | None = None, limit: int = 10
@@ -198,38 +117,11 @@ class ContextDictionary:
             raise ValueError("limit must be nonnegative")
         if not limit:
             return []
-        tokens = re.findall(r"[^\W_]+", text, re.UNICODE)
-        with self._connect() as db:
-            db.execute("BEGIN")
-            wiki = {
-                name: (kind, summary)
-                for name, kind, summary in db.execute(
-                    "SELECT name, kind, summary FROM wiki"
-                )
-            }
-            learned = dict(db.execute("SELECT name, kind FROM learned"))
-            aliases: dict[str, list[str]] = {}
-            corrections: dict[str, list[str]] = {}
-            for name, alias in db.execute(
-                "SELECT name, alias FROM wiki_alias ORDER BY alias"
-            ):
-                aliases.setdefault(name, []).append(alias)
-            for observed, name in db.execute(
-                "SELECT observed, name FROM corrections ORDER BY observed"
-            ):
-                corrections.setdefault(name, []).append(observed)
+        tokens = re.findall(r"[^\W_]+", _nfc(text), re.UNICODE)
+        entries = self.list_entries()
         ranked: list[tuple[int, int, str, ContextEntry]] = []
-        names = wiki.keys() | learned.keys()
-        for name in names:
-            kind, summary = wiki.get(name, (learned.get(name, "person"), ""))
-            entry = ContextEntry(
-                name,
-                kind,
-                tuple(aliases.get(name, ())),
-                tuple(corrections.get(name, ())),
-                summary,
-                "wiki" if name in wiki else "learn",
-            )
+        for entry in entries:
+            name = entry.name
             scores = [
                 _score(label, tokens)
                 for label in (name, *entry.aliases, *entry.misrecognitions)
@@ -255,20 +147,435 @@ class ContextDictionary:
             contact = next(
                 (entry for _, _, name, entry in ranked if name == contact_name), None
             )
-            if contact is None and contact_name in names:
-                kind, summary = wiki.get(
-                    contact_name, (learned.get(contact_name, "person"), "")
-                )
-                contact = ContextEntry(
-                    contact_name,
-                    kind,
-                    tuple(aliases.get(contact_name, ())),
-                    tuple(corrections.get(contact_name, ())),
-                    summary,
-                    "wiki" if contact_name in wiki else "learn",
-                )
+            if contact is None:
+                contact = self.resolve(contact_name)
+            contact = contact or ContextEntry(
+                _nfc(contact_name), "person", source="contact"
+            )
             result = [
-                contact or ContextEntry(contact_name, "person", source="contact"),
-                *(entry for entry in result if entry.name != contact_name),
+                contact,
+                *(entry for entry in result if entry.name != contact.name),
             ]
         return result[:limit]
+
+
+@dataclass(frozen=True)
+class _Edit:
+    name: str
+    bases: tuple[str, ...]
+    fallback_kind: Kind
+    kind: Kind | None = None
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    human_edited: bool = True
+    origin_wiki: bool = False
+
+
+def _decode_edit(payload: str) -> _Edit:
+    data = json.loads(payload)
+    if "bases" not in data:
+        # Read the initial v2 payload without retaining its frozen wiki summary.
+        return _Edit(
+            data["name"],
+            (data["name"], *data["aliases"]),
+            data["kind"],
+            data["kind"] if data["human_edited"] else None,
+            tuple(data["aliases"]),
+            human_edited=data["human_edited"],
+            origin_wiki=data["source"] == "wiki",
+        )
+    for field in ("bases", "added", "removed"):
+        data[field] = tuple(data[field])
+    return _Edit(**data)
+
+
+logger = logging.getLogger(__name__)
+
+
+class ContextDictionary:
+    """SQLite dictionary; read/modify/write operations share a write transaction."""
+
+    def __init__(self, state_root: Path) -> None:
+        self._readonly = False
+        state_root.mkdir(parents=True, exist_ok=True)
+        self._path = state_root / "context.sqlite3"
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version == 0:
+                if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table'"
+                ).fetchone():
+                    raise SchemaVersionError("unversioned context database")
+                db.execute(
+                    "CREATE TABLE wiki (name TEXT PRIMARY KEY, kind TEXT NOT NULL, summary TEXT NOT NULL)"
+                )
+                db.execute(
+                    "CREATE TABLE wiki_alias (name TEXT NOT NULL, alias TEXT NOT NULL, PRIMARY KEY(name, alias))"
+                )
+                db.execute(
+                    "CREATE TABLE learned (name TEXT PRIMARY KEY, kind TEXT NOT NULL)"
+                )
+                db.execute(
+                    "CREATE TABLE corrections (observed TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                )
+            if version in (0, 1):
+                self._upgrade(db)
+            elif version != _VERSION:
+                raise SchemaVersionError("unsupported context database version")
+        with self._path.open("rb") as file:
+            os.fchmod(file.fileno(), 0o600)
+
+    @staticmethod
+    def _upgrade(db: sqlite3.Connection) -> None:
+        # DDL and version change remain in the caller's single transaction.
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS edited (name TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        db.execute("CREATE TABLE IF NOT EXISTS hidden (name TEXT PRIMARY KEY)")
+        db.execute(f"PRAGMA user_version = {_VERSION}")
+
+    @classmethod
+    def open_readonly(cls, path: Path) -> "ContextDictionary":
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        dictionary = cls.__new__(cls)
+        dictionary._path = path.resolve()
+        dictionary._readonly = True
+        return dictionary
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        db = (
+            sqlite3.connect(f"{self._path.as_uri()}?mode=ro", uri=True, timeout=0.1)
+            if self._readonly
+            else sqlite3.connect(self._path, timeout=30)
+        )
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def _load(
+        self, db: sqlite3.Connection
+    ) -> tuple[DictionarySnapshot, dict[str, _Edit]]:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (1, _VERSION):
+            raise SchemaVersionError("unsupported context database version")
+        entries = {
+            _key(n): ContextEntry(_nfc(n), k, source="learn")
+            for n, k in db.execute("SELECT name, kind FROM learned ORDER BY name")
+        }
+        wiki = {
+            _key(n): ContextEntry(_nfc(n), k, summary=summary)
+            for n, k, summary in db.execute(
+                "SELECT name, kind, summary FROM wiki ORDER BY name"
+            )
+        }
+        aliases: dict[str, list[str]] = {}
+        corrections: dict[str, list[str]] = {}
+        for name, alias in db.execute(
+            "SELECT name, alias FROM wiki_alias ORDER BY alias"
+        ):
+            aliases.setdefault(_key(name), []).append(_nfc(alias))
+        for observed, name in db.execute(
+            "SELECT observed, name FROM corrections ORDER BY observed"
+        ):
+            corrections.setdefault(_key(name), []).append(_nfc(observed))
+        wiki = {
+            k: replace(e, aliases=tuple(aliases.get(k, ()))) for k, e in wiki.items()
+        }
+        entries.update(wiki)
+        edits = (
+            {
+                k: _decode_edit(p)
+                for k, p in db.execute("SELECT name, payload FROM edited ORDER BY name")
+            }
+            if version == _VERSION
+            else {}
+        )
+        # Only a renamed/merged source is hidden, never an unrelated page whose
+        # canonical name happens to equal an edited alias. Canonical names win.
+        for key, edit in edits.items():
+            if not edit.human_edited and key in wiki:
+                continue
+            bases = [wiki[_key(n)] for n in edit.bases if _key(n) in wiki]
+            base = bases[0] if bases else entries.get(key)
+            current_aliases = {a for e in bases for a in e.aliases}
+            current_aliases = {
+                a
+                for a in current_aliases
+                if _key(a) not in {_key(r) for r in edit.removed}
+            }
+            current_aliases.update(edit.added)
+            current_aliases = {a for a in current_aliases if _key(a) != key}
+            if edit.human_edited:
+                for name in edit.bases:
+                    if _key(name) != key and _key(name) in {
+                        _key(a) for a in current_aliases
+                    }:
+                        entries.pop(_key(name), None)
+            entries[key] = ContextEntry(
+                edit.name,
+                edit.kind or (base.kind if base else edit.fallback_kind),
+                tuple(sorted(current_aliases)),
+                summary=base.summary if base else "",
+                source="wiki" if bases else "learn",
+                human_edited=edit.human_edited,
+            )
+        entries = {
+            k: replace(e, misrecognitions=tuple(corrections.get(k, ())))
+            for k, e in entries.items()
+        }
+        return DictionarySnapshot(sorted(entries.values(), key=lambda e: e.name)), edits
+
+    def snapshot(self) -> DictionarySnapshot:
+        """Read once in a transaction, then resolve names/candidates in memory."""
+        with self._connect() as db:
+            db.execute("BEGIN")
+            return self._load(db)[0]
+
+    def list_entries(self, limit: int | None = None) -> list[ContextEntry]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be nonnegative")
+        entries = self.snapshot().list_entries()
+        return entries if limit is None else entries[:limit]
+
+    def resolve(self, name: str) -> ContextEntry | None:
+        return self.snapshot().resolve(name)
+
+    def kind_of(self, name: str) -> Kind | None:
+        entry = self.resolve(name)
+        return entry.kind if entry else None
+
+    def candidates(
+        self, text: str, contact_name: str | None = None, limit: int = 10
+    ) -> list[ContextEntry]:
+        return self.snapshot().candidates(text, contact_name, limit)
+
+    @contextmanager
+    def _writing(
+        self,
+    ) -> Iterator[tuple[sqlite3.Connection, DictionarySnapshot, dict[str, _Edit]]]:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            snapshot, edits = self._load(db)
+            yield db, snapshot, edits
+
+    @staticmethod
+    def _require(snapshot: DictionarySnapshot, name: str) -> ContextEntry:
+        entry = snapshot.resolve(name)
+        if entry is None:
+            raise ValueError("unknown dictionary entry")
+        return entry
+
+    @staticmethod
+    def _edit_for(entry: ContextEntry, edits: dict[str, _Edit]) -> _Edit:
+        return edits.get(_key(entry.name)) or _Edit(
+            entry.name, (entry.name,), entry.kind, origin_wiki=entry.source == "wiki"
+        )
+
+    def _save(
+        self,
+        db: sqlite3.Connection,
+        snapshot: DictionarySnapshot,
+        edit: _Edit,
+        hidden: tuple[str, ...] = (),
+    ) -> ContextEntry:
+        _validate(edit.name, edit.kind or edit.fallback_kind)
+        if any(not a.strip() for a in edit.added):
+            raise ValueError("alias must be nonempty")
+        own_keys = {_key(edit.name), *map(_key, hidden)}
+        prior_aliases = {
+            _key(alias)
+            for prior in snapshot.entries
+            if _key(prior.name) in own_keys
+            for alias in prior.aliases
+        }
+        new_aliases = set(map(_key, edit.added)) - prior_aliases
+        prior_name = any(_key(e.name) == _key(edit.name) for e in snapshot.entries)
+        for other in snapshot.entries:
+            if _key(other.name) in own_keys:
+                continue
+            other_labels = {_key(other.name), *map(_key, other.aliases)}
+            if (
+                _key(edit.name) in other_labels and not prior_name
+            ) or new_aliases & other_labels:
+                raise ValueError("dictionary name or alias collision")
+        for name in hidden:
+            db.execute("DELETE FROM edited WHERE name=?", (_key(name),))
+        learned = [
+            (name, kind)
+            for name, kind in db.execute("SELECT name, kind FROM learned")
+            if _key(name) in own_keys
+        ]
+        if learned:
+            fallback = next(
+                (kind for name, kind in learned if _key(name) == _key(edit.name)),
+                learned[0][1],
+            )
+            db.executemany(
+                "DELETE FROM learned WHERE name=?", [(name,) for name, _ in learned]
+            )
+            db.execute("INSERT INTO learned VALUES (?, ?)", (edit.name, fallback))
+        for observed, name in db.execute(
+            "SELECT observed, name FROM corrections"
+        ).fetchall():
+            if _key(name) in own_keys:
+                db.execute(
+                    "UPDATE corrections SET name=? WHERE observed=?",
+                    (edit.name, observed),
+                )
+        db.execute(
+            "INSERT INTO edited VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET payload=excluded.payload",
+            (_key(edit.name), json.dumps(asdict(edit), ensure_ascii=False)),
+        )
+        return self._require(self._load(db)[0], edit.name)
+
+    def add_entry(
+        self,
+        name: str,
+        kind: Kind,
+        aliases: tuple[str, ...] = (),
+        *,
+        human_edited: bool = True,
+        drop_conflicting_aliases: bool = False,
+    ) -> ContextEntry:
+        """Idempotent creation; automatic approval can discard racing alias conflicts."""
+        _validate(name, kind)
+        with self._writing() as (db, snapshot, _):
+            existing = snapshot.resolve(name)
+            if existing:
+                if drop_conflicting_aliases and _key(existing.name) != _key(name):
+                    logger.warning("skipped conflicting dictionary proposal")
+                return existing
+            normalized = tuple(sorted({_nfc(a) for a in aliases}))
+            if drop_conflicting_aliases:
+                normalized = tuple(a for a in normalized if snapshot.resolve(a) is None)
+                if len(normalized) < len(set(aliases)):
+                    logger.warning("dropped conflicting dictionary aliases")
+            edit = _Edit(
+                _nfc(name),
+                (_nfc(name),),
+                kind,
+                kind if human_edited else None,
+                normalized,
+                human_edited=human_edited,
+            )
+            return self._save(db, snapshot, edit)
+
+    def rename(self, name: str, new_name: str) -> ContextEntry:
+        with self._writing() as (db, snapshot, edits):
+            entry = self._require(snapshot, name)
+            target = snapshot.resolve(new_name)
+            if target and target.name != entry.name:
+                raise ValueError("dictionary name or alias collision")
+            edit = self._edit_for(entry, edits)
+            edit = replace(
+                edit,
+                name=_nfc(new_name),
+                human_edited=True,
+                added=tuple(
+                    sorted((set(edit.added) | {entry.name}) - {_nfc(new_name)})
+                ),
+            )
+            return self._save(db, snapshot, edit, (entry.name,))
+
+    def set_kind(self, name: str, kind: Kind) -> ContextEntry:
+        with self._writing() as (db, snapshot, edits):
+            entry = self._require(snapshot, name)
+            return self._save(
+                db,
+                snapshot,
+                replace(self._edit_for(entry, edits), kind=kind, human_edited=True),
+            )
+
+    def add_alias(self, name: str, alias: str) -> ContextEntry:
+        with self._writing() as (db, snapshot, edits):
+            entry = self._require(snapshot, name)
+            edit = self._edit_for(entry, edits)
+            edit = replace(
+                edit,
+                added=tuple(sorted(set(edit.added) | {_nfc(alias)})),
+                removed=tuple(a for a in edit.removed if _key(a) != _key(alias)),
+                human_edited=True,
+            )
+            return self._save(db, snapshot, edit)
+
+    def remove_alias(self, name: str, alias: str) -> ContextEntry:
+        with self._writing() as (db, snapshot, edits):
+            entry = self._require(snapshot, name)
+            edit = self._edit_for(entry, edits)
+            edit = replace(
+                edit,
+                added=tuple(a for a in edit.added if _key(a) != _key(alias)),
+                removed=tuple(sorted(set(edit.removed) | {_nfc(alias)})),
+                human_edited=True,
+            )
+            return self._save(db, snapshot, edit)
+
+    def merge(self, source: str, target: str) -> ContextEntry:
+        with self._writing() as (db, snapshot, edits):
+            a, b = self._require(snapshot, source), self._require(snapshot, target)
+            if a.name == b.name:
+                return b
+            source_edit, edit = self._edit_for(a, edits), self._edit_for(b, edits)
+            edit = replace(
+                edit,
+                bases=tuple(dict.fromkeys((*edit.bases, *source_edit.bases))),
+                kind=b.kind,
+                added=tuple(
+                    sorted(set((*edit.added, *source_edit.added, a.name)) - {b.name})
+                ),
+                removed=tuple(sorted(set((*edit.removed, *source_edit.removed)))),
+                human_edited=True,
+            )
+            return self._save(db, snapshot, edit, (a.name,))
+
+    def learn(self, observed: str, canonical: str, kind: Kind) -> None:
+        observed, canonical = _nfc(observed), _nfc(canonical)
+        _validate(canonical, kind)
+        if not observed.strip():
+            raise ValueError("observed must be nonempty")
+        with self._writing() as (db, snapshot, _):
+            resolved = snapshot.resolve(canonical)
+            canonical = resolved.name if resolved else canonical
+            db.execute(
+                "INSERT INTO learned VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET kind=excluded.kind",
+                (canonical, kind),
+            )
+            if observed != canonical:
+                db.execute(
+                    "INSERT INTO corrections VALUES (?, ?) ON CONFLICT(observed) DO UPDATE SET name=excluded.name",
+                    (observed, canonical),
+                )
+
+    def sync_from_pages(self, pages: list[Page]) -> None:
+        pages = [
+            replace(p, name=_nfc(p.name), aliases=tuple(_nfc(a) for a in p.aliases))
+            for p in pages
+        ]
+        names: set[str] = set()
+        for page in pages:
+            _validate(page.name, page.kind)
+            if _key(page.name) in names or any(not a.strip() for a in page.aliases):
+                raise ValueError("duplicate page or empty alias")
+            names.add(_key(page.name))
+        with self._writing() as (db, _, edits):
+            db.execute("DELETE FROM wiki_alias")
+            db.execute("DELETE FROM wiki")
+            for page in pages:
+                db.execute(
+                    "INSERT INTO wiki VALUES (?, ?, ?)",
+                    (page.name, page.kind, page.summary),
+                )
+                db.executemany(
+                    "INSERT INTO wiki_alias VALUES (?, ?)",
+                    [(page.name, a) for a in set(page.aliases)],
+                )
+            for key, edit in edits.items():
+                if edit.origin_wiki and not any(_key(n) in names for n in edit.bases):
+                    db.execute("DELETE FROM edited WHERE name=?", (key,))
+            # Old hidden rows are obsolete: hiding now depends on live aliases.
+            db.execute("DELETE FROM hidden")

@@ -462,3 +462,36 @@ def test_web_cli_creates_private_files_and_wal_sidecars(tmp_path, monkeypatch):
         result = CliRunner().invoke(cli, ["web", "--config", str(config.config_file)])
     assert result.exit_code == 0, result.output
     assert (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode) == before
+
+
+def test_tags_kind_resolves_dictionary_aliases(setup):
+    config, client = setup
+    context = ContextDictionary(config.state_root)
+    context.add_entry("정식이름", "organization", ("MixedAlias",))
+    FabricStore.from_config(config).append([draft("alias", tags=["mixedalias"])])
+    tags = {t["name"]: t["kind"] for t in client.get("/api/tags").json()}
+    assert tags["mixedalias"] == "organization"
+
+
+def test_tags_reads_dictionary_with_one_connection(setup, monkeypatch):
+    config, client = setup
+    connect = ContextDictionary._connect
+    connections = []
+
+    def counted_connect(self):
+        connections.append(self._path)
+        return connect(self)
+
+    monkeypatch.setattr(ContextDictionary, "_connect", counted_connect)
+    response = client.get("/api/tags")
+    assert response.status_code == 200
+    assert connections == [config.state_root / "context.sqlite3"]
+
+
+def test_tags_locked_dictionary_returns_503(setup):
+    config, client = setup
+    with sqlite3.connect(config.state_root / "context.sqlite3") as db:
+        db.execute("BEGIN EXCLUSIVE")
+        response = client.get("/api/tags")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "State database is temporarily unavailable."}

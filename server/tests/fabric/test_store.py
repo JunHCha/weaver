@@ -336,3 +336,18 @@ def test_updates_must_point_at_a_schedule_and_only_schedules_may_carry_it(tmp_pa
         draft("x", updates="s1")
     with pytest.raises(ValueError):
         draft("x", kind="일정", updates="s1")
+
+
+def test_nfc_before_append_and_correction_targets(tmp_path):
+    import unicodedata
+
+    from weaver.schema import TagCorrection
+
+    nfd = unicodedata.normalize("NFD", "한글")
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    stored = store.append([draft("nfc", content=nfd, tags=[nfd, "한글"])])[0]
+    assert stored.content == "한글"
+    assert stored.tags == ["한글"]
+    correction = TagCorrection(target="nfc", remove=[nfd], add=[nfd])
+    assert correction.remove == correction.add == ["한글"]
+    assert store.append([draft("nfc", content="한글", tags=["한글"])])[0] == stored

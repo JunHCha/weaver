@@ -272,10 +272,12 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
             if (config.state_root / "context.sqlite3").is_file()
             else None
         )
-        return [
-            {"name": name, "kind": context.kind_of(name) if context else None}
-            for name in names
-        ]
+        dictionary = context.snapshot() if context else None
+        result: list[dict[str, str | None]] = []
+        for name in names:
+            entry = dictionary.resolve(name) if dictionary else None
+            result.append({"name": name, "kind": entry.kind if entry else None})
+        return result
 
     @app.get("/api/states")
     def states(

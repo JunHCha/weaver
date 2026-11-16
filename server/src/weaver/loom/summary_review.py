@@ -4,14 +4,15 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from weaver.context import ContextDictionary, Kind
+from weaver.context import ContextDictionary, DictionarySnapshot, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
@@ -97,10 +98,30 @@ type ExtractedThread = (
 )
 
 
+# UTF-8 bytes conservatively bound tokens without depending on a provider tokenizer.
+TAG_CONTEXT_TOKEN_BUDGET = 8000
+EXISTING_TAG_TOKEN_BUDGET = 2000
+MAX_NEW_ENTRIES = 50
+MAX_LABEL_LENGTH = 120
+type EntryLabel = Annotated[NonEmpty, StringConstraints(max_length=MAX_LABEL_LENGTH)]
+
+
+class NewEntry(BaseModel):
+    """A canonical tag proposed together with its dictionary classification."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: EntryLabel
+    kind: Kind
+    aliases: list[EntryLabel] = Field(default_factory=list, max_length=20)
+
+
 class ApprovedResponse(BaseModel):
     """Final answer-applied text, reviewer corrections, and extracted facts."""
 
     body: str
+    new_entries: list[NewEntry] = Field(
+        default_factory=list, max_length=MAX_NEW_ENTRIES
+    )
     corrections: list[Correction]
     threads: list[ExtractedThread]
 
@@ -114,6 +135,7 @@ class Prepared(BaseModel):
     applied_at: datetime | None = None
     threads: list[ThreadDraft] = []
     corrections: list[Correction] = []
+    new_entries: list[NewEntry] = []
 
 
 class SummaryReview:
@@ -223,6 +245,14 @@ class SummaryReview:
                         raise ValueError("summary archive conflict")
                 else:
                     write_json_atomic(target, prepared.summary)
+            for entry in prepared.new_entries:
+                self.context.add_entry(
+                    entry.name,
+                    entry.kind,
+                    tuple(entry.aliases),
+                    human_edited=False,
+                    drop_conflicting_aliases=True,
+                )
             if prepared.threads:
                 self.sink.append(prepared.threads)
             for correction in prepared.corrections:
@@ -296,6 +326,42 @@ class SummaryReview:
             )
         return self._prepare(package, script, verdict, timestamp, replaces)
 
+    def _tag_context(self, snapshot: DictionarySnapshot, script: str) -> dict[str, Any]:
+        """Bound prompt hints; full snapshot still validates every returned tag."""
+        entries = getattr(self.sink, "entries", None)
+        threads: list[Thread] = entries(ThreadQuery()) if callable(entries) else []
+        recent_tags = list(
+            dict.fromkeys(
+                unicodedata.normalize("NFC", tag)
+                for thread in sorted(threads, key=lambda t: t.seq, reverse=True)
+                for tag in thread.tags
+            )
+        )
+        existing: list[str] = []
+        cost = len(json.dumps({"dictionary": [], "existing_tags": []}).encode("utf-8"))
+        for tag in recent_tags:
+            size = len(json.dumps(tag, ensure_ascii=False).encode("utf-8")) + 2
+            if cost + size <= EXISTING_TAG_TOKEN_BUDGET:
+                existing.append(tag)
+                cost += size
+        candidates = snapshot.candidates(script, limit=30)
+        recent_entries = [
+            entry for tag in recent_tags if (entry := snapshot.resolve(tag))
+        ]
+        ranked = [*candidates, *recent_entries, *snapshot.entries]
+        dictionary: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in ranked:
+            if entry.name in seen:
+                continue
+            seen.add(entry.name)
+            hint = {"name": entry.name, "kind": entry.kind, "aliases": entry.aliases}
+            size = len(json.dumps(hint, ensure_ascii=False).encode("utf-8")) + 2
+            if cost + size <= TAG_CONTEXT_TOKEN_BUDGET:
+                dictionary.append(hint)
+                cost += size
+        return {"dictionary": dictionary, "existing_tags": existing}
+
     def _schedules(self) -> tuple[set[str], list[Thread]]:
         """Schedule Threads already in Fabric: every valid link target, and the
         ones still standing (shown to the model). A sink that cannot be read
@@ -321,6 +387,8 @@ class SummaryReview:
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
         known, existing_active = self._schedules()
+        dictionary = self.context.snapshot()
+        tag_context = self._tag_context(dictionary, script)
         response = self.llm.generate_json(
             "loom.approve",
             (
@@ -329,6 +397,11 @@ class SummaryReview:
                 else "검토 답과 추가 피드백을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
             )
             + (
+                " tags는 관련 프로젝트·사람·조직·주제의 사전 표준 이름만 쓴다."
+                " dictionary의 aliases는 표준 name으로 바꾼다. 기존 태그도 사전으로 확인한다."
+                " 사전에 없는 이름은 new_entries에 name, kind(person/organization/project/topic),"
+                " 선택적 aliases와 함께 반환한 경우에만 태그로 쓸 수 있다."
+                " TODO나 확인 같은 작업 상태를 태그로 만들지 않는다."
                 " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
                 " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
                 " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
@@ -354,6 +427,7 @@ class SummaryReview:
             ),
             json.dumps(
                 {
+                    **tag_context,
                     "timezone": self.timezone,
                     "existing_schedules": [
                         {
@@ -395,9 +469,49 @@ class SummaryReview:
             "thr_" + hashlib.sha256(f"{digest}:{index}".encode()).hexdigest()
             for index in range(len(response.threads))
         ]
+        # Validate proposals without mutating the real dictionary until PREPARED
+        # is durable. First declaration owns a spelling; existing names win.
+        new_entries: list[NewEntry] = []
+        proposed_names: dict[str, str] = {}
+        for entry in response.new_entries:
+            canonical = unicodedata.normalize("NFC", entry.name)
+            if dictionary.resolve(canonical):
+                continue
+            key = canonical.casefold()
+            if key in proposed_names:
+                continue
+            aliases = [unicodedata.normalize("NFC", a) for a in entry.aliases]
+            safe_aliases = [
+                a
+                for a in aliases
+                if not dictionary.resolve(a) and a.casefold() not in proposed_names
+            ]
+            if len(safe_aliases) < len(aliases):
+                logger.warning("dropped conflicting dictionary aliases")
+            aliases = safe_aliases
+            new_entries.append(
+                NewEntry(name=canonical, kind=entry.kind, aliases=aliases)
+            )
+            for label in (canonical, *aliases):
+                proposed_names[label.casefold()] = canonical
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
+            tags: list[str] = []
+            for tag in thread.tags:
+                resolved_entry = dictionary.resolve(tag)
+                canonical_tag = (
+                    resolved_entry.name
+                    if resolved_entry
+                    else proposed_names.get(
+                        unicodedata.normalize("NFC", tag).casefold()
+                    )
+                )
+                if canonical_tag is None:
+                    logger.warning("dropped unresolved approval tag")
+                elif canonical_tag not in tags:
+                    tags.append(canonical_tag)
+            data["tags"] = tags
             updates = thread.updates
             if updates is not None and (
                 thread.kind != "일정" or thread.value is None or updates not in known
@@ -474,4 +588,11 @@ class SummaryReview:
                 len(proposed) - len(corrections),
                 len(proposed),
             )
-        return Prepared(summary=summary, threads=drafts, corrections=corrections)
+        used = {tag for draft in drafts for tag in draft.tags}
+        new_entries = [entry for entry in new_entries if entry.name in used]
+        return Prepared(
+            summary=summary,
+            threads=drafts,
+            corrections=corrections,
+            new_entries=new_entries,
+        )
