@@ -1,9 +1,9 @@
 package io.github.junhcha.weaver.widget
 
+import io.github.junhcha.weaver.ui.WeaverTokens
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,8 +39,8 @@ class ReviewWidget : GlanceAppWidget() {
 
 @Composable
 internal fun WidgetContent(context: Context, model: WidgetModel, large: Boolean) {
-    val normal = TextStyle(color = ColorProvider(Color(0xFF17251E)), fontSize = 14.sp)
-    Column(GlanceModifier.fillMaxSize().background(Color(0xFFF0F5EF)).padding(12.dp)) {
+    val normal = TextStyle(color = ColorProvider(WeaverTokens.ink), fontSize = WeaverTokens.number("typography.size.body").sp)
+    Column(GlanceModifier.fillMaxSize().background(WeaverTokens.bg).padding(12.dp)) {
         Text(if (model.failed) "Weaver · 목록 확인 필요" else "Weaver · 검토 대기 ${model.pendingCount}건", style = normal, maxLines = 1,
             modifier = GlanceModifier.clickable(actionStartActivity(
                 Intent(context, MainActivity::class.java).setAction(InboxRuntime.OPEN_INBOX))))

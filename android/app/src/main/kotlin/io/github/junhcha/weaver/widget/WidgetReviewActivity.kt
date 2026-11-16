@@ -1,5 +1,6 @@
 package io.github.junhcha.weaver.widget
 
+import io.github.junhcha.weaver.ui.WeaverTheme
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -49,8 +50,8 @@ class WidgetReviewActivity : ComponentActivity() {
                     WidgetReviewTarget.resolve(id, rev) { ReviewRuntime.open(applicationContext, it).revision }
                 }
             }
-            MaterialTheme {
-                Surface(Modifier.fillMaxSize()) {
+            WeaverTheme {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.safeDrawingPadding().padding(16.dp).verticalScroll(rememberScrollState())) {
                         when (val result = target) {
                             null -> Text("최신 제안을 확인하고 있습니다")

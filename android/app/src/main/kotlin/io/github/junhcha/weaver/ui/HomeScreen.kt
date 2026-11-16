@@ -50,7 +50,7 @@ fun ToolsScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { refresh() }
 
-    MaterialTheme {
+    WeaverTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier

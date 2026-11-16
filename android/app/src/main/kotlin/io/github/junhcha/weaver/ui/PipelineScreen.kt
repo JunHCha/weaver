@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -83,8 +84,8 @@ fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
         model.refresh()
         onPauseOrDispose {}
     }
-    MaterialTheme {
-        Surface(Modifier.fillMaxSize()) {
+    WeaverTheme {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             if (tools) {
                 BackHandler { tools = false }
                 Column(Modifier.safeDrawingPadding()) {
@@ -241,17 +242,12 @@ private val centers =
         MapNode.WIKI to Offset(750f, 355f),
         MapNode.COURIER to Offset(252f, 120f),
     )
-private val ink = Color(0xff5f5bb6)
-private val line = Color(0xffaab6d6)
-internal val wikiEditColor = Color(0xff0a8278)
+private val ink = WeaverTokens.ink
+private val line = WeaverTokens.line
+internal val wikiEditColor = WeaverTokens.muted
 
 private fun sourceColor(source: String) =
-    when (source) {
-        "Wiki 직접 수정" -> wikiEditColor
-        "통화" -> Color(0xff5b96d6)
-        "음성 메모" -> Color(0xff56ad98)
-        else -> Color(0xffd9af67)
-    }
+    if (source == "Wiki 직접 수정") wikiEditColor else WeaverTokens.muted
 
 private fun destination(item: MapItem, items: List<MapItem>): Offset {
     if (item.node == MapNode.COURIER) {
@@ -314,10 +310,10 @@ private fun PipelineMap(
             ) {
                 val k = size.width / 1000f
                 fun region(path: Path) {
-                    drawPath(path, Color.White)
+                    drawPath(path, WeaverTokens.surface)
                     drawPath(
                         path,
-                        Color(0xffcbd3e0),
+                        WeaverTokens.line,
                         style =
                             Stroke(
                                 1.2f * k,
@@ -379,14 +375,14 @@ private fun PipelineMap(
                 label("Thread 반영", 925f, 242f, 10f, k, true)
                 for ((node, c) in centers) if (node != MapNode.COURIER) {
                     drawRoundRect(
-                        if (selected == node) Color(0xfff4f2ff) else Color.White,
+                        if (selected == node) WeaverTokens.selected.compositeOver(WeaverTokens.surface) else WeaverTokens.surface,
                         Offset((c.x - 38) * k, (c.y - 38) * k),
                         Size(76 * k, 76 * k),
                         CornerRadius(21 * k),
                     )
                     drawRoundRect(
-                        if (node == MapNode.USER) Color(0xffd99430)
-                        else if (selected == node) ink else Color(0xffdbe1ec),
+                        if (node == MapNode.USER) WeaverTokens.request.color
+                        else if (selected == node) ink else WeaverTokens.line,
                         Offset((c.x - 38) * k, (c.y - 38) * k),
                         Size(76 * k, 76 * k),
                         CornerRadius(21 * k),
@@ -410,7 +406,7 @@ private fun PipelineMap(
                     val c = centers.getValue(node)
                     val warn = node == MapNode.USER
                     drawRoundRect(
-                        if (warn) Color(0xfffff0d3) else Color(0xfffce6e8),
+                        if (warn) kindBackground(WeaverTokens.request) else weaverColorScheme.errorContainer,
                         Offset((c.x + 5) * k, (c.y - 50) * k),
                         Size(62 * k, 21 * k),
                         CornerRadius(10 * k),
@@ -455,7 +451,7 @@ private fun PipelineMap(
                         )
                     }
                     .size(mapWidth * 32f / 1000f)
-                    .background(Color(0xfff0effb), RoundedCornerShape(50)),
+                    .background(WeaverTokens.bg, RoundedCornerShape(50)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -512,8 +508,8 @@ private fun PipelineMap(
                                     CornerRadius(3 * pixelScale),
                                 )
                                 drawRoundRect(
-                                    if (item.needsReview) Color(0xffd78a26)
-                                    else if (item.stopped) Color(0xffd34e59) else Color.White,
+                                    if (item.needsReview) WeaverTokens.request.color
+                                    else if (item.stopped) WeaverTokens.thread else WeaverTokens.surface,
                                     top,
                                     Size(s, s),
                                     CornerRadius(3 * pixelScale),
@@ -582,13 +578,7 @@ private fun Legend() {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        for (source in listOf("통화", "음성 메모", "공유한 글", "Wiki 직접 수정")) Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(8.dp).background(sourceColor(source), RoundedCornerShape(2.dp)))
-            Spacer(Modifier.width(3.dp))
-            Text(source, style = MaterialTheme.typography.labelSmall)
-        }
-        Text("주황: 내 차례 · 빨강: 멈춤", style = MaterialTheme.typography.labelSmall)
+        Text("수집 경로: 통화 · 음성 메모 · 공유한 글 · Wiki 직접 수정", style = MaterialTheme.typography.labelSmall)
+        Text("치자색: 내 차례 · 홍색: 멈춤", style = MaterialTheme.typography.labelSmall)
     }
 }

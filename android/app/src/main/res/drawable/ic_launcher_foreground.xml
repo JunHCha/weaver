@@ -1,14 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder mark: three woven strands. -->
+<!-- Paths from design/logo.svg; stroke bounds fit inside the centered 66dp safe circle. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M34,40 C44,52 64,52 74,40 M34,54 C44,66 64,66 74,54 M34,68 C44,80 64,80 74,68"
-        android:strokeWidth="5"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round" />
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.6" android:scaleY="1.6" android:translateX="28.4" android:translateY="28.4">
+        <path
+            android:pathData="M8 4V28M16 4V28M24 4V28"
+            android:strokeColor="@color/weaver_indigo"
+            android:strokeWidth="2.6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M4 8L10 25L16 13L22 25L28 8"
+            android:strokeColor="@color/weaver_bg"
+            android:strokeWidth="5.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M4 8L10 25L16 13L22 25L28 8"
+            android:strokeColor="@color/weaver_thread"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M16 9.5V16.5"
+            android:strokeColor="@color/weaver_bg"
+            android:strokeWidth="5.4"
+            android:strokeLineCap="butt"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M16 8V18"
+            android:strokeColor="@color/weaver_indigo"
+            android:strokeWidth="2.6"
+            android:strokeLineCap="butt"
+            android:strokeLineJoin="round" />
+    </group>
 </vector>

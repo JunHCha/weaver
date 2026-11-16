@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Weaver" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Base.Theme.Weaver" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">@color/weaver_indigo</item>
+        <item name="android:windowBackground">@color/weaver_bg</item>
+        <item name="android:statusBarColor">@color/weaver_bg</item>
+        <!-- API 26 has white navigation icons; use ink until dark icons are supported. -->
+        <item name="android:navigationBarColor">@color/weaver_ink</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+    <style name="Theme.Weaver" parent="Base.Theme.Weaver" />
 </resources>

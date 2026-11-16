@@ -33,7 +33,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
     val outputs = item.pages + listOfNotNull(item.digest)
     val arrived = outputs.isNotEmpty() && vault.isNotBlank() &&
         outputs.all { it.path + ":" + it.sha256 in availability }
-    OutlinedCard(Modifier.fillMaxWidth()) {
+    KindCard(kind = item.threads.cardKind()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
             Text(item.title, style = MaterialTheme.typography.titleMedium)
@@ -72,10 +72,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
                 }
                 1 -> {
                     if (item.threads.isEmpty()) Text("아직 발행된 Thread가 없어요.", style = MaterialTheme.typography.bodySmall)
-                    item.threads.forEach { thread ->
-                        Text("Thread · ${threadKindLabel(thread.kind)}", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
-                        if (thread.content.isNotBlank()) Text(thread.content, style = MaterialTheme.typography.bodySmall)
-                    }
+                    ThreadRows(item.threads)
                 }
                 else -> {
                     if (outputs.isEmpty()) Text("Wiki 결과를 기다리고 있어요.", style = MaterialTheme.typography.bodySmall)

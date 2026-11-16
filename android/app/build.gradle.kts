@@ -90,6 +90,9 @@ android {
         unitTests {
             isIncludeAndroidResources = true
             all { test ->
+                val designDir = rootProject.layout.projectDirectory.dir("../design")
+                test.inputs.dir(designDir).withPropertyName("weaverDesign")
+                test.systemProperty("weaver.designDir", designDir.asFile.absolutePath)
                 val schemaDir = rootProject.layout.projectDirectory.dir("../schema")
                 test.inputs.dir(schemaDir).withPropertyName("weaverSchema")
                 test.systemProperty("weaver.schemaDir", schemaDir.asFile.absolutePath)

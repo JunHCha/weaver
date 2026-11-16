@@ -1,5 +1,6 @@
 package io.github.junhcha.weaver.pipeline
 
+import io.github.junhcha.weaver.ui.WeaverTokens
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -34,7 +35,7 @@ object PipelineIcons {
             ImageVector.Builder(node.name, 24.dp, 24.dp, 24f, 24f)
                 .addPath(
                     PathParser().parsePathString(paths.getValue(node)).toNodes(),
-                    fill = SolidColor(Color.Black),
+                    fill = SolidColor(WeaverTokens.ink),
                 )
                 .build()
         }

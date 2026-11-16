@@ -69,17 +69,10 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             reviews.forEach { item ->
                 val p = packages[item.packageId]
                 val record = records.firstOrNull { it.verdict.packageId == item.packageId && it.verdict.revision == item.revision }
-                OutlinedCard(Modifier.fillMaxWidth()) {
+                KindCard {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Surface(color = when (p?.sourceLabel()) {
-                                "통화" -> MaterialTheme.colorScheme.tertiaryContainer
-                                "카카오톡" -> MaterialTheme.colorScheme.primaryContainer
-                                "음성 메모" -> MaterialTheme.colorScheme.surfaceVariant
-                                else -> MaterialTheme.colorScheme.secondaryContainer
-                            }, shape = MaterialTheme.shapes.small) {
-                                Text(p?.sourceLabel() ?: "문서", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                            }
+                            Text(p?.sourceLabel() ?: "문서", style = MaterialTheme.typography.labelMedium)
                             Surface(color = if ((p == null && item.packageId in packages) || record?.status in setOf(ReviewStatus.ERROR, ReviewStatus.CONFLICT))
                                 MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
                                 shape = MaterialTheme.shapes.small) {
