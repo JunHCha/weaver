@@ -24,6 +24,7 @@ export function AppShell({
             ["fabric", "Fabric", "/"],
             ["spinner", "Spinner", "/spinner"],
             ["loom", "Loom", "/loom"],
+            ["dictionary", "태그 사전", "/dictionary"],
           ].map(([key, label, href]) => (
             <Link
               key={key}

@@ -1,7 +1,9 @@
+import { TagEditor } from "./TagEditor";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
+  mdhm,
   fieldLabel,
   kindClass,
   kindStyle,
@@ -10,19 +12,20 @@ import {
   incomingRefLabels,
   relations,
 } from "../lib/presentation";
-import { Icon, KindWord, Tags } from "./Common";
+import { Icon, KindWord } from "./Common";
 export function DetailPanel({
   thread: t,
   threads,
-  tags,
   sources,
   onClose,
   onPick,
+  onSaved,
 }: {
   thread: Thread | null;
   threads: Thread[];
   tags: Tag[];
   sources: SourceView[];
+  onSaved?: () => void;
   onClose: () => void;
   onPick: (id: string) => void;
 }) {
@@ -96,7 +99,14 @@ export function DetailPanel({
         </span>
       </span>,
     ],
-    ["태그", t.tags.length ? <Tags key="tags" thread={t} tags={tags} /> : "—"],
+    [
+      "태그",
+      t.kind === "실행" ? (
+        "—"
+      ) : (
+        <TagEditor key={t.thread_id} thread={t} onSaved={onSaved} />
+      ),
+    ],
     ["필드", t.field ? fieldLabel[t.field] : "—"],
     ["방향", t.direction || "—"],
     ["행위자", actorLabel[t.actor]],
@@ -151,6 +161,41 @@ export function DetailPanel({
             </Fragment>
           ))}
         </dl>
+        <div className="sec tag-history">
+          <h3>태그 변경 이력</h3>
+          {threads.filter((row) => row.correction?.target === t.thread_id)
+            .length ? (
+            <ul aria-label="태그 변경 이력">
+              {threads
+                .filter((row) => row.correction?.target === t.thread_id)
+                .map((row) => (
+                  <li key={row.thread_id}>
+                    <time dateTime={row.recorded_at}>
+                      {mdhm(row.recorded_at)}
+                    </time>
+                    <span>
+                      {row.correction?.add.map((name) => (
+                        <span className="tag-added" key={name}>
+                          +{name}{" "}
+                        </span>
+                      ))}
+                      {row.correction?.remove.map((name) => (
+                        <span className="mut" key={name}>
+                          −{name}{" "}
+                        </span>
+                      ))}
+                    </span>
+                    <span className="mut">
+                      {actorLabel[row.actor]}
+                      {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <span className="mut">태그 변경 이력이 없습니다</span>
+          )}
+        </div>
         <div className="sec">
           <h3>값</h3>
           <pre className="json">

@@ -1,7 +1,7 @@
-"""Read-only local HTTP views of Fabric and runtime observations.
+"""Local HTTP views and authenticated human tag edits.
 
-Normal SQLite WAL sidecars (-wal/-shm) are an exception to file creation;
-the web command sets umask 077 and never modifies original main database files.
+GETs open existing databases read-only; normal WAL sidecars are permitted.
+The web command sets umask 077, including for files created by explicit writes.
 """
 
 import logging
@@ -28,6 +28,8 @@ from weaver.fabric import FabricStore, ThreadQuery
 from weaver.fabric.state import project
 from weaver.fabric.store import SchemaVersionError as FabricSchemaError
 from weaver.schema import PipelineItem, Thread
+
+from .editing import canonical_threads, editing_router
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +244,9 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
     @app.exception_handler(sqlite3.OperationalError)
     async def state_unavailable(_request: Request, _error: Exception) -> JSONResponse:
         return JSONResponse(
-            {"detail": "State database is temporarily unavailable."}, status_code=503
+            {"detail": "State database is temporarily unavailable."},
+            status_code=503,
+            headers={"Retry-After": "1"},
         )
 
     def snapshot(include_executions: bool = False) -> list[Thread]:
@@ -262,7 +266,7 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/threads")
     def threads(include_executions: bool = False) -> list[Thread]:
-        return snapshot(include_executions)
+        return canonical_threads(config, snapshot(include_executions))
 
     @app.get("/api/tags")
     def tags() -> list[dict[str, str | None]]:
@@ -277,13 +281,15 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
         for name in names:
             entry = dictionary.resolve(name) if dictionary else None
             result.append({"name": name, "kind": entry.kind if entry else None})
-        return result
+            if entry and entry.name != name and entry.name not in names:
+                names.append(entry.name)
+        return sorted(result, key=lambda tag: tag["name"] or "")
 
     @app.get("/api/states")
     def states(
         tag: Annotated[list[str] | None, Query()] = None,
     ) -> dict[str, JsonValue]:
-        full = snapshot(True)
+        full = canonical_threads(config, snapshot(True))
         result: dict[str, JsonValue] = {}
         for name in tag or sorted({tag for t in full for tag in t.tags}):
             state = project(name, full)
@@ -331,6 +337,8 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
                 "waiting_review": sum(item.status == "검토 대기" for item in rows),
             }
         return result
+
+    app.include_router(editing_router(config))
 
     if static_dir is not None:
         app.mount("/", ExportFiles(directory=static_dir, html=True))

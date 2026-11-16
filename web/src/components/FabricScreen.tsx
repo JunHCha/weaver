@@ -14,9 +14,19 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
     week = new Date(now);
   week.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   week.setHours(0, 0, 0, 0);
-  return threads.filter(
+  const metadata = new Set(
+    threads
+      .filter((t) => ["실행", "태그정정"].includes(t.kind))
+      .map((t) => t.thread_id),
+  );
+  const visible = (t: Thread) =>
+    f.executions ||
+    (!metadata.has(t.thread_id) && !metadata.has(t.retracts || ""));
+  const matching = threads.filter(
     (t) =>
-      (f.executions || t.kind !== "실행") &&
+      (f.retractions ||
+        (!t.retracts && !relation.retracted.has(t.thread_id))) &&
+      visible(t) &&
       (!f.kinds.length || f.kinds.includes(t.kind)) &&
       (!f.tags.length || t.tags.some((tag) => f.tags.includes(tag))) &&
       (f.period !== "week" || Date.parse(t.occurred_at) >= week.getTime()) &&
@@ -27,6 +37,18 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
         `${t.content || ""} ${t.tags.join(" ")} ${t.thread_id}`
           .toLowerCase()
           .includes(f.query.toLowerCase())),
+  );
+  if (!f.retractions) return matching;
+  const ids = new Set(matching.map((t) => t.thread_id));
+  const targets = new Set(
+    matching.flatMap((t) => (t.retracts ? [t.retracts] : [])),
+  );
+  return threads.filter(
+    (t) =>
+      visible(t) &&
+      (ids.has(t.thread_id) ||
+        targets.has(t.thread_id) ||
+        (!!t.retracts && ids.has(t.retracts))),
   );
 }
 function RefreshAge({ at }: { at: number | null }) {
@@ -44,8 +66,10 @@ function RefreshAge({ at }: { at: number | null }) {
 export function FabricScreen({
   data,
   refreshedAt = null,
+  onSaved,
 }: {
   data: FabricData;
+  onSaved?: () => void;
   refreshedAt?: number | null;
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters),
@@ -83,9 +107,17 @@ export function FabricScreen({
     },
     [sourcesById, sourceTimes],
   );
+  const threadsById = useMemo(
+    () => new Map(data.threads.map((t) => [t.thread_id, t])),
+    [data.threads],
+  );
   const groups = useCallback(
-    (t: Fact) => groupKeys(t, filters.group, tagKindsByName, sourceLabel),
-    [filters.group, tagKindsByName, sourceLabel],
+    (t: Fact) => {
+      const row = threadsById.get(t.thread_id);
+      const target = row?.retracts ? threadsById.get(row.retracts) : undefined;
+      return groupKeys(target || t, filters.group, tagKindsByName, sourceLabel);
+    },
+    [filters.group, tagKindsByName, sourceLabel, threadsById],
   );
   const lanes = useMemo<Lane[]>(() => {
     const counts = new Map<string, number>();
@@ -120,6 +152,7 @@ export function FabricScreen({
           view: filters.view,
           group: filters.group,
           executions: true,
+          retractions: true,
         });
       setSelected(id);
       setPanel(true);
@@ -223,6 +256,7 @@ export function FabricScreen({
           threads={data.threads}
           tags={data.tags}
           sources={data.sources}
+          onSaved={onSaved}
           onClose={() => setPanel(false)}
           onPick={(id) => pick(id, !!focus)}
         />

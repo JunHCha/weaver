@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
 import type { Tag, Thread } from "../lib/api";
 import {
   stateSummary,
@@ -37,6 +37,18 @@ export function LogTable({
   selected: string | null;
   onPick: (id: string) => void;
 }) {
+  const rowsById = useMemo(
+    () => new Map(rows.map((t) => [t.thread_id, t])),
+    [rows],
+  );
+  const retractions = useMemo(() => {
+    const result = new Map<string, Thread[]>();
+    rows.forEach((t) => {
+      if (t.retracts)
+        result.set(t.retracts, [...(result.get(t.retracts) || []), t]);
+    });
+    return result;
+  }, [rows]);
   const state = relations(threads),
     grouped = group !== "none";
   return (
@@ -65,7 +77,10 @@ export function LogTable({
           ))}
         </div>
         {lanes.map((lane) => {
-          const section = rows.filter((t) => groups(t).includes(lane.key)),
+          const candidates = rows.filter((t) => groups(t).includes(lane.key));
+          const section = candidates
+              .filter((t) => !t.retracts || !rowsById.has(t.retracts))
+              .flatMap((t) => [t, ...(retractions.get(t.thread_id) || [])]),
             header = grouped ? 34 : 0;
           const summary =
             states[lane.key] ||
