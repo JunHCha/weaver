@@ -1348,3 +1348,22 @@ pre.json {
   margin-left: 10px;
   font-size: 12px;
 }
+
+/* Human tag edits share the light Fabric controls and spacing. */
+.tag-editor { display: grid; gap: 8px; min-width: 0; width: 100%; }
+.tag-editor form, .editable-tags, .dictionary-main, .dictionary-aliases, .dictionary-merge, .dictionary-entry form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.tag-editor input, .tag-editor select, .dictionary-entry input, .dictionary-entry select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font: inherit; max-width: 100%; min-width: 0; }
+.tag-editor input { width: 180px; }
+.tag-editor .tg, .dictionary-aliases .tg { display: inline-flex; align-items: center; gap: 5px; }
+.tg button { border: 0; background: transparent; color: var(--muted); padding: 1px 4px; cursor: pointer; }
+.new-tag-kind { font-size: 12px; color: var(--muted); }
+.tag-editor [role=alert], .dictionary-error { color: var(--c-req); font-size: 12px; }
+.dictionary-error { padding: 12px 24px; }
+.dictionary-list { padding: 8px 24px 32px; }
+.dictionary-group { margin-bottom: 24px; }
+.dictionary-group h2 { font-size: 14px; font-weight: 500; margin: 16px 0 10px; }
+.dictionary-group h2 .mut { margin-left: 8px; font-weight: 400; }
+.dictionary-entry { border-top: 1px solid var(--line); padding: 16px 0; display: grid; gap: 10px; }
+.dictionary-entry input { width: 180px; }
+.dictionary-entry .mut, .dictionary-merge { font-size: 12px; }
+button:disabled { cursor: default; opacity: .5; }

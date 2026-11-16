@@ -14,8 +14,10 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
     week = new Date(now);
   week.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   week.setHours(0, 0, 0, 0);
-  return threads.filter(
+  const matching = threads.filter(
     (t) =>
+      (f.retractions ||
+        (!t.retracts && !relation.retracted.has(t.thread_id))) &&
       (f.executions || t.kind !== "실행") &&
       (!f.kinds.length || f.kinds.includes(t.kind)) &&
       (!f.tags.length || t.tags.some((tag) => f.tags.includes(tag))) &&
@@ -27,6 +29,17 @@ export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
         `${t.content || ""} ${t.tags.join(" ")} ${t.thread_id}`
           .toLowerCase()
           .includes(f.query.toLowerCase())),
+  );
+  if (!f.retractions) return matching;
+  const ids = new Set(matching.map((t) => t.thread_id));
+  const targets = new Set(
+    matching.flatMap((t) => (t.retracts ? [t.retracts] : [])),
+  );
+  return threads.filter(
+    (t) =>
+      ids.has(t.thread_id) ||
+      targets.has(t.thread_id) ||
+      (!!t.retracts && ids.has(t.retracts)),
   );
 }
 function RefreshAge({ at }: { at: number | null }) {
@@ -44,8 +57,10 @@ function RefreshAge({ at }: { at: number | null }) {
 export function FabricScreen({
   data,
   refreshedAt = null,
+  onSaved,
 }: {
   data: FabricData;
+  onSaved?: () => void;
   refreshedAt?: number | null;
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters),
@@ -84,8 +99,14 @@ export function FabricScreen({
     [sourcesById, sourceTimes],
   );
   const groups = useCallback(
-    (t: Fact) => groupKeys(t, filters.group, tagKindsByName, sourceLabel),
-    [filters.group, tagKindsByName, sourceLabel],
+    (t: Fact) => {
+      const row = data.threads.find((row) => row.thread_id === t.thread_id);
+      const target = row?.retracts
+        ? data.threads.find((t) => t.thread_id === row.retracts)
+        : undefined;
+      return groupKeys(target || t, filters.group, tagKindsByName, sourceLabel);
+    },
+    [filters.group, tagKindsByName, sourceLabel, data.threads],
   );
   const lanes = useMemo<Lane[]>(() => {
     const counts = new Map<string, number>();
@@ -120,6 +141,7 @@ export function FabricScreen({
           view: filters.view,
           group: filters.group,
           executions: true,
+          retractions: true,
         });
       setSelected(id);
       setPanel(true);
@@ -223,6 +245,7 @@ export function FabricScreen({
           threads={data.threads}
           tags={data.tags}
           sources={data.sources}
+          onSaved={onSaved}
           onClose={() => setPanel(false)}
           onPick={(id) => pick(id, !!focus)}
         />

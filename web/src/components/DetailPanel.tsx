@@ -1,3 +1,4 @@
+import { TagEditor } from "./TagEditor";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
@@ -10,19 +11,20 @@ import {
   incomingRefLabels,
   relations,
 } from "../lib/presentation";
-import { Icon, KindWord, Tags } from "./Common";
+import { Icon, KindWord } from "./Common";
 export function DetailPanel({
   thread: t,
   threads,
-  tags,
   sources,
   onClose,
   onPick,
+  onSaved,
 }: {
   thread: Thread | null;
   threads: Thread[];
   tags: Tag[];
   sources: SourceView[];
+  onSaved?: () => void;
   onClose: () => void;
   onPick: (id: string) => void;
 }) {
@@ -96,7 +98,14 @@ export function DetailPanel({
         </span>
       </span>,
     ],
-    ["태그", t.tags.length ? <Tags key="tags" thread={t} tags={tags} /> : "—"],
+    [
+      "태그",
+      t.kind === "실행" ? (
+        "—"
+      ) : (
+        <TagEditor key={t.thread_id} thread={t} onSaved={onSaved} />
+      ),
+    ],
     ["필드", t.field ? fieldLabel[t.field] : "—"],
     ["방향", t.direction || "—"],
     ["행위자", actorLabel[t.actor]],

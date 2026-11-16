@@ -67,6 +67,22 @@ export function WeftLayer({
         height={layout.height}
         aria-hidden="true"
       >
+        {anchors
+          .filter((a) => a.t.retracts)
+          .map((a) => {
+            const target = anchors.find((b) => b.id === a.t.retracts);
+            return target ? (
+              <path
+                key={a.id}
+                data-retraction={a.id}
+                d={`M${target.point.x - 6} ${target.point.y}C${target.point.x - 26} ${target.point.y} ${a.point.x - 26} ${a.point.y} ${a.point.x - 6} ${a.point.y}`}
+                fill="none"
+                stroke="var(--muted)"
+                strokeWidth="1.5"
+                strokeDasharray="5 4"
+              />
+            ) : null;
+          })}
         {segments.map((s, i) => (
           <path
             key={i}

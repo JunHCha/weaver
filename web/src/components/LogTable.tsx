@@ -65,7 +65,17 @@ export function LogTable({
           ))}
         </div>
         {lanes.map((lane) => {
-          const section = rows.filter((t) => groups(t).includes(lane.key)),
+          const candidates = rows.filter((t) => groups(t).includes(lane.key));
+          const section = candidates
+              .filter(
+                (t) =>
+                  !t.retracts ||
+                  !rows.some((target) => target.thread_id === t.retracts),
+              )
+              .flatMap((t) => [
+                t,
+                ...rows.filter((r) => r.retracts === t.thread_id),
+              ]),
             header = grouped ? 34 : 0;
           const summary =
             states[lane.key] ||

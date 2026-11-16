@@ -11,6 +11,7 @@ export interface Filters {
   period: "all" | "week" | "7d";
   openOnly: boolean;
   executions: boolean;
+  retractions: boolean;
   query: string;
 }
 export const initialFilters: Filters = {
@@ -21,6 +22,7 @@ export const initialFilters: Filters = {
   period: "all",
   openOnly: false,
   executions: false,
+  retractions: false,
   query: "",
 };
 function Menu({
@@ -220,6 +222,12 @@ export function FabricToolbar({
         label="실행 기록 포함"
         on={f.executions}
         onChange={() => onChange({ ...f, executions: !f.executions })}
+      />
+      <Toggle
+        id="t-retractions"
+        label="철회 포함"
+        on={f.retractions}
+        onChange={() => onChange({ ...f, retractions: !f.retractions })}
       />
       <label className="search">
         <span className="sr">내용 검색</span>

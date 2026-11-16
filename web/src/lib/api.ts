@@ -1,8 +1,19 @@
 import type { TagState } from "./fabric";
 export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 export type Kind =
-  "요청" | "결정" | "일정" | "기록" | "태그정정" | "거절" | "실행";
+  | "요청"
+  | "결정"
+  | "일정"
+  | "기록"
+  | "태그정정"
+  | "거절"
+  | "실행";
 export type Stage = "spinner" | "loom";
 export interface Thread {
   thread_id: string;
@@ -92,4 +103,60 @@ export const api = {
       ],
     };
   },
+};
+export type TagKind = NonNullable<Tag["kind"]>;
+export interface DictionaryEntry {
+  name: string;
+  kind: TagKind;
+  aliases: string[];
+  human_edited: boolean;
+  usage_count: number;
+}
+export interface TagEdit {
+  add: string[];
+  remove: string[];
+  kinds?: Record<string, TagKind>;
+}
+async function write(
+  path: string,
+  method: string,
+  body: unknown,
+): Promise<void> {
+  const session = await get<{ token: string }>("/session");
+  const response = await fetch("/api" + path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Weaver-Token": session.token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as {
+      detail?: unknown;
+    } | null;
+    throw new Error(
+      response.status === 503
+        ? "다른 작업이 저장 중입니다. 잠시 후 다시 시도하세요."
+        : typeof detail?.detail === "string"
+          ? detail.detail
+          : "저장하지 못했습니다. 다시 시도하세요.",
+    );
+  }
+}
+export const editing = {
+  dictionary: (signal?: AbortSignal) =>
+    get<DictionaryEntry[]>("/dictionary", signal),
+  tags: (id: string, edit: TagEdit) =>
+    write(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
+  entry: (name: string, edit: { name?: string; kind?: TagKind }) =>
+    write(`/dictionary/${encodeURIComponent(name)}`, "PATCH", edit),
+  alias: (name: string, alias: string, remove = false) =>
+    write(
+      `/dictionary/${encodeURIComponent(name)}/aliases`,
+      remove ? "DELETE" : "POST",
+      { alias },
+    ),
+  merge: (name: string, target: string) =>
+    write(`/dictionary/${encodeURIComponent(name)}/merge`, "POST", { target }),
 };

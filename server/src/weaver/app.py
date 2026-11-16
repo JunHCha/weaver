@@ -229,7 +229,7 @@ def web(
     host: str = "127.0.0.1",
     static_dir: Annotated[Path | None, typer.Option(envvar="WEAVER_WEB_DIR")] = None,
 ) -> None:
-    """Serve the read-only web UI on loopback only."""
+    """Serve the local web UI on loopback only."""
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise typer.BadParameter("host must be loopback (127.0.0.1, ::1, localhost)")
     import os

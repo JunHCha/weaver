@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { api, type FabricData, type Stage, type Status } from "../lib/api";
+import { DictionaryScreen } from "../components/DictionaryScreen";
 import { AppShell } from "../components/AppShell";
 import { FabricScreen } from "../components/FabricScreen";
 import { OpsScreen } from "../components/OpsScreen";
@@ -9,7 +10,7 @@ import styles from "./Workspace.module.css";
 export default function Workspace({
   screen = "fabric",
 }: {
-  screen?: "fabric" | Stage;
+  screen?: "fabric" | "dictionary" | Stage;
 }) {
   const [data, setData] = useState<FabricData | null>(null),
     [error, setError] = useState(false),
@@ -75,7 +76,15 @@ export default function Workspace({
           waiting={data.status.loom.waiting_review}
         >
           {screen === "fabric" ? (
-            <FabricScreen data={data} refreshedAt={refreshedAt} />
+            <FabricScreen
+              data={data}
+              refreshedAt={refreshedAt}
+              onSaved={() => void refresh(new AbortController().signal)}
+            />
+          ) : screen === "dictionary" ? (
+            <DictionaryScreen
+              onSaved={() => void refresh(new AbortController().signal)}
+            />
           ) : (
             <OpsScreen
               key={screen}
