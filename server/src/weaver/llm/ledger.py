@@ -196,3 +196,26 @@ class Ledger:
                 json.loads(row[0])
                 for row in db.execute("SELECT record FROM llm_calls ORDER BY rowid")
             ]
+
+
+class MemoryLedger(Ledger):
+    """Dry-run accounting with existing budget/cap reservations copied read-only.
+
+    New calls still obey the configured caps during this invocation, but never
+    update the persistent ledger. No SQLite temporary files are used.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._memory = sqlite3.connect(":memory:")
+        if path.is_file():
+            source = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                source.backup(self._memory)
+            finally:
+                source.close()
+        super().__init__(path)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        with self._memory:
+            yield self._memory

@@ -302,8 +302,21 @@ class ThreadDraft(Contract):
                         "if": {"properties": {"kind": {"const": "실행"}}},
                         "then": {"properties": {"actor": {"const": "system"}}},
                         "else": {
-                            "properties": {"actor": {"enum": ["ai_approved", "human"]}}
+                            "properties": {
+                                "actor": {"enum": ["ai_approved", "human", "system"]}
+                            }
                         },
+                    }
+                ]
+                + [
+                    {
+                        "if": {
+                            "properties": {
+                                "actor": {"const": "system"},
+                                "kind": {"not": {"const": "실행"}},
+                            }
+                        },
+                        "then": {"properties": {"retracts": {"type": "string"}}},
                     }
                 ]
                 + [
@@ -370,8 +383,10 @@ class ThreadDraft(Contract):
             raise ValueError("only a schedule with a value can update a schedule")
         if (self.executes is not None) != (self.kind == "실행"):
             raise ValueError("executes is required exactly for executions")
-        if (self.actor == "system") != (self.kind == "실행"):
-            raise ValueError("actor system is allowed exactly for executions")
+        if self.kind == "실행" and self.actor != "system":
+            raise ValueError("executions require actor system")
+        if self.actor == "system" and self.kind != "실행" and self.retracts is None:
+            raise ValueError("system facts require a retraction target")
         if self.kind == "실행":
             if (
                 self.field is not None

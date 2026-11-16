@@ -129,6 +129,82 @@ def run(
         raise typer.Exit(code=code)
 
 
+@cli.command()
+def reextract(
+    config: ConfigOption = None,
+    llm: LlmOption = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Apply replacements after backing up state_root"),
+    ] = False,
+    source: Annotated[
+        str | None, typer.Option("--source", help="Only this source ID")
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Machine-readable report")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm apply (required without a TTY)")
+    ] = False,
+) -> None:
+    """Re-extract saved approved reviews; defaults to a read-only preview.
+
+    LLM calls may incur charges. API previews keep accounting in memory;
+    subscription CLI backends retain their own auth/cache and scratch behavior.
+    """
+    from contextlib import nullcontext
+
+    from weaver.llm import create_client
+    from weaver.loom.reextract import reextract as execute
+    from weaver.loom.reextract import render
+    from weaver.runtime import AlreadyRunning, InstanceLock
+
+    settings = _load(config, llm=llm)
+    if apply:
+        import shlex
+
+        root = shlex.quote(str(settings.state_root))
+        typer.echo(
+            f"적용 전 백업: cp -a {root} {shlex.quote(str(settings.state_root) + '.backup')} (데몬을 중지한 뒤 실행)",
+            err=True,
+        )
+        if not yes:
+            if not sys.stdin.isatty():
+                typer.echo("Error: non-interactive --apply requires --yes", err=True)
+                raise typer.Exit(2)
+            if not typer.confirm("state_root 백업을 완료했으며 재추출을 적용합니까?"):
+                raise typer.Exit(2)
+    else:
+        typer.echo(
+            "미리보기: Weaver 상태·사전·원장은 쓰지 않습니다. LLM 호출은 과금될 수 있으며 CLI 자체 인증/캐시·임시 작업 파일은 사용할 수 있습니다.",
+            err=True,
+        )
+    try:
+        with (
+            InstanceLock(settings.state_root / "weaver.lock")
+            if apply
+            else nullcontext()
+        ):
+            report = execute(
+                settings.state_root,
+                settings.vault_root,
+                create_client(
+                    settings.llm, state_root=settings.state_root, dry_run=not apply
+                ),
+                apply=apply,
+                source=source,
+                timezone=settings.time.timezone,
+            )
+    except AlreadyRunning:
+        typer.echo(
+            "Error: resident daemon holds weaver.lock; stop it before --apply", err=True
+        )
+        raise typer.Exit(3) from None
+    typer.echo(report.model_dump_json() if json_output else render(report))
+    if any(item.error for item in report.sources):
+        raise typer.Exit(1)
+
+
 @cli.command("install-agent")
 def install_agent(
     config: ConfigOption = None,

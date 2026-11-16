@@ -152,7 +152,8 @@
           "actor": {
             "enum": [
               "ai_approved",
-              "human"
+              "human",
+              "system"
             ]
           }
         }
@@ -168,6 +169,27 @@
         "properties": {
           "actor": {
             "const": "system"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "const": "system"
+          },
+          "kind": {
+            "not": {
+              "const": "실행"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "retracts": {
+            "type": "string"
           }
         }
       }
