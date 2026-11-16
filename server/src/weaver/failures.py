@@ -13,6 +13,8 @@ _FIELDS = frozenset(
 )
 _MESSAGES = {
     "missing": "Field required",
+    "too_long": "List exceeds maximum length",
+    "string_too_long": "String exceeds maximum length",
     "value_error": "Validation rule failed",
     "literal_error": "Unexpected literal",
     "none_required": "Input should be None",

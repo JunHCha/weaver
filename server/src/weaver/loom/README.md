@@ -31,12 +31,21 @@ into Fabric Threads. It never appends a fact the user did not approve.
    the approved document describes as a change of a standing schedule carries
    `updates` (the model sees `existing_schedules`); an unfounded link is dropped.
 
-Approval receives up to 500 dictionary entries (`name`, `kind`, `aliases`) and
-all distinct existing Fabric tags. Tags resolve to canonical dictionary names;
-unknown tags must be declared in `new_entries` with a supported kind and optional
-aliases. Unresolved tags and conflicting proposals are dropped with content-free
-warnings. New entries are journaled and inserted before Fabric append, so retries
-reuse the same canonical tags without overwriting later human dictionary edits.
+Approval loads one dictionary snapshot and bounds `dictionary` plus
+`existing_tags` to 8,000 estimated tokens, conservatively charging one token per
+UTF-8 JSON byte. Existing tags get at most 2,000 of that budget, most recent
+first. Dictionary hints prioritize transcript candidates, entries resolved from
+recent Fabric tags, then the remaining entries. Full-snapshot validation still
+accepts a known tag omitted from the prompt budget.
+
+Tags resolve to canonical dictionary names. Unknown tags must be declared in
+`new_entries` with a supported kind and optional aliases (at most 50 entries,
+20 aliases per entry and 120 characters per name/alias). Unresolved tags and
+conflicting aliases are dropped with content-free warnings; a valid new entry
+survives a bad alias. Only new entries referenced by this approval's tags are
+journaled and inserted before Fabric append. Apply-time alias collisions are
+filtered inside the dictionary transaction, so retries cannot wedge the append
+or overwrite later human dictionary edits.
 
 ## Durability
 

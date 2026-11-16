@@ -814,3 +814,196 @@ def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> 
     assert context.kind_of("새사람") == "organization"
     assert "dropped unresolved approval tag" in caplog.text
     assert "비공개미확인태그" not in caplog.text
+
+
+def test_apply_racing_alias_collision_never_wedges_append(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    import sqlite3
+
+    context = ContextDictionary(tmp_path / "state")
+    add = context.add_entry
+    calls = []
+
+    def racing_add(name, kind, aliases=(), **kwargs):
+        with sqlite3.connect(tmp_path / "state" / "summary.sqlite3") as db:
+            assert db.execute("SELECT stage FROM reviews").fetchone() == ("PREPARED",)
+        if not calls:
+            add("개인항목", "person", ("경쟁별칭",))
+        calls.append(name)
+        return add(name, kind, aliases, **kwargs)
+
+    class Llm(FakeLlm):
+        calls = 0
+
+        def generate_json(self, task, system, user, schema):
+            self.calls += 1
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["new_entries"] = [
+                {
+                    "name": "새항목",
+                    "kind": "project",
+                    "aliases": ["경쟁별칭", "안전별칭"],
+                }
+            ]
+            data["corrections"] = []
+            data["threads"][0]["tags"] = ["경쟁별칭"]
+            return schema.model_validate(data)
+
+    monkeypatch.setattr(context, "add_entry", racing_add)
+    sink, llm = FakeSink(), Llm()
+    review = SummaryReview(
+        llm, context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    result = review.approve(package(), "원문", verdict, now=NOW)
+    assert review.approve(package(), "원문", verdict, now=NOW) == result
+    assert len(sink.drafts) == 1 and llm.calls == 1
+    assert sink.drafts[0].tags == ["새항목"]
+    assert context.resolve("안전별칭").name == "새항목"
+    assert context.resolve("경쟁별칭").name == "개인항목"
+    assert "dropped conflicting dictionary aliases" in caplog.text
+    assert "경쟁별칭" not in caplog.text
+
+
+def test_prepare_keeps_safe_aliases_and_only_used_proposals(
+    tmp_path: Path, monkeypatch
+) -> None:
+    context = ContextDictionary(tmp_path / "state")
+    context.add_entry("기존", "person", ("충돌",))
+    snapshot = context.snapshot
+    reads = []
+
+    def counted_snapshot():
+        reads.append(1)
+        return snapshot()
+
+    class Llm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["new_entries"] = [
+                {"name": "사용", "kind": "project", "aliases": ["충돌", "안전"]},
+                {"name": "미사용", "kind": "topic", "aliases": []},
+            ]
+            data["threads"][0]["tags"] = ["안전", "충돌", "사용"]
+            data["corrections"] = []
+            return schema.model_validate(data)
+
+    monkeypatch.setattr(context, "snapshot", counted_snapshot)
+    sink = FakeSink()
+    review = SummaryReview(
+        Llm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "원문", verdict, now=NOW)
+    assert len(reads) == 1
+    assert sink.drafts[0].tags == ["사용", "기존"]
+    assert snapshot().resolve("사용").aliases == ("안전",)
+    assert snapshot().resolve("미사용") is None
+
+
+def test_large_dictionary_and_tags_obey_token_budget_and_priority(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from weaver.context import Page
+    from weaver.loom.summary_review import TAG_CONTEXT_TOKEN_BUDGET
+
+    context = ContextDictionary(tmp_path / "state")
+    context.sync_from_pages(
+        [
+            *(
+                Page(f"A{i:04d}DictionaryEntry", "topic", (f"별칭{i}",))
+                for i in range(650)
+            ),
+            Page("ZrecentUnique", "person"),
+            Page("ZtranscriptUnique", "project"),
+        ]
+    )
+    thread = ThreadDraft(
+        thread_id="old",
+        kind="기록",
+        content="기존",
+        occurred_at=NOW,
+        recorded_at=NOW,
+        tags=["A0000DictionaryEntry"],
+        field=None,
+        value=None,
+        source_id=SOURCE,
+        actor="human",
+        direction=None,
+        resolves=None,
+        retracts=None,
+        correction=None,
+    )
+
+    class Sink(FakeSink):
+        def entries(self, query):
+            return [
+                Thread(**thread.model_dump(), seq=1),
+                Thread(
+                    **(
+                        thread.model_dump()
+                        | {
+                            "thread_id": "recent",
+                            "tags": [
+                                "ZrecentUnique",
+                                *(f"huge-tag-{i:04d}" for i in range(2000)),
+                            ],
+                        }
+                    ),
+                    seq=2,
+                ),
+            ]
+
+    class Llm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            prompt = json.loads(user)
+            hints = {key: prompt[key] for key in ("dictionary", "existing_tags")}
+            assert (
+                len(json.dumps(hints, ensure_ascii=False).encode("utf-8"))
+                <= TAG_CONTEXT_TOKEN_BUDGET
+            )
+            names = [e["name"] for e in prompt["dictionary"]]
+            assert names[:2] == ["ZtranscriptUnique", "ZrecentUnique"]
+            assert len(names) < 500
+            assert prompt["existing_tags"][0] == "ZrecentUnique"
+            assert len(prompt["existing_tags"]) < 2000
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["threads"][0]["tags"] = ["A0649DictionaryEntry"]
+            data["corrections"] = []
+            return schema.model_validate(data)
+
+    sink = Sink()
+    review = SummaryReview(
+        Llm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "ZtranscriptUnique", verdict, now=NOW)
+    # Tags outside the prompt budget still validate against the complete snapshot.
+    assert sink.drafts[0].tags == ["A0649DictionaryEntry"]

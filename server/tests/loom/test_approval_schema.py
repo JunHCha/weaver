@@ -98,3 +98,18 @@ def test_new_dictionary_entry_contract(response, transform):
     assert not validator.is_valid(response)
     with pytest.raises(ValidationError):
         ApprovedResponse.model_validate(response)
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [{"name": "name", "kind": "topic"}] * 51,
+        [{"name": "x" * 121, "kind": "topic"}],
+        [{"name": "name", "kind": "topic", "aliases": ["x" * 121]}],
+        [{"name": "name", "kind": "topic", "aliases": ["alias"] * 21}],
+    ],
+)
+def test_new_entry_budget_validation(response, entries):
+    response["new_entries"] = entries
+    with pytest.raises(ValidationError):
+        ApprovedResponse.model_validate(response)

@@ -471,3 +471,27 @@ def test_tags_kind_resolves_dictionary_aliases(setup):
     FabricStore.from_config(config).append([draft("alias", tags=["mixedalias"])])
     tags = {t["name"]: t["kind"] for t in client.get("/api/tags").json()}
     assert tags["mixedalias"] == "organization"
+
+
+def test_tags_reads_dictionary_with_one_connection(setup, monkeypatch):
+    config, client = setup
+    connect = ContextDictionary._connect
+    connections = []
+
+    def counted_connect(self):
+        connections.append(self._path)
+        return connect(self)
+
+    monkeypatch.setattr(ContextDictionary, "_connect", counted_connect)
+    response = client.get("/api/tags")
+    assert response.status_code == 200
+    assert connections == [config.state_root / "context.sqlite3"]
+
+
+def test_tags_locked_dictionary_returns_503(setup):
+    config, client = setup
+    with sqlite3.connect(config.state_root / "context.sqlite3") as db:
+        db.execute("BEGIN EXCLUSIVE")
+        response = client.get("/api/tags")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "State database is temporarily unavailable."}

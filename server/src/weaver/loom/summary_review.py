@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from weaver.context import ContextDictionary, Kind
+from weaver.context import ContextDictionary, DictionarySnapshot, Kind
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
@@ -98,20 +98,30 @@ type ExtractedThread = (
 )
 
 
+# UTF-8 bytes conservatively bound tokens without depending on a provider tokenizer.
+TAG_CONTEXT_TOKEN_BUDGET = 8000
+EXISTING_TAG_TOKEN_BUDGET = 2000
+MAX_NEW_ENTRIES = 50
+MAX_LABEL_LENGTH = 120
+type EntryLabel = Annotated[NonEmpty, StringConstraints(max_length=MAX_LABEL_LENGTH)]
+
+
 class NewEntry(BaseModel):
     """A canonical tag proposed together with its dictionary classification."""
 
     model_config = ConfigDict(extra="forbid")
-    name: NonEmpty
+    name: EntryLabel
     kind: Kind
-    aliases: list[NonEmpty] = Field(default_factory=list)
+    aliases: list[EntryLabel] = Field(default_factory=list, max_length=20)
 
 
 class ApprovedResponse(BaseModel):
     """Final answer-applied text, reviewer corrections, and extracted facts."""
 
     body: str
-    new_entries: list[NewEntry] = Field(default_factory=list)
+    new_entries: list[NewEntry] = Field(
+        default_factory=list, max_length=MAX_NEW_ENTRIES
+    )
     corrections: list[Correction]
     threads: list[ExtractedThread]
 
@@ -237,7 +247,11 @@ class SummaryReview:
                     write_json_atomic(target, prepared.summary)
             for entry in prepared.new_entries:
                 self.context.add_entry(
-                    entry.name, entry.kind, tuple(entry.aliases), human_edited=False
+                    entry.name,
+                    entry.kind,
+                    tuple(entry.aliases),
+                    human_edited=False,
+                    drop_conflicting_aliases=True,
                 )
             if prepared.threads:
                 self.sink.append(prepared.threads)
@@ -312,14 +326,41 @@ class SummaryReview:
             )
         return self._prepare(package, script, verdict, timestamp, replaces)
 
-    def _existing_tags(self) -> list[str]:
+    def _tag_context(self, snapshot: DictionarySnapshot, script: str) -> dict[str, Any]:
+        """Bound prompt hints; full snapshot still validates every returned tag."""
         entries = getattr(self.sink, "entries", None)
-        if not callable(entries):
-            return []
-        threads: list[Thread] = entries(ThreadQuery())
-        return sorted(
-            {unicodedata.normalize("NFC", tag) for t in threads for tag in t.tags}
+        threads: list[Thread] = entries(ThreadQuery()) if callable(entries) else []
+        recent_tags = list(
+            dict.fromkeys(
+                unicodedata.normalize("NFC", tag)
+                for thread in sorted(threads, key=lambda t: t.seq, reverse=True)
+                for tag in thread.tags
+            )
         )
+        existing: list[str] = []
+        cost = len(json.dumps({"dictionary": [], "existing_tags": []}).encode("utf-8"))
+        for tag in recent_tags:
+            size = len(json.dumps(tag, ensure_ascii=False).encode("utf-8")) + 2
+            if cost + size <= EXISTING_TAG_TOKEN_BUDGET:
+                existing.append(tag)
+                cost += size
+        candidates = snapshot.candidates(script, limit=30)
+        recent_entries = [
+            entry for tag in recent_tags if (entry := snapshot.resolve(tag))
+        ]
+        ranked = [*candidates, *recent_entries, *snapshot.entries]
+        dictionary: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in ranked:
+            if entry.name in seen:
+                continue
+            seen.add(entry.name)
+            hint = {"name": entry.name, "kind": entry.kind, "aliases": entry.aliases}
+            size = len(json.dumps(hint, ensure_ascii=False).encode("utf-8")) + 2
+            if cost + size <= TAG_CONTEXT_TOKEN_BUDGET:
+                dictionary.append(hint)
+                cost += size
+        return {"dictionary": dictionary, "existing_tags": existing}
 
     def _schedules(self) -> tuple[set[str], list[Thread]]:
         """Schedule Threads already in Fabric: every valid link target, and the
@@ -346,6 +387,8 @@ class SummaryReview:
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
         known, existing_active = self._schedules()
+        dictionary = self.context.snapshot()
+        tag_context = self._tag_context(dictionary, script)
         response = self.llm.generate_json(
             "loom.approve",
             (
@@ -384,11 +427,7 @@ class SummaryReview:
             ),
             json.dumps(
                 {
-                    "dictionary": [
-                        {"name": e.name, "kind": e.kind, "aliases": e.aliases}
-                        for e in self.context.list_entries(limit=500)
-                    ],
-                    "existing_tags": self._existing_tags(),
+                    **tag_context,
                     "timezone": self.timezone,
                     "existing_schedules": [
                         {
@@ -436,18 +475,20 @@ class SummaryReview:
         proposed_names: dict[str, str] = {}
         for entry in response.new_entries:
             canonical = unicodedata.normalize("NFC", entry.name)
-            if self.context.resolve(canonical):
+            if dictionary.resolve(canonical):
                 continue
             key = canonical.casefold()
             if key in proposed_names:
                 continue
             aliases = [unicodedata.normalize("NFC", a) for a in entry.aliases]
-            if any(
-                self.context.resolve(a) or a.casefold() in proposed_names
+            safe_aliases = [
+                a
                 for a in aliases
-            ):
-                logger.warning("dropped conflicting dictionary proposal")
-                continue
+                if not dictionary.resolve(a) and a.casefold() not in proposed_names
+            ]
+            if len(safe_aliases) < len(aliases):
+                logger.warning("dropped conflicting dictionary aliases")
+            aliases = safe_aliases
             new_entries.append(
                 NewEntry(name=canonical, kind=entry.kind, aliases=aliases)
             )
@@ -458,7 +499,7 @@ class SummaryReview:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
             tags: list[str] = []
             for tag in thread.tags:
-                resolved_entry = self.context.resolve(tag)
+                resolved_entry = dictionary.resolve(tag)
                 canonical_tag = (
                     resolved_entry.name
                     if resolved_entry
@@ -547,6 +588,8 @@ class SummaryReview:
                 len(proposed) - len(corrections),
                 len(proposed),
             )
+        used = {tag for draft in drafts for tag in draft.tags}
+        new_entries = [entry for entry in new_entries if entry.name in used]
         return Prepared(
             summary=summary,
             threads=drafts,
