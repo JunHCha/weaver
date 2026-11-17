@@ -1,25 +1,27 @@
 import { useMemo, type CSSProperties } from "react";
-import type { Tag, Thread } from "../lib/api";
+import type { Thread } from "../lib/api";
 import {
   stateSummary,
   type Fact,
   type Lane,
   type TagState,
 } from "../lib/fabric";
+import { actorLabel, kindClass, kindStyle, mdhm } from "../lib/presentation";
 import {
-  actorLabel,
-  fieldText,
-  kindClass,
-  kindStyle,
-  mdhm,
-  relations,
-} from "../lib/presentation";
-import { projectRows } from "../lib/projection";
+  adjacentHistory,
+  distribute,
+  isHistory,
+  mentionMatch,
+  type ThreadView,
+  type ValueChange,
+} from "../lib/history";
 import { Icon, References, Tags } from "./Common";
+import { HistoryChanges } from "./HistoryChanges";
 export function LogTable({
+  changes,
+  view,
+  selectedTags = [],
   rows,
-  threads,
-  tags,
   lanes,
   groups,
   group,
@@ -27,9 +29,10 @@ export function LogTable({
   selected,
   onPick,
 }: {
+  changes: ValueChange[];
+  view: ThreadView;
+  selectedTags?: string[];
   rows: Thread[];
-  threads: Thread[];
-  tags: Tag[];
   lanes: Lane[];
   groups: (t: Fact) => string[];
   group: string;
@@ -37,22 +40,25 @@ export function LogTable({
   selected: string | null;
   onPick: (id: string) => void;
 }) {
-  const rowsById = useMemo(
-    () => new Map(rows.map((t) => [t.thread_id, t])),
-    [rows],
+  const grouped = group !== "none",
+    targeted = group === "project" || group === "area";
+  const sections = useMemo(() => distribute(rows, groups), [rows, groups]);
+  const changesByLane = useMemo(
+    () =>
+      targeted
+        ? distribute(changes, ({ thread }) => groups(thread))
+        : new Map<string, ValueChange[]>(),
+    [changes, groups, targeted],
   );
-  const retractions = useMemo(() => {
-    const result = new Map<string, Thread[]>();
-    rows.forEach((t) => {
-      if (t.retracts)
-        result.set(t.retracts, [...(result.get(t.retracts) || []), t]);
-    });
-    return result;
-  }, [rows]);
-  const state = relations(threads),
-    grouped = group !== "none";
+  const state = view.relation;
   return (
     <div className="scroller" id="scr">
+      {!targeted && changes.length > 0 && (
+        <section className="unassigned-history" aria-label="값 변경 이력">
+          <b>값 변경 이력</b>
+          <HistoryChanges changes={changes} onPick={onPick} showTarget />
+        </section>
+      )}
       <div
         className="ltable"
         id="lt"
@@ -77,131 +83,146 @@ export function LogTable({
           ))}
         </div>
         {lanes.map((lane) => {
-          const candidates = rows.filter((t) => groups(t).includes(lane.key));
-          const section = candidates
-              .filter((t) => !t.retracts || !rowsById.has(t.retracts))
-              .flatMap((t) => [t, ...(retractions.get(t.thread_id) || [])]),
-            header = grouped ? 34 : 0;
-          const summary =
-            states[lane.key] ||
-            projectRows(
-              threads.filter((t) => groups(t).includes(lane.key)),
-              threads,
-            );
+          const section = adjacentHistory(sections.get(lane.key) || []);
+          const laneChanges =
+            targeted && !lane.none ? changesByLane.get(lane.key) || [] : [];
+          const summary = targeted && !lane.none ? states[lane.key] : undefined;
+          let height = 0;
+          const centers = section.map((t) => {
+            const h =
+              isHistory(t) || state.retracted.has(t.thread_id) ? 30 : 34;
+            const center = height + h / 2;
+            height += h;
+            return center;
+          });
           return (
             <section className="lsec" key={lane.key}>
               {grouped && (
                 <div className="lsech">
                   <b>{lane.key}</b>
                   <span className="mut">{section.length}</span>
-                  <span className="sums">
-                    {stateSummary(summary).map(([k, v]) => (
-                      <span className="sm" key={k}>
-                        <b>{k}</b> {v}
-                      </span>
-                    ))}
-                  </span>
+                  {summary && (
+                    <span className="sums">
+                      {stateSummary(summary).map(([k, v]) => (
+                        <span className="sm" key={k}>
+                          <b>{k}</b> {v}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                  <HistoryChanges changes={laneChanges} onPick={onPick} />
                 </div>
               )}
-              {section.map((t) => {
-                const field = fieldText(t);
-                return (
-                  <div
-                    key={t.thread_id}
-                    className={[
-                      "lrow",
-                      "k-" + kindClass[t.kind],
-                      kindClass[t.kind] === "hol" ? "hol" : "",
-                      selected === t.thread_id ? "sel" : "",
-                      state.retracted.has(t.thread_id) ? "retracted" : "",
-                    ].join(" ")}
-                    data-id={t.thread_id}
-                    tabIndex={0}
-                    style={kindStyle(t.kind)}
-                    onClick={() => onPick(t.thread_id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.stopPropagation();
-                        onPick(t.thread_id);
+              <div className="lsection-rows">
+                {section.map((t) => {
+                  const field = view.fields.get(t.thread_id),
+                    history = isHistory(t) || state.retracted.has(t.thread_id),
+                    mention = mentionMatch(t, selectedTags, view.peopleTags);
+                  return (
+                    <div
+                      key={t.thread_id}
+                      className={[
+                        "lrow",
+                        history ? "history-item" : "",
+                        mention ? "mention-only" : "",
+                        "k-" + kindClass[t.kind],
+                        kindClass[t.kind] === "hol" ? "hol" : "",
+                        selected === t.thread_id ? "sel" : "",
+                        state.retracted.has(t.thread_id) ? "retracted" : "",
+                      ].join(" ")}
+                      data-id={t.thread_id}
+                      tabIndex={0}
+                      style={kindStyle(t.kind)}
+                      onClick={() => onPick(t.thread_id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          onPick(t.thread_id);
+                        }
+                      }}
+                    >
+                      <div />
+                      <div className="mut">{mdhm(t.occurred_at)}</div>
+                      <div>
+                        {history && <span className="history-type">이력</span>}{" "}
+                        <span className="kw">{t.kind}</span>
+                      </div>
+                      <div className="lc" title={t.content || ""}>
+                        {t.content || <span className="mut">내용 없음</span>}
+                        {mention && <span className="mention-mark">언급</span>}
+                        {t.kind === "요청" &&
+                          state.resolved.has(t.thread_id) && (
+                            <span className="mark"> 해결됨</span>
+                          )}
+                      </div>
+                      <div>
+                        {field ? (
+                          <>
+                            <span className="mut">{field[0]}</span> {field[1]}
+                          </>
+                        ) : (
+                          <span className="mut">—</span>
+                        )}
+                      </div>
+                      <div className="mut">
+                        {t.direction && (
+                          <span className="dir">
+                            <Icon
+                              name={t.direction === "받음" ? "in" : "out"}
+                            />
+                            {t.direction}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mut">
+                        <Tags thread={t} knownTags={view.knownTags} />
+                      </div>
+                      <div>{actorLabel[t.actor]}</div>
+                      <div className="mut">
+                        <References
+                          thread={t}
+                          byId={view.byId}
+                          numbers={false}
+                        />
+                      </div>
+                      <div className="r mut">{t.seq}</div>
+                    </div>
+                  );
+                })}
+                <svg
+                  className="lsvg"
+                  width={36}
+                  height={height}
+                  aria-hidden="true"
+                >
+                  {section.length > 1 && (
+                    <line
+                      x1={14}
+                      x2={14}
+                      y1={centers[0]}
+                      y2={centers.at(-1)}
+                      stroke="var(--thread)"
+                      strokeWidth="1.25"
+                      opacity=".55"
+                    />
+                  )}
+                  {section.map((t, i) => (
+                    <circle
+                      key={t.thread_id}
+                      cx={14}
+                      cy={centers[i]}
+                      r="3.6"
+                      fill={
+                        isHistory(t) || kindClass[t.kind] === "hol"
+                          ? "var(--bg)"
+                          : `var(--c-${kindClass[t.kind]})`
                       }
-                    }}
-                  >
-                    <div />
-                    <div className="mut">{mdhm(t.occurred_at)}</div>
-                    <div>
-                      <span className="kw">{t.kind}</span>
-                    </div>
-                    <div className="lc" title={t.content || ""}>
-                      {t.content || <span className="mut">내용 없음</span>}
-                      {t.kind === "요청" && state.resolved.has(t.thread_id) && (
-                        <span className="mark"> 해결됨</span>
-                      )}
-                    </div>
-                    <div>
-                      {field ? (
-                        <>
-                          <span className="mut">{field[0]}</span> {field[1]}
-                        </>
-                      ) : (
-                        <span className="mut">—</span>
-                      )}
-                    </div>
-                    <div className="mut">
-                      {t.direction && (
-                        <span className="dir">
-                          <Icon name={t.direction === "받음" ? "in" : "out"} />
-                          {t.direction}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mut">
-                      <Tags thread={t} tags={tags} />
-                    </div>
-                    <div>{actorLabel[t.actor]}</div>
-                    <div className="mut">
-                      <References
-                        thread={t}
-                        threads={threads}
-                        numbers={false}
-                      />
-                    </div>
-                    <div className="r mut">{t.seq}</div>
-                  </div>
-                );
-              })}
-              <svg
-                className="lsvg"
-                width={36}
-                height={header + section.length * 34}
-                aria-hidden="true"
-              >
-                {section.length > 1 && (
-                  <line
-                    x1={14}
-                    x2={14}
-                    y1={header + 17}
-                    y2={header + (section.length - 1) * 34 + 17}
-                    stroke="var(--thread)"
-                    strokeWidth="1.25"
-                    opacity=".55"
-                  />
-                )}
-                {section.map((t, i) => (
-                  <circle
-                    key={t.thread_id}
-                    cx={14}
-                    cy={header + i * 34 + 17}
-                    r="3.6"
-                    fill={
-                      kindClass[t.kind] === "hol"
-                        ? "var(--bg)"
-                        : `var(--c-${kindClass[t.kind]})`
-                    }
-                    stroke="var(--bg)"
-                    strokeWidth="1.5"
-                  />
-                ))}
-              </svg>
+                      stroke="var(--muted)"
+                      strokeWidth="1"
+                    />
+                  ))}
+                </svg>
+              </div>
             </section>
           );
         })}

@@ -2,53 +2,74 @@ import { useKeyboardNavigation } from "../hooks/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FabricData, Thread } from "../lib/api";
 import { groupKeys, tagKinds, type Fact, type Lane } from "../lib/fabric";
-import { kinds, relations } from "../lib/presentation";
+import {
+  adjacentHistory,
+  createThreadView,
+  type ThreadView,
+  historyTarget,
+  isHistory,
+  isValueHistory,
+} from "../lib/history";
+import { kinds } from "../lib/presentation";
 import { CardBoard } from "./CardBoard";
 import { DetailPanel } from "./DetailPanel";
 import { FabricToolbar, initialFilters, type Filters } from "./FabricToolbar";
 import { FocusBar } from "./FocusBar";
 import { LogTable } from "./LogTable";
-export function filteredThreads(threads: Thread[], f: Filters): Thread[] {
-  const relation = relations(threads),
+export function filteredThreads(
+  threads: Thread[],
+  f: Filters,
+  includeValueHistory = false,
+  view: ThreadView = createThreadView(threads, []),
+): Thread[] {
+  const relation = view.relation,
     now = new Date(),
     week = new Date(now);
   week.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   week.setHours(0, 0, 0, 0);
-  const metadata = new Set(
-    threads
-      .filter((t) => ["실행", "태그정정"].includes(t.kind))
-      .map((t) => t.thread_id),
-  );
-  const visible = (t: Thread) =>
-    f.executions ||
-    (!metadata.has(t.thread_id) && !metadata.has(t.retracts || ""));
   const matching = threads.filter(
     (t) =>
-      (f.retractions ||
-        (!t.retracts && !relation.retracted.has(t.thread_id))) &&
-      visible(t) &&
+      (includeValueHistory || !isValueHistory(t)) &&
+      (f.history || (!isHistory(t) && !relation.retracted.has(t.thread_id))) &&
       (!f.kinds.length || f.kinds.includes(t.kind)) &&
-      (!f.tags.length || t.tags.some((tag) => f.tags.includes(tag))) &&
+      (!f.tags.length ||
+        t.tags.some((tag) => f.tags.includes(tag)) ||
+        f.tags.includes(t.counterpart || "")) &&
       (f.period !== "week" || Date.parse(t.occurred_at) >= week.getTime()) &&
       (f.period !== "7d" ||
         Date.parse(t.occurred_at) >= now.getTime() - 7 * 86400000) &&
       (!f.openOnly || relation.isOpen(t)) &&
       (!f.query ||
-        `${t.content || ""} ${t.tags.join(" ")} ${t.thread_id}`
+        `${t.content || ""} ${t.counterpart || ""} ${t.tags.join(" ")} ${t.thread_id}`
           .toLowerCase()
           .includes(f.query.toLowerCase())),
   );
-  if (!f.retractions) return matching;
+  if (!f.history) return matching;
   const ids = new Set(matching.map((t) => t.thread_id));
-  const targets = new Set(
-    matching.flatMap((t) => (t.retracts ? [t.retracts] : [])),
-  );
-  return threads.filter(
-    (t) =>
-      visible(t) &&
-      (ids.has(t.thread_id) ||
-        targets.has(t.thread_id) ||
-        (!!t.retracts && ids.has(t.retracts))),
+  const queue = [...ids];
+  // Each snapshot ID enters the queue at most once, including cyclic metadata.
+  const enqueue = (id: string) => {
+    if (view.byId.has(id) && !ids.has(id)) {
+      ids.add(id);
+      queue.push(id);
+    }
+  };
+  for (let i = 0; i < queue.length; i++) {
+    const row = view.byId.get(queue[i])!;
+    if (isHistory(row)) {
+      const target = historyTarget(row);
+      if (target) enqueue(target);
+    }
+    for (const child of view.children.get(row.thread_id) || [])
+      enqueue(child.thread_id);
+  }
+  return adjacentHistory(
+    threads.filter(
+      (t) =>
+        (includeValueHistory || !isValueHistory(t)) &&
+        (ids.has(t.thread_id) ||
+          (isHistory(t) && ids.has(historyTarget(t) || ""))),
+    ),
   );
 }
 function RefreshAge({ at }: { at: number | null }) {
@@ -76,10 +97,28 @@ export function FabricScreen({
     [selected, setSelected] = useState<string | null>(null),
     [focusId, setFocus] = useState<string | null>(null),
     [panel, setPanel] = useState(false);
-  const rows = useMemo(
-    () => filteredThreads(data.threads, filters),
-    [data.threads, filters],
+  const view = useMemo(
+    () => createThreadView(data.threads, data.tags),
+    [data.threads, data.tags],
   );
+  const rows = useMemo(
+    () => filteredThreads(data.threads, filters, false, view),
+    [data.threads, filters, view],
+  );
+  const fieldRows = useMemo(
+    () =>
+      filteredThreads(
+        data.threads,
+        { ...filters, history: true },
+        true,
+        view,
+      ).filter(isValueHistory),
+    [data.threads, filters, view],
+  );
+  const changes = useMemo(() => {
+    const ids = new Set(fieldRows.map((t) => t.thread_id));
+    return view.changes.filter(({ thread }) => ids.has(thread.thread_id));
+  }, [fieldRows, view]);
   const focus =
     filters.view === "card" && rows.some((t) => t.thread_id === focusId)
       ? focusId
@@ -107,28 +146,28 @@ export function FabricScreen({
     },
     [sourcesById, sourceTimes],
   );
-  const threadsById = useMemo(
-    () => new Map(data.threads.map((t) => [t.thread_id, t])),
-    [data.threads],
-  );
   const hiddenProjects = useMemo(
     () =>
       new Set(
         data.tags
-          .filter((tag) => tag.kind === "project" && tag.archived && !filters.archived)
+          .filter(
+            (tag) =>
+              tag.kind === "project" && tag.archived && !filters.archived,
+          )
           .map((tag) => tag.name),
       ),
     [data.tags, filters.archived],
   );
   const groups = useCallback(
-    (t: Fact) => {
-      const row = threadsById.get(t.thread_id);
-      const target = row?.retracts ? threadsById.get(row.retracts) : undefined;
-      return groupKeys(
-        target || t, filters.group, tagKindsByName, sourceLabel, hiddenProjects,
-      );
-    },
-    [filters.group, tagKindsByName, sourceLabel, threadsById, hiddenProjects],
+    (t: Fact) =>
+      groupKeys(
+        view.targets.get(t.thread_id) || t,
+        filters.group,
+        tagKindsByName,
+        sourceLabel,
+        hiddenProjects,
+      ),
+    [view, filters.group, tagKindsByName, sourceLabel, hiddenProjects],
   );
   const lanes = useMemo<Lane[]>(() => {
     const counts = new Map<string, number>();
@@ -136,7 +175,10 @@ export function FabricScreen({
       groups(t).forEach((key) => counts.set(key, (counts.get(key) || 0) + 1)),
     );
     const keys = [...counts.keys()],
-      none = tagKinds[filters.group] + " 없음";
+      none =
+        filters.group === "person"
+          ? "상대 없음"
+          : tagKinds[filters.group] + " 없음";
     if (tagKinds[filters.group])
       keys.sort(
         (a, b) =>
@@ -157,19 +199,26 @@ export function FabricScreen({
   }, [rows, groups, filters.group]);
   const pick = useCallback(
     (id: string, enterFocus: boolean) => {
-      if (!rows.some((t) => t.thread_id === id))
-        setFilters({
-          ...initialFilters,
-          view: filters.view,
-          group: filters.group,
-          executions: true,
-          retractions: true,
-        });
+      const target = view.byId.get(id);
+      if (!target) return;
+      // History lives outside row filters. Opening it must not change the view.
+      if (!isValueHistory(target) && !rows.some((t) => t.thread_id === id)) {
+        const archived = (view.targets.get(id) || target).tags.some((name) =>
+          hiddenProjects.has(name),
+        );
+        if (isHistory(target) || archived)
+          setFilters((old) => ({
+            ...old,
+            history: old.history || isHistory(target),
+            archived: old.archived || archived,
+          }));
+      }
       setSelected(id);
       setPanel(true);
-      if (enterFocus && filters.view === "card") setFocus(id);
+      if (enterFocus && filters.view === "card" && !isValueHistory(target))
+        setFocus(id);
     },
-    [rows, filters.view, filters.group],
+    [rows, view, hiddenProjects, filters.view],
   );
   useKeyboardNavigation({
     rows,
@@ -180,7 +229,13 @@ export function FabricScreen({
     setPanel,
     setSelected,
   });
-  const thread = data.threads.find((t) => t.thread_id === selected) || null;
+  const thread = selected ? view.byId.get(selected) || null : null;
+  const pickCard = useCallback((id: string) => pick(id, true), [pick]);
+  const selectCard = useCallback(
+    (id: string) => pick(id, !!focus),
+    [pick, focus],
+  );
+  const pickLog = useCallback((id: string) => pick(id, false), [pick]);
   return (
     <section className="screen">
       <div
@@ -202,11 +257,7 @@ export function FabricScreen({
             }}
           />
           <FocusBar
-            thread={
-              focus
-                ? data.threads.find((t) => t.thread_id === focus) || null
-                : null
-            }
+            thread={focus ? view.byId.get(focus) || null : null}
             previous={Math.min(
               4,
               Math.max(
@@ -216,7 +267,7 @@ export function FabricScreen({
             )}
             onExit={() => setFocus(null)}
           />
-          {!rows.length ? (
+          {!lanes.length && !(filters.view === "log" && changes.length) ? (
             <div className="scroller" id="scr">
               <div className="empty">
                 조건에 맞는 Thread가 없습니다. 필터를 줄여 보세요.
@@ -237,32 +288,36 @@ export function FabricScreen({
             </div>
           ) : filters.view === "card" ? (
             <CardBoard
+              states={data.states}
+              changes={changes}
+              view={view}
+              selectedTags={filters.tags}
               rows={rows}
-              threads={data.threads}
-              tags={data.tags}
               lanes={lanes}
               groups={groups}
               group={filters.group}
               focus={focus}
               selected={selected}
-              onPick={(id) => pick(id, true)}
-              onSelect={(id) => pick(id, !!focus)}
+              onPick={pickCard}
+              onSelect={selectCard}
             />
           ) : (
             <LogTable
+              changes={changes}
+              view={view}
+              selectedTags={filters.tags}
               rows={rows}
-              threads={data.threads}
-              tags={data.tags}
               lanes={lanes}
               groups={groups}
               group={filters.group}
               states={data.states}
               selected={selected}
-              onPick={(id) => pick(id, false)}
+              onPick={pickLog}
             />
           )}
         </div>
         <DetailPanel
+          view={view}
           thread={panel ? thread : null}
           threads={data.threads}
           tags={data.tags}

@@ -215,12 +215,12 @@ it("hides retraction pairs by default and places retractions under the target in
   expect(
     screen.queryByRole("article", { name: "기록 철회 기록" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "철회 포함" }));
+  fireEvent.click(screen.getByRole("button", { name: "이력 포함" }));
   expect(
-    screen.getByRole("article", { name: "기록 원래 기록" }),
+    screen.getByRole("article", { name: "기록 원래 기록 · 이력" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("article", { name: "기록 철회 기록" }),
+    screen.getByRole("article", { name: "기록 철회 기록 · 이력" }),
   ).toBeInTheDocument();
   expect(document.querySelector("[data-retraction=undo]")).toHaveAttribute(
     "stroke-dasharray",
@@ -235,7 +235,7 @@ it("hides retraction pairs by default and places retractions under the target in
       n.getAttribute("data-id"),
     ),
   ).toEqual(["one", "undo", "two"]);
-  fireEvent.click(screen.getByRole("button", { name: "철회 포함" }));
+  fireEvent.click(screen.getByRole("button", { name: "이력 포함" }));
   expect(
     [...document.querySelectorAll(".lrow[data-id]")].map((n) =>
       n.getAttribute("data-id"),
@@ -307,7 +307,7 @@ it("hides tag corrections in both default views and shows target history with ti
     screen.queryByRole("article", { name: "태그정정 태그 수정" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("article", { name: "기록 원래 기록" }));
-  const history = screen.getByRole("list", { name: "태그 변경 이력" });
+  const history = screen.getByRole("list", { name: "이력" });
   expect(history).toHaveTextContent("11/16 12:00");
   expect(history).toHaveTextContent("+새 태그");
   expect(history).toHaveTextContent("−이전 태그");
@@ -318,7 +318,7 @@ it("hides tag corrections in both default views and shows target history with ti
       n.getAttribute("data-id"),
     ),
   ).toEqual(["one"]);
-  fireEvent.click(screen.getByRole("button", { name: "실행·태그정정 포함" }));
+  fireEvent.click(screen.getByRole("button", { name: "이력 포함" }));
   expect(
     [...document.querySelectorAll(".lrow[data-id]")].map((n) =>
       n.getAttribute("data-id"),
@@ -326,7 +326,7 @@ it("hides tag corrections in both default views and shows target history with ti
   ).toEqual(["one", "correction"]);
 });
 
-it("keeps corrections and their retractions hidden when only the retraction toggle is on", () => {
+it("uses one history toggle for corrections and retractions", () => {
   const correction: Thread = {
     ...thread,
     thread_id: "meta",
@@ -335,17 +335,13 @@ it("keeps corrections and their retractions hidden when only the retraction togg
   };
   const undo = { ...thread, thread_id: "undo-meta", retracts: "meta" };
   const rows = [thread, correction, undo];
+  expect(filteredThreads(rows, initialFilters).map((t) => t.thread_id)).toEqual(
+    ["one"],
+  );
   expect(
-    filteredThreads(rows, { ...initialFilters, retractions: true }).map(
+    filteredThreads(rows, { ...initialFilters, history: true }).map(
       (t) => t.thread_id,
     ),
-  ).toEqual(["one"]);
-  expect(
-    filteredThreads(rows, {
-      ...initialFilters,
-      retractions: true,
-      executions: true,
-    }).map((t) => t.thread_id),
   ).toEqual(["one", "meta", "undo-meta"]);
 });
 

@@ -61,3 +61,12 @@ and puts facts whose project tags are all hidden in the `프로젝트 없음` la
 `server/tests/wiki/test_promotion.py` uses only synthetic data, fake LLMs and
 private temporary stores, covering mixed valid/invalid outputs, Seoul midnight,
 source-time archive boundaries, append replay, reverts and independent projects.
+
+## Read-only contact view
+
+`사람별 연락.md` counts active business Threads by their single canonical person
+`counterpart`, resolving dictionary renames and aliases. Mention tags, organization
+counterparts and missing counterparts do not count as contact. Lines are ordered
+by the canonical counterpart name in ascending Unicode string order for stable
+rendering, not by latest contact time. Each line separately shows its latest
+contact date and the preceding 7-day/30-day counts in the injected local timezone.

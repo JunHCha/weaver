@@ -1,50 +1,54 @@
-import type { CSSProperties, RefCallback } from "react";
-import type { Tag, Thread } from "../lib/api";
-import {
-  dateLabel,
-  fieldText,
-  kindClass,
-  kindStyle,
-  relations,
-} from "../lib/presentation";
+import { memo, type RefCallback } from "react";
+import type { Thread } from "../lib/api";
+import { dateLabel, kindClass, kindStyle } from "../lib/presentation";
+import { isHistory, type ThreadView } from "../lib/history";
 import { Icon, References, Tags } from "./Common";
 export interface CardProps {
   thread: Thread;
-  threads: Thread[];
-  tags: Tag[];
+  view: ThreadView;
   selected: boolean;
   keep: boolean;
   neighbor: string | undefined;
   flashing: boolean;
   ghost?: boolean;
-  style: CSSProperties;
+  mention?: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height?: number;
   nodeRef: RefCallback<HTMLElement>;
   onHover: (id: string | null) => void;
   onPick: (id: string) => void;
 }
-export function ThreadCard({
+export const ThreadCard = memo(function ThreadCard({
   thread: t,
-  threads,
-  tags,
+  view,
   selected,
   keep,
   neighbor,
   flashing,
   ghost = false,
-  style,
+  mention = false,
+  x,
+  y,
+  width,
+  height,
   nodeRef,
   onHover,
   onPick,
 }: CardProps) {
-  const state = relations(threads),
-    field = fieldText(t),
-    hollow = kindClass[t.kind] === "hol";
+  const state = view.relation,
+    field = view.fields.get(t.thread_id),
+    hollow = kindClass[t.kind] === "hol",
+    history = isHistory(t) || state.retracted.has(t.thread_id);
   return (
     <article
       ref={nodeRef}
       className={[
         "card",
         ghost ? "ghost" : "",
+        history ? "history-item" : "",
+        mention ? "mention-only" : "",
         "k-" + kindClass[t.kind],
         hollow ? "hol" : "",
         state.retracted.has(t.thread_id) ? "retracted" : "",
@@ -59,8 +63,8 @@ export function ThreadCard({
       data-nb={neighbor}
       aria-hidden={ghost || undefined}
       tabIndex={ghost ? -1 : 0}
-      style={{ ...kindStyle(t.kind), ...style }}
-      aria-label={`${t.kind} ${t.content || "거절"}`}
+      style={{ ...kindStyle(t.kind), left: x, top: y, width, height }}
+      aria-label={`${t.kind} ${t.content || "거절"}${mention ? " · 언급" : ""}${isHistory(t) || state.retracted.has(t.thread_id) ? " · 이력" : ""}`}
       onMouseEnter={() => onHover(t.thread_id)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onPick(t.thread_id)}
@@ -74,6 +78,8 @@ export function ThreadCard({
     >
       <div className="ctop">
         <span className="kw">{t.kind}</span>
+        {mention && <span className="mention-mark">언급</span>}
+        {history && <span className="history-type">이력</span>}
         {state.isOpen(t) && <span className="op">열림</span>}
         <span className="time">{dateLabel(t.occurred_at)}</span>
       </div>
@@ -102,10 +108,10 @@ export function ThreadCard({
       </div>
       <div className="cfoot">
         <span className="tags">
-          <Tags thread={t} tags={tags} />
+          <Tags thread={t} knownTags={view.knownTags} />
         </span>
-        <References thread={t} threads={threads} />
+        <References thread={t} byId={view.byId} />
       </div>
     </article>
   );
-}
+});

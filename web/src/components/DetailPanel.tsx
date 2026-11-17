@@ -1,5 +1,5 @@
 import { TagEditor } from "./TagEditor";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
@@ -10,18 +10,26 @@ import {
   refs,
   refLabels,
   incomingRefLabels,
-  relations,
 } from "../lib/presentation";
+import {
+  isHistory,
+  stateTag,
+  threadHistory,
+  type ThreadView,
+} from "../lib/history";
 import { Icon, KindWord } from "./Common";
 export function DetailPanel({
   thread: t,
+  view,
   threads,
   sources,
+  tags,
   onClose,
   onPick,
   onSaved,
 }: {
   thread: Thread | null;
+  view: ThreadView;
   threads: Thread[];
   tags: Tag[];
   sources: SourceView[];
@@ -35,10 +43,46 @@ export function DetailPanel({
     const timer = setTimeout(() => setToast(""), 1600);
     return () => clearTimeout(timer);
   }, [toast]);
+  const historyRows = useMemo(() => {
+    if (!t) return [];
+    const name = t.field ? stateTag(t, tags) : undefined;
+    const direct = threadHistory(t, threads, view.children).map((row) => ({
+      row,
+      label: null as string | null,
+    }));
+    const ids = new Set(direct.map(({ row }) => row.thread_id));
+    const fieldChanges = name
+      ? view.changes
+          .filter(
+            ({ thread, target }) =>
+              target === name &&
+              thread.field === t.field &&
+              thread.thread_id !== t.thread_id &&
+              !ids.has(thread.thread_id),
+          )
+          .map(({ thread, label }) => ({ row: thread, label }))
+      : [];
+    return [...direct, ...fieldChanges].sort(
+      (a, b) =>
+        Date.parse(a.row.recorded_at) - Date.parse(b.row.recorded_at) ||
+        a.row.seq - b.row.seq,
+    );
+  }, [t, threads, tags, view]);
+  const same = useMemo(
+    () =>
+      t
+        ? threads.filter(
+            (x) =>
+              x.source_id === t.source_id &&
+              !isHistory(x) &&
+              !view.relation.retracted.has(x.thread_id),
+          )
+        : [],
+    [t, threads, view],
+  );
   if (!t)
     return <aside className="panel" id="panel" aria-label="Thread 상세" />;
-  const relation = relations(threads),
-    same = threads.filter((x) => x.source_id === t.source_id),
+  const relation = view.relation,
     source = sources.find((s) => s.id === t.source_id);
   const copy = async (value: string) => {
     try {
@@ -61,7 +105,7 @@ export function DetailPanel({
     </button>
   );
   const link = (id: string) => {
-    const target = threads.find((x) => x.thread_id === id);
+    const target = view.byId.get(id);
     return (
       <button
         type="button"
@@ -86,6 +130,7 @@ export function DetailPanel({
     ],
     ["seq", t.seq],
     ["유형", t.kind],
+    ["상대", t.counterpart || "상대 없음"],
     ["발생 시각", t.occurred_at],
     [
       "기록 시각",
@@ -122,7 +167,7 @@ export function DetailPanel({
   const outbound = refs.filter((key) => t[key]),
     inbound = threads.flatMap((from) =>
       refs
-        .filter((key) => from[key] === t.thread_id)
+        .filter((key) => !isHistory(from) && from[key] === t.thread_id)
         .map((key) => ({ from, key })),
     );
   return (
@@ -162,38 +207,42 @@ export function DetailPanel({
           ))}
         </dl>
         <div className="sec tag-history">
-          <h3>태그 변경 이력</h3>
-          {threads.filter((row) => row.correction?.target === t.thread_id)
-            .length ? (
-            <ul aria-label="태그 변경 이력">
-              {threads
-                .filter((row) => row.correction?.target === t.thread_id)
-                .map((row) => (
-                  <li key={row.thread_id}>
-                    <time dateTime={row.recorded_at}>
-                      {mdhm(row.recorded_at)}
-                    </time>
-                    <span>
-                      {row.correction?.add.map((name) => (
-                        <span className="tag-added" key={name}>
-                          +{name}{" "}
-                        </span>
+          <h3>이력</h3>
+          {historyRows.length > 0 ? (
+            <ul aria-label="이력">
+              {historyRows.map(({ row, label }) => (
+                <li key={row.thread_id}>
+                  <time dateTime={row.recorded_at}>
+                    {mdhm(row.recorded_at)}
+                  </time>
+                  <span>
+                    {label ||
+                      (row.correction ? (
+                        <>
+                          {row.correction.add.map((name) => (
+                            <span className="tag-added" key={name}>
+                              +{name}{" "}
+                            </span>
+                          ))}
+                          {row.correction.remove.map((name) => (
+                            <span className="mut" key={name}>
+                              −{name}{" "}
+                            </span>
+                          ))}
+                        </>
+                      ) : (
+                        row.content || row.kind
                       ))}
-                      {row.correction?.remove.map((name) => (
-                        <span className="mut" key={name}>
-                          −{name}{" "}
-                        </span>
-                      ))}
-                    </span>
-                    <span className="mut">
-                      {actorLabel[row.actor]}
-                      {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
-                    </span>
-                  </li>
-                ))}
+                  </span>
+                  <span className="mut">
+                    {actorLabel[row.actor]}
+                    {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
+                  </span>
+                </li>
+              ))}
             </ul>
           ) : (
-            <span className="mut">태그 변경 이력이 없습니다</span>
+            <span className="mut">이력이 없습니다</span>
           )}
         </div>
         <div className="sec">

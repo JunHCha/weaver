@@ -129,12 +129,17 @@ def canonical_threads(config: ServerConfig, rows: list[Thread]) -> list[Thread]:
     return [
         t.model_copy(
             update={
+                "counterpart": (
+                    entry.name
+                    if t.counterpart and (entry := dictionary.resolve(t.counterpart))
+                    else t.counterpart
+                ),
                 "tags": list(
                     dict.fromkeys(
                         entry.name if (entry := dictionary.resolve(tag)) else tag
                         for tag in t.tags
                     )
-                )
+                ),
             }
         )
         for t in rows

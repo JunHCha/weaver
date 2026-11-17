@@ -10,8 +10,7 @@ export interface Filters {
   tags: string[];
   period: "all" | "week" | "7d";
   openOnly: boolean;
-  executions: boolean;
-  retractions: boolean;
+  history: boolean;
   archived: boolean;
   query: string;
 }
@@ -22,8 +21,7 @@ export const initialFilters: Filters = {
   tags: [],
   period: "all",
   openOnly: false,
-  executions: false,
-  retractions: false,
+  history: false,
   archived: false,
   query: "",
 };
@@ -145,9 +143,9 @@ export function FabricToolbar({
                 onChange({
                   ...f,
                   kinds: toggle(f.kinds, kind),
-                  executions: ["실행", "태그정정"].includes(kind)
+                  history: ["실행", "태그정정", "거절"].includes(kind)
                     ? true
-                    : f.executions,
+                    : f.history,
                 })
               }
             />
@@ -160,14 +158,6 @@ export function FabricToolbar({
           </button>
         </div>
       </Menu>
-      {f.group === "project" && (
-        <Toggle
-          id="t-archived"
-          label="보관 프로젝트 표시"
-          on={f.archived}
-          onChange={() => onChange({ ...f, archived: !f.archived })}
-        />
-      )}
       <Menu
         id="b-tag"
         label={`태그${f.tags.length ? " " + f.tags.length : ""}`}
@@ -230,17 +220,19 @@ export function FabricToolbar({
         onChange={() => onChange({ ...f, openOnly: !f.openOnly })}
       />
       <Toggle
-        id="t-exec"
-        label="실행·태그정정 포함"
-        on={f.executions}
-        onChange={() => onChange({ ...f, executions: !f.executions })}
+        id="t-history"
+        label="이력 포함"
+        on={f.history}
+        onChange={() => onChange({ ...f, history: !f.history })}
       />
-      <Toggle
-        id="t-retractions"
-        label="철회 포함"
-        on={f.retractions}
-        onChange={() => onChange({ ...f, retractions: !f.retractions })}
-      />
+      {f.group === "project" && (
+        <Toggle
+          id="t-archived"
+          label="보관 프로젝트 표시"
+          on={f.archived}
+          onChange={() => onChange({ ...f, archived: !f.archived })}
+        />
+      )}
       <label className="search">
         <span className="sr">내용 검색</span>
         <Icon name="search" size={13} />

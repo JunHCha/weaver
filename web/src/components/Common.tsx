@@ -1,4 +1,4 @@
-import type { Tag, Thread } from "../lib/api";
+import type { Thread } from "../lib/api";
 import { kindClass, kindStyle, refs, refLabels } from "../lib/presentation";
 export function Icon({
   name,
@@ -36,18 +36,22 @@ export function Icon({
     </svg>
   );
 }
-export function Tags({ thread, tags }: { thread: Thread; tags: Tag[] }) {
+export function Tags({
+  thread,
+  knownTags,
+}: {
+  thread: Thread;
+  knownTags: ReadonlySet<string>;
+}) {
   return (
     <>
       {thread.tags.map((name, i) => (
         <span key={name}>
           {i > 0 ? " " : ""}
           <span
-            className={
-              "tg" + (tags.find((t) => t.name === name)?.kind ? "" : " unk")
-            }
+            className={"tg" + (knownTags.has(name) ? "" : " unk")}
             title={
-              tags.find((t) => t.name === name)?.kind
+              knownTags.has(name)
                 ? undefined
                 : "종류가 정해지지 않은 태그 — wiki에서 종류를 정하세요"
             }
@@ -72,11 +76,11 @@ export function KindWord({ thread }: { thread: Thread }) {
 }
 export function References({
   thread,
-  threads,
+  byId,
   numbers = true,
 }: {
   thread: Thread;
-  threads: Thread[];
+  byId: ReadonlyMap<string, Thread>;
   numbers?: boolean;
 }) {
   return (
@@ -87,12 +91,10 @@ export function References({
           <span
             key={key}
             className="rel"
-            title={`${refLabels[key]} seq ${threads.find((t) => t.thread_id === thread[key])?.seq ?? "?"}`}
+            title={`${refLabels[key]} seq ${byId.get(thread[key]!)?.seq ?? "?"}`}
           >
             <Icon name={key} />
-            {numbers
-              ? threads.find((t) => t.thread_id === thread[key])?.seq
-              : null}
+            {numbers ? byId.get(thread[key]!)?.seq : null}
           </span>
         ))}
     </span>
