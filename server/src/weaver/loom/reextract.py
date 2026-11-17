@@ -19,7 +19,7 @@ from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot, _key
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.types import LlmClient
-from weaver.loom.summary_review import ApprovalExtractor, Prepared
+from weaver.loom.summary_review import ApprovalExtractor, MissingApprovalTime, Prepared
 from weaver.loom.summary_state import read_contact_name, read_source_reference
 from weaver.loom.tagging import NewEntry, clean_name
 from weaver.readonly import connect_snapshot
@@ -895,13 +895,6 @@ def reextract(
                     approved_at = original.applied_at
                     if approved_at is None and original.summary is not None:
                         approved_at = original.summary.created_at
-                    if approved_at is None:
-                        recorded = [t.recorded_at for t in original.threads]
-                        if not recorded:
-                            recorded = [t.recorded_at for t in plan.old]
-                        approved_at = min(recorded) if recorded else None
-                    if approved_at is None and verdict.feedback is not None:
-                        raise ValueError("missing original approval time")
                     reference = read_source_reference(root, package)
                     plan.source_time_estimated = reference.is_fallback
                     prepared = ApprovalExtractor(
@@ -910,6 +903,7 @@ def reextract(
                         ExtractionView(threads, plan.source_id),
                         timezone=timezone,
                         approved_at=approved_at,
+                        allow_current_approval_time=False,
                         source_occurred_at=reference.occurred_at,
                         source_time_is_fallback=reference.is_fallback,
                         contact_name=read_contact_name(
@@ -977,7 +971,11 @@ def reextract(
                     c for c in plan.tag_corrections if c.canonical in used
                 ]
             except Exception as error:
-                plan.error = type(error).__name__
+                plan.error = (
+                    str(error)
+                    if isinstance(error, MissingApprovalTime)
+                    else type(error).__name__
+                )
                 plan.batch = []
         global_names = MemoryDictionary(entries.copy(), blocked)
         for plan in report.sources:
