@@ -21,7 +21,7 @@ TAG_RULES = (
     " 기존 영역을 우선하고 맞는 영역이 없을 때만 적고 넓은 영역을 new_entries로 만든다."
     " area는 PARA의 지속 책임, topic은 PARA resource다."
     " 프로젝트는 기존 사전 항목이 명확히 맞을 때만 쓰며 새 project는 만들지 않는다."
-    " Wiki의 자동 project는 사람이 편집하기 전까지 태그 후보가 아니다."
+    " Wiki에서 승격된 활성 프로젝트만 자동 project 태그 후보가 된다."
     " 사람 표준 이름에 직함·소속·메모를 넣지 않는다."
     " dictionary의 aliases는 표준 name으로 바꾸고 기존 태그도 사전으로 확인한다."
     " 사전에 없는 이름은 new_entries에 name, kind(person/organization/area/topic),"
@@ -62,7 +62,14 @@ def tag_context(
     excluded = {
         e.name
         for e in snapshot.entries
-        if e.kind == "project" and e.source == "wiki" and not e.human_edited
+        if e.archived
+        or e.promotion_reverted
+        or (
+            e.kind == "project"
+            and e.source == "wiki"
+            and not e.human_edited
+            and not e.promoted
+        )
     }
     recent_tags = list(
         dict.fromkeys(
@@ -171,12 +178,19 @@ def canonical_tags(
 
 
 def tag_snapshot(snapshot: DictionarySnapshot) -> DictionarySnapshot:
-    """Incident-style generated project pages are not promoted projects (#149)."""
+    """Only active promoted or curated projects are extraction candidates."""
     return DictionarySnapshot(
         [
             entry
             for entry in snapshot.entries
-            if entry.kind != "project" or entry.source != "wiki" or entry.human_edited
+            if not entry.archived
+            and not entry.promotion_reverted
+            and (
+                entry.kind != "project"
+                or entry.source != "wiki"
+                or entry.human_edited
+                or entry.promoted
+            )
         ]
     )
 

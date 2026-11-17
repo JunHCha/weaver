@@ -47,6 +47,7 @@ class WikiJob:
         self.compiler = BatchCompiler(
             store, fabric, context, client, state / "wiki-compiler.sqlite3", lookup
         )
+        self.compiler.timezone = zone
         self.digest = DigestBuilder(
             store,
             state / "wiki-digest.sqlite3",

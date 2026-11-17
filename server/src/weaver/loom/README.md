@@ -188,9 +188,10 @@ come first within the shared dictionary budget. The server rejects an extraction
 with zero or multiple resolved area tags before journaling any facts, using
 retryable `SchemaMismatch` and the existing bounded contract-error retry path. A project
 must already exist and clearly fit; `new_entries` of kind `project` are dropped
-with a content-free warning. Unedited Wiki project pages are excluded from both
-dictionary and recent-tag hints and cannot pass tag validation. Bootstrap also
-cannot create projects; curation/promotion belongs to #149. `topic` means PARA
+with a content-free warning. Unedited Wiki project pages that have not been promoted are excluded from both
+dictionary and recent-tag hints and cannot pass tag validation. Wiki-promoted
+active projects are eligible; archived projects are always excluded. Bootstrap also
+cannot create projects; curation/promotion belongs to the Wiki batch lifecycle. `topic` means PARA
 resource. Wiki human-edit business facts use these same guards; tag corrections
 and code-produced field history have their own contracts below.
 

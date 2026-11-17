@@ -38,6 +38,7 @@ export interface Thread {
   correction: { target: string; add: string[]; remove: string[] } | null;
 }
 export interface Tag {
+  archived?: boolean;
   name: string;
   kind: "project" | "area" | "person" | "organization" | "topic" | null;
 }
@@ -108,6 +109,8 @@ export const api = {
 };
 export type TagKind = NonNullable<Tag["kind"]>;
 export interface DictionaryEntry {
+  archived?: boolean;
+  promoted?: boolean;
   name: string;
   kind: TagKind;
   aliases: string[];

@@ -18,7 +18,7 @@ and the token is still required. There is no cross-origin access allowance.
   repeated edits return 200 with the current target Thread and append nothing.
   Removing a displayed canonical name removes all matching historical spellings.
 - `GET /api/dictionary`: name-sorted entries with `name`, `kind`, `aliases`,
-  `human_edited` and `usage_count`. Usage counts active business Threads with
+  `human_edited`, `promoted`, `archived` and `usage_count`. Usage counts active business Threads with
   effective tags, deduplicating aliases and excluding retraction pairs.
 - `PATCH /api/dictionary`: `{entry: string, name?: string, kind?: kind}`.
   Exactly one of name/kind is required; requests changing both are rejected with
@@ -63,3 +63,8 @@ This attribute is never stored in Fabric and adds no shared schema field.
 Thread `counterpart` is a single canonical person/organization or null and also
 appears in its tags; tag corrections do not change counterpart. The phone's
 strict PipelineItem wire format deliberately omits counterpart entirely.
+
+`GET /api/tags` includes `archived` on each tag. Archived projects remain
+readable and editable in the dictionary and in historical Threads. Project
+grouping hides their lanes by default; “보관 프로젝트 표시” reveals them.
+Other groupings retain the underlying business facts.

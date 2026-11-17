@@ -523,7 +523,9 @@ def test_area_kind_and_derived_presentation_are_read_only(tmp_path):
     assert rows["fact"]["counterpart"] == "김철수"
     for key in ("wiki-field:rev:0", "correction", "retraction"):
         assert rows[key]["presentation"] == "history"
-    assert {"name": "자료 관리", "kind": "area"} in client.get("/api/tags").json()
+    assert {"name": "자료 관리", "kind": "area", "archived": False} in client.get(
+        "/api/tags"
+    ).json()
     with fabric._connect() as db:
         payloads = [row[0] for row in db.execute("SELECT payload FROM threads")]
     assert not any('"presentation"' in payload for payload in payloads)

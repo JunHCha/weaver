@@ -68,8 +68,19 @@ so `area` needs no data rewrite or database version change. Wiki page roles map
 organization unchanged. `page_role` takes precedence over a legacy `kind` field
 when synchronizing pages. Web dictionary edits and `/api/tags` accept `area`.
 
-A Wiki-synced project with `human_edited=False` remains resolvable for history
+A Wiki-synced project with `human_edited=False` and `promoted=False` remains resolvable for history
 and dictionary management, but is excluded from approval/Wiki extraction tag
 candidates, including recent-tag hints. Existing curated projects and existing
 learned projects may be tagged when clearly relevant. Automatic approval and
-bootstrap never create a project; project promotion is deferred to #149.
+bootstrap never create a project. Wiki batch promotion registers projects with
+`human_edited=False` and `promoted=True`, making active projects eligible.
+`set_project_lifecycle(name, promoted=None, archived=..., reverted=None)` stores automatic flags
+separately from human overrides, without changing their provenance. Flags survive
+Wiki sync and follow human renames/merges through historical aliases. Archived
+projects remain resolvable but are excluded from all extraction tag hints and
+validation. Human-reverted promotions set `promotion_reverted=True` and
+`promoted=False`, which excludes even learned or human-edited entries from tag
+candidates. The additive lifecycle table accepts earlier rows without `reverted`;
+readers default it to false and writers add the column transactionally. Older
+v1/v2 read-only dictionaries without the additive lifecycle table return false flags; writers create the table transactionally. See
+[`wiki/README.md`](../wiki/README.md) for promotion and suppression journaling.
