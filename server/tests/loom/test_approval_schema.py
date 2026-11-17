@@ -31,6 +31,7 @@ def response():
                 "retracts": None,
                 "blocked_by_index": None,
                 "updates": None,
+                "from_feedback": False,
             }
         ],
     }

@@ -261,3 +261,22 @@ after server now is clamped even when the phone's reference clock is ahead.
 Re-extraction run `source-time-v5` supersedes `para-counterpart-v4`, so saved plans
 must be recreated and completed older runs can be deliberately planned again.
 Text preview includes occurrence and recording times alongside field values.
+
+## Feedback tasks and approval time
+
+Answers only repair business facts; ordinary opinions in feedback do not create
+Threads. An explicit feedback instruction for the reviewer to check, register or
+process work creates one request with direction `받음` (내가 할 일). Its content
+identifies the source work, and its tags include the source's single area. The
+model marks this internal extraction origin with `from_feedback`; it is not a
+Fabric or phone schema field. This request occurs at `approved_at`, and relative
+deadlines use that approval time in the configured timezone. Source facts retain
+their source-time reference, even in the same response.
+
+The review journal already persists the approval clock as `Prepared.applied_at`.
+Re-extraction restores it, then falls back to the original summary's `created_at`
+or the original extraction Threads' earliest `recorded_at` (including Fabric
+rows for older journals). Feedback without any recoverable approval time fails
+for that source rather than using the replay clock. Re-extraction run
+`feedback-time-v6` supersedes `source-time-v5`; recreate saved plans to deliberately
+re-extract completed older runs with these rules.

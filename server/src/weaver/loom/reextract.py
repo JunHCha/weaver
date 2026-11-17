@@ -33,7 +33,7 @@ from weaver.schema import (
 )
 from weaver.wiki.store import _properties
 
-RUN_KEY = "source-time-v5"
+RUN_KEY = "feedback-time-v6"
 BOOTSTRAP_MAX_ENTRIES = 200
 BOOTSTRAP_MAX_BYTES = 32768
 JUNK_TAGS = frozenset({"todo", "확인", "확인필요", "tbd"})
@@ -670,8 +670,10 @@ def _saved(root: Path, key: str) -> SourcePlan | None:
 
 def _reviews(
     root: Path, report: Report, source: str | None
-) -> tuple[dict[str, tuple[ReviewPackage, str, Verdict]], dict[str, set[str]]]:
-    selected: dict[str, tuple[ReviewPackage, str, Verdict]] = {}
+) -> tuple[
+    dict[str, tuple[ReviewPackage, str, Verdict, Prepared]], dict[str, set[str]]
+]:
+    selected: dict[str, tuple[ReviewPackage, str, Verdict, Prepared]] = {}
     old_ids: dict[str, set[str]] = {}
     try:
         with closing(_read(root / "summary.sqlite3")) as db:
@@ -703,7 +705,7 @@ def _reviews(
             old_ids.setdefault(source_id, set()).update(
                 t.thread_id for t in prepared.threads
             )
-            selected.setdefault(source_id, (package, script, verdict))
+            selected.setdefault(source_id, (package, script, verdict, prepared))
         except (ValueError, TypeError, AttributeError) as error:
             if source_id.startswith("package:"):
                 # A malformed latest package must never silently select an
@@ -889,7 +891,17 @@ def reextract(
                 ]
                 plan.additions = memory.add(bootstrap)
                 if plan.source_id in selected:
-                    package, script, verdict = selected[plan.source_id]
+                    package, script, verdict, original = selected[plan.source_id]
+                    approved_at = original.applied_at
+                    if approved_at is None and original.summary is not None:
+                        approved_at = original.summary.created_at
+                    if approved_at is None:
+                        recorded = [t.recorded_at for t in original.threads]
+                        if not recorded:
+                            recorded = [t.recorded_at for t in plan.old]
+                        approved_at = min(recorded) if recorded else None
+                    if approved_at is None and verdict.feedback is not None:
+                        raise ValueError("missing original approval time")
                     reference = read_source_reference(root, package)
                     plan.source_time_estimated = reference.is_fallback
                     prepared = ApprovalExtractor(
@@ -897,6 +909,7 @@ def reextract(
                         memory,
                         ExtractionView(threads, plan.source_id),
                         timezone=timezone,
+                        approved_at=approved_at,
                         source_occurred_at=reference.occurred_at,
                         source_time_is_fallback=reference.is_fallback,
                         contact_name=read_contact_name(

@@ -94,6 +94,7 @@ class _ExtractedThread[K, D, R, B, F, V](BaseModel):
     retracts: NonEmpty | None
     blocked_by_index: B | None = None
     updates: NonEmpty | None = None
+    from_feedback: bool = False
 
 
 type _FieldThread[K, D, R, B] = (
@@ -150,7 +151,9 @@ class ApprovalExtractor:
         contact_name: str | None = None,
         source_occurred_at: datetime | None = None,
         source_time_is_fallback: bool = False,
+        approved_at: datetime | None = None,
     ) -> None:
+        self.approved_at = approved_at
         self.source_time_is_fallback = source_time_is_fallback
         self.source_occurred_at = source_occurred_at
         self.contact_name = contact_name
@@ -193,6 +196,7 @@ class ApprovalExtractor:
         replaces: str | None,
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
+        approval = (self.approved_at or timestamp).astimezone(ZoneInfo(self.timezone))
         reference = self.source_occurred_at
         is_fallback = self.source_time_is_fallback
         if reference is None:
@@ -258,6 +262,13 @@ class ApprovalExtractor:
                 + FACT_RULES
                 + "\n"
                 + TAG_RULES
+                + "\nfeedback에 검토자 본인이 할 확인·등록·처리 등 할 일 지시가 있으면"
+                " 이를 요청 Thread 하나로 만든다. direction=받음(내가 할 일), from_feedback=true로 쓴다."
+                " content는 출처의 어떤 일을 해야 하는지 알 수 있는 문장이고 태그와 영역은 대상 출처를 따른다."
+                " answers와 일반 의견·감상·사실 교정만인 feedback은 독립 Thread로 만들지 않는다."
+                " 그 외 출처 업무 Thread는 from_feedback=false이다."
+                " 피드백 요청의 occurred_at은 approved_at이며, 오늘·내일 등 상대 날짜는"
+                " 출처 날짜나 재처리 날짜가 아닌 approved_at과 timezone을 기준으로 푼다."
                 + "\n기록 주인(화자 본인)은 태그하지 않는다. contact_name은 통화 상대다."
                 + " counterpart는 업무를 주고받은 상대 한 명/조직의 표준 이름 또는 null이다."
                 " 통화 상대(contact_name), 받음 요청의 요청자, 보냄 요청의 수신자를 쓴다."
@@ -282,9 +293,9 @@ class ApprovalExtractor:
                     " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
                     " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
                     " source_occurred_at은 출처의 발생 시각(없으면 수집·검토 시각의 추정치)이다."
-                    " occurred_at은 그 사실이 일어난 시각을 시간대 포함 RFC 3339로 쓰며,"
+                    " 출처 업무의 occurred_at은 그 사실이 일어난 시각을 시간대 포함 RFC 3339로 쓰며,"
                     " 근거가 없으면 source_occurred_at을 쓰되 서버 현재 시각을 넘지 않는다."
-                    " 오늘·내일·다음 주·18일 등 상대 날짜는 본문의 명시적 날짜와 날짜 머리글을"
+                    " 출처 업무의 오늘·내일·다음 주·18일 등 상대 날짜는 본문의 명시적 날짜와 날짜 머리글을"
                     " source_occurred_at보다 우선하여 해석하고, 그러한 근거가 없으면"
                     " source_occurred_at과 timezone을 기준으로 해석한다. 재처리 날짜를 쓰지 않는다."
                     " source_time_is_fallback=true이면 수집 이전의 과거 이력일 수 있으므로"
@@ -307,6 +318,8 @@ class ApprovalExtractor:
                     **hints,
                     "contact_name": self.contact_name,
                     "timezone": self.timezone,
+                    "approved_at": approval.isoformat(),
+                    "approval_today": approval.date().isoformat(),
                     "source_occurred_at": reference.isoformat(),
                     "source_time_is_fallback": is_fallback,
                     "today": reference.date().isoformat(),
@@ -357,16 +370,28 @@ class ApprovalExtractor:
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(
-                exclude={"blocked_by_index", "updates"}, warnings=False
+                exclude={"blocked_by_index", "updates", "from_feedback"}, warnings=False
             )
+            feedback_request = thread.from_feedback
+            if feedback_request and (thread.kind != "요청" or verdict.feedback is None):
+                raise ValueError("feedback origin requires a feedback request")
+            thread_reference = approval if feedback_request else reference
+            thread_fallback = is_fallback and not feedback_request
+            if feedback_request:
+                data["direction"] = "받음"
+                data["occurred_at"] = min(approval, timestamp)
             # Long calls may contain facts later than their start. Capture-only
             # references cannot bound historical facts in imported transcripts.
-            if thread.occurred_at > timestamp:
+            if not feedback_request and thread.occurred_at > timestamp:
                 data["occurred_at"] = min(reference, timestamp)
                 logger.warning("corrected future occurrence time")
-            elif not is_fallback and (
-                thread.occurred_at > reference + timedelta(days=1)
-                or thread.occurred_at < reference - timedelta(days=366)
+            elif (
+                not feedback_request
+                and not is_fallback
+                and (
+                    thread.occurred_at > reference + timedelta(days=1)
+                    or thread.occurred_at < reference - timedelta(days=366)
+                )
             ):
                 data["occurred_at"] = min(reference, timestamp)
                 logger.warning("corrected out-of-range occurrence time")
@@ -375,15 +400,18 @@ class ApprovalExtractor:
                 if isinstance(thread.value, str):
                     try:
                         if len(thread.value) == 10:
-                            past = date.fromisoformat(thread.value) < reference.date()
+                            past = (
+                                date.fromisoformat(thread.value)
+                                < thread_reference.date()
+                            )
                         else:
                             deadline = datetime.fromisoformat(thread.value)
                             if deadline.tzinfo is None:
                                 deadline = deadline.replace(
                                     tzinfo=ZoneInfo(self.timezone)
                                 )
-                            past = deadline < reference
-                        valid = is_fallback or not past
+                            past = deadline < thread_reference
+                        valid = thread_fallback or not past
                     except ValueError:
                         pass
                 if not valid:
@@ -450,11 +478,11 @@ class ApprovalExtractor:
                     mode="json"
                 )
             if (
-                not is_fallback
+                not thread_fallback
                 and data["field"] == "schedule"
                 and data["value"] is not None
             ):
-                if datetime.fromisoformat(data["value"]["start"]) < reference:
+                if datetime.fromisoformat(data["value"]["start"]) < thread_reference:
                     data["field"] = data["value"] = None
                     updates = None
                     logger.warning("dropped schedule before source reference time")
