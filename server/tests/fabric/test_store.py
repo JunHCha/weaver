@@ -351,3 +351,38 @@ def test_nfc_before_append_and_correction_targets(tmp_path):
     correction = TagCorrection(target="nfc", remove=[nfd], add=[nfd])
     assert correction.remove == correction.add == ["한글"]
     assert store.append([draft("nfc", content="한글", tags=["한글"])])[0] == stored
+
+
+def test_legacy_payload_without_counterpart_and_tag_correction_preserve_party(tmp_path):
+    import json
+
+    from weaver.schema import TagCorrection
+
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    old = draft("legacy")
+    payload = old.model_dump(mode="json", exclude={"counterpart"})
+    with store._connect() as db:
+        db.execute(
+            "INSERT INTO threads(thread_id, payload) VALUES (?, ?)",
+            ("legacy", json.dumps(payload)),
+        )
+    assert store.entries(ThreadQuery())[0].counterpart is None
+    assert store.append([old])[0].seq == 1
+    store.append(
+        [
+            draft("party", counterpart="김철수"),
+            draft(
+                "tags",
+                kind="태그정정",
+                correction=TagCorrection(
+                    target="party", add=["자료 관리"], remove=["홍길동"]
+                ),
+            ),
+        ]
+    )
+    assert (
+        next(
+            t for t in store.entries(ThreadQuery()) if t.thread_id == "party"
+        ).counterpart
+        == "김철수"
+    )

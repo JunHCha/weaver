@@ -5,23 +5,88 @@
       "case_id": "summary-001",
       "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       "script": "홍길돈이 금요일에 자료를 보내기로 했다.",
-      "answers": ["홍길동"],
+      "answers": [
+        "홍길동"
+      ],
       "expected": {
         "body": "홍길돈이 금요일에 자료를 보내기로 했다.",
-        "questions": [{"question": "누구인가요?", "rationale": "이름이 불확실함", "choices": ["홍길동", "김철수", "모름"], "source_excerpt": "홍길돈이 금요일에 자료를 보내기로 했다."}],
-        "threads": [{"kind": "결정", "content": "홍길동이 금요일에 자료를 보내기로 했다.", "tags": ["홍길동"]}]
+        "questions": [
+          {
+            "question": "누구인가요?",
+            "rationale": "이름이 불확실함",
+            "choices": [
+              "홍길동",
+              "김철수",
+              "모름"
+            ],
+            "source_excerpt": "홍길돈이 금요일에 자료를 보내기로 했다."
+          }
+        ],
+        "threads": [
+          {
+            "kind": "결정",
+            "content": "홍길동이 금요일에 자료를 보내기로 했다.",
+            "tags": [
+              "홍길동",
+              "업무 운영"
+            ]
+          }
+        ]
       },
       "responses": {
         "loom.summary": {
           "script": "홍길돈이 금요일에 자료를 보내기로 했다.",
           "body": "홍길돈이 금요일에 자료를 보내기로 했다.",
-          "questions": [{"question": "누구인가요?", "rationale": "이름이 불확실함", "choices": ["홍길동", "김철수", "모름"]}]
+          "questions": [
+            {
+              "question": "누구인가요?",
+              "rationale": "이름이 불확실함",
+              "choices": [
+                "홍길동",
+                "김철수",
+                "모름"
+              ]
+            }
+          ]
         },
         "loom.approve": {
-          "new_entries": [{"name": "홍길동", "kind": "person", "aliases": []}],
+          "new_entries": [
+            {
+              "name": "홍길동",
+              "kind": "person",
+              "aliases": []
+            },
+            {
+              "name": "업무 운영",
+              "kind": "area",
+              "aliases": []
+            }
+          ],
           "body": "홍길동이 금요일에 자료를 보내기로 했다.",
-          "corrections": [{"observed": "홍길돈", "canonical": "홍길동", "kind": "person"}],
-          "threads": [{"kind": "결정", "content": "홍길동이 금요일에 자료를 보내기로 했다.", "occurred_at": "2026-01-01T00:00:00Z", "tags": ["홍길동"], "field": null, "value": null, "direction": null, "resolves": null, "retracts": null}]
+          "corrections": [
+            {
+              "observed": "홍길돈",
+              "canonical": "홍길동",
+              "kind": "person"
+            }
+          ],
+          "threads": [
+            {
+              "kind": "결정",
+              "content": "홍길동이 금요일에 자료를 보내기로 했다.",
+              "occurred_at": "2026-01-01T00:00:00Z",
+              "tags": [
+                "홍길동",
+                "업무 운영"
+              ],
+              "field": null,
+              "value": null,
+              "direction": null,
+              "resolves": null,
+              "retracts": null,
+              "counterpart": null
+            }
+          ]
         }
       }
     }

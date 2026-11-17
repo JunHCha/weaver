@@ -3,6 +3,8 @@
 import threading
 from pathlib import Path
 
+from server.tests.fake_responses import fixture_response
+
 from weaver.config import load_config
 from weaver.courier import Courier
 from weaver.runtime.assemble import Plugins, build_runtime
@@ -13,12 +15,12 @@ class FakeLlm:
 
     def generate_json(self, task, system, user, schema):
         if task == "loom.summary":
-            return schema.model_validate(
-                {"script": "원문", "body": "요약", "questions": []}
+            return fixture_response(
+                schema, {"script": "원문", "body": "요약", "questions": []}
             )
         if task == "loom.approve":
-            return schema.model_validate(
-                {"body": "요약", "corrections": [], "threads": []}
+            return fixture_response(
+                schema, {"body": "요약", "corrections": [], "threads": []}
             )
         raise AssertionError(task)
 
@@ -285,7 +287,8 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
 
         def generate_json(self, task, system, user, schema):
             if task == "loom.approve":
-                return schema.model_validate(
+                return fixture_response(
+                    schema,
                     {
                         "body": "요약",
                         "new_entries": [{"name": "홍길동", "kind": "person"}],
@@ -303,13 +306,14 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                                 "retracts": None,
                             }
                         ],
-                    }
+                    },
                 )
             if task == "wiki.compile_batch":
                 payload = json.loads(user)
                 self.compile_inputs.append(payload)
                 previous = "\n".join(p["body"] for p in payload["existing_pages"])
-                return schema.model_validate(
+                return fixture_response(
+                    schema,
                     {
                         "pages": [
                             {
@@ -337,11 +341,12 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                             }
                             for target in payload["digest_targets"]
                         ],
-                    }
+                    },
                 )
             if task == "wiki.human_edit":
-                return schema.model_validate(
-                    {"changes": [{"content": "사람의 수정", "tags": ["홍길동"]}]}
+                return fixture_response(
+                    schema,
+                    {"changes": [{"content": "사람의 수정", "tags": ["홍길동"]}]},
                 )
             return super().generate_json(task, system, user, schema)
 
@@ -457,7 +462,8 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
                     "resolves": None,
                     "retracts": None,
                 }
-                return schema.model_validate(
+                return fixture_response(
+                    schema,
                     {
                         "body": "요약",
                         "new_entries": [{"name": "홍길동", "kind": "person"}],
@@ -485,7 +491,7 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
                                 "blocked_by_index": 0,
                             },
                         ],
-                    }
+                    },
                 )
             return super().generate_json(task, system, user, schema)
 
@@ -623,7 +629,8 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
         def generate_json(self, task, system, user, schema):
             if task != "loom.approve":
                 return super().generate_json(task, system, user, schema)
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "요약",
                     "new_entries": [{"name": "홍길동", "kind": "person"}],
@@ -645,7 +652,7 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
                             "retracts": None,
                         }
                     ],
-                }
+                },
             )
 
     config_file = tmp_path / "server.toml"

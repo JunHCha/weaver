@@ -13,7 +13,8 @@ Public API for CLI and web callers:
 - `snapshot()` reads the dictionary once in a transaction and returns a
   `DictionarySnapshot` for repeated in-memory `resolve(name)` and `candidates`.
   Canonical names take precedence over aliases, compared in NFC with Unicode
-  casefold; colliding aliases resolve in stable canonical name order. A new wiki
+  casefold with all Unicode whitespace removed; canonical and alias collisions
+  resolve in stable canonical name order (canonical names always win). A new wiki
   page whose canonical name equals an existing alias remains a distinct entry.
 - `list_entries(limit=None)` returns stable name-sorted `ContextEntry` values.
   `resolve(name)` returns an entry or `None`; `kind_of(name)` uses that resolution.
@@ -27,7 +28,10 @@ Public API for CLI and web callers:
   became occupied after preparation; it logs a content-free warning and still
   creates the entry, so Fabric append can proceed. A now-occupied canonical name
   returns the existing entry instead.
-- `rename(name, new_name)` retains the old name as an alias. `set_kind(name, kind)`,
+- `rename(name, new_name, human_edited=True)` retains the old name as an alias.
+  The automatic `human_edited=False` path accepts only unedited learned entries,
+  keeps that flag false and stores the former spelling only as a transcript
+  correction (never a tag alias). `set_kind(name, kind)`,
   `add_alias(name, alias, human_edited=True)`, `remove_alias(name, alias)` and `merge(source, target)`
   return the updated entry and mark it `human_edited`. Every edit reads and writes
   within one `BEGIN IMMEDIATE` transaction. Merge retains the target kind,
@@ -55,3 +59,17 @@ still raise ValueError. Alias-only automatic payloads use an optional
 implementation after applying such aliases. Existing v1/v2 payloads without
 that field remain readable. Normal add_entry retry semantics are unchanged;
 callers must explicitly add aliases to an already existing canonical entry.
+
+Kinds follow PARA: `project` is a curated project, `area` a broad ongoing
+responsibility, and `topic` a resource; `person` and `organization` identify
+parties. Existing SQLite tables store kind labels without a closed SQL enum,
+so `area` needs no data rewrite or database version change. Wiki page roles map
+`project → project`, `operation → area`, `reference → topic`, and person and
+organization unchanged. `page_role` takes precedence over a legacy `kind` field
+when synchronizing pages. Web dictionary edits and `/api/tags` accept `area`.
+
+A Wiki-synced project with `human_edited=False` remains resolvable for history
+and dictionary management, but is excluded from approval/Wiki extraction tag
+candidates, including recent-tag hints. Existing curated projects and existing
+learned projects may be tagged when clearly relevant. Automatic approval and
+bootstrap never create a project; project promotion is deferred to #149.

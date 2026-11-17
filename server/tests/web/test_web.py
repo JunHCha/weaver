@@ -495,3 +495,87 @@ def test_tags_locked_dictionary_returns_503(setup):
         response = client.get("/api/tags")
     assert response.status_code == 503
     assert response.json() == {"detail": "State database is temporarily unavailable."}
+
+
+def test_area_kind_and_derived_presentation_are_read_only(tmp_path):
+    from weaver.schema import TagCorrection
+
+    config = config_at(tmp_path)
+    context = ContextDictionary(config.state_root)
+    context.add_entry("자료 관리", "area")
+    fabric = FabricStore.from_config(config)
+    fabric.append(
+        [
+            draft("fact", tags=["자료 관리"], counterpart="김철수"),
+            draft("retired", tags=["자료 관리"]),
+            draft("wiki-field:rev:0", tags=["자료 관리"], field="status", value="보류"),
+            draft(
+                "correction",
+                kind="태그정정",
+                correction=TagCorrection(target="fact", add=[], remove=["자료 관리"]),
+            ),
+            draft("retraction", retracts="retired"),
+        ]
+    )
+    client = TestClient(create_app(config), base_url="http://127.0.0.1")
+    rows = {row["thread_id"]: row for row in client.get("/api/threads").json()}
+    assert rows["fact"]["presentation"] == "fact"
+    assert rows["fact"]["counterpart"] == "김철수"
+    for key in ("wiki-field:rev:0", "correction", "retraction"):
+        assert rows[key]["presentation"] == "history"
+    assert {"name": "자료 관리", "kind": "area"} in client.get("/api/tags").json()
+    with fabric._connect() as db:
+        payloads = [row[0] for row in db.execute("SELECT payload FROM threads")]
+    assert not any('"presentation"' in payload for payload in payloads)
+
+
+def test_presentation_covers_legacy_fields_rejection_and_fact_lifecycle(tmp_path):
+    from weaver.fabric import ThreadQuery
+
+    config = config_at(tmp_path)
+    fabric = FabricStore.from_config(config)
+    fabric.append(
+        [
+            draft("old-fact"),
+            draft("retract", retracts="old-fact"),
+            draft("request", kind="요청", direction="받음"),
+            draft("decision", kind="결정", resolves="request"),
+            draft("rejection", kind="거절", content=None),
+            draft("wiki:legacy:0", field="status", value="보류", content="status 변경"),
+            draft(
+                "wiki:business:0",
+                field="status",
+                value="보류",
+                content="다음 점검까지 보류한다.",
+            ),
+            draft("ordinary", field="status", value="보류", content="status 변경"),
+            draft(
+                "execution",
+                kind="실행",
+                actor="system",
+                executes="decision",
+                tags=[],
+                value={
+                    "action_id": "act_00000000000000000000000000000000",
+                    "action": "calendar.register",
+                    "outcome": "completed",
+                    "external_id": "synthetic",
+                    "error": None,
+                },
+            ),
+        ]
+    )
+    client = TestClient(create_app(config), base_url="http://127.0.0.1")
+    rows = {
+        row["thread_id"]: row["presentation"]
+        for row in client.get("/api/threads?include_executions=true").json()
+    }
+    assert {key for key, value in rows.items() if value == "history"} == {
+        "retract",
+        "rejection",
+        "wiki:legacy:0",
+        "execution",
+    }
+    assert rows["old-fact"] == rows["request"] == rows["decision"] == "fact"
+    assert rows["wiki:business:0"] == rows["ordinary"] == "fact"
+    assert len(fabric.entries(ThreadQuery(include_executions=True))) == len(rows)

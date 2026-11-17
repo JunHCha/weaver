@@ -134,3 +134,91 @@ Other schedules show 유지, update, remove+register, register or remove accordi
 to the same Action derivation used by the engine. Review these effects before
 applying. The next daemon start may cause the wiki compiler to recompile pages
 whose tags changed, making additional LLM calls and incurring their normal cost.
+
+## Approval extraction rules
+
+`loom.approve` extracts business requests, decisions, schedules and records.
+Review questions/answers, transcript interpretation, identity checks and
+unconfirmed statements are not independent facts; answers only repair the
+underlying business fact. This is a prompt rule, without text heuristics that
+could delete valid business facts. Every involved person/organization, project
+and topic belongs in the Thread tags; the record owner does not. Canonical
+person names omit titles, affiliations and notes. Deterministic structural
+checks drop malformed/titled proposed names, with content-free warnings.
+
+`contact_name` comes from optional package metadata in `summary.sqlite3`
+(`contacts`, keyed by package ID), saved from Source.hints.counterpart during
+drafting. Legacy packages fall back to Spinner's stored Source metadata when
+available; otherwise the input is null. No phone/schema change is needed.
+
+Actual alternate names alone belong in aliases. Typographical errors and
+misrecognitions belong in transcript corrections; spacing/case variants resolve
+without aliases and are dropped from automatic proposals. A count-only warning
+reports input dictionary people/organizations present in the approved body but
+absent from every extracted Thread's tags; no name, body or source ID is logged.
+Wiki human-edit extraction shares the dictionary budget, tag rules and proposal
+validation, journals new entries before append, and leaves frontmatter changes
+to code. Unknown generated tags are dropped rather than stored.
+
+`open_requests` contains at most 50 active unresolved requests within an 8,000
+UTF-8 byte JSON budget, ranked by shared relevant tags then newest sequence.
+Each hint has id, content, tags, direction and occurred_at. Only an explicit
+completion, answer or cancellation can produce a decision's `resolves`; similarity
+is insufficient. The server drops targets outside the full active unresolved
+request set. Re-extraction excludes the source's own old requests and schedules.
+
+Re-extraction run `para-counterpart-v4` separates bootstrap `renames` from
+`tag_corrections` (both observed → canonical). Only unedited learned
+people/organizations may be renamed automatically; wiki and human names stay
+protected. Apply uses `rename(..., human_edited=False)`, stores the former
+spelling as a transcript correction, and adds no former-name tag alias.
+Invalid/uncleanable names are omitted from automatic dictionary planning and
+reported by count. Tag mappings are plan-only, including old typos and spacing
+variants; independent human facts receive tag corrections. Only operations whose
+canonical names are used survive into a source plan. Preview includes automatic
+renames and tag mappings, and apply/retry journals both before Fabric append.
+Synthetic replay and optional real-model evaluation are documented in
+[`server/evals/README.md`](../../../evals/README.md).
+
+## PARA area and exchanged party
+
+Every newly extracted business Thread has exactly one `area` tag. Prefer the
+few broad areas already present; propose an area only when none fits. Area hints
+come first within the shared dictionary budget. The server rejects an extraction
+with zero or multiple resolved area tags before journaling any facts, using
+retryable `SchemaMismatch` and the existing bounded contract-error retry path. A project
+must already exist and clearly fit; `new_entries` of kind `project` are dropped
+with a content-free warning. Unedited Wiki project pages are excluded from both
+dictionary and recent-tag hints and cannot pass tag validation. Bootstrap also
+cannot create projects; curation/promotion belongs to #149. `topic` means PARA
+resource. Wiki human-edit business facts use these same guards; tag corrections
+and code-produced field history have their own contracts below.
+
+`Thread.counterpart` is one canonical person/organization or null: the party the
+work was exchanged with, usually the contact, requester for a received request,
+or recipient for a sent request. The canonical counterpart is also added to the involved-party tags if omitted. The server validates it against the complete eligible dictionary plus
+accepted new entries; invalid kinds/unknown names become null with a content-free
+warning. An entry used only by counterpart is still persisted. Old Fabric rows
+and cached plans read the missing field as null. Tag corrections change tags
+only. Re-extraction's `para-counterpart-v4` plan stores area and counterpart and
+prints counterpart in preview; older saved plan versions must be recreated.
+The phone's `PipelineThread` projection deliberately omits counterpart for strict
+older Android readers; the field stays in Fabric and the web API only.
+
+Human Wiki frontmatter changes produce deterministic Korean history sentences
+for assignees, deadline, schedule and status. Their IDs start `wiki-field:`;
+semantic human facts still start `wiki:`. These field histories use the current
+`state_tag` resolved through the full dictionary, plus the entity's area when a
+single area is determinable from active related Threads, and counterpart is
+always null. They never use the page filename as a tag. A missing/unresolved
+state_tag leaves the edit in Wiki without a field Thread and logs a content-free
+warning. New entries for semantic edits remain journaled before append.
+
+Wiki semantic extraction uses its own rule block without approval Q&A or contact
+owner instructions. Business facts require one area; tag corrections require
+none. Invalid JSON, schema/area mismatches, missing output and refusals retry
+per edit revision up to three times, with a durable attempt count. Exhaustion
+journals an empty result, acknowledges the unchanged Wiki text, and emits a
+content-free warning; later ticks/restarts reuse the empty result without a new
+model call. Other edits remain independent. Re-extraction reports contract
+errors per source. Count-only untagged-name warnings use emitted tags alone.

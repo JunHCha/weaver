@@ -49,3 +49,17 @@ Thread lookup errors return 404 and missing token or invalid origin returns 403.
 Thread and state reads resolve effective tags through one dictionary snapshot,
 so renames and merges need no historical log rewrite. The legacy tags endpoint
 also retains historical labels for existing consumers.
+
+Dictionary kinds include PARA `area` (ongoing responsibility) and `topic`
+(resource). `/api/tags` and dictionary edit requests support `area`.
+`GET /api/threads` adds a derived read-only `presentation: fact | history`.
+History covers tag corrections (태그정정), executions (실행), rejections (거절),
+retraction records (`retracts` set), new Wiki field histories (`wiki-field:` ID),
+and legacy Wiki field histories (`wiki:` ID, `field` set, and content exactly
+`<field> 변경`). All other Threads are facts, including resolved requests.
+A retracted business original retains `fact`; the effective view hides that
+original using its retraction record instead of changing its presentation.
+This attribute is never stored in Fabric and adds no shared schema field.
+Thread `counterpart` is a single canonical person/organization or null and also
+appears in its tags; tag corrections do not change counterpart. The phone's
+strict PipelineItem wire format deliberately omits counterpart entirely.

@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
+from server.tests.fake_responses import fixture_response
 from typer.testing import CliRunner
 
 from weaver.action import ActionEngine, ActionOutbox
@@ -57,18 +58,20 @@ class FakeLlm:
     ) -> T:
         self.calls.append(task)
         if task == "loom.reextract_bootstrap":
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "entries": [
-                        {"name": "Weaver", "kind": "project", "aliases": ["위버 작업"]}
+                        {"name": "Weaver", "kind": "topic", "aliases": ["위버 작업"]}
                     ]
-                }
+                },
             )
         assert task == "loom.approve"
         data = json.loads(user)
         if data["body"] == self.fail_body:
             raise RuntimeError("synthetic failure")
-        return schema.model_validate(
+        return fixture_response(
+            schema,
             {
                 "body": "새 승인 사실",
                 "corrections": [],
@@ -86,7 +89,7 @@ class FakeLlm:
                         "retracts": None,
                     }
                 ],
-            }
+            },
         )
 
     def generate_text(self, task, system, user):
@@ -155,7 +158,7 @@ def test_preview_is_readonly_and_shows_full_diff(tmp_path):
     wiki = tmp_path / "wiki"
     (wiki / "pages").mkdir(parents=True)
     (wiki / "pages" / "Weaver.md").write_text(
-        '---\nkind: project\naliases: ["위버"]\n---\n# Weaver\n'
+        '---\nkind: topic\naliases: ["위버"]\n---\n# Weaver\n'
     )
     before = hashes(tmp_path)
     llm = FakeLlm()
@@ -163,7 +166,7 @@ def test_preview_is_readonly_and_shows_full_diff(tmp_path):
     assert hashes(tmp_path) == before
     assert llm.calls == ["loom.reextract_bootstrap", "loom.approve"]
     assert report.sources[0].old[0].tags == ["위버 작업", "TODO"]
-    assert report.sources[0].new[0].tags == ["Weaver"]
+    assert report.sources[0].new[0].tags == ["Weaver", "업무 운영"]
     output = render(report)
     assert "기존 Threads →" in output and "새 Threads" in output and "Weaver" in output
     assert "None=null" in output
@@ -350,7 +353,10 @@ def test_cli_json_preview_uses_fake_client(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli, ["reextract", "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
-    assert not data["applied"] and data["sources"][0]["new"][0]["tags"] == ["Weaver"]
+    assert not data["applied"] and data["sources"][0]["new"][0]["tags"] == [
+        "Weaver",
+        "업무 운영",
+    ]
     assert hashes(tmp_path) == before
 
 
@@ -409,6 +415,11 @@ def test_old_edit_revisions_are_retracted_and_new_links_are_remapped(tmp_path):
 
 def test_dictionary_bootstrap_preserves_wiki_title_and_short_alias(tmp_path):
     seed(tmp_path)
+    from weaver.context import Page
+
+    context = ContextDictionary(tmp_path)
+    context.sync_from_pages([Page("프로젝트 긴 제목", "project")])
+    context.set_kind("프로젝트 긴 제목", "project")
     wiki = tmp_path / "wiki"
     (wiki / "pages").mkdir(parents=True)
     (wiki / "pages" / "프로젝트 긴 제목.md").write_text(
@@ -421,7 +432,8 @@ def test_dictionary_bootstrap_preserves_wiki_title_and_short_alias(tmp_path):
         ) -> T:
             if task == "loom.reextract_bootstrap":
                 self.calls.append(task)
-                return schema.model_validate(
+                return fixture_response(
+                    schema,
                     {
                         "entries": [
                             {
@@ -430,7 +442,7 @@ def test_dictionary_bootstrap_preserves_wiki_title_and_short_alias(tmp_path):
                                 "aliases": ["프로젝트"],
                             }
                         ]
-                    }
+                    },
                 )
             return super().generate_json(task, system, user, schema)
 
@@ -488,7 +500,8 @@ def test_failed_source_does_not_leak_uncommitted_dictionary_to_next(
             # Approval only returns new_entries for names absent from its snapshot.
             names = {e["name"] for e in json.loads(user)["dictionary"]}
             self.calls.append(task)
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "새 사실",
                     "corrections": [],
@@ -508,7 +521,7 @@ def test_failed_source_does_not_leak_uncommitted_dictionary_to_next(
                             "retracts": None,
                         }
                     ],
-                }
+                },
             )
 
     monkeypatch.setattr(FabricStore, "append", fail_first)
@@ -517,3 +530,125 @@ def test_failed_source_does_not_leak_uncommitted_dictionary_to_next(
     assert by_source[SOURCE].error == "OSError" and by_source[OTHER].done
     assert ContextDictionary(tmp_path).resolve("홍길동")
     assert any(e.name == "홍길동" for e in by_source[OTHER].additions)
+
+
+def test_bootstrap_clean_rename_transcript_only_and_plan_tag_mapping(tmp_path):
+    root = tmp_path / "state"
+    seed(root)
+    context = ContextDictionary(root)
+    context.add_entry("지원팀 김철수 팀장님", "person", human_edited=False)
+    context.add_entry("이름 미확인(수정 필요)", "person", human_edited=False)
+    fabric = FabricStore(root / "fabric.sqlite3")
+    fabric.append(
+        [
+            draft(
+                "human",
+                actor="human",
+                tags=["지원팀 김철수 팀장님", "김 철수", "김철쑤"],
+            )
+        ]
+    )
+
+    class Llm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            if task == "loom.reextract_bootstrap":
+                for rule in (
+                    "오타·오인식·띄어쓰기",
+                    "직함·소속·메모",
+                    "녹취 교정으로만",
+                    "이름이 아니면",
+                    "tag_corrections",
+                ):
+                    assert rule in system
+                return fixture_response(
+                    schema,
+                    {
+                        "entries": [
+                            {
+                                "name": "김철수",
+                                "kind": "person",
+                                "aliases": ["김 철수", "김철쑤"],
+                            }
+                        ],
+                        "renames": [
+                            {"observed": "지원팀 김철수 팀장님", "canonical": "김철수"},
+                            {
+                                "observed": "이름 미확인(수정 필요)",
+                                "canonical": "확인 필요",
+                            },
+                        ],
+                        "tag_corrections": [
+                            {"observed": "김철쑤", "canonical": "김철수"}
+                        ],
+                    },
+                )
+            return fixture_response(
+                schema,
+                {"body": "김철수가 자료를 전달했다.", "corrections": [], "threads": []},
+            )
+
+    report = plan_reextract(root, tmp_path / "wiki", Llm())
+    assert not report.errors and not report.sources[0].error
+    plan = report.sources[0]
+    assert [(c.observed, c.canonical) for c in plan.renames] == [
+        ("지원팀 김철수 팀장님", "김철수")
+    ]
+    assert plan.human_changes[0].new_tags == ["김철수"]
+    assert report.notices
+    assert not any(e.aliases for e in plan.additions)
+    applied = apply_report(root, report)
+    assert applied.sources[0].done
+    entry = context.resolve("김철수")
+    assert not entry.human_edited and not entry.aliases
+    assert "지원팀 김철수 팀장님" in entry.misrecognitions
+    assert context.resolve("지원팀 김철수 팀장님") is None
+    assert context.resolve("김철쑤") is None
+    assert context.resolve("김 철수").name == "김철수"
+
+
+def test_reextract_carries_area_and_counterpart_in_plan_preview_and_apply(tmp_path):
+    seed(tmp_path)
+    context = ContextDictionary(tmp_path)
+    context.add_entry("김철수", "person")
+
+    class PartyLlm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            result = super().generate_json(task, system, user, schema)
+            if task == "loom.approve":
+                data = result.model_dump()
+                data["threads"][0]["counterpart"] = "김철수"
+                return fixture_response(schema, data)
+            return result
+
+    report = reextract(tmp_path, tmp_path / "wiki", PartyLlm())
+    planned = report.sources[0].new[0]
+    assert "업무 운영" in planned.tags
+    assert planned.counterpart == "김철수"
+    assert "counterpart=김철수" in render(report)
+    apply_report(tmp_path, report)
+    assert (
+        next(
+            t
+            for t in FabricStore(tmp_path / "fabric.sqlite3").entries(ThreadQuery())
+            if t.thread_id == planned.thread_id
+        ).counterpart
+        == "김철수"
+    )
+
+
+def test_area_contract_error_is_reported_per_source(tmp_path):
+    seed(tmp_path, body="bad")
+    seed(tmp_path, source=OTHER, name="good", body="good")
+
+    class BadArea(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            result = super().generate_json(task, system, user, schema)
+            if task == "loom.approve" and json.loads(user)["body"] == "bad":
+                result.threads[0].tags = []
+            return result
+
+    report = reextract(tmp_path, tmp_path / "wiki", BadArea())
+    plans = {plan.source_id: plan for plan in report.sources}
+    assert plans[SOURCE].error == "SchemaMismatch"
+    assert not plans[SOURCE].batch
+    assert not plans[OTHER].error and plans[OTHER].new

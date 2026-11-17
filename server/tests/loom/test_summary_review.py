@@ -1,7 +1,10 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
+from server.tests.fake_responses import fixture_response
 
 from weaver.context import ContextDictionary
 from weaver.loom.summary_review import SummaryReview
@@ -15,7 +18,8 @@ class FakeLlm:
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
     ) -> T:
-        return schema.model_validate(
+        return fixture_response(
+            schema,
             {
                 "new_entries": [{"name": "홍길동", "kind": "person"}],
                 "body": "홍길동이 결정했다.",
@@ -35,7 +39,7 @@ class FakeLlm:
                         "retracts": None,
                     }
                 ],
-            }
+            },
         )
 
     def generate_text(self, task: str, system: str, user: str) -> str:
@@ -205,7 +209,7 @@ def test_edit_reject_and_replay(tmp_path: Path) -> None:
         ) -> T:
             data = super().generate_json(task, system, user, schema).model_dump()
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     def make() -> SummaryReview:
         return SummaryReview(
@@ -313,7 +317,8 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
                 "resolves": None,
                 "retracts": None,
             }
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "요청을 마치면 회의한다. 별도 회의도 한다.",
                     "corrections": [],
@@ -347,7 +352,7 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
                             "blocked_by_index": None,
                         },
                     ],
-                }
+                },
             )
 
     sink = FakeSink()
@@ -390,7 +395,8 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
         def generate_json[T: BaseModel](
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "회의",
                     "corrections": [],
@@ -408,7 +414,7 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
                             "blocked_by_index": self.index,
                         }
                     ],
-                }
+                },
             )
 
     llm = Llm()
@@ -455,8 +461,8 @@ def test_freeform_answers_and_feedback_use_one_approval_request(tmp_path: Path) 
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
             self.calls.append((task, user))
-            return schema.model_validate(
-                {"body": "추가 답변 반영", "corrections": [], "threads": []}
+            return fixture_response(
+                schema, {"body": "추가 답변 반영", "corrections": [], "threads": []}
             )
 
     llm = RecordingLlm()
@@ -492,8 +498,8 @@ def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> Non
         def generate_json[T: BaseModel](
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
-            return schema.model_validate(
-                {"body": "모델이 바꾼 문장", "corrections": [], "threads": []}
+            return fixture_response(
+                schema, {"body": "모델이 바꾼 문장", "corrections": [], "threads": []}
             )
 
     review = SummaryReview(
@@ -528,7 +534,7 @@ def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
                 {"observed": "홍길돈", "canonical": "직접 입력한 답", "kind": "person"},
                 {"observed": "원문에 없음", "canonical": "홍길동", "kind": "person"},
             ]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     sink = FakeSink()
     context = ContextDictionary(tmp_path / "state")
@@ -644,7 +650,8 @@ def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> 
             self.calls_made.append(1)
             self.calls_made[:] = self.calls_made
             plan = self.kind == "일정"
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": f"회의를 옮긴다 {len(self.calls_made)}",
                     "corrections": [],
@@ -669,7 +676,7 @@ def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> 
                             "updates": self.link,
                         }
                     ],
-                }
+                },
             )
 
     llm = Llm()
@@ -770,7 +777,7 @@ def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> 
                 "newalias",
                 "비공개미확인태그",
             ]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     class InterruptedSink:
         failed = False
@@ -808,8 +815,8 @@ def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> 
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     assert llm.calls == 1
-    assert fabric.entries(ThreadQuery())[-1].tags == ["표준", "새사람"]
-    assert len(context.list_entries()) == 2
+    assert fabric.entries(ThreadQuery())[-1].tags == ["표준", "새사람", "업무 운영"]
+    assert len(context.list_entries()) == 3
     assert context.resolve("NewAlias").human_edited
     assert context.kind_of("새사람") == "organization"
     assert "dropped unresolved approval tag" in caplog.text
@@ -842,13 +849,13 @@ def test_apply_racing_alias_collision_never_wedges_append(
             data["new_entries"] = [
                 {
                     "name": "새항목",
-                    "kind": "project",
+                    "kind": "topic",
                     "aliases": ["경쟁별칭", "안전별칭"],
                 }
             ]
             data["corrections"] = []
             data["threads"][0]["tags"] = ["경쟁별칭"]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     monkeypatch.setattr(context, "add_entry", racing_add)
     sink, llm = FakeSink(), Llm()
@@ -867,7 +874,7 @@ def test_apply_racing_alias_collision_never_wedges_append(
     result = review.approve(package(), "원문", verdict, now=NOW)
     assert review.approve(package(), "원문", verdict, now=NOW) == result
     assert len(sink.drafts) == 1 and llm.calls == 1
-    assert sink.drafts[0].tags == ["새항목"]
+    assert sink.drafts[0].tags == ["새항목", "업무 운영"]
     assert context.resolve("안전별칭").name == "새항목"
     assert context.resolve("경쟁별칭").name == "개인항목"
     assert "dropped conflicting dictionary aliases" in caplog.text
@@ -890,12 +897,12 @@ def test_prepare_keeps_safe_aliases_and_only_used_proposals(
         def generate_json(self, task, system, user, schema):
             data = super().generate_json(task, system, user, schema).model_dump()
             data["new_entries"] = [
-                {"name": "사용", "kind": "project", "aliases": ["충돌", "안전"]},
+                {"name": "사용", "kind": "topic", "aliases": ["충돌", "안전"]},
                 {"name": "미사용", "kind": "topic", "aliases": []},
             ]
             data["threads"][0]["tags"] = ["안전", "충돌", "사용"]
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     monkeypatch.setattr(context, "snapshot", counted_snapshot)
     sink = FakeSink()
@@ -913,7 +920,7 @@ def test_prepare_keeps_safe_aliases_and_only_used_proposals(
     )
     review.approve(package(), "원문", verdict, now=NOW)
     assert len(reads) == 1
-    assert sink.drafts[0].tags == ["사용", "기존"]
+    assert sink.drafts[0].tags == ["사용", "기존", "업무 운영"]
     assert snapshot().resolve("사용").aliases == ("안전",)
     assert snapshot().resolve("미사용") is None
 
@@ -934,7 +941,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
                 for i in range(650)
             ),
             Page("ZrecentUnique", "person"),
-            Page("ZtranscriptUnique", "project"),
+            Page("ZtranscriptUnique", "topic"),
         ]
     )
     thread = ThreadDraft(
@@ -989,7 +996,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
             data = super().generate_json(task, system, user, schema).model_dump()
             data["threads"][0]["tags"] = ["A0649DictionaryEntry"]
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     sink = Sink()
     review = SummaryReview(
@@ -1006,4 +1013,207 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
     )
     review.approve(package(), "ZtranscriptUnique", verdict, now=NOW)
     # Tags outside the prompt budget still validate against the complete snapshot.
-    assert sink.drafts[0].tags == ["A0649DictionaryEntry"]
+    assert sink.drafts[0].tags == ["A0649DictionaryEntry", "업무 운영"]
+
+
+def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog):
+    from weaver.loom.summary_review import ApprovalExtractor
+
+    context = ContextDictionary(tmp_path / "state")
+    context.add_entry("김철수", "person")
+    context.add_entry("가상연구소", "organization")
+
+    class RulesLlm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            for rule in (
+                "검토 질문과 답 자체는 Thread로 만들지 않는다",
+                "사람 동일성",
+                "미확인",
+                "직함·소속",
+                "화자 본인",
+                "오인식·오타·띄어쓰기",
+                "corrections(observed → canonical)",
+            ):
+                assert rule in system
+            assert json.loads(user)["contact_name"] == "홍길동"
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["body"] = "김철수가 가상연구소에 자료를 보냈다."
+            data["corrections"] = []
+            data["new_entries"] = [
+                {
+                    "name": "홍길동",
+                    "kind": "person",
+                    "aliases": ["홍 길동", "홍길동", "별명"],
+                },
+                {"name": "지원팀 김영희 팀장님", "kind": "person", "aliases": []},
+            ]
+            data["threads"][0]["tags"] = ["홍 길동", "지원팀 김영희 팀장님"]
+            return fixture_response(schema, data)
+
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    prepared = ApprovalExtractor(
+        RulesLlm(), context, FakeSink(), contact_name="홍길동"
+    ).prepare(package(), "합성 원문", verdict, now=NOW)
+    assert prepared.new_entries[0].aliases == ["별명"]
+    assert prepared.threads[0].tags == ["홍길동", "업무 운영"]
+    assert "approved body has untagged dictionary names: 2" in caplog.text
+    assert "김철수" not in caplog.text and "가상연구소" not in caplog.text
+
+
+def test_open_requests_are_active_budgeted_ranked_and_validated(tmp_path, caplog):
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.loom.reextract import ExtractionView
+    from weaver.loom.summary_review import ApprovalExtractor
+
+    context = ContextDictionary(tmp_path / "context")
+    context.add_entry("자료", "topic")
+    fabric = FabricStore(tmp_path / "fabric.db")
+    base = ThreadDraft(
+        thread_id="request",
+        kind="요청",
+        content="자료 전송",
+        occurred_at=NOW,
+        recorded_at=NOW,
+        tags=["자료"],
+        field=None,
+        value=None,
+        source_id=SOURCE,
+        actor="human",
+        direction="받음",
+        resolves=None,
+        retracts=None,
+        correction=None,
+    )
+    rows = [
+        base,
+        base.model_copy(update={"thread_id": "done"}),
+        base.model_copy(update={"thread_id": "gone"}),
+        base.model_copy(
+            update={
+                "thread_id": "resolved",
+                "kind": "결정",
+                "direction": None,
+                "resolves": "done",
+            }
+        ),
+        base.model_copy(
+            update={
+                "thread_id": "retracted",
+                "kind": "기록",
+                "direction": None,
+                "retracts": "gone",
+            }
+        ),
+    ]
+    rows.extend(
+        base.model_copy(
+            update={"thread_id": f"other-{i}", "tags": [], "content": "x" * 1000}
+        )
+        for i in range(70)
+    )
+    fabric.append(rows)
+
+    class Llm(FakeLlm):
+        target = "request"
+
+        def generate_json(self, task, system, user, schema):
+            payload = json.loads(user)
+            assert "완료·응답·취소" in system and "유사성만으로" in system
+            assert payload["open_requests"][0]["id"] == "request"
+            ids = {r["id"] for r in payload["open_requests"]}
+            assert "done" not in ids and "gone" not in ids
+            assert (
+                len(json.dumps(payload["open_requests"], ensure_ascii=False).encode())
+                <= 8000
+            )
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["threads"][0]["resolves"] = self.target
+            return fixture_response(schema, data)
+
+    llm = Llm()
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    extractor = ApprovalExtractor(llm, context, fabric)
+    for target in ("request", "done", "gone", "resolved", "unknown"):
+        llm.target = target
+        prepared = extractor.prepare(package(), "자료", verdict, now=NOW)
+        assert prepared.threads[0].resolves == (
+            "request" if target == "request" else None
+        )
+    assert "dropped invalid request resolution" in caplog.text
+    assert not any(
+        t.kind == "요청"
+        for t in ExtractionView(fabric.entries(ThreadQuery()), SOURCE).threads
+    )
+
+
+def test_contact_metadata_survives_restart_and_legacy_spinner_fallback(tmp_path):
+    import sqlite3
+
+    from weaver.loom.summary_state import SummaryState, read_contact_name
+
+    state = SummaryState(tmp_path)
+    state.save_package(package(), "합성 원문", "김철수")
+    state.save_package(package(), "합성 원문")
+    assert SummaryState(tmp_path).contact_name("pkg", SOURCE) == "김철수"
+    with state.connect() as db:
+        db.execute("DROP TABLE contacts")
+    with sqlite3.connect(tmp_path / "spinner.sqlite3") as db:
+        db.execute("CREATE TABLE results (source_id TEXT, version TEXT, source TEXT)")
+        db.execute(
+            "INSERT INTO results VALUES (?, ?, ?)",
+            (SOURCE, "1", json.dumps({"hints": {"counterpart": "김영희"}})),
+        )
+    assert read_contact_name(tmp_path, "pkg", SOURCE) == "김영희"
+
+
+@pytest.mark.parametrize("action", ["approve", "edit"])
+def test_prompt_corrections_are_approval_only(tmp_path, action):
+    class PromptLlm(FakeLlm):
+        system = ""
+
+        def generate_json(self, task, system, user, schema):
+            self.system = system
+            return super().generate_json(task, system, user, schema)
+
+    llm = PromptLlm()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action=action,
+        answers=["홍길동"],
+        edited_body="사람이 편집한 업무 사실" if action == "edit" else None,
+        feedback=None,
+    )
+    review.apply(package(), "홍길돈 원문", verdict, now=NOW)
+    assert (
+        "오인식은 corrections(observed → canonical)로만 제안한다" in llm.system
+    ) == (action == "approve")
+    if action == "edit":
+        assert "edit에서는 corrections를 비운다" in llm.system
+        assert "canonical은 검토 답 하나와 정확히 일치" not in llm.system
+    assert "#149" not in llm.system
+    assert "counterpart가 있으면 그 표준 이름도 반드시 tags에 포함한다" in llm.system

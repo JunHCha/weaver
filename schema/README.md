@@ -162,3 +162,12 @@ stage_times is limited to the existing wire keys `반영` and `wiki갱신`.
 No capture or review milestones are synthesized. Thread summaries can include
 optional `content`; old capture projections omit it and `wiki_edit` to preserve
 strict v2 readers. See `examples/PipelineItem-wiki-edit.json`.
+
+`Thread` and `ThreadDraft` include optional `counterpart` (one nonempty canonical
+person/organization name or null), defaulting to null for older payloads. It is
+not an array and is not rewritten by tag corrections. `PipelineItem.threads`
+deliberately has no counterpart key: existing Android clients reject unknown
+keys, and the phone map does not need this field. The server validates
+dictionary ownership and kinds at extraction time; standalone
+JSON Schema validates only the scalar shape. Web-only `presentation` is derived
+and does not belong to the persisted Thread schema.

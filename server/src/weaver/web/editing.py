@@ -22,7 +22,7 @@ from weaver.runtime.loop import AlreadyRunning, InstanceLock
 from weaver.schema import TagCorrection, Thread, ThreadDraft
 
 MAX_BODY_BYTES = 65536
-TagKind = Literal["project", "person", "organization", "topic"]
+TagKind = Literal["project", "area", "person", "organization", "topic"]
 Name = Annotated[str, Field(min_length=1, max_length=256)]
 
 

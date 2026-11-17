@@ -1,5 +1,7 @@
 """Versioned operating rules distilled from the user's work-vault conventions."""
 
+from weaver.loom.tagging import TAG_RULES
+
 RULES_VERSION = "work-vault-v2"
 
 WORK_VAULT_RULES = """업무 Wiki 운영 규칙
@@ -59,10 +61,15 @@ digest_targets의 각 path에 대해 digests에 path와 sentences를 쓴다.
 """
 )
 
-HUMAN_EDIT_PROMPT = """사람의 수정 중 새로운 사실과 기존 사실의 명시적 정정만 추출한다.
+WIKI_EDIT_RULES = """사람의 Wiki 수정 중 새로운 업무 사실(요청·결정·일정·기록)과 기존 사실의 명시적 정정만 추출한다.
+녹취 해석(오인식·용어 뜻), 사람 동일성 확인, 불확실함·미확인 진술은 독립 사실로 만들지 않는다.
 오타·서식·섹션 순서·링크 경로 수정·관련 문서 정리·체크리스트의 단순 재배치는 제외한다.
 줄이나 문서 삭제만으로 업무 취소·완료·요청 해결을 추정하지 않는다.
-frontmatter 필드 변경은 코드가 처리하므로 제외한다.
+frontmatter 필드 변경은 코드가 처리하므로 제외한다."""
+
+WIKI_EDIT_OUTPUT_RULES = """업무 Thread에는 영역 태그가 정확히 하나 있어야 하며 태그 정정에는 영역이 필요 없다.
+counterpart는 업무를 주고받은 한 사람/조직의 사전 표준 이름 또는 null이다. 목록은 쓰지 않는다.
 태그 정정의 대상은 제공된 로그에 실제로 있는 Thread ID여야 한다.
-이름 변경을 관련 없는 기록 전체의 병합으로 확대하지 않는다.
-"""
+이름 변경을 관련 없는 기록 전체의 병합으로 확대하지 않는다."""
+
+HUMAN_EDIT_PROMPT = "\n".join((WIKI_EDIT_RULES, TAG_RULES, WIKI_EDIT_OUTPUT_RULES))

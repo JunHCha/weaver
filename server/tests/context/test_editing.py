@@ -327,3 +327,45 @@ def test_automatic_alias_respects_human_removal_and_does_not_freeze_wiki(tmp_pat
     store.add_entry("별도", "person", ("이미있음",))
     with pytest.raises(ValueError, match="collision"):
         store.add_alias("자동별칭", "이미있음", human_edited=False)
+
+
+def test_whitespace_resolution_collisions_and_automatic_rename(tmp_path):
+    import unicodedata
+
+    import pytest
+
+    from weaver.context import ContextEntry, DictionarySnapshot
+
+    context = ContextDictionary(tmp_path)
+    context.add_entry("홍길동", "person", human_edited=False)
+    assert context.resolve(" 홍\t길 동\n").name == "홍길동"
+    context.add_entry("한빛", "organization", ("Bright Lab",))
+    assert context.resolve("BRIGHT\tLAB").name == "한빛"
+    with pytest.raises(ValueError):
+        context.add_alias("홍길동", "brightlab")
+    with pytest.raises(ValueError):
+        context.sync_from_pages([Page("한 빛", "topic"), Page("한빛", "topic")])
+    snapshot = DictionarySnapshot(
+        [
+            ContextEntry("Z", "topic", ("A B",)),
+            ContextEntry("AB", "person"),
+            ContextEntry("A", "topic", ("a b",)),
+        ]
+    )
+    assert snapshot.resolve("a\tb").name == "AB"
+    collision = DictionarySnapshot(
+        [ContextEntry("Z", "topic", ("A B",)), ContextEntry("A", "topic", ("ab",))]
+    )
+    assert collision.resolve("a b").name == "A"
+    context.add_entry(
+        "지원팀 김철수 팀장님", "person", ("지원팀 김철수 팀장님",), human_edited=False
+    )
+    renamed = context.rename("지원팀 김철수 팀장님", "김철수", human_edited=False)
+    assert not renamed.human_edited and not renamed.aliases
+    assert renamed.misrecognitions == ("지원팀 김철수 팀장님",)
+    assert context.resolve("지원팀 김철수 팀장님") is None
+    assert context.resolve(unicodedata.normalize("NFD", "김 철 수")).name == "김철수"
+    assert context.resolve("김철수").misrecognitions == ("지원팀 김철수 팀장님",)
+    context.set_kind("김철수", "person")
+    with pytest.raises(ValueError):
+        context.rename("김철수", "김영희", human_edited=False)

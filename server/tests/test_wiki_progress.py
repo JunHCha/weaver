@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from server.tests.fake_responses import fixture_response
 
 from weaver.context import ContextDictionary
 from weaver.fabric import FabricStore, ThreadQuery
@@ -19,12 +20,14 @@ class Client:
 
     def generate_json(self, task, system, user, schema):
         if task == "wiki.human_edit":
-            return EditResult.model_validate(
+            return fixture_response(
+                EditResult,
                 {
+                    "new_entries": [{"name": "점검", "kind": "topic", "aliases": []}],
                     "changes": []
                     if self.formatting_only
-                    else [{"content": "현장 확인 후 진행", "tags": ["점검"]}]
-                }
+                    else [{"content": "현장 확인 후 진행", "tags": ["점검"]}],
+                },
             )
         if self.fail:
             raise RuntimeError("generation paused")
@@ -68,10 +71,12 @@ def setup(tmp_path):
     def no_summary(_):
         raise LookupError("no source summary for a direct edit")
 
+    context = ContextDictionary(tmp_path / "state")
+    context.add_entry("점검", "topic")
     compiler = BatchCompiler(
         store,
         fabric,
-        ContextDictionary(tmp_path / "state"),
+        context,
         client,
         tmp_path / "compiler.sqlite3",
         no_summary,

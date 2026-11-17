@@ -1,12 +1,14 @@
 """Durable journal for summary drafts and review side effects."""
 
 import fcntl
+import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
+from weaver.readonly import connect_snapshot
 from weaver.schema import ReviewPackage
 
 
@@ -19,6 +21,9 @@ class SummaryState:
         with self.lock(), self.connect() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS packages (id TEXT, revision INTEGER, package TEXT NOT NULL, script TEXT NOT NULL, PRIMARY KEY(id, revision))"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
             )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS reviews (id TEXT, revision INTEGER, verdict TEXT NOT NULL, prepared TEXT NOT NULL, stage TEXT NOT NULL, PRIMARY KEY(id, revision))"
@@ -46,9 +51,16 @@ class SummaryState:
         finally:
             db.close()
 
-    def save_package(self, package: ReviewPackage, script: str) -> None:
+    def save_package(
+        self, package: ReviewPackage, script: str, contact_name: str | None = None
+    ) -> None:
         """Persist an immutable revision, rejecting conflicting snapshots."""
         with self.connect() as db:
+            if contact_name:
+                db.execute(
+                    "INSERT OR IGNORE INTO contacts VALUES (?, ?)",
+                    (package.package_id, contact_name),
+                )
             row = db.execute(
                 "SELECT package, script FROM packages WHERE id=? AND revision=?",
                 (package.package_id, package.revision),
@@ -77,3 +89,31 @@ class SummaryState:
         if row is None:
             raise ValueError("unknown package revision")
         return ReviewPackage.model_validate_json(row[0]), str(row[1])
+
+    def contact_name(self, package_id: str, source_id: str) -> str | None:
+        return read_contact_name(self.path.parent, package_id, source_id)
+
+
+def read_contact_name(root: Path, package_id: str, source_id: str) -> str | None:
+    """Read optional metadata; legacy packages can recover Spinner's archived hint."""
+    with closing(connect_snapshot(root / "summary.sqlite3")) as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='contacts'").fetchone():
+            row = db.execute(
+                "SELECT name FROM contacts WHERE id=?", (package_id,)
+            ).fetchone()
+            if row:
+                return str(row[0])
+    path = root / "spinner.sqlite3"
+    if not path.is_file():
+        return None
+    with closing(connect_snapshot(path)) as db:
+        rows = db.execute(
+            "SELECT source FROM results WHERE source_id=? ORDER BY version",
+            (source_id,),
+        ).fetchall()
+    for (raw,) in rows:
+        source = json.loads(raw)
+        counterpart = source.get("hints", {}).get("counterpart")
+        if isinstance(counterpart, str) and counterpart.strip():
+            return counterpart
+    return None
