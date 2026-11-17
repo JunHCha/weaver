@@ -1,9 +1,8 @@
 import { TagEditor } from "./TagEditor";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
-  fieldText,
   mdhm,
   fieldLabel,
   kindClass,
@@ -11,18 +10,17 @@ import {
   refs,
   refLabels,
   incomingRefLabels,
-  relations,
 } from "../lib/presentation";
 import {
-  currentThread,
   isHistory,
   stateTag,
   threadHistory,
-  valueChanges,
+  type ThreadView,
 } from "../lib/history";
 import { Icon, KindWord } from "./Common";
 export function DetailPanel({
   thread: t,
+  view,
   threads,
   sources,
   tags,
@@ -31,6 +29,7 @@ export function DetailPanel({
   onSaved,
 }: {
   thread: Thread | null;
+  view: ThreadView;
   threads: Thread[];
   tags: Tag[];
   sources: SourceView[];
@@ -44,15 +43,46 @@ export function DetailPanel({
     const timer = setTimeout(() => setToast(""), 1600);
     return () => clearTimeout(timer);
   }, [toast]);
+  const historyRows = useMemo(() => {
+    if (!t) return [];
+    const name = t.field ? stateTag(t, tags) : undefined;
+    const direct = threadHistory(t, threads, view.children).map((row) => ({
+      row,
+      label: null as string | null,
+    }));
+    const ids = new Set(direct.map(({ row }) => row.thread_id));
+    const fieldChanges = name
+      ? view.changes
+          .filter(
+            ({ thread, target }) =>
+              target === name &&
+              thread.field === t.field &&
+              thread.thread_id !== t.thread_id &&
+              !ids.has(thread.thread_id),
+          )
+          .map(({ thread, label }) => ({ row: thread, label }))
+      : [];
+    return [...direct, ...fieldChanges].sort(
+      (a, b) =>
+        Date.parse(a.row.recorded_at) - Date.parse(b.row.recorded_at) ||
+        a.row.seq - b.row.seq,
+    );
+  }, [t, threads, tags, view]);
+  const same = useMemo(
+    () =>
+      t
+        ? threads.filter(
+            (x) =>
+              x.source_id === t.source_id &&
+              !isHistory(x) &&
+              !view.relation.retracted.has(x.thread_id),
+          )
+        : [],
+    [t, threads, view],
+  );
   if (!t)
     return <aside className="panel" id="panel" aria-label="Thread 상세" />;
-  const relation = relations(threads),
-    same = threads.filter(
-      (x) =>
-        x.source_id === t.source_id &&
-        !isHistory(x) &&
-        !relation.retracted.has(x.thread_id),
-    ),
+  const relation = view.relation,
     source = sources.find((s) => s.id === t.source_id);
   const copy = async (value: string) => {
     try {
@@ -75,7 +105,7 @@ export function DetailPanel({
     </button>
   );
   const link = (id: string) => {
-    const target = threads.find((x) => x.thread_id === id);
+    const target = view.byId.get(id);
     return (
       <button
         type="button"
@@ -134,29 +164,6 @@ export function DetailPanel({
     ],
   ];
   if (t.correction) rows.push(["태그 정정", JSON.stringify(t.correction)]);
-  const history = threadHistory(t, threads);
-  const changes = valueChanges(
-    threads.filter((row) => row.tags.includes(stateTag(t, tags) || "")),
-    threads,
-    tags,
-  );
-  const effective = currentThread(t, threads, tags);
-  const historyRows = [
-    ...(JSON.stringify(effective.value) !== JSON.stringify(t.value)
-      ? [{ row: t, label: `원래 값 · ${fieldText(t)?.join(" ") || "없음"}` }]
-      : []),
-    ...history.map((row) => ({
-      row,
-      label: null as string | null,
-    })),
-    ...changes
-      .filter(({ thread }) => thread.thread_id !== t.thread_id)
-      .map(({ thread, label }) => ({ row: thread, label })),
-  ].sort(
-    (a, b) =>
-      Date.parse(a.row.recorded_at) - Date.parse(b.row.recorded_at) ||
-      a.row.seq - b.row.seq,
-  );
   const outbound = refs.filter((key) => t[key]),
     inbound = threads.flatMap((from) =>
       refs
@@ -201,9 +208,7 @@ export function DetailPanel({
         </dl>
         <div className="sec tag-history">
           <h3>이력</h3>
-          {history.length > 0 ||
-          changes.length > 0 ||
-          JSON.stringify(effective.value) !== JSON.stringify(t.value) ? (
+          {historyRows.length > 0 ? (
             <ul aria-label="이력">
               {historyRows.map(({ row, label }) => (
                 <li key={row.thread_id}>
@@ -243,9 +248,7 @@ export function DetailPanel({
         <div className="sec">
           <h3>값</h3>
           <pre className="json">
-            {effective.value === null
-              ? "—"
-              : JSON.stringify(effective.value, null, 2)}
+            {t.value === null ? "—" : JSON.stringify(t.value, null, 2)}
           </pre>
         </div>
         <div className="sec">

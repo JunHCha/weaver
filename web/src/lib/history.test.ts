@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Tag, Thread } from "./api";
 import {
   adjacentHistory,
-  currentThread,
+  createThreadView,
+  stateTag,
+  mentionOnly,
   isHistory,
   threadHistory,
   valueChanges,
@@ -53,7 +55,7 @@ describe("fact and target history projection", () => {
     ).toBe(false);
     expect(isHistory(row("reject", 1, { kind: "거절" }))).toBe(true);
   });
-  it("keeps field state current and rolls back retracted changes without mixing projects in one area", () => {
+  it("preserves each fact value and scopes field history without mixing projects in one area", () => {
     const original = row("original", 1);
     const unrelated = row("unrelated", 2, {
       tags: ["B", "공통"],
@@ -69,13 +71,16 @@ describe("fact and target history projection", () => {
       retracts: change.thread_id,
     });
     const snapshot = [original, unrelated, change];
-    expect(currentThread(original, snapshot, tags).value).toBe("2026-11-25");
+    expect(createThreadView(snapshot, tags).fields.get("original")).toEqual([
+      "마감",
+      "11/20",
+    ]);
     expect(valueChanges([change], snapshot, tags)[0].label).toBe(
       "마감 11/20 → 11/25",
     );
-    expect(currentThread(original, [...snapshot, undo], tags).value).toBe(
-      "2026-11-20",
-    );
+    expect(
+      createThreadView([...snapshot, undo], tags).fields.get("original"),
+    ).toEqual(["마감", "11/20"]);
     expect(valueChanges([change], [...snapshot, undo], tags)[0].label).toBe(
       "마감 11/20 → 11/25 · 철회됨",
     );
@@ -104,4 +109,46 @@ describe("fact and target history projection", () => {
       ),
     ).toEqual(["fact", "correction", "undo", "execute", "other"]);
   });
+});
+
+it("does not use a person as a value target and treats mixed mention matches correctly", () => {
+  const peopleTags: Tag[] = [
+    { name: "민수", kind: "person" },
+    { name: "회사", kind: "organization" },
+    { name: "프로젝트", kind: "project" },
+  ];
+  const fact = row("one", 1, {
+    tags: ["민수", "회사", "프로젝트"],
+    counterpart: "다른 상대",
+  });
+  expect(
+    stateTag({ ...fact, tags: ["민수", "회사"] }, peopleTags),
+  ).toBeUndefined();
+  expect(mentionOnly(fact, ["민수"], peopleTags)).toBe(true);
+  expect(mentionOnly(fact, ["회사"], peopleTags)).toBe(true);
+  expect(mentionOnly(fact, ["민수", "회사"], peopleTags)).toBe(true);
+  expect(mentionOnly(fact, ["민수", "프로젝트"], peopleTags)).toBe(false);
+  expect(
+    mentionOnly({ ...fact, counterpart: "회사" }, ["민수", "회사"], peopleTags),
+  ).toBe(false);
+  expect(mentionOnly(fact, ["민수", "일치하지 않음"], peopleTags)).toBe(true);
+});
+it("bounds cyclic and deep history traversal without recursive stack growth", () => {
+  const root = row("root", 1);
+  const chain = Array.from({ length: 3000 }, (_, i) =>
+    row("h" + i, 2, {
+      field: null,
+      kind: "태그정정",
+      correction: { target: i ? "h" + (i - 1) : "root", add: [], remove: [] },
+    }),
+  );
+  const snapshot = [root, ...chain];
+  expect(threadHistory(root, snapshot)).toHaveLength(3000);
+  expect(adjacentHistory(snapshot)).toHaveLength(3001);
+  const cyclic = [
+    row("x", 1, { retracts: "y" }),
+    row("y", 2, { retracts: "x" }),
+  ];
+  expect(adjacentHistory(cyclic)).toHaveLength(2);
+  expect(createThreadView(cyclic, tags).targets.size).toBe(2);
 });

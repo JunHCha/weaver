@@ -5,6 +5,7 @@ import {
   highlightedSegments,
   weftPath,
   type BoardLayout,
+  type PlacedCard,
 } from "../lib/fabric";
 import { useComet } from "../hooks/comet";
 export function WeftLayer({
@@ -22,30 +23,36 @@ export function WeftLayer({
   onFlash: (ids: string[]) => void;
   onPick: (id: string) => void;
 }) {
-  const anchors = useMemo(
-    () =>
-      rows.flatMap((t) => {
-        const copies = layout.cards
-          .filter((c) => c.id === t.thread_id)
-          .sort((a, b) => a.x - b.x);
-        return copies.length
-          ? [
-              {
-                id: t.thread_id,
-                t,
-                point: {
-                  x: copies[0].x,
-                  y: copies[0].y + 18,
-                  lane: copies[0].lane,
-                },
-                others: copies
-                  .slice(1)
-                  .map((c) => ({ x: c.x, y: c.y + 18, lane: c.lane })),
+  const anchors = useMemo(() => {
+    const byId = new Map<string, PlacedCard[]>();
+    for (const card of layout.cards) {
+      const list = byId.get(card.id);
+      if (list) list.push(card);
+      else byId.set(card.id, [card]);
+    }
+    return rows.flatMap((t) => {
+      const copies = (byId.get(t.thread_id) || []).sort((a, b) => a.x - b.x);
+      return copies.length
+        ? [
+            {
+              id: t.thread_id,
+              t,
+              point: {
+                x: copies[0].x,
+                y: copies[0].y + 18,
+                lane: copies[0].lane,
               },
-            ]
-          : [];
-      }),
-    [layout.cards, rows],
+              others: copies
+                .slice(1)
+                .map((c) => ({ x: c.x, y: c.y + 18, lane: c.lane })),
+            },
+          ]
+        : [];
+    });
+  }, [layout.cards, rows]);
+  const anchorsById = useMemo(
+    () => new Map(anchors.map((a) => [a.id, a])),
+    [anchors],
   );
   const active = highlightedSegments(
     anchors.map((a) => a.id),
@@ -70,7 +77,7 @@ export function WeftLayer({
         {anchors
           .filter((a) => a.t.retracts)
           .map((a) => {
-            const target = anchors.find((b) => b.id === a.t.retracts);
+            const target = anchorsById.get(a.t.retracts!);
             return target ? (
               <path
                 key={a.id}

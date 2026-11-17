@@ -1386,69 +1386,33 @@ button:disabled { cursor: default; opacity: .5; }
 .tag-history li > .mut { grid-column: 2; }
 .tag-added { color: var(--c-sch); }
 
-/* History and mention annotations share the existing quiet, light palette. */
-.card.history-item,
-.lrow.history-item {
+/* History stays quiet without sacrificing readable contrast or target size. */
+.card.history-item, .lrow.history-item {
   --k: var(--muted) !important;
-  color: var(--muted);
-  border: 1px dashed var(--line);
+  color: var(--ink);
+  border: 1px dashed var(--muted);
   background: var(--bg);
 }
-.card.history-item .ctext {
-  font-size: 12px;
-  margin: 4px 0;
-}
-.card.history-item .cfoot {
-  display: none;
-}
-.mention-only {
-  background: var(--bg);
-  color: var(--muted);
-}
-.mention-mark {
-  font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 3px;
-}
-.history-dot {
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--muted);
-  background: var(--bg);
-  z-index: 5;
-  cursor: pointer;
-}
-.value-history {
-  font-size: 11px;
-  color: var(--muted);
-  position: relative;
-}
-.value-history summary {
-  cursor: pointer;
-  white-space: nowrap;
-}
-.value-history ul {
-  position: absolute;
-  top: 14px;
-  left: 0;
-  min-width: 320px;
-  padding: 12px;
-  background: var(--bg);
-  border: 1px dashed var(--line);
-  z-index: 8;
-  list-style: none;
-}
-.value-history li {
-  padding: 4px 0;
-}
-
+.card.history-item .ctext { font-size: 13px; margin: 4px 0; }
+.card.history-item .cfoot { display: none; }
+.mention-only { background: var(--bg); color: var(--muted); }
+.mention-mark, .history-type { font-size: 12px; font-weight: 500; color: var(--ink); border: 1px solid var(--muted); border-radius: 3px; padding: 1px 4px; margin-right: 4px; }
+.history-dot { position: absolute; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; z-index: 5; cursor: pointer; border-radius: 4px; }
+.history-dot::after { content: ""; position: absolute; left: 8px; top: 8px; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--muted); background: var(--bg); }
+.history-dot:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+.value-history { font-size: 13px; color: var(--ink); }
+.value-history summary { cursor: pointer; white-space: nowrap; }
+.value-history ul { position: static; min-width: 320px; padding: 12px; margin: 8px 0; background: var(--bg); border: 1px dashed var(--muted); list-style: none; }
+.value-history li { padding: 4px 0; }
+.value-history time { margin-right: 8px; }
 .history-spine { position: absolute; border-left: 1px solid var(--thread); opacity: .55; pointer-events: none; z-index: 1; }
 .card.history-item::before { background: none; border-left: 3px dashed var(--muted); }
 .lrow.history-item[data-id], .card.mention-only { background: var(--bg); }
+.lrow.history-item { height: 30px; font-size: 13px; }
+.lsection-rows { position: relative; }
+.lsech { height: auto; min-height: 34px; align-items: baseline; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+.unassigned-history { padding: 12px 24px; border-bottom: 1px solid var(--line); }
 
-.lrow.history-item { height: 28px; font-size: 12px; }
+.lane-h { flex-wrap: wrap; }
+.lane-summary { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.lane-summary span { font-size: 12px; }

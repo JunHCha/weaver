@@ -1,0 +1,108 @@
+import type { FabricData, Thread } from "../lib/api";
+export function thread(id: string, changes: Partial<Thread> = {}): Thread {
+  return {
+    thread_id: id,
+    seq: 1,
+    kind: "기록",
+    content: "합성 " + id,
+    occurred_at: "2026-11-17T09:00:00+09:00",
+    recorded_at: "2026-11-17T09:00:00+09:00",
+    tags: ["A", "영역", "민수"],
+    counterpart: "민수",
+    field: null,
+    value: null,
+    source_id: "synthetic",
+    actor: "human",
+    direction: null,
+    resolves: null,
+    retracts: null,
+    updates: null,
+    blocked_by: null,
+    executes: null,
+    correction: null,
+    ...changes,
+  };
+}
+export const fixture: FabricData = {
+  threads: [
+    thread("fact", {
+      kind: "요청",
+      direction: "받음",
+      field: "deadline",
+      value: "2026-11-20",
+    }),
+    thread("mention", {
+      seq: 2,
+      counterpart: "지연",
+      tags: ["A", "영역", "민수", "회사"],
+    }),
+    thread("none", {
+      seq: 3,
+      tags: ["민수"],
+      counterpart: null,
+      field: "deadline",
+      value: "2026-12-01",
+    }),
+    thread("wiki-field:deadline", {
+      seq: 4,
+      field: "deadline",
+      value: "2026-11-25",
+      tags: ["A", "영역"],
+      counterpart: null,
+      presentation: "history",
+    }),
+    thread("wiki-field:status", {
+      seq: 5,
+      field: "status",
+      value: "진행중",
+      tags: ["A", "영역"],
+      counterpart: null,
+      presentation: "history",
+    }),
+    thread("wiki-field:orphan", {
+      seq: 6,
+      field: "deadline",
+      value: "2026-12-15",
+      tags: ["B"],
+      counterpart: null,
+      presentation: "history",
+    }),
+    thread("exec", {
+      seq: 7,
+      kind: "실행",
+      executes: "fact",
+      tags: [],
+      value: { outcome: "completed" },
+      presentation: "history",
+    }),
+  ],
+  tags: [
+    { name: "A", kind: "project" },
+    { name: "B", kind: "project" },
+    { name: "영역", kind: "area" },
+    { name: "민수", kind: "person" },
+    { name: "지연", kind: "person" },
+    { name: "회사", kind: "organization" },
+  ],
+  states: {
+    A: {
+      deadline: "2026-11-25",
+      schedule: null,
+      status: "진행중",
+      assignees: [],
+      open_requests: ["fact"],
+    },
+    민수: {
+      deadline: "2099-01-01",
+      schedule: null,
+      status: "오염된 사람 상태",
+      assignees: [],
+      open_requests: [],
+    },
+  },
+  sources: [],
+  status: {
+    spinner: { last_activity: null, waiting_review: 0 },
+    loom: { last_activity: null, waiting_review: 0 },
+  },
+};

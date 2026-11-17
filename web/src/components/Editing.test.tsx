@@ -217,10 +217,10 @@ it("hides retraction pairs by default and places retractions under the target in
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "이력 포함" }));
   expect(
-    screen.getByRole("article", { name: "기록 원래 기록" }),
+    screen.getByRole("article", { name: "기록 원래 기록 · 이력" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("article", { name: "기록 철회 기록" }),
+    screen.getByRole("article", { name: "기록 철회 기록 · 이력" }),
   ).toBeInTheDocument();
   expect(document.querySelector("[data-retraction=undo]")).toHaveAttribute(
     "stroke-dasharray",

@@ -22,10 +22,10 @@ export function groupKeys(
 ): string[] {
   if (group === "person") return [t.counterpart || "상대 없음"];
   if (tagKinds[group]) {
-    const names = t.tags.filter((name) => kinds[name] === group && !hiddenTags.has(name));
-    return names.length
-      ? names
-      : [`${tagKinds[group]} 없음`];
+    const names = t.tags.filter(
+      (name) => kinds[name] === group && !hiddenTags.has(name),
+    );
+    return names.length ? names : [`${tagKinds[group]} 없음`];
   }
   return [
     group === "kind"
@@ -162,9 +162,16 @@ export function focusLayout(
 ): BoardLayout {
   const selected = selectFocus(rows, focus);
   const visible = rows.filter((t) => !selected || selected.has(t.thread_id));
-  const counts = lanes.map(
-    (l) => visible.filter((t) => groups(t).includes(l.key)).length,
-  );
+  const laneIndex = new Map(lanes.map((lane, i) => [lane.key, i]));
+  const memberships = visible.map((t) => ({
+    t,
+    lanes: groups(t).flatMap((key) => {
+      const i = laneIndex.get(key);
+      return i === undefined ? [] : [i];
+    }),
+  }));
+  const counts = Array<number>(lanes.length).fill(0);
+  memberships.forEach(({ lanes }) => lanes.forEach((i) => counts[i]++));
   const strips = lanes.map((l, i) => (l.none && collapsed) || counts[i] === 0);
   const closed = strips.filter(Boolean).length;
   const width = single
@@ -191,12 +198,9 @@ export function focusLayout(
     x += lane.width + (single ? 0 : 56);
     return lane;
   });
-  const items = visible.map((t) => ({
+  const items = memberships.map(({ t, lanes }) => ({
     t,
-    lanes: groups(t)
-      .map((k) => lanes.findIndex((l) => l.key === k))
-      .filter((i) => i >= 0 && !strips[i])
-      .sort((a, b) => a - b),
+    lanes: lanes.filter((i) => !strips[i]).sort((a, b) => a - b),
   }));
   const packed = packColumns(
     items.map(({ t, lanes }) => ({
