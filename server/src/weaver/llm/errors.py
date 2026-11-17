@@ -75,3 +75,9 @@ class UnsupportedStructuredOutput(LlmError):
 
 class BudgetExceeded(LlmError):
     code = "budget_exceeded"
+
+
+class WikiTimeoutBudgetExceeded(LlmError):
+    """Wiki CLI calls paused for the day after excessive timed-out calls."""
+
+    code = "wiki_timeout_budget"

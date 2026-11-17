@@ -120,7 +120,7 @@ def test_argv_stdin_schema_usage_cleanup_and_log(setup, caplog):
         assert argv[argv.index(feature) - 1] == "--disable"
     assert argv[argv.index("-m") + 1] == "test-model"
     assert 'model_reasoning_effort="high"' in argv
-    assert not cwd.exists() and 0 < timeout <= 120
+    assert not cwd.exists() and 599 < timeout <= 600
     assert runner.schema["required"] == ["count", "title"]
     assert runner.schema["additionalProperties"] is False
     record = setup[1].records()[0]

@@ -43,11 +43,13 @@ from weaver.llm.errors import (
     BudgetExceeded,
     InsufficientCredit,
     InvalidJson,
+    LlmTimeout,
     MissingOutput,
     RateLimited,
     Refusal,
     SchemaMismatch,
     UsageLimited,
+    WikiTimeoutBudgetExceeded,
 )
 
 from .gate import Interrupted, LlmGate, LlmUnavailable
@@ -205,6 +207,8 @@ class Runtime[S: HasSourceId]:
         self._last_run: dict[str, float] = {}
         self._last_llm_check: float | None = None
         self._wiki_rate_failures = 0
+        self._wiki_timeout_failures = 0
+        self._wiki_timeout_until = 0.0
         self._started_at = datetime.now(UTC).isoformat()
 
     # ---- process lifecycle -----------------------------------------------------
@@ -366,7 +370,14 @@ class Runtime[S: HasSourceId]:
             logger.warning("source failed: %s %s", sid, type(error).__name__)
         except Exception as error:
             self._retry_or_fail(
-                sid, error, attempts, contract, attempts >= MAX_RETRY_ATTEMPTS
+                sid,
+                error,
+                attempts,
+                contract,
+                attempts >= MAX_RETRY_ATTEMPTS,
+                timeout_failures=(known.timeout_failures if known else 0) + 1
+                if isinstance(error, LlmTimeout)
+                else 0,
             )
         else:
             self.ledger.record(
@@ -375,7 +386,13 @@ class Runtime[S: HasSourceId]:
             logger.info("source %s: %s", outcome, sid)
 
     def _retry_or_fail(
-        self, sid: str, error: Exception, attempts: int, contract: int, give_up: bool
+        self,
+        sid: str,
+        error: Exception,
+        attempts: int,
+        contract: int,
+        give_up: bool,
+        timeout_failures: int = 0,
     ) -> None:
         name = type(error).__name__
         if give_up:
@@ -390,7 +407,10 @@ class Runtime[S: HasSourceId]:
                 "source failed after %d attempts: %s %s", attempts, sid, name
             )
             return
-        delay = min(self.interval * 2.0**attempts, MAX_RETRY_BACKOFF_SECONDS)
+        delay = min(
+            self.interval * 2.0 ** min(timeout_failures or attempts, 20),
+            MAX_RETRY_BACKOFF_SECONDS,
+        )
         self.ledger.record(
             sid,
             "retry",
@@ -398,6 +418,7 @@ class Runtime[S: HasSourceId]:
             contract_failures=contract,
             error_class=name,
             next_attempt_at=self.clock() + delay,
+            timeout_failures=timeout_failures,
         )
         logger.warning("source retry in %.0fs: %s %s", delay, sid, name)
 
@@ -406,20 +427,41 @@ class Runtime[S: HasSourceId]:
         for task in self.maintenance:
             if task.name == "wiki" and not self.gate.available:
                 continue
+            if task.name == "wiki" and now < self._wiki_timeout_until:
+                continue
             last = self._last_run.get(task.name)
             if last is not None and now - last < task.interval_seconds:
                 continue
             self._last_run[task.name] = now
             try:
                 task.run()
+            except LlmTimeout:
+                if task.name == "wiki":
+                    self._wiki_timeout_failures += 1
+                    delay = min(
+                        task.interval_seconds
+                        * 2.0 ** min(self._wiki_timeout_failures, 20),
+                        MAX_RETRY_BACKOFF_SECONDS,
+                    )
+                    self._wiki_timeout_until = self.clock() + delay
+                    logger.warning("Wiki timeout; retry in %.0fs", delay)
+                else:
+                    logger.warning("maintenance timeout")
+            except WikiTimeoutBudgetExceeded:
+                logger.warning("Wiki CLI paused: daily timeout allowance reached")
             except (*_LLM_OFF, RateLimited) as error:
                 if task.name == "wiki":
+                    self._wiki_timeout_failures = 0
+                    self._wiki_timeout_until = 0.0
                     if isinstance(error, RateLimited):
                         self._wiki_rate_failures += 1
                     self.gate.disable(error.code)
                     self._last_llm_check = self.clock()
                 logger.warning("maintenance failed: %s %s", task.name, error.code)
             except Exception as error:
+                if task.name == "wiki":
+                    self._wiki_timeout_failures = 0
+                    self._wiki_timeout_until = 0.0
                 reason = " validation_failed" if isinstance(error, ValueError) else ""
                 logger.error(
                     "maintenance failed: %s %s%s",
@@ -430,6 +472,8 @@ class Runtime[S: HasSourceId]:
             else:
                 if task.name == "wiki":
                     self._wiki_rate_failures = 0
+                    self._wiki_timeout_failures = 0
+                    self._wiki_timeout_until = 0.0
 
     # ---- status ------------------------------------------------------------------
 

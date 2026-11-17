@@ -55,6 +55,18 @@ class LlmConfig:
     codex_path: Path | None = None
     codex_model: str | None = None
     codex_effort: str | None = None
+    cli_timeout_seconds: float = 300
+    wiki_cli_timeout_seconds: float = 600
+
+    def __post_init__(self) -> None:
+        for name in ("cli_timeout_seconds", "wiki_cli_timeout_seconds"):
+            value = getattr(self, name)
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or not 0 < value <= 900
+            ):
+                raise ConfigError(f"llm.{name}: expected finite number > 0 and <= 900")
 
 
 @dataclass(frozen=True)
@@ -248,6 +260,8 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         "codex_model",
         "codex_effort",
         "max_cli_calls_per_day",
+        "cli_timeout_seconds",
+        "wiki_cli_timeout_seconds",
     }:
         raise ConfigError("llm: unknown fields (inline credentials are unsupported)")
     backend = value.get("backend", "anthropic")
@@ -308,6 +322,8 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         codex_path,
         model,
         cast(str | None, effort),
+        value.get("cli_timeout_seconds", 300),
+        value.get("wiki_cli_timeout_seconds", 600),
     )
 
 

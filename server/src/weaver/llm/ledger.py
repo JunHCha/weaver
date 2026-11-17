@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from weaver.readonly import connect_snapshot
 
-from .errors import BudgetExceeded
+from .errors import BudgetExceeded, WikiTimeoutBudgetExceeded
 
 logger = logging.getLogger(__name__)
 NANO_USD = 1_000_000_000
@@ -34,6 +34,7 @@ class Ledger:
         self.stop_usd = stop_usd
         # Parent is the explicit state_root; never create user vault paths.
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS llm_calls (
                 id TEXT PRIMARY KEY, month TEXT NOT NULL,
                 charged_nano INTEGER NOT NULL, record TEXT NOT NULL
@@ -43,6 +44,28 @@ class Ledger:
                 "CREATE TABLE IF NOT EXISTS cli_daily "
                 "(day TEXT PRIMARY KEY, calls INTEGER NOT NULL)"
             )
+
+            has_timeouts = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cli_timeouts'"
+            ).fetchone()
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS cli_timeouts "
+                "(day TEXT PRIMARY KEY, calls INTEGER NOT NULL)"
+            )
+
+            if not has_timeouts:
+                # Preserve pre-upgrade CLI timeouts, attributed to the local
+                # start day just like the subscription call cap.
+                db.execute(
+                    "INSERT INTO cli_timeouts "
+                    "SELECT date(json_extract(record, '$.started_at'), 'localtime'), COUNT(*) "
+                    "FROM llm_calls "
+                    "WHERE json_extract(record, '$.status')='timeout' "
+                    "AND json_extract(record, '$.backend') IN ('claude_cli', 'codex_cli') "
+                    "AND json_extract(record, '$.attempts') > 0 "
+                    "AND date(json_extract(record, '$.started_at'), 'localtime') IS NOT NULL "
+                    "GROUP BY date(json_extract(record, '$.started_at'), 'localtime')"
+                )
 
     def _secure_files(self) -> None:
         # Create private BEFORE SQLite opens it, regardless of process umask;
@@ -112,10 +135,17 @@ class Ledger:
             logger.warning("LLM monthly budget warning threshold reached")
         return call_id
 
-    def take_daily_call(self, day: str, limit: int) -> bool:
+    def take_daily_call(self, day: str, limit: int, *, wiki: bool = False) -> bool:
         """Atomically count one subscription CLI call; False once at the cap."""
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if wiki:
+                timeouts = db.execute(
+                    "SELECT calls FROM cli_timeouts WHERE day=?", (day,)
+                ).fetchone()
+                if timeouts and int(timeouts[0]) * 2 >= limit:
+                    logger.warning("Wiki CLI paused: daily timeout allowance reached")
+                    raise WikiTimeoutBudgetExceeded()
             row = db.execute(
                 "SELECT calls FROM cli_daily WHERE day=?", (day,)
             ).fetchone()
@@ -137,6 +167,21 @@ class Ledger:
     def finish(self, call_id: str, record: dict[str, Any], charge: int) -> None:
         record["budget_held_usd"] = charge / NANO_USD
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT record FROM llm_calls WHERE id=?", (call_id,)
+            ).fetchone()
+            if (
+                record.get("status") == "timeout"
+                and record.get("cli_day")
+                and previous
+                and json.loads(previous[0]).get("status") == "pending"
+            ):
+                db.execute(
+                    "INSERT INTO cli_timeouts VALUES (?, 1) "
+                    "ON CONFLICT(day) DO UPDATE SET calls=calls+1",
+                    (record["cli_day"],),
+                )
             db.execute(
                 "UPDATE llm_calls SET charged_nano=?, record=? WHERE id=?",
                 (

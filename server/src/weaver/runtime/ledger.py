@@ -37,6 +37,7 @@ class Progress:
     attempts: int
     contract_failures: int
     next_attempt_at: float | None
+    timeout_failures: int = 0
 
 
 class RuntimeLedger:
@@ -50,6 +51,11 @@ class RuntimeLedger:
             db.execute("PRAGMA journal_mode = WAL")
             for statement in _SCHEMA:
                 db.execute(statement)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sources)")}
+            if "timeout_failures" not in columns:
+                db.execute(
+                    "ALTER TABLE sources ADD COLUMN timeout_failures INTEGER NOT NULL DEFAULT 0"
+                )
         for suffix in ("-wal", "-shm"):
             with contextlib.suppress(FileNotFoundError):
                 os.chmod(str(path) + suffix, 0o600)
@@ -85,10 +91,12 @@ class RuntimeLedger:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT source_id, status, attempts, contract_failures,"
-                " next_attempt_at FROM sources"
+                " next_attempt_at, timeout_failures FROM sources"
                 " WHERE status NOT IN ('done', 'failed')"
             ).fetchall()
-        return {row[0]: Progress(row[1], row[2], row[3], row[4]) for row in rows}
+        return {
+            row[0]: Progress(row[1], row[2], row[3], row[4], row[5]) for row in rows
+        }
 
     def record(
         self,
@@ -99,10 +107,11 @@ class RuntimeLedger:
         contract_failures: int = 0,
         error_class: str | None = None,
         next_attempt_at: float | None = None,
+        timeout_failures: int = 0,
     ) -> None:
         with self._connect() as db:
             db.execute(
-                "INSERT OR REPLACE INTO sources VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source_id,
                     status,
@@ -111,6 +120,7 @@ class RuntimeLedger:
                     contract_failures,
                     next_attempt_at,
                     datetime.now(UTC).isoformat(),
+                    timeout_failures,
                 ),
             )
 

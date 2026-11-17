@@ -258,11 +258,11 @@ class ClaudeCliClient:
         state_root: Path,
         runner: Runner = subprocess_runner,
         environ: Mapping[str, str] | None = None,
-        deadline_seconds: float = 120,
+        deadline_seconds: float | None = None,
     ) -> None:
         if config.backend != self.backend:
             raise ValueError("ClaudeCliClient requires claude_cli backend")
-        if not 0 < deadline_seconds <= 600:
+        if deadline_seconds is not None and not 0 < deadline_seconds <= 900:
             raise ValueError("invalid deadline")
         self.config = config
         self.ledger = ledger
@@ -270,6 +270,15 @@ class ClaudeCliClient:
         self.environ = os.environ if environ is None else environ
         self.deadline_seconds = deadline_seconds
         self.workdir = state_root / self.workdir_name
+
+    def _deadline(self, task: str) -> float:
+        if self.deadline_seconds is not None:
+            return self.deadline_seconds
+        return (
+            self.config.wiki_cli_timeout_seconds
+            if task.startswith("wiki.")
+            else self.config.cli_timeout_seconds
+        )
 
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
@@ -358,10 +367,15 @@ class ClaudeCliClient:
         if schema is not None:
             json_schema = json.dumps(anthropic.transform_schema(schema))
         day = datetime.now().astimezone().date().isoformat()
-        if not self.ledger.take_daily_call(day, self.config.max_cli_calls_per_day):
+        if not self.ledger.take_daily_call(
+            day,
+            self.config.max_cli_calls_per_day,
+            wiki=record["task"].startswith("wiki."),
+        ):
             logger.warning("Claude CLI daily call cap reached; call refused")
             raise UsageLimited()
         record["daily_day"] = day
+        record["cli_day"] = day
         self.workdir.mkdir(mode=0o700, exist_ok=True)
         record["attempts"] = 1
         attempt: dict[str, Any] = {"status": "pending", "usage": None}
@@ -372,7 +386,7 @@ class ClaudeCliClient:
                 stdin=user.encode("utf-8"),
                 env=child_env(self.environ),
                 cwd=self.workdir,
-                timeout=self.deadline_seconds,
+                timeout=self._deadline(record["task"]),
             )
         except OSError:
             attempt["status"] = LlmError.code
