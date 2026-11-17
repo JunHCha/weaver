@@ -1,5 +1,6 @@
 """Evaluate document drafting and approved Thread extraction in isolation."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -11,6 +12,8 @@ from weaver.loom.summary_review import SummaryReview
 from weaver.schema import Thread, ThreadDraft, Verdict
 
 from .client import TracedClient
+
+SOURCE_TIME = datetime(2032, 1, 1, tzinfo=UTC)
 
 SUMMARY_CASES = Path(__file__).resolve().parents[3] / "evals" / "summary_cases.json"
 
@@ -29,12 +32,23 @@ class _Sink:
 def evaluate_summary(case: dict[str, Any], client: LlmClient) -> dict[str, Any]:
     """Run the production draft and approve stages against one independent case."""
     traced = TracedClient(client)
+    source_time = (
+        datetime.fromisoformat(case["source_occurred_at"])
+        if case.get("source_occurred_at")
+        else SOURCE_TIME
+    )
     with TemporaryDirectory(prefix="weaver-summary-eval-") as directory:
         root = Path(directory)
         context = ContextDictionary(root / "state")
         package, script = SummaryDrafts(
             traced, context, root / "proposals", state_root=root / "state"
-        ).create(case["source_id"], case["script"], package_id="eval")
+        ).create(
+            case["source_id"],
+            case["script"],
+            package_id="eval",
+            source_occurred_at=source_time,
+            now=source_time,
+        )
         sink = _Sink()
         verdict = Verdict(
             schema_version=2,
@@ -47,7 +61,7 @@ def evaluate_summary(case: dict[str, Any], client: LlmClient) -> dict[str, Any]:
         )
         final = SummaryReview(
             traced, context, sink, root / "archive", state_root=root / "state"
-        ).approve(package, script, verdict)
+        ).approve(package, script, verdict, now=source_time)
         threads = [
             {key: getattr(thread, key) for key in ("kind", "content", "tags")}
             for thread in sink.drafts

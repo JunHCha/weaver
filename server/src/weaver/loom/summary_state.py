@@ -2,10 +2,12 @@
 
 import fcntl
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +16,14 @@ from pydantic import TypeAdapter
 from weaver.readonly import connect_snapshot
 from weaver.schema import ReviewPackage
 from weaver.schema.models import Timestamp
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SourceReference:
+    occurred_at: datetime
+    is_fallback: bool = False
 
 
 class SummaryState:
@@ -29,6 +39,14 @@ class SummaryState:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS source_times (id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL)"
             )
+            if "is_fallback" not in {
+                row[1] for row in db.execute("PRAGMA table_info(source_times)")
+            }:
+                # Existing rows did not distinguish occurrence from capture.
+                # Conservatively preserve historical values for these rows.
+                db.execute(
+                    "ALTER TABLE source_times ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 1"
+                )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
             )
@@ -65,20 +83,28 @@ class SummaryState:
         contact_name: str | None = None,
         *,
         source_occurred_at: datetime | None = None,
+        source_time_is_fallback: bool = False,
     ) -> None:
         """Persist an immutable revision, rejecting conflicting snapshots."""
         with self.connect() as db:
             if source_occurred_at is not None:
                 timestamp = TypeAdapter(Timestamp).validate_python(source_occurred_at)
                 row = db.execute(
-                    "SELECT occurred_at FROM source_times WHERE id=?",
+                    "SELECT occurred_at, is_fallback FROM source_times WHERE id=?",
                     (package.package_id,),
                 ).fetchone()
-                if row and datetime.fromisoformat(row[0]) != timestamp:
+                if row and (
+                    datetime.fromisoformat(row[0]) != timestamp
+                    or bool(row[1]) != source_time_is_fallback
+                ):
                     raise ValueError("conflicting source reference time")
                 db.execute(
-                    "INSERT OR IGNORE INTO source_times VALUES (?, ?)",
-                    (package.package_id, timestamp.isoformat()),
+                    "INSERT OR IGNORE INTO source_times (id, occurred_at, is_fallback) VALUES (?, ?, ?)",
+                    (
+                        package.package_id,
+                        timestamp.isoformat(),
+                        source_time_is_fallback,
+                    ),
                 )
             if contact_name:
                 db.execute(
@@ -143,7 +169,7 @@ def read_contact_name(root: Path, package_id: str, source_id: str) -> str | None
     return None
 
 
-def read_source_occurred_at(root: Path, package: ReviewPackage) -> datetime:
+def read_source_reference(root: Path, package: ReviewPackage) -> SourceReference:
     """Recover immutable source time, never the current processing clock.
 
     Source metadata in Spinner retains captured_at when occurrence is unknown.
@@ -153,11 +179,17 @@ def read_source_occurred_at(root: Path, package: ReviewPackage) -> datetime:
         if db.execute(
             "SELECT 1 FROM sqlite_master WHERE name='source_times'"
         ).fetchone():
+            has_flag = "is_fallback" in {
+                row[1] for row in db.execute("PRAGMA table_info(source_times)")
+            }
+            columns = "occurred_at, is_fallback" if has_flag else "occurred_at, 1"
             row = db.execute(
-                "SELECT occurred_at FROM source_times WHERE id=?", (package.package_id,)
+                f"SELECT {columns} FROM source_times WHERE id=?", (package.package_id,)
             ).fetchone()
             if row:
-                return TypeAdapter(Timestamp).validate_python(row[0])
+                return SourceReference(
+                    TypeAdapter(Timestamp).validate_python(row[0]), bool(row[1])
+                )
     path = root / "spinner.sqlite3"
     if path.is_file():
         with closing(connect_snapshot(path)) as db:
@@ -169,7 +201,16 @@ def read_source_occurred_at(root: Path, package: ReviewPackage) -> datetime:
             source = json.loads(raw)
             timestamp = source.get("occurred_at") or source.get("captured_at")
             if timestamp is not None:
-                return TypeAdapter(Timestamp).validate_python(timestamp)
+                return SourceReference(
+                    TypeAdapter(Timestamp).validate_python(timestamp),
+                    source.get("occurred_at") is None,
+                )
     if not package.stage_times:
         raise ValueError("missing source reference time")
-    return min(package.stage_times.values())
+    logger.warning("using estimated source time from review stages")
+    return SourceReference(min(package.stage_times.values()), True)
+
+
+def read_source_occurred_at(root: Path, package: ReviewPackage) -> datetime:
+    """Compatibility accessor for callers that only need the timestamp."""
+    return read_source_reference(root, package).occurred_at

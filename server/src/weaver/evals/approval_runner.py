@@ -57,7 +57,13 @@ def evaluate_approval(case: dict[str, Any], client: LlmClient) -> dict[str, Any]
             feedback=None,
         )
         prepared = ApprovalExtractor(
-            traced, context, _Sink(), contact_name=case.get("contact_name")
+            traced,
+            context,
+            _Sink(),
+            contact_name=case.get("contact_name"),
+            source_occurred_at=datetime.fromisoformat(case["source_occurred_at"])
+            if case.get("source_occurred_at")
+            else NOW,
         ).prepare(package, case["script"], verdict, now=NOW)
         expected = case["expected"]
         tags = {tag for thread in prepared.threads for tag in thread.tags}

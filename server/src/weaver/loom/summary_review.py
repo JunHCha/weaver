@@ -15,7 +15,7 @@ from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
-from weaver.loom.summary_state import SummaryState, read_source_occurred_at
+from weaver.loom.summary_state import SummaryState, read_source_reference
 from weaver.loom.tagging import (
     FACT_RULES,
     MAX_NEW_ENTRIES,
@@ -149,7 +149,9 @@ class ApprovalExtractor:
         timezone: str = "Asia/Seoul",
         contact_name: str | None = None,
         source_occurred_at: datetime | None = None,
+        source_time_is_fallback: bool = False,
     ) -> None:
+        self.source_time_is_fallback = source_time_is_fallback
         self.source_occurred_at = source_occurred_at
         self.contact_name = contact_name
         self.llm, self.context, self.sink = llm, context, sink
@@ -192,11 +194,18 @@ class ApprovalExtractor:
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
         reference = self.source_occurred_at
+        is_fallback = self.source_time_is_fallback
         if reference is None:
             if not package.stage_times:
                 raise ValueError("missing source reference time")
             reference = min(package.stage_times.values())
+            is_fallback = True
+            logger.warning("using estimated source time from review stages")
         reference = reference.astimezone(ZoneInfo(self.timezone))
+        if is_fallback:
+            logger.warning(
+                "estimated source time; preserving historical extracted dates"
+            )
         known, existing_active = self._schedules()
         full_dictionary = self.context.snapshot()
         dictionary = tag_snapshot(full_dictionary)
@@ -272,14 +281,16 @@ class ApprovalExtractor:
                     " field가 없으면 value도 null이다. deadline/status 값은 문자열,"
                     " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
                     " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
-                    " source_occurred_at은 출처의 발생 시각(없으면 수집 시각)이다."
-                    " 오늘·내일·다음 주·18일 등 상대 날짜는 source_occurred_at과 timezone을"
-                    " 기준으로 해석한다. 재처리하는 현재 날짜를 쓰지 않는다."
-                    " occurred_at은 그 사실이 일어난 시각이며 근거가 없으면 source_occurred_at이다."
+                    " source_occurred_at은 출처의 발생 시각(없으면 수집·검토 시각의 추정치)이다."
+                    " occurred_at은 그 사실이 일어난 시각을 시간대 포함 RFC 3339로 쓰며,"
+                    " 근거가 없으면 source_occurred_at을 쓰되 서버 현재 시각을 넘지 않는다."
+                    " 오늘·내일·다음 주·18일 등 상대 날짜는 본문의 명시적 날짜와 날짜 머리글을"
+                    " source_occurred_at보다 우선하여 해석하고, 그러한 근거가 없으면"
+                    " source_occurred_at과 timezone을 기준으로 해석한다. 재처리 날짜를 쓰지 않는다."
+                    " source_time_is_fallback=true이면 수집 이전의 과거 이력일 수 있으므로"
+                    " 발생·마감·일정을 출처 추정치에 맞춰 옮기지 않는다."
                     " 일정의 예정 시각은 occurred_at이 아니라 schedule 값에 쓴다."
-                    " 마감·일정은 출처 기준보다 이전으로 만들지 않는다."
                     " deadline은 ISO 8601 날짜 또는 시각이다."
-                    " occurred_at은 시간대를 포함한 RFC 3339 시각이다."
                     " 일정 start는 유효한 ISO 8601 시각이며 end는 start보다 늦어야 한다."
                     " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
                     " 해당 시간대에 존재하지 않는 현지 시각을 만들지 않는다."
@@ -297,6 +308,7 @@ class ApprovalExtractor:
                     "contact_name": self.contact_name,
                     "timezone": self.timezone,
                     "source_occurred_at": reference.isoformat(),
+                    "source_time_is_fallback": is_fallback,
                     "today": reference.date().isoformat(),
                     "open_requests": open_requests,
                     "existing_schedules": [
@@ -344,26 +356,36 @@ class ApprovalExtractor:
         new_entries, proposed_names = proposals(full_dictionary, response.new_entries)
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
-            data = thread.model_dump(exclude={"blocked_by_index", "updates"})
-            # Facts occur at/before the source, not at approval/replay time.
-            # Bound unsupported historical guesses to one year before capture.
-            if thread.occurred_at > min(
-                reference, timestamp
-            ) or thread.occurred_at < reference - timedelta(days=366):
-                data["occurred_at"] = reference
+            data = thread.model_dump(
+                exclude={"blocked_by_index", "updates"}, warnings=False
+            )
+            # Long calls may contain facts later than their start. Capture-only
+            # references cannot bound historical facts in imported transcripts.
+            if thread.occurred_at > timestamp:
+                data["occurred_at"] = min(reference, timestamp)
+                logger.warning("corrected future occurrence time")
+            elif not is_fallback and (
+                thread.occurred_at > reference + timedelta(days=1)
+                or thread.occurred_at < reference - timedelta(days=366)
+            ):
+                data["occurred_at"] = min(reference, timestamp)
                 logger.warning("corrected out-of-range occurrence time")
             if thread.field == "deadline" and thread.value is not None:
-                assert isinstance(thread.value, str)
-                try:
-                    if len(thread.value) == 10:
-                        valid = date.fromisoformat(thread.value) >= reference.date()
-                    else:
-                        deadline = datetime.fromisoformat(thread.value)
-                        if deadline.tzinfo is None:
-                            deadline = deadline.replace(tzinfo=ZoneInfo(self.timezone))
-                        valid = deadline >= reference
-                except ValueError:
-                    valid = False
+                valid = False
+                if isinstance(thread.value, str):
+                    try:
+                        if len(thread.value) == 10:
+                            past = date.fromisoformat(thread.value) < reference.date()
+                        else:
+                            deadline = datetime.fromisoformat(thread.value)
+                            if deadline.tzinfo is None:
+                                deadline = deadline.replace(
+                                    tzinfo=ZoneInfo(self.timezone)
+                                )
+                            past = deadline < reference
+                        valid = is_fallback or not past
+                    except ValueError:
+                        pass
                 if not valid:
                     data["field"] = data["value"] = None
                     logger.warning("dropped invalid or past deadline")
@@ -388,9 +410,15 @@ class ApprovalExtractor:
                 # An unfounded link is dropped; the schedule stays a new event.
                 logger.warning("dropped unfounded schedule update link")
                 updates = None
-            if thread.field == "schedule" and thread.value is not None:
-                if not isinstance(thread.value, dict):
-                    raise ValueError("schedule value must be an object")
+            if (
+                thread.field == "schedule"
+                and thread.value is not None
+                and not isinstance(thread.value, dict)
+            ):
+                data["field"] = data["value"] = None
+                updates = None
+                logger.warning("dropped invalid schedule value")
+            if data["field"] == "schedule" and isinstance(thread.value, dict):
                 value = dict(thread.value)
                 zone_name = value.get("timezone")
                 if zone_name is None:
@@ -421,7 +449,11 @@ class ApprovalExtractor:
                 data["value"] = ScheduleValue.model_validate(value).model_dump(
                     mode="json"
                 )
-            if thread.field == "schedule" and data["value"] is not None:
+            if (
+                not is_fallback
+                and data["field"] == "schedule"
+                and data["value"] is not None
+            ):
                 if datetime.fromisoformat(data["value"]["start"]) < reference:
                     data["field"] = data["value"] = None
                     updates = None
@@ -670,7 +702,7 @@ class SummaryReview(ApprovalExtractor):
         self.contact_name = self.state.contact_name(
             package.package_id, package.source_id
         )
-        self.source_occurred_at = read_source_occurred_at(
-            self.state.path.parent, package
-        )
+        reference = read_source_reference(self.state.path.parent, package)
+        self.source_occurred_at = reference.occurred_at
+        self.source_time_is_fallback = reference.is_fallback
         return self._prepare(package, script, verdict, timestamp, replaces)

@@ -20,7 +20,7 @@ from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot, 
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_review import ApprovalExtractor, Prepared
-from weaver.loom.summary_state import read_contact_name, read_source_occurred_at
+from weaver.loom.summary_state import read_contact_name, read_source_reference
 from weaver.loom.tagging import NewEntry, clean_name
 from weaver.readonly import connect_snapshot
 from weaver.schema import (
@@ -152,6 +152,7 @@ class SourcePlan(BaseModel):
     skipped: str | None = None
     referencing_seqs: list[int] = Field(default_factory=list)
     done: bool = False
+    source_time_estimated: bool = False
     error: str | None = None
 
 
@@ -889,12 +890,15 @@ def reextract(
                 plan.additions = memory.add(bootstrap)
                 if plan.source_id in selected:
                     package, script, verdict = selected[plan.source_id]
+                    reference = read_source_reference(root, package)
+                    plan.source_time_estimated = reference.is_fallback
                     prepared = ApprovalExtractor(
                         llm,
                         memory,
                         ExtractionView(threads, plan.source_id),
                         timezone=timezone,
-                        source_occurred_at=read_source_occurred_at(root, package),
+                        source_occurred_at=reference.occurred_at,
+                        source_time_is_fallback=reference.is_fallback,
                         contact_name=read_contact_name(
                             root, package.package_id, package.source_id
                         ),
@@ -1169,6 +1173,8 @@ def render(report: Report) -> str:
     lines.extend(f"알림: {notice}" for notice in report.notices)
     for plan in report.sources:
         lines.append(f"출처 {plan.source_id}" + (" (반영됨)" if plan.done else ""))
+        if plan.source_time_estimated:
+            lines.append("  출처 시각 추정")
         if plan.skipped:
             lines.append(f"  {plan.skipped}: 참조 seq={plan.referencing_seqs}")
             continue
