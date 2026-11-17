@@ -222,3 +222,26 @@ journals an empty result, acknowledges the unchanged Wiki text, and emits a
 content-free warning; later ticks/restarts reuse the empty result without a new
 model call. Other edits remain independent. Re-extraction reports contract
 errors per source. Count-only untagged-name warnings use emitted tags alone.
+
+## Source time in approval and replay
+
+Runtime drafts persist `Source.occurred_at or Source.captured_at` separately in
+`summary.sqlite3.source_times`, keyed by package ID; phone contracts stay stable.
+Approval and re-extraction pass that immutable `source_occurred_at`, configured
+`timezone` and its local `today` to the shared prompt. Relative dates use this
+reference, while `recorded_at` and summary creation remain processing times.
+Legacy packages recover Source metadata from Spinner's `results.source`; if none
+exists, the earliest saved package stage is the stable fallback. A package with
+neither metadata nor stage timestamps is refused instead of using today's clock.
+
+The server replaces occurrence times after the source/approval time or more than
+366 days before the source with the source time, logging a content-free warning.
+An unsupported occurrence defaults to the source time in the prompt. Invalid or
+past deadlines and schedules before the source are cleared with content-free
+warnings; date-only deadlines compare local dates, timed deadlines and schedules
+compare instants. Values in the past relative to processing but after the source
+remain valid. The server does not invent a replacement appointment/deadline.
+
+Re-extraction run `source-time-v5` supersedes `para-counterpart-v4`, so saved plans
+must be recreated and completed older runs can be deliberately planned again.
+Text preview includes occurrence and recording times alongside field values.

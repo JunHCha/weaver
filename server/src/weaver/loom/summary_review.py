@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, Protocol, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,7 +15,7 @@ from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
-from weaver.loom.summary_state import SummaryState
+from weaver.loom.summary_state import SummaryState, read_source_occurred_at
 from weaver.loom.tagging import (
     FACT_RULES,
     MAX_NEW_ENTRIES,
@@ -148,7 +148,9 @@ class ApprovalExtractor:
         *,
         timezone: str = "Asia/Seoul",
         contact_name: str | None = None,
+        source_occurred_at: datetime | None = None,
     ) -> None:
+        self.source_occurred_at = source_occurred_at
         self.contact_name = contact_name
         self.llm, self.context, self.sink = llm, context, sink
         self.timezone = ZoneInfo(timezone).key
@@ -189,6 +191,12 @@ class ApprovalExtractor:
         replaces: str | None,
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
+        reference = self.source_occurred_at
+        if reference is None:
+            if not package.stage_times:
+                raise ValueError("missing source reference time")
+            reference = min(package.stage_times.values())
+        reference = reference.astimezone(ZoneInfo(self.timezone))
         known, existing_active = self._schedules()
         full_dictionary = self.context.snapshot()
         dictionary = tag_snapshot(full_dictionary)
@@ -264,6 +272,13 @@ class ApprovalExtractor:
                     " field가 없으면 value도 null이다. deadline/status 값은 문자열,"
                     " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
                     " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
+                    " source_occurred_at은 출처의 발생 시각(없으면 수집 시각)이다."
+                    " 오늘·내일·다음 주·18일 등 상대 날짜는 source_occurred_at과 timezone을"
+                    " 기준으로 해석한다. 재처리하는 현재 날짜를 쓰지 않는다."
+                    " occurred_at은 그 사실이 일어난 시각이며 근거가 없으면 source_occurred_at이다."
+                    " 일정의 예정 시각은 occurred_at이 아니라 schedule 값에 쓴다."
+                    " 마감·일정은 출처 기준보다 이전으로 만들지 않는다."
+                    " deadline은 ISO 8601 날짜 또는 시각이다."
                     " occurred_at은 시간대를 포함한 RFC 3339 시각이다."
                     " 일정 start는 유효한 ISO 8601 시각이며 end는 start보다 늦어야 한다."
                     " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
@@ -281,6 +296,8 @@ class ApprovalExtractor:
                     **hints,
                     "contact_name": self.contact_name,
                     "timezone": self.timezone,
+                    "source_occurred_at": reference.isoformat(),
+                    "today": reference.date().isoformat(),
                     "open_requests": open_requests,
                     "existing_schedules": [
                         {
@@ -328,6 +345,28 @@ class ApprovalExtractor:
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
+            # Facts occur at/before the source, not at approval/replay time.
+            # Bound unsupported historical guesses to one year before capture.
+            if thread.occurred_at > min(
+                reference, timestamp
+            ) or thread.occurred_at < reference - timedelta(days=366):
+                data["occurred_at"] = reference
+                logger.warning("corrected out-of-range occurrence time")
+            if thread.field == "deadline" and thread.value is not None:
+                assert isinstance(thread.value, str)
+                try:
+                    if len(thread.value) == 10:
+                        valid = date.fromisoformat(thread.value) >= reference.date()
+                    else:
+                        deadline = datetime.fromisoformat(thread.value)
+                        if deadline.tzinfo is None:
+                            deadline = deadline.replace(tzinfo=ZoneInfo(self.timezone))
+                        valid = deadline >= reference
+                except ValueError:
+                    valid = False
+                if not valid:
+                    data["field"] = data["value"] = None
+                    logger.warning("dropped invalid or past deadline")
             data["tags"] = business_tags(
                 dictionary, new_entries, proposed_names, thread.tags
             )
@@ -382,6 +421,11 @@ class ApprovalExtractor:
                 data["value"] = ScheduleValue.model_validate(value).model_dump(
                     mode="json"
                 )
+            if thread.field == "schedule" and data["value"] is not None:
+                if datetime.fromisoformat(data["value"]["start"]) < reference:
+                    data["field"] = data["value"] = None
+                    updates = None
+                    logger.warning("dropped schedule before source reference time")
             index = thread.blocked_by_index
             if index is not None and (
                 thread.kind != "일정"
@@ -625,5 +669,8 @@ class SummaryReview(ApprovalExtractor):
             )
         self.contact_name = self.state.contact_name(
             package.package_id, package.source_id
+        )
+        self.source_occurred_at = read_source_occurred_at(
+            self.state.path.parent, package
         )
         return self._prepare(package, script, verdict, timestamp, replaces)

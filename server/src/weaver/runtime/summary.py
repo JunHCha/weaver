@@ -171,6 +171,7 @@ class SummaryProcessor:
             script.text,
             source.hints.counterpart,
             source_type=source.channel,
+            source_occurred_at=source.occurred_at or source.captured_at,
             call=script if source.channel == "call" and not revised else None,
             revised=revised,
             on_revised=lambda corrected: self.spinner.save_revised(source, corrected),

@@ -86,6 +86,7 @@ class SummaryDrafts:
         contact_name: str | None = None,
         *,
         source_type: str = "",
+        source_occurred_at: datetime | None = None,
         now: datetime | None = None,
         package_id: str | None = None,
         call: Script | None = None,
@@ -171,7 +172,13 @@ class SummaryDrafts:
         if not response.script.strip():
             raise ValueError("revised script must not be empty")
         with self.state.lock():
-            self.state.save_package(package, response.script, contact_name)
+            self.state.save_package(
+                package,
+                response.script,
+                contact_name,
+                source_occurred_at=source_occurred_at
+                or (call.occurred_at if call else None),
+            )
         self.proposals.mkdir(parents=True, exist_ok=True)
         write_json_atomic(self.proposals / f"{package_id}.r1.json", package)
         return package, response.script

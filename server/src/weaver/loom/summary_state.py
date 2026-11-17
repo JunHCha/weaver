@@ -6,10 +6,14 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from datetime import datetime
 from pathlib import Path
+
+from pydantic import TypeAdapter
 
 from weaver.readonly import connect_snapshot
 from weaver.schema import ReviewPackage
+from weaver.schema.models import Timestamp
 
 
 class SummaryState:
@@ -21,6 +25,9 @@ class SummaryState:
         with self.lock(), self.connect() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS packages (id TEXT, revision INTEGER, package TEXT NOT NULL, script TEXT NOT NULL, PRIMARY KEY(id, revision))"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS source_times (id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL)"
             )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
@@ -52,10 +59,27 @@ class SummaryState:
             db.close()
 
     def save_package(
-        self, package: ReviewPackage, script: str, contact_name: str | None = None
+        self,
+        package: ReviewPackage,
+        script: str,
+        contact_name: str | None = None,
+        *,
+        source_occurred_at: datetime | None = None,
     ) -> None:
         """Persist an immutable revision, rejecting conflicting snapshots."""
         with self.connect() as db:
+            if source_occurred_at is not None:
+                timestamp = TypeAdapter(Timestamp).validate_python(source_occurred_at)
+                row = db.execute(
+                    "SELECT occurred_at FROM source_times WHERE id=?",
+                    (package.package_id,),
+                ).fetchone()
+                if row and datetime.fromisoformat(row[0]) != timestamp:
+                    raise ValueError("conflicting source reference time")
+                db.execute(
+                    "INSERT OR IGNORE INTO source_times VALUES (?, ?)",
+                    (package.package_id, timestamp.isoformat()),
+                )
             if contact_name:
                 db.execute(
                     "INSERT OR IGNORE INTO contacts VALUES (?, ?)",
@@ -117,3 +141,35 @@ def read_contact_name(root: Path, package_id: str, source_id: str) -> str | None
         if isinstance(counterpart, str) and counterpart.strip():
             return counterpart
     return None
+
+
+def read_source_occurred_at(root: Path, package: ReviewPackage) -> datetime:
+    """Recover immutable source time, never the current processing clock.
+
+    Source metadata in Spinner retains captured_at when occurrence is unknown.
+    Old/imported packages without Source metadata use their earliest stage time.
+    """
+    with closing(connect_snapshot(root / "summary.sqlite3")) as db:
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='source_times'"
+        ).fetchone():
+            row = db.execute(
+                "SELECT occurred_at FROM source_times WHERE id=?", (package.package_id,)
+            ).fetchone()
+            if row:
+                return TypeAdapter(Timestamp).validate_python(row[0])
+    path = root / "spinner.sqlite3"
+    if path.is_file():
+        with closing(connect_snapshot(path)) as db:
+            rows = db.execute(
+                "SELECT source FROM results WHERE source_id=? ORDER BY version",
+                (package.source_id,),
+            ).fetchall()
+        for (raw,) in rows:
+            source = json.loads(raw)
+            timestamp = source.get("occurred_at") or source.get("captured_at")
+            if timestamp is not None:
+                return TypeAdapter(Timestamp).validate_python(timestamp)
+    if not package.stage_times:
+        raise ValueError("missing source reference time")
+    return min(package.stage_times.values())

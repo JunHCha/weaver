@@ -511,7 +511,9 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
 
     runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
     package, _ = runtime.processor.drafts.create(
-        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문"
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "원문",
+        source_occurred_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     (config.courier.decisions / f"{package.package_id}.r1.json").write_text(
         json.dumps(
@@ -675,7 +677,11 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
 
     def approve(source, start):
         llm.start = start
-        package, _ = runtime.processor.drafts.create(source, "원문")
+        package, _ = runtime.processor.drafts.create(
+            source,
+            "원문",
+            source_occurred_at=datetime(2026, 1, 1, tzinfo=ZoneInfo("UTC")),
+        )
         (config.courier.decisions / f"{package.package_id}.r1.json").write_text(
             json.dumps(
                 {
