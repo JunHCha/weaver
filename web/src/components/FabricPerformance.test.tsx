@@ -31,3 +31,40 @@ it("renders 3000 synthetic Threads with one relation index and no per-card state
     vi.restoreAllMocks();
   }
 });
+
+it("distributes 3000 log rows into 30 lanes with one grouping call per row", async () => {
+  const { createThreadView } = await import("../lib/history");
+  const { LogTable } = await import("./LogTable");
+  const threads = Array.from({ length: 3000 }, (_, i) =>
+    thread("log-" + i, {
+      seq: i + 1,
+      tags: ["P" + (i % 30)],
+      field: "deadline",
+      value: "2026-11-20",
+    }),
+  );
+  const tags = Array.from({ length: 30 }, (_, i) => ({
+    name: "P" + i,
+    kind: "project" as const,
+  }));
+  const view = createThreadView(threads, tags);
+  const groups = vi.fn((t: { tags: string[] }) => t.tags);
+  const lanes = tags.map((tag) => ({ key: tag.name, count: 100, none: false }));
+  const started = performance.now();
+  const html = renderToString(
+    <LogTable
+      rows={threads}
+      view={view}
+      changes={[]}
+      lanes={lanes}
+      groups={groups}
+      group="project"
+      states={{}}
+      selected={null}
+      onPick={() => {}}
+    />,
+  );
+  expect(html.match(/data-id="log-/g) || []).toHaveLength(3000);
+  expect(groups).toHaveBeenCalledTimes(3000);
+  expect(performance.now() - started).toBeLessThan(5000);
+});
