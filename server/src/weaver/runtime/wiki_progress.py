@@ -161,7 +161,6 @@ class WikiEditPublisher:
                     status="working",
                     threads=[
                         PipelineThread(
-                            counterpart=t.counterpart,
                             thread_id=t.thread_id,
                             kind=t.kind,
                             content=t.content or "",

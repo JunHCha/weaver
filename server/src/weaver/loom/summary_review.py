@@ -237,12 +237,20 @@ class ApprovalExtractor:
                 else "검토 답과 추가 피드백을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
             )
             + (
-                FACT_RULES
+                "\n"
+                + FACT_RULES
+                + "\n"
                 + TAG_RULES
+                + "\n기록 주인(화자 본인)은 태그하지 않는다. contact_name은 통화 상대다."
                 + " counterpart는 업무를 주고받은 상대 한 명/조직의 표준 이름 또는 null이다."
                 " 통화 상대(contact_name), 받음 요청의 요청자, 보냄 요청의 수신자를 쓴다."
                 " 목록으로 쓰지 말고 불명확하면 null이다."
-                + " 오인식은 corrections(observed → canonical)로만 제안한다."
+                + (
+                    " 오인식은 corrections(observed → canonical)로만 제안한다."
+                    " observed는 원문에 실제로 있는 표기이고 canonical은 검토 답 하나와 정확히 일치해야 한다."
+                    if verdict.action == "approve"
+                    else " edit에서는 corrections를 비운다."
+                )
                 + (
                     " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
                     " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
@@ -266,8 +274,6 @@ class ApprovalExtractor:
                     " 제목이나 태그가 비슷하다는 이유로 연결하지 말고, 새 일정이거나"
                     " 불확실하면 null로 둔다. 일정이 아닌 Thread의 updates는 항상 null이다."
                     " 태그정정/거절 Thread는 추출하지 않는다. correction은 서버가 null로 둔다."
-                    " corrections의 observed는 원문에 실제로 있는 표기이고 canonical은"
-                    " 검토 답 하나와 정확히 일치해야 한다. edit에서는 corrections를 비운다."
                 )
             ),
             json.dumps(
@@ -328,6 +334,11 @@ class ApprovalExtractor:
             data["counterpart"] = counterpart_name(
                 dictionary, new_entries, proposed_names, thread.counterpart
             )
+            if (
+                data["counterpart"] is not None
+                and data["counterpart"] not in data["tags"]
+            ):
+                data["tags"].append(data["counterpart"])
             if thread.resolves is not None and thread.resolves not in request_ids:
                 logger.warning("dropped invalid request resolution")
                 data["resolves"] = None
@@ -407,15 +418,15 @@ class ApprovalExtractor:
                 len(proposed) - len(corrections),
                 len(proposed),
             )
-        used = {tag for draft in drafts for tag in draft.tags} | {
-            draft.counterpart for draft in drafts if draft.counterpart
-        }
+        used = {tag for draft in drafts for tag in draft.tags}
+        hinted_names = {hint["name"] for hint in hints["dictionary"]}
+        body_key = _key(summary.body)
         missing = sum(
             entry.kind in ("person", "organization")
-            and _key(entry.name) in _key(summary.body)
+            and _key(entry.name) in body_key
             and entry.name not in used
             for entry in dictionary.entries
-            if entry.name in {hint["name"] for hint in hints["dictionary"]}
+            if entry.name in hinted_names
         )
         if missing:
             logger.warning("approved body has untagged dictionary names: %d", missing)

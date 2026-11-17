@@ -165,8 +165,9 @@ strict v2 readers. See `examples/PipelineItem-wiki-edit.json`.
 
 `Thread` and `ThreadDraft` include optional `counterpart` (one nonempty canonical
 person/organization name or null), defaulting to null for older payloads. It is
-not an array and is not rewritten by tag corrections. The phone's
-`PipelineItem.threads` projection carries the same optional scalar field. The
-server validates dictionary ownership and kinds at extraction time; standalone
+not an array and is not rewritten by tag corrections. `PipelineItem.threads`
+deliberately has no counterpart key: existing Android clients reject unknown
+keys, and the phone map does not need this field. The server validates
+dictionary ownership and kinds at extraction time; standalone
 JSON Schema validates only the scalar shape. Web-only `presentation` is derived
 and does not belong to the persisted Thread schema.

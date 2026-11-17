@@ -77,17 +77,6 @@
           "title": "Content",
           "type": "string"
         },
-        "counterpart": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/NonEmpty"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "kind": {
           "enum": [
             "요청",

@@ -185,7 +185,8 @@ Synthetic replay and optional real-model evaluation are documented in
 Every newly extracted business Thread has exactly one `area` tag. Prefer the
 few broad areas already present; propose an area only when none fits. Area hints
 come first within the shared dictionary budget. The server rejects an extraction
-with zero or multiple resolved area tags before journaling any facts. A project
+with zero or multiple resolved area tags before journaling any facts, using
+retryable `SchemaMismatch` and the existing bounded contract-error retry path. A project
 must already exist and clearly fit; `new_entries` of kind `project` are dropped
 with a content-free warning. Unedited Wiki project pages are excluded from both
 dictionary and recent-tag hints and cannot pass tag validation. Bootstrap also
@@ -195,14 +196,14 @@ and code-produced field history have their own contracts below.
 
 `Thread.counterpart` is one canonical person/organization or null: the party the
 work was exchanged with, usually the contact, requester for a received request,
-or recipient for a sent request. It is separate from the set of involved-party
-tags. The server validates it against the complete eligible dictionary plus
+or recipient for a sent request. The canonical counterpart is also added to the involved-party tags if omitted. The server validates it against the complete eligible dictionary plus
 accepted new entries; invalid kinds/unknown names become null with a content-free
 warning. An entry used only by counterpart is still persisted. Old Fabric rows
 and cached plans read the missing field as null. Tag corrections change tags
 only. Re-extraction's `para-counterpart-v4` plan stores area and counterpart and
 prints counterpart in preview; older saved plan versions must be recreated.
-The phone's `PipelineThread` projection also carries the optional scalar party.
+The phone's `PipelineThread` projection deliberately omits counterpart for strict
+older Android readers; the field stays in Fabric and the web API only.
 
 Human Wiki frontmatter changes produce deterministic Korean history sentences
 for assignees, deadline, schedule and status. Their IDs start `wiki-field:`;
@@ -212,3 +213,12 @@ single area is determinable from active related Threads, and counterpart is
 always null. They never use the page filename as a tag. A missing/unresolved
 state_tag leaves the edit in Wiki without a field Thread and logs a content-free
 warning. New entries for semantic edits remain journaled before append.
+
+Wiki semantic extraction uses its own rule block without approval Q&A or contact
+owner instructions. Business facts require one area; tag corrections require
+none. Invalid JSON, schema/area mismatches, missing output and refusals retry
+per edit revision up to three times, with a durable attempt count. Exhaustion
+journals an empty result, acknowledges the unchanged Wiki text, and emits a
+content-free warning; later ticks/restarts reuse the empty result without a new
+model call. Other edits remain independent. Re-extraction reports contract
+errors per source. Count-only untagged-name warnings use emitted tags alone.

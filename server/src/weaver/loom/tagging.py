@@ -9,27 +9,26 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from weaver.context import DictionarySnapshot, Kind, _key
+from weaver.llm.errors import SchemaMismatch
 from weaver.schema import Thread
 from weaver.schema.models import NonEmpty
 
 logger = logging.getLogger(__name__)
 
 TAG_RULES = (
-    " 각 업무 Thread의 tags에는 영역(area)을 정확히 하나 붙인다. 기존 영역을 우선한다."
-    " 맞는 영역이 없을 때만 new_entries로 적고 넓은 영역을 만든다. area는 PARA의 지속 책임,"
-    " topic은 PARA resource다. 프로젝트 태그는 사전의 기존 project가 명확히 맞을 때만 쓴다."
-    " 승인에서 새 project는 만들지 않는다. Wiki에서 자동 생성된 project는 사람이 편집하기"
-    " 전까지 태그 후보가 아니다. 프로젝트 승격은 후속 #149에서 다룬다."
-    " 각 Thread의 tags에는 언급되거나 관여한 사람"
-    "(요청자·담당자·상대방), 조직, 관련 주제를 모두 사전 표준 이름으로 붙인다."
-    " 기록 주인(화자 본인)은 태그하지 않는다. contact_name은 통화 상대다."
+    "각 업무 Thread의 tags에는 영역(area) 정확히 하나를 포함하고, 관련된 기존 프로젝트·"
+    "언급되거나 관여한 사람(요청자·담당자·상대방)·조직·주제의 사전 표준 이름을 모두 붙인다."
+    " 기존 영역을 우선하고 맞는 영역이 없을 때만 적고 넓은 영역을 new_entries로 만든다."
+    " area는 PARA의 지속 책임, topic은 PARA resource다."
+    " 프로젝트는 기존 사전 항목이 명확히 맞을 때만 쓰며 새 project는 만들지 않는다."
+    " Wiki의 자동 project는 사람이 편집하기 전까지 태그 후보가 아니다."
     " 사람 표준 이름에 직함·소속·메모를 넣지 않는다."
-    " dictionary의 aliases는 표준 name으로 바꾼다. 기존 태그도 사전으로 확인한다."
+    " dictionary의 aliases는 표준 name으로 바꾸고 기존 태그도 사전으로 확인한다."
     " 사전에 없는 이름은 new_entries에 name, kind(person/organization/area/topic),"
-    " 선택적 aliases와 함께 반환한 경우에만 태그로 쓸 수 있다."
-    " TODO나 확인 같은 작업 상태를 태그로 만들지 않는다."
+    " 선택적 aliases와 함께 반환한 경우에만 쓴다. TODO나 확인 같은 작업 상태는 태그가 아니다."
     " new_entries.aliases는 실제로 같은 대상을 부르는 다른 이름"
     "(약칭·영문/한글 표기·별명)만이다. 오인식·오타·띄어쓰기·대소문자 차이는 별칭이 아니다."
+    " counterpart가 있으면 그 표준 이름도 반드시 tags에 포함한다."
 )
 
 FACT_RULES = (
@@ -194,7 +193,7 @@ def business_tags(
     }
     if sum(kinds[tag] == "area" for tag in tags) != 1:
         logger.warning("invalid business area tag count")
-        raise ValueError("business Thread requires exactly one area tag")
+        raise SchemaMismatch()
     return tags
 
 

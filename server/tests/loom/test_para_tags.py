@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from weaver.context import ContextDictionary, Page
+from weaver.llm.errors import SchemaMismatch
 from weaver.loom.summary_review import ApprovalExtractor
 from weaver.schema import ReviewPackage, Verdict
 
@@ -95,7 +96,7 @@ def test_existing_area_curated_project_and_canonical_counterpart(tmp_path, caplo
         ],
     )
     result = prepare(context, llm)
-    assert result.threads[0].tags == ["자료 관리", "사람이 고른 사업"]
+    assert result.threads[0].tags == ["자료 관리", "사람이 고른 사업", "김철수"]
     assert result.threads[0].counterpart == "김철수"
     assert result.new_entries == []
     assert "자동 사건" not in {e["name"] for e in llm.payload["dictionary"]}
@@ -108,7 +109,7 @@ def test_exactly_one_area_required(tmp_path, tags, caplog):
     context = ContextDictionary(tmp_path)
     for name in ("자료 관리", "외부 협력"):
         context.add_entry(name, "area")
-    with pytest.raises(ValueError, match="exactly one area"):
+    with pytest.raises(SchemaMismatch):
         prepare(context, Llm(tags))
     assert "invalid business area tag count" in caplog.text
     assert "자료 관리" not in caplog.text
@@ -138,3 +139,12 @@ def test_new_area_and_counterpart_only_entry_are_kept(tmp_path):
     result = prepare(context, llm)
     assert {e.name for e in result.new_entries} == {"자료 관리", "가상연구소"}
     assert result.threads[0].counterpart == "가상연구소"
+
+
+def test_counterpart_is_added_to_tags_and_not_warned_as_untagged(tmp_path, caplog):
+    context = ContextDictionary(tmp_path)
+    context.add_entry("資料管理", "area")
+    context.add_entry("김철수", "person", ("김 박사",))
+    result = prepare(context, Llm(["資料管理"], "김 박사"))
+    assert result.threads[0].tags == ["資料管理", "김철수"]
+    assert "untagged dictionary names" not in caplog.text

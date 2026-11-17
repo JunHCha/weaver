@@ -43,14 +43,6 @@
     "/$defs/PipelineStatus/type": "string",
     "/$defs/PipelineThread/additionalProperties": false,
     "/$defs/PipelineThread/properties/content/type": "string",
-    "/$defs/PipelineThread/properties/counterpart/anyOf": [
-        {
-            "$ref": "#/$defs/NonEmpty"
-        },
-        {
-            "type": "null"
-        }
-    ],
     "/$defs/PipelineThread/properties/kind/enum": [
         "요청",
         "결정",

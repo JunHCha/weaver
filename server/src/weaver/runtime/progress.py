@@ -306,9 +306,7 @@ class PipelinePublisher:
                 location="fabric",
                 status="rejected" if verdict.action == "reject" else "done",
                 threads=[
-                    PipelineThread(
-                        thread_id=t.thread_id, kind=t.kind, counterpart=t.counterpart
-                    )
+                    PipelineThread(thread_id=t.thread_id, kind=t.kind)
                     for t in threads
                     if t.kind != "실행"
                 ],

@@ -44,9 +44,14 @@ def presentation(thread: Thread) -> Literal["fact", "history"]:
     return (
         "history"
         if (
-            thread.kind in ("태그정정", "실행")
+            thread.kind in ("태그정정", "실행", "거절")
             or thread.retracts is not None
             or thread.thread_id.startswith("wiki-field:")
+            or (
+                thread.thread_id.startswith("wiki:")
+                and thread.field is not None
+                and thread.content == f"{thread.field} 변경"
+            )
         )
         else "fact"
     )

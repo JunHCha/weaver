@@ -24,11 +24,9 @@ enum class PipelineStatus {
     @SerialName("rejected") REJECTED,
 }
 
-@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class PipelineThread(@SerialName("thread_id") val threadId: String, val kind: String, val content: String = "", @EncodeDefault(EncodeDefault.Mode.NEVER) val counterpart: String? = null) {
+data class PipelineThread(@SerialName("thread_id") val threadId: String, val kind: String, val content: String = "") {
     init {
-        counterpart?.let { Rules.nonEmpty(it, "counterpart") }
         Rules.nonEmpty(threadId, "thread_id")
         require(kind in setOf("요청", "결정", "일정", "기록", "태그정정", "거절"))
     }

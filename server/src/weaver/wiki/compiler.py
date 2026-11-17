@@ -24,6 +24,7 @@ from weaver.context import (
 )
 from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
+from weaver.llm.errors import InvalidJson, MissingOutput, Refusal, SchemaMismatch
 from weaver.llm.types import LlmClient
 from weaver.loom.tagging import (
     MAX_NEW_ENTRIES,
@@ -43,6 +44,17 @@ from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore, normalize_
 
 logger = logging.getLogger(__name__)
 FIELD_THREAD_PREFIX = "wiki-field:"
+MAX_EDIT_CONTRACT_FAILURES = 3
+
+
+def _direction_particle(text: str) -> str:
+    last = text.rstrip()[-1:]
+    if last and "가" <= last <= "힣":
+        final = (ord(last) - ord("가")) % 28
+        suffix = "로" if final in (0, 8) else "으로"
+    else:
+        suffix = "로" if last and last in "1245789" else "으로"
+    return text + suffix
 
 
 def _field_text(field: str, before: JsonValue, after: JsonValue) -> str:
@@ -72,7 +84,7 @@ def _field_text(field: str, before: JsonValue, after: JsonValue) -> str:
         )
         return ", ".join(parts) or "담당자 없음"
     if field == "deadline":
-        return f"마감을 {date(before)}에서 {date(after)}로 변경"
+        return f"마감을 {date(before)}에서 {_direction_particle(date(after))} 변경"
     if field == "schedule":
         if isinstance(after, dict):
             start, end = after.get("start"), after.get("end")
@@ -82,9 +94,9 @@ def _field_text(field: str, before: JsonValue, after: JsonValue) -> str:
                     label += "–" + datetime.fromisoformat(end).strftime("%H:%M")
                 except ValueError:
                     label += "–" + end
-            return f"일정을 {label}으로 변경"
+            return f"일정을 {_direction_particle(label)} 변경"
         return "일정을 미정으로 변경"
-    return f"상태를 {after if after is not None else '미정'}로 변경"
+    return f"상태를 {_direction_particle(str(after) if after is not None else '미정')} 변경"
 
 
 def _field_tags(
@@ -154,6 +166,7 @@ class Compiler:
             db.executescript(
                 "CREATE TABLE IF NOT EXISTS bookmark (seq INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edits (rev TEXT PRIMARY KEY, drafts TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS edit_failures (rev TEXT PRIMARY KEY, attempts INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_entries (rev TEXT PRIMARY KEY, entries TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS compiled_pages "
                 "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, hash TEXT NOT NULL);"
@@ -170,6 +183,34 @@ class Compiler:
             return int(db.execute("SELECT seq FROM bookmark").fetchone()[0])
 
     def _edit(self, edit: HumanEdit) -> None:
+        """Retry contract violations per revision, then durably acknowledge no facts."""
+        try:
+            self._apply_edit(edit)
+        except (InvalidJson, SchemaMismatch, MissingOutput, Refusal):
+            with sqlite3.connect(self.state_path) as db:
+                db.execute(
+                    "INSERT INTO edit_failures VALUES (?, 1) ON CONFLICT(rev) DO UPDATE SET attempts=attempts+1",
+                    (edit.new_rev,),
+                )
+                attempts = int(
+                    db.execute(
+                        "SELECT attempts FROM edit_failures WHERE rev=?",
+                        (edit.new_rev,),
+                    ).fetchone()[0]
+                )
+                if attempts >= MAX_EDIT_CONTRACT_FAILURES:
+                    db.execute(
+                        "INSERT OR IGNORE INTO edits VALUES (?, '[]')", (edit.new_rev,)
+                    )
+            if attempts >= MAX_EDIT_CONTRACT_FAILURES:
+                logger.warning(
+                    "wiki edit contract retries exhausted; acknowledged without threads"
+                )
+                self._apply_edit(edit)
+            else:
+                logger.warning("wiki edit contract violation; retry pending")
+
+    def _apply_edit(self, edit: HumanEdit) -> None:
         with sqlite3.connect(self.state_path) as db:
             row = db.execute(
                 "SELECT drafts FROM edits WHERE rev=?", (edit.new_rev,)
@@ -254,15 +295,20 @@ class Compiler:
                                 "add": canonical_tags(dictionary, names, correction.add)
                             }
                         )
+                    counterpart = (
+                        counterpart_name(
+                            dictionary, additions, names, change.counterpart
+                        )
+                        if not correction
+                        else None
+                    )
+                    if counterpart is not None and counterpart not in tags:
+                        tags.append(counterpart)
                     make(
                         change.content,
                         tags,
                         correction=correction,
-                        counterpart=counterpart_name(
-                            dictionary, additions, names, change.counterpart
-                        )
-                        if not correction
-                        else None,
+                        counterpart=counterpart,
                     )
                 used = (
                     {tag for d in drafts for tag in d.tags}

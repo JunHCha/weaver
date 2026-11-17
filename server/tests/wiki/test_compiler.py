@@ -292,7 +292,7 @@ def test_edit_uses_shared_rules_dictionary_validation_and_durable_proposals(
         def generate_json(self, task, system, user, schema):
             self.calls += 1
             for rule in (
-                "검토 질문과 답 자체는 Thread로 만들지 않는다",
+                "녹취 해석(오인식·용어 뜻)",
                 "직함·소속",
                 "new_entries",
                 "오인식·오타·띄어쓰기",
@@ -453,3 +453,136 @@ def test_wiki_roles_sync_to_para_kinds(tmp_path):
         "person": "person",
         "organization": "organization",
     }
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("보류", "보류로"),
+        ("진행", "진행으로"),
+        ("대기실", "대기실로"),
+        ("완료", "완료로"),
+        ("확인중", "확인중으로"),
+    ],
+)
+def test_field_text_korean_direction_particle(status, expected):
+    from weaver.wiki.compiler import _field_text
+
+    assert _field_text("status", None, status) == f"상태를 {expected} 변경"
+
+
+def test_wiki_prompt_is_specific_and_counterpart_is_a_tag(tmp_path):
+    from weaver.wiki.compiler import EditChange
+    from weaver.wiki.prompts import (
+        HUMAN_EDIT_PROMPT,
+        WIKI_EDIT_OUTPUT_RULES,
+        WIKI_EDIT_RULES,
+    )
+    from weaver.wiki.store import HumanEdit
+
+    assert "\n" in HUMAN_EDIT_PROMPT
+    assert HUMAN_EDIT_PROMPT.startswith(WIKI_EDIT_RULES + "\n")
+    assert HUMAN_EDIT_PROMPT.endswith("\n" + WIKI_EDIT_OUTPUT_RULES)
+    for forbidden in ("contact_name", "기록 주인", "검토 답", "corrections", "#149"):
+        assert forbidden not in HUMAN_EDIT_PROMPT
+    assert "태그 정정에는 영역이 필요 없다" in HUMAN_EDIT_PROMPT
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", settle_seconds=0)
+    store.acknowledge = lambda _: None
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.add_entry("자료 관리", "area")
+    context.add_entry("김철수", "person", ("김 박사",))
+
+    class Party(FakeLLM):
+        def generate_json(self, task, system, user, schema):
+            return EditResult(
+                changes=[
+                    EditChange(
+                        content="김철수가 자료를 전달했다.",
+                        tags=["자료 관리"],
+                        counterpart="김 박사",
+                    )
+                ]
+            )
+
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        Party(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    compiler._edit(HumanEdit("pages/자료.md", "old", "new", "합성 변경", {}, {}))
+    result = fabric.entries(ThreadQuery())[0]
+    assert result.counterpart == "김철수"
+    assert result.tags == ["자료 관리", "김철수"]
+
+
+@pytest.mark.parametrize("failure", ["area", "schema", "json", "missing", "refusal"])
+def test_wiki_contract_failure_is_bounded_durable_and_acknowledged_without_threads(
+    tmp_path, caplog, failure
+):
+    from weaver.llm.errors import InvalidJson, MissingOutput, Refusal, SchemaMismatch
+    from weaver.wiki.compiler import MAX_EDIT_CONTRACT_FAILURES, EditChange
+    from weaver.wiki.store import HumanEdit
+
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", settle_seconds=0)
+    acknowledged = []
+    store.acknowledge = acknowledged.append
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+
+    class Bad(FakeLLM):
+        calls = 0
+
+        def generate_json(self, task, system, user, schema):
+            self.calls += 1
+            if failure != "area":
+                raise {
+                    "schema": SchemaMismatch,
+                    "json": InvalidJson,
+                    "missing": MissingOutput,
+                    "refusal": Refusal,
+                }[failure]()
+            return EditResult(
+                changes=[EditChange(content="SYNTHETIC_PRIVATE_FACT", tags=[])]
+            )
+
+    llm = Bad()
+    edit = HumanEdit(
+        "pages/SYNTHETIC_PRIVATE_PAGE.md",
+        "old",
+        "new",
+        "SYNTHETIC_PRIVATE_DIFF",
+        {},
+        {},
+    )
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        llm,
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    for _ in range(MAX_EDIT_CONTRACT_FAILURES - 1):
+        compiler._edit(edit)
+        assert not acknowledged and not fabric.entries(ThreadQuery())
+    # Retry counts survive a process restart.
+    restarted = Compiler(
+        store,
+        fabric,
+        context,
+        llm,
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    restarted._edit(edit)
+    assert acknowledged == [edit]
+    assert llm.calls == MAX_EDIT_CONTRACT_FAILURES
+    assert not fabric.entries(ThreadQuery())
+    restarted._edit(edit)
+    assert llm.calls == MAX_EDIT_CONTRACT_FAILURES
+    assert "acknowledged without threads" in caplog.text
+    assert "SYNTHETIC_PRIVATE" not in caplog.text

@@ -634,3 +634,21 @@ def test_reextract_carries_area_and_counterpart_in_plan_preview_and_apply(tmp_pa
         ).counterpart
         == "김철수"
     )
+
+
+def test_area_contract_error_is_reported_per_source(tmp_path):
+    seed(tmp_path, body="bad")
+    seed(tmp_path, source=OTHER, name="good", body="good")
+
+    class BadArea(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            result = super().generate_json(task, system, user, schema)
+            if task == "loom.approve" and json.loads(user)["body"] == "bad":
+                result.threads[0].tags = []
+            return result
+
+    report = reextract(tmp_path, tmp_path / "wiki", BadArea())
+    plans = {plan.source_id: plan for plan in report.sources}
+    assert plans[SOURCE].error == "SchemaMismatch"
+    assert not plans[SOURCE].batch
+    assert not plans[OTHER].error and plans[OTHER].new

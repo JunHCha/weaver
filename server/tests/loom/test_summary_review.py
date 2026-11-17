@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 from server.tests.fake_responses import fixture_response
 
@@ -1179,3 +1180,40 @@ def test_contact_metadata_survives_restart_and_legacy_spinner_fallback(tmp_path)
             (SOURCE, "1", json.dumps({"hints": {"counterpart": "김영희"}})),
         )
     assert read_contact_name(tmp_path, "pkg", SOURCE) == "김영희"
+
+
+@pytest.mark.parametrize("action", ["approve", "edit"])
+def test_prompt_corrections_are_approval_only(tmp_path, action):
+    class PromptLlm(FakeLlm):
+        system = ""
+
+        def generate_json(self, task, system, user, schema):
+            self.system = system
+            return super().generate_json(task, system, user, schema)
+
+    llm = PromptLlm()
+    review = SummaryReview(
+        llm,
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action=action,
+        answers=["홍길동"],
+        edited_body="사람이 편집한 업무 사실" if action == "edit" else None,
+        feedback=None,
+    )
+    review.apply(package(), "홍길돈 원문", verdict, now=NOW)
+    assert (
+        "오인식은 corrections(observed → canonical)로만 제안한다" in llm.system
+    ) == (action == "approve")
+    if action == "edit":
+        assert "edit에서는 corrections를 비운다" in llm.system
+        assert "canonical은 검토 답 하나와 정확히 일치" not in llm.system
+    assert "#149" not in llm.system
+    assert "counterpart가 있으면 그 표준 이름도 반드시 tags에 포함한다" in llm.system

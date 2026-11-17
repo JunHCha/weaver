@@ -369,3 +369,18 @@ def test_unknown_hosts_are_omitted_from_projection(tmp_path):
     assert "capture_hosts" not in json.loads(path.read_text())
     journal.update(item.source_id, capture_hosts=["mac", "unknown"])
     assert json.loads(path.read_text())["capture_hosts"] == ["mac", "unknown"]
+
+
+def test_pipeline_wire_has_no_counterpart_with_or_without_wiki_edit():
+    from pathlib import Path
+
+    for name in ("PipelineItem.json", "PipelineItem-wiki-edit.json"):
+        text = (
+            Path(__file__).resolve().parents[2] / "schema" / "examples" / name
+        ).read_text()
+        item = PipelineItem.model_validate_json(text)
+        wire = item.model_dump_json()
+        assert '"counterpart"' not in wire
+        assert all(
+            "counterpart" not in thread for thread in json.loads(wire)["threads"]
+        )
