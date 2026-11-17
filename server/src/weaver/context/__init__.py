@@ -46,6 +46,7 @@ class ContextEntry:
     human_edited: bool = False
     promoted: bool = False
     archived: bool = False
+    promotion_reverted: bool = False
 
 
 class SchemaVersionError(RuntimeError):
@@ -232,6 +233,13 @@ class ContextDictionary:
                 "CREATE TABLE IF NOT EXISTS project_lifecycle "
                 "(name TEXT PRIMARY KEY, promoted INTEGER NOT NULL, archived INTEGER NOT NULL)"
             )
+            columns = {
+                row[1] for row in db.execute("PRAGMA table_info(project_lifecycle)")
+            }
+            if "reverted" not in columns:
+                db.execute(
+                    "ALTER TABLE project_lifecycle ADD COLUMN reverted INTEGER NOT NULL DEFAULT 0"
+                )
         with self._path.open("rb") as file:
             os.fchmod(file.fileno(), 0o600)
 
@@ -358,10 +366,15 @@ class ContextDictionary:
         if db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_lifecycle'"
         ).fetchone():
+            columns = {
+                row[1] for row in db.execute("PRAGMA table_info(project_lifecycle)")
+            }
             lifecycle = {
-                name: (bool(promoted), bool(archived))
-                for name, promoted, archived in db.execute(
-                    "SELECT * FROM project_lifecycle"
+                row[0]: tuple(bool(value) for value in row[1:])
+                for row in db.execute(
+                    "SELECT name, promoted, archived, "
+                    + ("reverted" if "reverted" in columns else "0")
+                    + " FROM project_lifecycle"
                 )
             }
             for key, entry in entries.items():
@@ -370,11 +383,14 @@ class ContextDictionary:
                     for label in (key, *map(_key, entry.aliases))
                     if label in lifecycle
                 ]
+                if key in lifecycle:
+                    values = [lifecycle[key]]
                 if values:
                     entries[key] = replace(
                         entry,
                         promoted=any(v[0] for v in values),
                         archived=any(v[1] for v in values),
+                        promotion_reverted=any(v[2] for v in values),
                     )
         return DictionarySnapshot(sorted(entries.values(), key=lambda e: e.name)), edits
 
@@ -518,7 +534,12 @@ class ContextDictionary:
             return self._save(db, snapshot, edit)
 
     def set_project_lifecycle(
-        self, name: str, *, promoted: bool | None = None, archived: bool
+        self,
+        name: str,
+        *,
+        promoted: bool | None = None,
+        archived: bool,
+        reverted: bool | None = None,
     ) -> ContextEntry:
         """Persist automatic lifecycle separately from human dictionary overrides."""
         with self._writing() as (db, snapshot, _):
@@ -526,12 +547,13 @@ class ContextDictionary:
             if entry.kind != "project":
                 raise ValueError("lifecycle requires a project")
             db.execute(
-                "INSERT INTO project_lifecycle VALUES (?, ?, ?) "
-                "ON CONFLICT(name) DO UPDATE SET promoted=excluded.promoted, archived=excluded.archived",
+                "INSERT INTO project_lifecycle VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET promoted=excluded.promoted, archived=excluded.archived, reverted=excluded.reverted",
                 (
                     _key(entry.name),
                     entry.promoted if promoted is None else promoted,
                     archived,
+                    entry.promotion_reverted if reverted is None else reverted,
                 ),
             )
             return self._require(self._load(db)[0], entry.name)

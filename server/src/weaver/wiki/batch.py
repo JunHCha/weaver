@@ -5,10 +5,12 @@ import logging
 import re
 import sqlite3
 import unicodedata
+from contextlib import closing
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, WithJsonSchema
 
 from weaver.fabric import ThreadQuery
 from weaver.fabric.state import project
@@ -18,7 +20,11 @@ from weaver.wiki.compiler import Compiler
 from weaver.wiki.digest import DigestBuilder, DigestEntry
 from weaver.wiki.generation import fingerprint
 from weaver.wiki.links import summary_path
-from weaver.wiki.promotion import ProjectLifecycle, ProjectPromotion
+from weaver.wiki.promotion import (
+    PROJECT_THREAD_PREFIX,
+    ProjectLifecycle,
+    PromotionShape,
+)
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION, WORK_VAULT_RULES
 from weaver.wiki.snapshot import canonical_threads
 from weaver.wiki.store import HumanEditPending
@@ -55,6 +61,21 @@ def _strip_managed_evidence(body: str) -> str:
     return head + "\n" + kept + "\n" if kept else head
 
 
+def _current_states(threads: list[Thread], active: list[Thread]) -> dict[str, object]:
+    states: dict[str, object] = {}
+    for tag in sorted({tag for t in active for tag in t.tags}):
+        state = project(tag, threads)
+        states[tag] = {
+            "fields": {
+                k: {"value": v.value, "thread_id": v.thread_id}
+                for k, v in state.fields.items()
+            },
+            "assignees": sorted(state.assignees),
+            "open_requests": [t.thread_id for t in state.open_requests],
+        }
+    return states
+
+
 class WikiPage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -74,13 +95,20 @@ class ExcludedThread(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+# Keep the provider schema structured while preserving malformed JSON items for
+# isolated validation after pages/digests have been accepted.
+type PromotionItem = Annotated[
+    JsonValue, WithJsonSchema(PromotionShape.model_json_schema())
+]
+
+
 class WikiBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pages: list[WikiPage] = Field(min_length=1, max_length=64)
     excluded_threads: list[ExcludedThread]
     digests: list[DigestEntry] = Field(default_factory=list)
-    promotions: list[ProjectPromotion] = Field(default_factory=list, max_length=64)
+    promotions: list[PromotionItem] = Field(default_factory=list)
 
 
 _VALIDATION_REASONS = frozenset(
@@ -108,6 +136,7 @@ class BatchCompiler(Compiler):
     """One corpus-level LLM call; validate the whole batch before writing pages."""
 
     digest: DigestBuilder | None = None
+    timezone: ZoneInfo = ZoneInfo("UTC")
 
     def _existing_pages(self) -> dict[str, tuple[dict[str, JsonValue], str, str]]:
         pages = {}
@@ -120,7 +149,7 @@ class BatchCompiler(Compiler):
         return pages
 
     def _tables(self) -> None:
-        with sqlite3.connect(self.state_path) as db:
+        with closing(sqlite3.connect(self.state_path)) as db, db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS batches "
                 "(seq INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL, "
@@ -136,12 +165,18 @@ class BatchCompiler(Compiler):
         self.store.restore_readonly()
         for edit in self.store.scan(self.store.clock()):
             self._edit(edit)
-        lifecycle = ProjectLifecycle(self.state_path, self.context, self.fabric)
+        lifecycle = ProjectLifecycle(
+            self.state_path, self.context, self.fabric, self.timezone
+        )
         now = datetime.fromtimestamp(self.store.clock(), UTC)
         lifecycle.refresh(now)
         threads = canonical_threads(self.fabric.entries(ThreadQuery()))
         high = max(
-            (t.seq for t in threads if not t.thread_id.startswith("wiki-project:")),
+            (
+                t.seq
+                for t in threads
+                if not t.thread_id.startswith(PROJECT_THREAD_PREFIX)
+            ),
             default=0,
         )
         if high <= self.bookmark():
@@ -182,18 +217,8 @@ class BatchCompiler(Compiler):
                 "path": path,
                 "body": summary.body,
             }
-        states = {}
-        for tag in sorted({tag for t in active for tag in t.tags}):
-            state = project(tag, threads)
-            states[tag] = {
-                "fields": {
-                    k: {"value": v.value, "thread_id": v.thread_id}
-                    for k, v in state.fields.items()
-                },
-                "assignees": sorted(state.assignees),
-                "open_requests": [t.thread_id for t in state.open_requests],
-            }
-        digest_targets = self.digest.plan(threads, high) if self.digest else []
+        stable_threads = lifecycle.stable_threads(threads)
+        digest_targets = self.digest.plan(stable_threads, high) if self.digest else []
         corpus = {
             "rules_version": RULES_VERSION,
             "dictionary": [
@@ -207,9 +232,22 @@ class BatchCompiler(Compiler):
             ],
             "threads": [t.model_dump(mode="json") for t in active],
             "sources": list(sources.values()),
-            "current_states": states,
+            "current_states": _current_states(threads, active),
         }
-        snapshot = fingerprint({"corpus": corpus, "high": high, "prompt": BATCH_PROMPT})
+        active_ids = {t.thread_id for t in active}
+        stable_active = [t for t in stable_threads if t.thread_id in active_ids]
+        snapshot = fingerprint(
+            {
+                "corpus": {
+                    "rules_version": RULES_VERSION,
+                    "threads": [t.model_dump(mode="json") for t in stable_active],
+                    "sources": list(sources.values()),
+                    "current_states": _current_states(stable_threads, stable_active),
+                },
+                "high": high,
+                "prompt": BATCH_PROMPT,
+            }
+        )
         failure_key = fingerprint(
             {
                 "snapshot": snapshot,
@@ -217,7 +255,7 @@ class BatchCompiler(Compiler):
                 "validator": _VALIDATOR_VERSION,
             }
         )
-        with sqlite3.connect(self.state_path) as db:
+        with closing(sqlite3.connect(self.state_path)) as db, db:
             failed = db.execute(
                 "SELECT reason FROM batch_failures WHERE fingerprint=?", (failure_key,)
             ).fetchone()
@@ -285,7 +323,7 @@ class BatchCompiler(Compiler):
                     and str(error) in _VALIDATION_REASONS
                 ):
                     reason += ": " + str(error)
-                with sqlite3.connect(self.state_path) as db:
+                with closing(sqlite3.connect(self.state_path)) as db, db:
                     db.execute(
                         "INSERT OR REPLACE INTO batch_failures VALUES (?, ?)",
                         (failure_key, reason),
@@ -293,7 +331,7 @@ class BatchCompiler(Compiler):
                 logger.warning("wiki batch validation failed: %s", reason)
                 raise
             completed = {}
-            with sqlite3.connect(self.state_path) as db:
+            with closing(sqlite3.connect(self.state_path)) as db, db:
                 db.execute(
                     "DELETE FROM compiled_pages WHERE fingerprint=?", (snapshot,)
                 )
@@ -363,7 +401,7 @@ class BatchCompiler(Compiler):
                 )
             body = page.body.rstrip() + "\n\n## 근거\n" + "\n".join(evidence) + "\n"
             written = self.store.write(path, props, body, base)
-            with sqlite3.connect(self.state_path) as db:
+            with closing(sqlite3.connect(self.state_path)) as db, db:
                 db.execute(
                     "INSERT OR REPLACE INTO compiled_pages VALUES (?, ?, ?)",
                     (path, snapshot, written),
@@ -371,12 +409,14 @@ class BatchCompiler(Compiler):
         if self.digest is not None:
             self.digest.apply(digest_targets, result.digests, high)
         self._sync_pages()
-        lifecycle.apply(result.promotions, active, now)
-        with sqlite3.connect(self.state_path) as db:
+        lifecycle.apply(result.promotions, active, now, replay=False)
+        with closing(sqlite3.connect(self.state_path)) as db, db:
             db.execute("UPDATE bookmark SET seq=?", (high,))
             db.execute(
                 "DELETE FROM batches WHERE seq < (SELECT MAX(seq) FROM batches) AND seq NOT IN (SELECT seq FROM batches ORDER BY seq DESC LIMIT 2)"
             )
+
+        lifecycle.refresh(now)
 
     def _validate(
         self,
@@ -452,7 +492,7 @@ class BatchCompiler(Compiler):
     def refresh_index(self) -> None:
         """Publish navigation from actual files, never from guessed link targets."""
         self._tables()
-        with sqlite3.connect(self.state_path) as db:
+        with closing(sqlite3.connect(self.state_path)) as db, db:
             row = db.execute(
                 "SELECT result, seq, created_at FROM batches ORDER BY seq DESC LIMIT 1"
             ).fetchone()

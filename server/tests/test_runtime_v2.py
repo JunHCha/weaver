@@ -400,7 +400,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
     assert "요약" in copy.read_text()
     job = next(task.run.__self__ for task in runtime.maintenance if task.name == "wiki")
     job.store.clock = lambda: now[0]
-    now[0] += 1801
+    # Setup can take more than a second under the full suite. Start the quiet
+    # period at the actual latest write, rather than the pre-setup frozen clock.
+    now[0] = max(now[0], *(p.stat().st_mtime for p in root.rglob("*.md"))) + 1801
     job.run()
     assert copy.stem in (root / "열린 요청.md").read_text()
     assert list((root / "Digest").rglob("*.md"))

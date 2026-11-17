@@ -74,10 +74,13 @@ candidates, including recent-tag hints. Existing curated projects and existing
 learned projects may be tagged when clearly relevant. Automatic approval and
 bootstrap never create a project. Wiki batch promotion registers projects with
 `human_edited=False` and `promoted=True`, making active projects eligible.
-`set_project_lifecycle(name, promoted=None, archived=...)` stores automatic flags
+`set_project_lifecycle(name, promoted=None, archived=..., reverted=None)` stores automatic flags
 separately from human overrides, without changing their provenance. Flags survive
 Wiki sync and follow human renames/merges through historical aliases. Archived
 projects remain resolvable but are excluded from all extraction tag hints and
-validation. Older v1/v2 read-only dictionaries without the additive lifecycle
-table return false flags; writers create the table transactionally. See
+validation. Human-reverted promotions set `promotion_reverted=True` and
+`promoted=False`, which excludes even learned or human-edited entries from tag
+candidates. The additive lifecycle table accepts earlier rows without `reverted`;
+readers default it to false and writers add the column transactionally. Older
+v1/v2 read-only dictionaries without the additive lifecycle table return false flags; writers create the table transactionally. See
 [`wiki/README.md`](../wiki/README.md) for promotion and suppression journaling.

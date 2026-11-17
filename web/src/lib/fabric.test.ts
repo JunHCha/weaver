@@ -199,3 +199,9 @@ it("lays out focused groups independently of FLIP animation and preserves top al
     ).cards,
   ).toEqual([]);
 });
+
+
+it("puts a fact whose only project is archived in the no-project lane", () => {
+  const row = { thread_id: "archived-only", occurred_at: "2026-11-17", kind: "기록", source_id: "source", tags: ["보관 작업"] };
+  expect(groupKeys(row, "project", { "보관 작업": "project" }, String, new Set(["보관 작업"]))).toEqual(["프로젝트 없음"]);
+});

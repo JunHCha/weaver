@@ -20,9 +20,9 @@ export function groupKeys(
   hiddenTags: ReadonlySet<string> = new Set(),
 ): string[] {
   if (tagKinds[group]) {
-    const names = t.tags.filter((name) => kinds[name] === group);
+    const names = t.tags.filter((name) => kinds[name] === group && !hiddenTags.has(name));
     return names.length
-      ? names.filter((name) => !hiddenTags.has(name))
+      ? names
       : [`${tagKinds[group]} 없음`];
   }
   return [

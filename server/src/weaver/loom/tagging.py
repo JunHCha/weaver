@@ -63,6 +63,7 @@ def tag_context(
         e.name
         for e in snapshot.entries
         if e.archived
+        or e.promotion_reverted
         or (
             e.kind == "project"
             and e.source == "wiki"
@@ -183,6 +184,7 @@ def tag_snapshot(snapshot: DictionarySnapshot) -> DictionarySnapshot:
             entry
             for entry in snapshot.entries
             if not entry.archived
+            and not entry.promotion_reverted
             and (
                 entry.kind != "project"
                 or entry.source != "wiki"

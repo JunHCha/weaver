@@ -139,6 +139,7 @@ it("hides archived project groups until requested and keeps the area view intact
   fireEvent.change(screen.getByLabelText("묶기"), { target: { value: "project" } });
   const names = () => [...document.querySelectorAll(".lane-h b")].map((n) => n.textContent);
   expect(names()).toEqual(["B", "프로젝트 없음"]);
+  expect(screen.getByRole("article", { name: "기록 내용 2" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "보관 프로젝트 표시" }));
   expect(names()).toEqual(["A", "B", "프로젝트 없음"]);
   fireEvent.change(screen.getByLabelText("묶기"), { target: { value: "none" } });
