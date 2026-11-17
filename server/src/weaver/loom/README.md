@@ -261,3 +261,35 @@ after server now is clamped even when the phone's reference clock is ahead.
 Re-extraction run `source-time-v5` supersedes `para-counterpart-v4`, so saved plans
 must be recreated and completed older runs can be deliberately planned again.
 Text preview includes occurrence and recording times alongside field values.
+
+## Feedback tasks and approval time
+
+Answers only repair business facts; ordinary opinions in feedback do not create
+Threads. This semantic distinction is a shared prompt rule: the server trusts
+the model's judgment and does not classify task wording with text heuristics.
+An explicit instruction for the reviewer to check, register or process work
+creates one request with direction `받음` (내가 할 일) and content identifying the
+source work. The model marks its internal origin with `from_feedback`; this is
+not a Fabric or phone schema field. The server keeps the first valid feedback
+request only, downgrading extra flags, non-request flags and flags without
+feedback to ordinary source-time extraction with content-free warnings. It
+corrects the kept request's direction to `받음` with a warning when necessary.
+
+When the response also contains source-based Threads, the feedback request takes
+the first source Thread's validated area, replacing a different area with a
+content-free warning. With no source-based Threads, its area is left to the
+model, subject to the existing exactly-one-area validation. Other tags still
+identify the work. This request occurs at `approved_at`, and relative deadlines
+use `approval_today` in the configured timezone, rather than the source's `today`.
+Source facts retain their source-time reference, even in the same response.
+
+The review journal already persists the approval clock as `Prepared.applied_at`.
+Re-extraction restores it, then falls back to the original summary's `created_at`.
+Thread `recorded_at` is never an approval fallback: earlier re-extractions may
+have replaced it with their own processing time. When neither saved approval
+clock is available, prompt inputs `approved_at` and `approval_today` are null.
+Only an actually emitted valid feedback request fails that source with a readable
+preview error; opinion-only feedback without such a request can still be
+re-extracted. Re-extraction run `feedback-time-v6` supersedes `source-time-v5`;
+recreate saved plans to deliberately re-extract completed older runs with these
+rules.
