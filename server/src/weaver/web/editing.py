@@ -231,6 +231,8 @@ def editing_router(config: ServerConfig) -> APIRouter:
                 "kind": e.kind,
                 "aliases": list(e.aliases),
                 "human_edited": e.human_edited,
+                "archived": e.archived,
+                "promoted": e.promoted,
                 "usage_count": counts.get(e.name, 0),
             }
             for e in dictionary.entries

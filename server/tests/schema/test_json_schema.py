@@ -206,3 +206,18 @@ def test_schedule_value_has_consumer_parity():
         {k: v for k, v in (base | {"value": schedule}).items() if k != "seq"},
         True,
     )
+
+
+def test_system_tag_correction_is_allowed_without_retraction():
+    payload = example("Thread") | {
+        "actor": "system",
+        "kind": "태그정정",
+        "direction": None,
+        "field": None,
+        "value": None,
+        "retracts": None,
+        "correction": {"target": "thread-2", "remove": [], "add": ["교체 프로젝트"]},
+    }
+    agree(Thread, payload, True)
+    agree(ThreadDraft, {k: v for k, v in payload.items() if k != "seq"}, True)
+    agree(Thread, payload | {"kind": "기록", "correction": None}, False)

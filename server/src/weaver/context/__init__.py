@@ -44,6 +44,8 @@ class ContextEntry:
     summary: str = ""
     source: Source = "wiki"
     human_edited: bool = False
+    promoted: bool = False
+    archived: bool = False
 
 
 class SchemaVersionError(RuntimeError):
@@ -226,6 +228,10 @@ class ContextDictionary:
                 self._upgrade(db)
             elif version != _VERSION:
                 raise SchemaVersionError("unsupported context database version")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS project_lifecycle "
+                "(name TEXT PRIMARY KEY, promoted INTEGER NOT NULL, archived INTEGER NOT NULL)"
+            )
         with self._path.open("rb") as file:
             os.fchmod(file.fileno(), 0o600)
 
@@ -349,6 +355,27 @@ class ContextDictionary:
             k: replace(e, misrecognitions=tuple(corrections.get(k, ())))
             for k, e in entries.items()
         }
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_lifecycle'"
+        ).fetchone():
+            lifecycle = {
+                name: (bool(promoted), bool(archived))
+                for name, promoted, archived in db.execute(
+                    "SELECT * FROM project_lifecycle"
+                )
+            }
+            for key, entry in entries.items():
+                values = [
+                    lifecycle[label]
+                    for label in (key, *map(_key, entry.aliases))
+                    if label in lifecycle
+                ]
+                if values:
+                    entries[key] = replace(
+                        entry,
+                        promoted=any(v[0] for v in values),
+                        archived=any(v[1] for v in values),
+                    )
         return DictionarySnapshot(sorted(entries.values(), key=lambda e: e.name)), edits
 
     def snapshot(self) -> DictionarySnapshot:
@@ -489,6 +516,25 @@ class ContextDictionary:
                 human_edited=human_edited,
             )
             return self._save(db, snapshot, edit)
+
+    def set_project_lifecycle(
+        self, name: str, *, promoted: bool | None = None, archived: bool
+    ) -> ContextEntry:
+        """Persist automatic lifecycle separately from human dictionary overrides."""
+        with self._writing() as (db, snapshot, _):
+            entry = self._require(snapshot, name)
+            if entry.kind != "project":
+                raise ValueError("lifecycle requires a project")
+            db.execute(
+                "INSERT INTO project_lifecycle VALUES (?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET promoted=excluded.promoted, archived=excluded.archived",
+                (
+                    _key(entry.name),
+                    entry.promoted if promoted is None else promoted,
+                    archived,
+                ),
+            )
+            return self._require(self._load(db)[0], entry.name)
 
     def rename(
         self, name: str, new_name: str, *, human_edited: bool = True

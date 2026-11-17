@@ -17,10 +17,13 @@ export function groupKeys(
   group: string,
   kinds: Record<string, string | null>,
   sourceLabel: (id: string) => string,
+  hiddenTags: ReadonlySet<string> = new Set(),
 ): string[] {
   if (tagKinds[group]) {
     const names = t.tags.filter((name) => kinds[name] === group);
-    return names.length ? names : [`${tagKinds[group]} 없음`];
+    return names.length
+      ? names.filter((name) => !hiddenTags.has(name))
+      : [`${tagKinds[group]} 없음`];
   }
   return [
     group === "kind"

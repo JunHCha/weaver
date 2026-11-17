@@ -348,3 +348,11 @@ it("keeps corrections and their retractions hidden when only the retraction togg
     }).map((t) => t.thread_id),
   ).toEqual(["one", "meta", "undo-meta"]);
 });
+
+
+it("shows an archived project's state in the dictionary", async () => {
+  vi.spyOn(editing, "dictionary").mockResolvedValue([{ ...entry, archived: true }]);
+  render(<DictionaryScreen />);
+  expect(await screen.findByText("프로젝트 · 보관")).toBeVisible();
+  expect(screen.getByRole("button", { name: "알파 편집" })).toBeEnabled();
+});

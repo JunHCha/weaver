@@ -45,7 +45,7 @@ function EntryRow({
       >
         <span className="dictionary-name">{entry.name}</span>
         <span className="dictionary-kind" data-kind={entry.kind}>
-          {tagKinds[entry.kind]}
+          {tagKinds[entry.kind]}{entry.archived ? " · 보관" : ""}
         </span>
         <span className="dictionary-alias-summary mut">
           {entry.aliases.join(" · ") || "별칭 없음"}

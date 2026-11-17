@@ -313,7 +313,7 @@ class ThreadDraft(Contract):
                         "if": {
                             "properties": {
                                 "actor": {"const": "system"},
-                                "kind": {"not": {"const": "실행"}},
+                                "kind": {"not": {"enum": ["실행", "태그정정"]}},
                             }
                         },
                         "then": {"properties": {"retracts": {"type": "string"}}},
@@ -386,7 +386,11 @@ class ThreadDraft(Contract):
             raise ValueError("executes is required exactly for executions")
         if self.kind == "실행" and self.actor != "system":
             raise ValueError("executions require actor system")
-        if self.actor == "system" and self.kind != "실행" and self.retracts is None:
+        if (
+            self.actor == "system"
+            and self.kind not in ("실행", "태그정정")
+            and self.retracts is None
+        ):
             raise ValueError("system facts require a retraction target")
         if self.kind == "실행":
             if (

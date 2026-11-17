@@ -579,3 +579,18 @@ def test_body_limit_applies_to_streamed_bodies_and_boundary(state):
             path, headers=headers, content=iter([b"{}", b" " * 65535])
         )
         assert response.status_code == 413
+
+
+def test_archived_projects_remain_readable_with_lifecycle_flags(state):
+    config, client, _ = state
+    dictionary = ContextDictionary(config.state_root)
+    dictionary.set_project_lifecycle("Alpha", promoted=True, archived=True)
+    before = (config.state_root / "context.sqlite3").read_bytes()
+    tag = next(t for t in client.get("/api/tags").json() if t["name"] == "Alpha")
+    assert tag == {"name": "Alpha", "kind": "project", "archived": True}
+    entry = next(
+        e for e in client.get("/api/dictionary").json() if e["name"] == "Alpha"
+    )
+    assert entry["archived"] and entry["promoted"] and entry["usage_count"] == 1
+    assert client.get("/api/threads").json()[0]["tags"] == ["Alpha", "old"]
+    assert (config.state_root / "context.sqlite3").read_bytes() == before

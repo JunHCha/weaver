@@ -296,7 +296,7 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
         ]
 
     @app.get("/api/tags")
-    def tags() -> list[dict[str, str | None]]:
+    def tags() -> list[dict[str, str | bool | None]]:
         names = sorted({tag for thread in snapshot(True) for tag in thread.tags})
         context = (
             ContextDictionary.open_readonly(config.state_root / "context.sqlite3")
@@ -304,13 +304,19 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
             else None
         )
         dictionary = context.snapshot() if context else None
-        result: list[dict[str, str | None]] = []
+        result: list[dict[str, str | bool | None]] = []
         for name in names:
             entry = dictionary.resolve(name) if dictionary else None
-            result.append({"name": name, "kind": entry.kind if entry else None})
+            result.append(
+                {
+                    "name": name,
+                    "kind": entry.kind if entry else None,
+                    "archived": entry.archived if entry else False,
+                }
+            )
             if entry and entry.name != name and entry.name not in names:
                 names.append(entry.name)
-        return sorted(result, key=lambda tag: tag["name"] or "")
+        return sorted(result, key=lambda tag: str(tag["name"] or ""))
 
     @app.get("/api/states")
     def states(

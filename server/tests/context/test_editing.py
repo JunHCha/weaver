@@ -369,3 +369,21 @@ def test_whitespace_resolution_collisions_and_automatic_rename(tmp_path):
     context.set_kind("김철수", "person")
     with pytest.raises(ValueError):
         context.rename("김철수", "김영희", human_edited=False)
+
+
+def test_project_lifecycle_survives_sync_rename_and_readonly(tmp_path):
+    store = ContextDictionary(tmp_path)
+    store.add_entry("전환", "project", human_edited=False)
+    store.set_project_lifecycle("전환", promoted=True, archived=False)
+    store.sync_from_pages([Page("전환", "project")])
+    assert store.resolve("전환").promoted
+    assert not store.resolve("전환").human_edited
+    store.set_project_lifecycle("전환", archived=True)
+    renamed = store.rename("전환", "사람이 정한 이름")
+    assert renamed.promoted and renamed.archived and renamed.human_edited
+    readonly = ContextDictionary.open_readonly(tmp_path / "context.sqlite3")
+    assert readonly.resolve("전환").archived
+    assert readonly.resolve("사람이 정한 이름").promoted
+    with pytest.raises(ValueError, match="requires a project"):
+        store.add_entry("영역", "area")
+        store.set_project_lifecycle("영역", archived=True)

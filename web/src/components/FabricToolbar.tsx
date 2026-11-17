@@ -12,6 +12,7 @@ export interface Filters {
   openOnly: boolean;
   executions: boolean;
   retractions: boolean;
+  archived: boolean;
   query: string;
 }
 export const initialFilters: Filters = {
@@ -23,6 +24,7 @@ export const initialFilters: Filters = {
   openOnly: false,
   executions: false,
   retractions: false,
+  archived: false,
   query: "",
 };
 function Menu({
@@ -158,6 +160,14 @@ export function FabricToolbar({
           </button>
         </div>
       </Menu>
+      {f.group === "project" && (
+        <Toggle
+          id="t-archived"
+          label="보관 프로젝트 표시"
+          on={f.archived}
+          onChange={() => onChange({ ...f, archived: !f.archived })}
+        />
+      )}
       <Menu
         id="b-tag"
         label={`태그${f.tags.length ? " " + f.tags.length : ""}`}

@@ -111,13 +111,24 @@ export function FabricScreen({
     () => new Map(data.threads.map((t) => [t.thread_id, t])),
     [data.threads],
   );
+  const hiddenProjects = useMemo(
+    () =>
+      new Set(
+        data.tags
+          .filter((tag) => tag.kind === "project" && tag.archived && !filters.archived)
+          .map((tag) => tag.name),
+      ),
+    [data.tags, filters.archived],
+  );
   const groups = useCallback(
     (t: Fact) => {
       const row = threadsById.get(t.thread_id);
       const target = row?.retracts ? threadsById.get(row.retracts) : undefined;
-      return groupKeys(target || t, filters.group, tagKindsByName, sourceLabel);
+      return groupKeys(
+        target || t, filters.group, tagKindsByName, sourceLabel, hiddenProjects,
+      );
     },
-    [filters.group, tagKindsByName, sourceLabel, threadsById],
+    [filters.group, tagKindsByName, sourceLabel, threadsById, hiddenProjects],
   );
   const lanes = useMemo<Lane[]>(() => {
     const counts = new Map<string, number>();

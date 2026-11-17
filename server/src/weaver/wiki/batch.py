@@ -18,6 +18,7 @@ from weaver.wiki.compiler import Compiler
 from weaver.wiki.digest import DigestBuilder, DigestEntry
 from weaver.wiki.generation import fingerprint
 from weaver.wiki.links import summary_path
+from weaver.wiki.promotion import ProjectLifecycle, ProjectPromotion
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION, WORK_VAULT_RULES
 from weaver.wiki.snapshot import canonical_threads
 from weaver.wiki.store import HumanEditPending
@@ -79,6 +80,7 @@ class WikiBatch(BaseModel):
     pages: list[WikiPage] = Field(min_length=1, max_length=64)
     excluded_threads: list[ExcludedThread]
     digests: list[DigestEntry] = Field(default_factory=list)
+    promotions: list[ProjectPromotion] = Field(default_factory=list, max_length=64)
 
 
 _VALIDATION_REASONS = frozenset(
@@ -134,8 +136,14 @@ class BatchCompiler(Compiler):
         self.store.restore_readonly()
         for edit in self.store.scan(self.store.clock()):
             self._edit(edit)
+        lifecycle = ProjectLifecycle(self.state_path, self.context, self.fabric)
+        now = datetime.fromtimestamp(self.store.clock(), UTC)
+        lifecycle.refresh(now)
         threads = canonical_threads(self.fabric.entries(ThreadQuery()))
-        high = max((t.seq for t in threads), default=0)
+        high = max(
+            (t.seq for t in threads if not t.thread_id.startswith("wiki-project:")),
+            default=0,
+        )
         if high <= self.bookmark():
             self._sync_pages()
             return
@@ -188,6 +196,15 @@ class BatchCompiler(Compiler):
         digest_targets = self.digest.plan(threads, high) if self.digest else []
         corpus = {
             "rules_version": RULES_VERSION,
+            "dictionary": [
+                {
+                    "name": e.name,
+                    "kind": e.kind,
+                    "archived": e.archived,
+                    "promoted": e.promoted,
+                }
+                for e in self.context.snapshot().entries
+            ],
             "threads": [t.model_dump(mode="json") for t in active],
             "sources": list(sources.values()),
             "current_states": states,
@@ -354,6 +371,7 @@ class BatchCompiler(Compiler):
         if self.digest is not None:
             self.digest.apply(digest_targets, result.digests, high)
         self._sync_pages()
+        lifecycle.apply(result.promotions, active, now)
         with sqlite3.connect(self.state_path) as db:
             db.execute("UPDATE bookmark SET seq=?", (high,))
             db.execute(
