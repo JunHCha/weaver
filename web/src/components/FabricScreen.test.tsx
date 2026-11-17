@@ -226,13 +226,13 @@ it("places each person card once by counterpart, exposes areas and marks mention
   expect(board().querySelectorAll(".card:not(.ghost)")).toHaveLength(3);
   fireEvent.click(screen.getByRole("button", { name: "태그" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "민수" }));
-  expect(screen.getByRole("article", { name: "기록 합성 언급 · 언급" })).toHaveClass(
-    "mention-only",
-  );
   expect(
-    within(screen.getByRole("article", { name: "기록 합성 언급 · 언급" })).getByText(
-      "언급",
-    ),
+    screen.getByRole("article", { name: "기록 합성 언급 · 언급" }),
+  ).toHaveClass("mention-only");
+  expect(
+    within(
+      screen.getByRole("article", { name: "기록 합성 언급 · 언급" }),
+    ).getByText("언급"),
   ).toBeVisible();
   expect(
     screen.getByRole("article", { name: "요청 합성 요청" }),
@@ -250,7 +250,9 @@ it("hides archived project lanes until requested and preserves current values wi
   expect(document.querySelector(".lane-h")).not.toHaveTextContent(
     "옛 프로젝트",
   );
-  expect(screen.getByRole("article", {name:"기록 합성 보관"})).toBeInTheDocument();
+  expect(
+    screen.getByRole("article", { name: "기록 합성 보관" }),
+  ).toBeInTheDocument();
   expect(
     screen.getByRole("article", { name: "요청 합성 요청" }),
   ).toHaveTextContent("11/20");
@@ -332,13 +334,25 @@ it("keeps a resolving fact in its own counterpart lane and nests retractions of 
 });
 
 it("hides archived project groups until requested and keeps the area view intact", () => {
-  render(<FabricScreen data={{ ...data, tags: data.tags.map((tag) => ({ ...tag, archived: tag.name === "A" })) }} />);
-  fireEvent.change(screen.getByLabelText("묶기"), { target: { value: "project" } });
-  const names = () => [...document.querySelectorAll(".lane-h b")].map((n) => n.textContent);
+  render(
+    <FabricScreen
+      data={{
+        ...data,
+        tags: data.tags.map((tag) => ({ ...tag, archived: tag.name === "A" })),
+      }}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("묶기"), {
+    target: { value: "project" },
+  });
+  const names = () =>
+    [...document.querySelectorAll(".lane-h b")].map((n) => n.textContent);
   expect(names()).toEqual(["B", "프로젝트 없음"]);
   expect(screen.getByRole("article", { name: "기록 내용 2" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "보관 프로젝트 표시" }));
   expect(names()).toEqual(["A", "B", "프로젝트 없음"]);
-  fireEvent.change(screen.getByLabelText("묶기"), { target: { value: "none" } });
+  fireEvent.change(screen.getByLabelText("묶기"), {
+    target: { value: "none" },
+  });
   expect(board().querySelectorAll(".card:not(.ghost)")).toHaveLength(12);
 });

@@ -205,3 +205,20 @@ def test_contacts_count_counterpart_only_and_resolve_aliases(tmp_path):
     page = render_pages(fabric, context, now=now)["사람별 연락.md"]
     assert "상대: 최근 2026-11-10, 7일 2건, 30일 2건" in page
     assert "언급" not in page and "회사" not in page and "별칭" not in page
+
+
+def test_contacts_order_by_canonical_name_not_recency(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages([Page("가나다", "person"), Page("나루", "person")])
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    add(fabric, 1, counterpart="나루", tags=["나루"], at=now)
+    add(
+        fabric,
+        2,
+        counterpart="가나다",
+        tags=["가나다"],
+        at=now - timedelta(days=3),
+    )
+    page = render_pages(fabric, context, now=now)["사람별 연락.md"]
+    assert page.index("가나다") < page.index("나루")
