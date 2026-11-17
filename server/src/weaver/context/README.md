@@ -59,3 +59,17 @@ still raise ValueError. Alias-only automatic payloads use an optional
 implementation after applying such aliases. Existing v1/v2 payloads without
 that field remain readable. Normal add_entry retry semantics are unchanged;
 callers must explicitly add aliases to an already existing canonical entry.
+
+Kinds follow PARA: `project` is a curated project, `area` a broad ongoing
+responsibility, and `topic` a resource; `person` and `organization` identify
+parties. Existing SQLite tables store kind labels without a closed SQL enum,
+so `area` needs no data rewrite or database version change. Wiki page roles map
+`project → project`, `operation → area`, `reference → topic`, and person and
+organization unchanged. `page_role` takes precedence over a legacy `kind` field
+when synchronizing pages. Web dictionary edits and `/api/tags` accept `area`.
+
+A Wiki-synced project with `human_edited=False` remains resolvable for history
+and dictionary management, but is excluded from approval/Wiki extraction tag
+candidates, including recent-tag hints. Existing curated projects and existing
+learned projects may be tagged when clearly relevant. Automatic approval and
+bootstrap never create a project; project promotion is deferred to #149.

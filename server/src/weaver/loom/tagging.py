@@ -15,12 +15,17 @@ from weaver.schema.models import NonEmpty
 logger = logging.getLogger(__name__)
 
 TAG_RULES = (
-    " 각 Thread의 tags에는 관련 프로젝트, 언급되거나 관여한 사람"
+    " 각 업무 Thread의 tags에는 영역(area)을 정확히 하나 붙인다. 기존 영역을 우선한다."
+    " 맞는 영역이 없을 때만 new_entries로 적고 넓은 영역을 만든다. area는 PARA의 지속 책임,"
+    " topic은 PARA resource다. 프로젝트 태그는 사전의 기존 project가 명확히 맞을 때만 쓴다."
+    " 승인에서 새 project는 만들지 않는다. Wiki에서 자동 생성된 project는 사람이 편집하기"
+    " 전까지 태그 후보가 아니다. 프로젝트 승격은 후속 #149에서 다룬다."
+    " 각 Thread의 tags에는 언급되거나 관여한 사람"
     "(요청자·담당자·상대방), 조직, 관련 주제를 모두 사전 표준 이름으로 붙인다."
     " 기록 주인(화자 본인)은 태그하지 않는다. contact_name은 통화 상대다."
     " 사람 표준 이름에 직함·소속·메모를 넣지 않는다."
     " dictionary의 aliases는 표준 name으로 바꾼다. 기존 태그도 사전으로 확인한다."
-    " 사전에 없는 이름은 new_entries에 name, kind(person/organization/project/topic),"
+    " 사전에 없는 이름은 new_entries에 name, kind(person/organization/area/topic),"
     " 선택적 aliases와 함께 반환한 경우에만 태그로 쓸 수 있다."
     " TODO나 확인 같은 작업 상태를 태그로 만들지 않는다."
     " new_entries.aliases는 실제로 같은 대상을 부르는 다른 이름"
@@ -55,11 +60,17 @@ def tag_context(
     snapshot: DictionarySnapshot, script: str, threads: list[Thread]
 ) -> dict[str, Any]:
     """Bound prompt hints; full snapshot still validates every returned tag."""
+    excluded = {
+        e.name
+        for e in snapshot.entries
+        if e.kind == "project" and e.source == "wiki" and not e.human_edited
+    }
     recent_tags = list(
         dict.fromkeys(
             unicodedata.normalize("NFC", tag)
             for thread in sorted(threads, key=lambda t: t.seq, reverse=True)
             for tag in thread.tags
+            if not ((entry := snapshot.resolve(tag)) and entry.name in excluded)
         )
     )
     existing: list[str] = []
@@ -69,9 +80,15 @@ def tag_context(
         if cost + size <= EXISTING_TAG_TOKEN_BUDGET:
             existing.append(tag)
             cost += size
+    snapshot = tag_snapshot(snapshot)
     candidates = snapshot.candidates(script, limit=30)
     recent_entries = [entry for tag in recent_tags if (entry := snapshot.resolve(tag))]
-    ranked = [*candidates, *recent_entries, *snapshot.entries]
+    ranked = [
+        *(entry for entry in snapshot.entries if entry.kind == "area"),
+        *candidates,
+        *recent_entries,
+        *snapshot.entries,
+    ]
     dictionary: list[dict[str, Any]] = []
     seen: set[str] = set()
     for entry in ranked:
@@ -109,6 +126,9 @@ def proposals(
     new_entries: list[NewEntry] = []
     proposed_names: dict[str, str] = {}
     for entry in entries:
+        if entry.kind == "project":
+            logger.warning("dropped automatic project proposal")
+            continue
         if entry.kind in ("person", "organization") and not clean_name(
             entry.name, entry.kind
         ):
@@ -149,3 +169,49 @@ def canonical_tags(
         elif canonical not in tags:
             tags.append(canonical)
     return tags
+
+
+def tag_snapshot(snapshot: DictionarySnapshot) -> DictionarySnapshot:
+    """Incident-style generated project pages are not promoted projects (#149)."""
+    return DictionarySnapshot(
+        [
+            entry
+            for entry in snapshot.entries
+            if entry.kind != "project" or entry.source != "wiki" or entry.human_edited
+        ]
+    )
+
+
+def business_tags(
+    dictionary: DictionarySnapshot,
+    additions: list[NewEntry],
+    names: dict[str, str],
+    values: list[str],
+) -> list[str]:
+    tags = canonical_tags(dictionary, names, values)
+    kinds = {e.name: e.kind for e in dictionary.entries} | {
+        e.name: e.kind for e in additions
+    }
+    if sum(kinds[tag] == "area" for tag in tags) != 1:
+        logger.warning("invalid business area tag count")
+        raise ValueError("business Thread requires exactly one area tag")
+    return tags
+
+
+def counterpart_name(
+    dictionary: DictionarySnapshot,
+    additions: list[NewEntry],
+    names: dict[str, str],
+    value: str | None,
+) -> str | None:
+    if value is None:
+        return None
+    entry = dictionary.resolve(value)
+    canonical = entry.name if entry else names.get(_key(value))
+    kinds = {e.name: e.kind for e in dictionary.entries} | {
+        e.name: e.kind for e in additions
+    }
+    if canonical and kinds.get(canonical) in ("person", "organization"):
+        return canonical
+    logger.warning("dropped invalid business counterpart")
+    return None

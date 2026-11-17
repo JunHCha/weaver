@@ -21,9 +21,11 @@ from weaver.loom.tagging import (
     MAX_NEW_ENTRIES,
     TAG_RULES,
     NewEntry,
-    canonical_tags,
+    business_tags,
+    counterpart_name,
     proposals,
     tag_context,
+    tag_snapshot,
 )
 from weaver.loom.tagging import TAG_CONTEXT_TOKEN_BUDGET as TAG_CONTEXT_TOKEN_BUDGET
 from weaver.schema import (
@@ -84,6 +86,7 @@ class _ExtractedThread[K, D, R, B, F, V](BaseModel):
     content: NonEmpty
     occurred_at: Timestamp
     tags: list[NonEmpty]
+    counterpart: NonEmpty | None = None
     field: F
     value: V
     direction: D
@@ -187,10 +190,11 @@ class ApprovalExtractor:
     ) -> "Prepared":
         timestamp = now or datetime.now(UTC)
         known, existing_active = self._schedules()
-        dictionary = self.context.snapshot()
+        full_dictionary = self.context.snapshot()
+        dictionary = tag_snapshot(full_dictionary)
         entries = getattr(self.sink, "entries", None)
         all_threads: list[Thread] = entries(ThreadQuery()) if callable(entries) else []
-        hints = tag_context(dictionary, script, all_threads)
+        hints = tag_context(full_dictionary, script, all_threads)
         retracted = {t.retracts for t in all_threads if t.retracts}
         active = [
             t
@@ -235,6 +239,9 @@ class ApprovalExtractor:
             + (
                 FACT_RULES
                 + TAG_RULES
+                + " counterpart는 업무를 주고받은 상대 한 명/조직의 표준 이름 또는 null이다."
+                " 통화 상대(contact_name), 받음 요청의 요청자, 보냄 요청의 수신자를 쓴다."
+                " 목록으로 쓰지 말고 불명확하면 null이다."
                 + " 오인식은 corrections(observed → canonical)로만 제안한다."
                 + (
                     " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
@@ -311,11 +318,16 @@ class ApprovalExtractor:
         ]
         # Validate proposals without mutating the real dictionary until PREPARED
         # is durable. First declaration owns a spelling; existing names win.
-        new_entries, proposed_names = proposals(dictionary, response.new_entries)
+        new_entries, proposed_names = proposals(full_dictionary, response.new_entries)
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
-            data["tags"] = canonical_tags(dictionary, proposed_names, thread.tags)
+            data["tags"] = business_tags(
+                dictionary, new_entries, proposed_names, thread.tags
+            )
+            data["counterpart"] = counterpart_name(
+                dictionary, new_entries, proposed_names, thread.counterpart
+            )
             if thread.resolves is not None and thread.resolves not in request_ids:
                 logger.warning("dropped invalid request resolution")
                 data["resolves"] = None
@@ -395,7 +407,9 @@ class ApprovalExtractor:
                 len(proposed) - len(corrections),
                 len(proposed),
             )
-        used = {tag for draft in drafts for tag in draft.tags}
+        used = {tag for draft in drafts for tag in draft.tags} | {
+            draft.counterpart for draft in drafts if draft.counterpart
+        }
         missing = sum(
             entry.kind in ("person", "organization")
             and _key(entry.name) in _key(summary.body)

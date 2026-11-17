@@ -25,14 +25,21 @@
               "retracts": null,
               "content": "김철수가 2032년 1월 2일 자료를 보내기로 했다.",
               "tags": [
-                "김철수"
-              ]
+                "김철수",
+                "업무 운영"
+              ],
+              "counterpart": "김철수"
             }
           ],
           "new_entries": [
             {
               "name": "김철수",
               "kind": "person",
+              "aliases": []
+            },
+            {
+              "name": "업무 운영",
+              "kind": "area",
               "aliases": []
             }
           ],
@@ -48,7 +55,8 @@
       "expected": {
         "count": 1,
         "tags": [
-          "김철수"
+          "김철수",
+          "업무 운영"
         ],
         "forbidden_content": [],
         "forbidden_aliases": [
@@ -88,14 +96,21 @@
               "retracts": null,
               "content": "김철수가 자료를 보냈다.",
               "tags": [
-                "김철수"
-              ]
+                "김철수",
+                "업무 운영"
+              ],
+              "counterpart": "김철수"
             }
           ],
           "new_entries": [
             {
               "name": "김철수",
               "kind": "person",
+              "aliases": []
+            },
+            {
+              "name": "업무 운영",
+              "kind": "area",
               "aliases": []
             }
           ],
@@ -105,7 +120,8 @@
       "expected": {
         "count": 1,
         "tags": [
-          "김철수"
+          "김철수",
+          "업무 운영"
         ],
         "forbidden_content": [
           "allow",
@@ -128,7 +144,13 @@
       "contact_name": "김철수",
       "answers": [],
       "question": null,
-      "dictionary": [],
+      "dictionary": [
+        {
+          "name": "새봄 사업",
+          "kind": "project",
+          "aliases": []
+        }
+      ],
       "responses": {
         "loom.approve": {
           "body": "김철수는 가상연구소의 김영희에게 새봄 사업 자료를 보내기로 했다.",
@@ -146,8 +168,10 @@
                 "김철수",
                 "가상연구소",
                 "김영희",
-                "새봄 사업"
-              ]
+                "새봄 사업",
+                "업무 운영"
+              ],
+              "counterpart": "김철수"
             }
           ],
           "new_entries": [
@@ -167,8 +191,8 @@
               "aliases": []
             },
             {
-              "name": "새봄 사업",
-              "kind": "project",
+              "name": "업무 운영",
+              "kind": "area",
               "aliases": []
             }
           ],
@@ -181,7 +205,8 @@
           "김철수",
           "가상연구소",
           "김영희",
-          "새봄 사업"
+          "새봄 사업",
+          "업무 운영"
         ],
         "forbidden_content": [],
         "forbidden_aliases": [

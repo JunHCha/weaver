@@ -4,6 +4,7 @@ import json
 import sqlite3
 
 import pytest
+from server.tests.fake_responses import fixture_response
 
 from weaver.action import ActionEngine, ActionOutbox
 from weaver.context import ContextDictionary, Page
@@ -58,7 +59,7 @@ def test_baseline_schedule_replacement_never_registers(tmp_path, changed):
             if changed and task == "loom.approve":
                 data = result.model_dump()
                 data["threads"][0]["value"]["start"] = "2026-12-02T10:00:00+09:00"
-                return schema.model_validate(data)
+                return fixture_response(schema, data)
             return result
 
     plan = reextract(tmp_path, tmp_path / "wiki", ScheduleLlm(schedule=True))
@@ -88,7 +89,7 @@ def test_external_reference_skips_entire_source_preserving_open_requests(tmp_pat
 
 def test_automatic_alias_on_existing_wiki_entry_is_not_human_edit(tmp_path):
     context = ContextDictionary(tmp_path)
-    context.sync_from_pages([Page("Weaver", "project")])
+    context.sync_from_pages([Page("Weaver", "topic")])
     entry = context.add_alias("Weaver", "위버 작업", human_edited=False)
     assert not entry.human_edited
     context.sync_from_pages([Page("Weaver", "organization", summary="최신")])
@@ -101,7 +102,7 @@ def test_junk_tag_resolving_to_generated_wiki_entry_is_dropped(tmp_path):
     context = ContextDictionary(tmp_path)
     context.sync_from_pages([Page("TODO", "topic"), Page("확인", "topic")])
     report = reextract(tmp_path, tmp_path / "wiki", FakeLlm())
-    assert report.sources[0].new[0].tags == ["Weaver"]
+    assert report.sources[0].new[0].tags == ["Weaver", "업무 운영"]
 
 
 def test_own_schedules_hidden_from_approval_and_later_updater_skips_source(tmp_path):
@@ -215,7 +216,7 @@ def test_bootstrap_caps_and_unrelated_notes_not_in_dictionary(tmp_path):
     apply_report(tmp_path / "state", report)
     context = ContextDictionary(tmp_path / "state")
     assert not context.resolve("비밀")
-    assert len(context.list_entries()) == 1  # only the tag actually used by facts
+    assert len(context.list_entries()) == 2  # used entity plus one broad area
 
 
 @pytest.mark.parametrize("change", ["dictionary", "summary", "outbox"])
@@ -242,7 +243,7 @@ def test_existing_entry_alias_preview_equals_apply(tmp_path):
 
     seed(tmp_path)
     context = ContextDictionary(tmp_path)
-    context.sync_from_pages([Page("Weaver", "project")])
+    context.sync_from_pages([Page("Weaver", "topic")])
     report = reextract(tmp_path, tmp_path / "wiki", FakeLlm())
     assert report.sources[0].additions[0].aliases == ["위버 작업"]
     apply_report(tmp_path, report)

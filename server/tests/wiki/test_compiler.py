@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from server.tests.fake_responses import fixture_response
 
 from weaver.context import ContextDictionary, Page
 from weaver.fabric.store import FabricStore, ThreadQuery
@@ -97,17 +98,20 @@ def test_human_edit_retry_and_fields(tmp_path):
         def generate_json(self, task, system, user, schema):
             from weaver.schema import TagCorrection
 
-            return EditResult(
-                changes=[
-                    EditChange(content="새 사실", tags=["홍길동"]),
-                    EditChange(
-                        content="태그 정정",
-                        tags=[],
-                        correction=TagCorrection(
-                            target="one", remove=["홍길동"], add=["김철수"]
+            return fixture_response(
+                EditResult,
+                dict(
+                    changes=[
+                        EditChange(content="새 사실", tags=["홍길동"]),
+                        EditChange(
+                            content="태그 정정",
+                            tags=[],
+                            correction=TagCorrection(
+                                target="one", remove=["홍길동"], add=["김철수"]
+                            ),
                         ),
-                    ),
-                ]
+                    ]
+                ),
             )
 
     compiler = Compiler(
@@ -123,8 +127,9 @@ def test_human_edit_retry_and_fields(tmp_path):
         "old",
         "new",
         "diff",
-        {"status": "진행", "assignees": ["홍길동"]},
+        {"state_tag": "홍길동", "status": "진행", "assignees": ["홍길동"]},
         {
+            "state_tag": "홍길동",
             "status": "완료",
             "deadline": "2025-01-02",
             "schedule": {
@@ -304,22 +309,25 @@ def test_edit_uses_shared_rules_dictionary_validation_and_durable_proposals(
                 )
                 <= TAG_CONTEXT_TOKEN_BUDGET
             )
-            return EditResult(
-                new_entries=[
-                    NewEntry(name="김철수", kind="person", aliases=["김 철수"]),
-                    NewEntry(name="지원팀 김영희 팀장님", kind="person"),
-                ],
-                changes=[
-                    EditChange(
-                        content="홍길동과 김철수가 자료를 전달했다.",
-                        tags=[
-                            "가명",
-                            "김 철수",
-                            "비공개미등록",
-                            "지원팀 김영희 팀장님",
-                        ],
-                    )
-                ],
+            return fixture_response(
+                EditResult,
+                dict(
+                    new_entries=[
+                        NewEntry(name="김철수", kind="person", aliases=["김 철수"]),
+                        NewEntry(name="지원팀 김영희 팀장님", kind="person"),
+                    ],
+                    changes=[
+                        EditChange(
+                            content="홍길동과 김철수가 자료를 전달했다.",
+                            tags=[
+                                "가명",
+                                "김 철수",
+                                "비공개미등록",
+                                "지원팀 김영희 팀장님",
+                            ],
+                        )
+                    ],
+                ),
             )
 
     llm = Llm()
@@ -344,8 +352,104 @@ def test_edit_uses_shared_rules_dictionary_validation_and_durable_proposals(
     fabric.append = original
     compiler._edit(edit)
     assert llm.calls == 1
-    assert fabric.entries(ThreadQuery())[0].tags == ["홍길동", "김철수"]
+    assert fabric.entries(ThreadQuery())[0].tags == ["홍길동", "김철수", "업무 운영"]
     assert not context.resolve("김철수").human_edited
     assert context.resolve("김철수").aliases == ()
     assert "dropped unresolved approval tag" in caplog.text
     assert "비공개미등록" not in caplog.text
+
+
+def test_field_sentences_state_tag_area_and_no_stem_fallback(tmp_path, caplog):
+    from weaver.wiki.compiler import _field_text
+    from weaver.wiki.store import HumanEdit
+
+    assert (
+        _field_text("assignees", [], {"add": ["김철수"], "remove": ["김영희"]})
+        == "담당자에 김철수 추가, 담당자에서 김영희 제외"
+    )
+    assert (
+        _field_text("deadline", "2032-11-20", "2032-11-25")
+        == "마감을 11/20에서 11/25로 변경"
+    )
+    assert (
+        _field_text(
+            "schedule",
+            None,
+            {"start": "2032-11-18T13:30:00+09:00", "end": "2032-11-18T14:00:00+09:00"},
+        )
+        == "일정을 11/18 13:30–14:00으로 변경"
+    )
+    assert _field_text("status", None, "보류") == "상태를 보류로 변경"
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", settle_seconds=0)
+    store.acknowledge = lambda _: None
+    context = ContextDictionary(tmp_path / "context")
+    context.add_entry("자료", "topic", ("자료별칭",))
+    context.add_entry("자료 관리", "area")
+    fabric = FabricStore(tmp_path / "fabric.db")
+    fabric.append(
+        [
+            draft().model_copy(
+                update={"tags": ["자료", "자료 관리"], "counterpart": "김철수"}
+            )
+        ]
+    )
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        FakeLLM(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    compiler._edit(
+        HumanEdit(
+            "pages/절대태그아님.md",
+            "old",
+            "new",
+            "",
+            {"state_tag": "자료별칭", "status": "진행"},
+            {"state_tag": "자료별칭", "status": "보류"},
+        )
+    )
+    generated = fabric.entries(ThreadQuery())[-1]
+    assert generated.thread_id.startswith("wiki-field:")
+    assert generated.tags == ["자료", "자료 관리"]
+    assert generated.content == "상태를 보류로 변경"
+    assert generated.counterpart is None
+    compiler._edit(
+        HumanEdit("pages/절대태그아님.md", "new", "missing", "", {}, {"status": "완료"})
+    )
+    assert len(fabric.entries(ThreadQuery())) == 2
+    assert "skipped wiki fields without a resolved state tag" in caplog.text
+    assert "절대태그아님" not in caplog.text
+
+
+def test_wiki_roles_sync_to_para_kinds(tmp_path):
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", settle_seconds=0)
+    context = ContextDictionary(tmp_path / "context")
+    compiler = Compiler(
+        store,
+        FabricStore(tmp_path / "fabric.db"),
+        context,
+        FakeLLM(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    for role, _expected in (
+        ("project", "project"),
+        ("operation", "area"),
+        ("reference", "topic"),
+        ("person", "person"),
+        ("organization", "organization"),
+    ):
+        store.write(
+            f"pages/{role}.md", {"kind": "topic", "page_role": role}, "본문", None
+        )
+    compiler._sync_pages()
+    assert {entry.name: entry.kind for entry in context.list_entries()} == {
+        "project": "project",
+        "operation": "area",
+        "reference": "topic",
+        "person": "person",
+        "organization": "organization",
+    }

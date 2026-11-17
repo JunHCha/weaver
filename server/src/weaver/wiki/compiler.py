@@ -3,6 +3,7 @@
 import fcntl
 import hashlib
 import json
+import logging
 import sqlite3
 import unicodedata
 from collections.abc import Callable
@@ -14,22 +15,98 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field, JsonValue
 
-from weaver.context import ContextDictionary, ContextEntry, Kind, Page
+from weaver.context import (
+    ContextDictionary,
+    ContextEntry,
+    DictionarySnapshot,
+    Kind,
+    Page,
+)
 from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.loom.tagging import (
     MAX_NEW_ENTRIES,
     NewEntry,
+    business_tags,
     canonical_tags,
+    counterpart_name,
     proposals,
     tag_context,
+    tag_snapshot,
 )
-from weaver.schema import TagCorrection, ThreadDraft
+from weaver.schema import TagCorrection, Thread, ThreadDraft
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
 from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore, normalize_path
+
+logger = logging.getLogger(__name__)
+FIELD_THREAD_PREFIX = "wiki-field:"
+
+
+def _field_text(field: str, before: JsonValue, after: JsonValue) -> str:
+    def date(value: JsonValue) -> str:
+        if value is None:
+            return "미정"
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+                return f"{parsed.month}/{parsed.day}" + (
+                    f" {parsed:%H:%M}" if "T" in value else ""
+                )
+            except ValueError:
+                return value
+        return str(value)
+
+    if field == "assignees" and isinstance(after, dict):
+        add = after.get("add", [])
+        remove = after.get("remove", [])
+        parts = (
+            [f"담당자에 {name} 추가" for name in add] if isinstance(add, list) else []
+        )
+        parts += (
+            [f"담당자에서 {name} 제외" for name in remove]
+            if isinstance(remove, list)
+            else []
+        )
+        return ", ".join(parts) or "담당자 없음"
+    if field == "deadline":
+        return f"마감을 {date(before)}에서 {date(after)}로 변경"
+    if field == "schedule":
+        if isinstance(after, dict):
+            start, end = after.get("start"), after.get("end")
+            label = date(start)
+            if isinstance(end, str):
+                try:
+                    label += "–" + datetime.fromisoformat(end).strftime("%H:%M")
+                except ValueError:
+                    label += "–" + end
+            return f"일정을 {label}으로 변경"
+        return "일정을 미정으로 변경"
+    return f"상태를 {after if after is not None else '미정'}로 변경"
+
+
+def _field_tags(
+    state_tag: object, dictionary: DictionarySnapshot, threads: list[Thread]
+) -> list[str]:
+    if not isinstance(state_tag, str) or not (entry := dictionary.resolve(state_tag)):
+        logger.warning("skipped wiki fields without a resolved state tag")
+        return []
+    retracted = {t.retracts for t in threads if t.retracts}
+    areas = {
+        area.name
+        for thread in threads
+        if thread.thread_id not in retracted
+        and thread.retracts is None
+        and thread.kind not in ("태그정정", "실행", "거절")
+        and any(dictionary.resolve(tag) == entry for tag in thread.tags)
+        for tag in thread.tags
+        if (area := dictionary.resolve(tag)) and area.kind == "area"
+    }
+    return list(
+        dict.fromkeys([entry.name, *(sorted(areas) if len(areas) == 1 else [])])
+    )
 
 
 @dataclass(frozen=True)
@@ -45,6 +122,7 @@ class EditChange(BaseModel):
 
     content: str
     tags: list[str]
+    counterpart: str | None = None
     correction: TagCorrection | None = None
 
 
@@ -97,14 +175,15 @@ class Compiler:
                 "SELECT drafts FROM edits WHERE rev=?", (edit.new_rev,)
             ).fetchone()
             if row is None:
-                dictionary = self.context.snapshot()
+                field_dictionary = self.context.snapshot()
+                dictionary = tag_snapshot(field_dictionary)
                 threads = self.fabric.entries(ThreadQuery())
                 result = self.llm.generate_json(
                     "wiki.human_edit",
                     HUMAN_EDIT_PROMPT,
                     json.dumps(
                         {
-                            **tag_context(dictionary, edit.diff, threads),
+                            **tag_context(field_dictionary, edit.diff, threads),
                             "diff": edit.diff,
                             "threads": [
                                 {
@@ -136,15 +215,17 @@ class Compiler:
                     | None = None,
                     value: JsonValue = None,
                     correction: TagCorrection | None = None,
+                    counterpart: str | None = None,
                 ) -> None:
                     drafts.append(
                         ThreadDraft(
-                            thread_id=f"wiki:{edit.new_rev}:{len(drafts)}",
+                            thread_id=f"{FIELD_THREAD_PREFIX if field else 'wiki:'}{edit.new_rev}:{len(drafts)}",
                             kind="태그정정" if correction else "기록",
                             content=content,
                             occurred_at=now,
                             recorded_at=now,
                             tags=tags,
+                            counterpart=counterpart,
                             field=field,
                             value=value,
                             source_id=source_id,
@@ -157,17 +238,13 @@ class Compiler:
                     )
 
                 state_tag = edit.frontmatter_after.get("state_tag")
-                if not isinstance(state_tag, str) or not state_tag:
-                    state_tag = edit.frontmatter_before.get("state_tag")
-                tag = unicodedata.normalize(
-                    "NFC",
-                    state_tag
-                    if isinstance(state_tag, str) and state_tag
-                    else Path(edit.path).stem,
-                )
-                additions, names = proposals(dictionary, result.new_entries)
+                additions, names = proposals(field_dictionary, result.new_entries)
                 for change in result.changes:
-                    tags = canonical_tags(dictionary, names, change.tags)
+                    tags = (
+                        canonical_tags(dictionary, names, change.tags)
+                        if change.correction
+                        else business_tags(dictionary, additions, names, change.tags)
+                    )
                     correction = change.correction
                     if correction:
                         if correction.target not in {t.thread_id for t in threads}:
@@ -177,10 +254,21 @@ class Compiler:
                                 "add": canonical_tags(dictionary, names, correction.add)
                             }
                         )
-                    make(change.content, tags, correction=correction)
-                used = {tag for d in drafts for tag in d.tags} | {
-                    tag for d in drafts if d.correction for tag in d.correction.add
-                }
+                    make(
+                        change.content,
+                        tags,
+                        correction=correction,
+                        counterpart=counterpart_name(
+                            dictionary, additions, names, change.counterpart
+                        )
+                        if not correction
+                        else None,
+                    )
+                used = (
+                    {tag for d in drafts for tag in d.tags}
+                    | {d.counterpart for d in drafts if d.counterpart}
+                    | {tag for d in drafts if d.correction for tag in d.correction.add}
+                )
                 db.execute(
                     "INSERT INTO edit_entries VALUES (?, ?)",
                     (
@@ -197,6 +285,9 @@ class Compiler:
                         edit.frontmatter_after.get(field),
                     )
                     if before != after:
+                        field_tags = _field_tags(state_tag, field_dictionary, threads)
+                        if not field_tags:
+                            continue
                         if field == "assignees":
                             old = before if isinstance(before, list) else []
                             new = after if isinstance(after, list) else []
@@ -204,7 +295,9 @@ class Compiler:
                                 "add": [x for x in new if x not in old],
                                 "remove": [x for x in old if x not in new],
                             }
-                        make(f"{field} 변경", [tag], field, after)
+                        make(
+                            _field_text(field, before, after), field_tags, field, after
+                        )
                 payload = json.dumps(
                     [d.model_dump(mode="json") for d in drafts], ensure_ascii=False
                 )
@@ -341,9 +434,16 @@ class Compiler:
         if directory.exists():
             for page_path in directory.glob("*.md"):
                 props, body, _ = self.store.read(f"pages/{page_path.name}")
-                kind = props.get("kind")
+                role = props.get("page_role")
+                kind = {
+                    "operation": "area",
+                    "reference": "topic",
+                    "project": "project",
+                    "person": "person",
+                    "organization": "organization",
+                }.get(str(role), props.get("kind"))
                 aliases = props.get("aliases")
-                if kind in ("person", "organization", "project", "topic"):
+                if kind in ("person", "organization", "project", "area", "topic"):
                     pages.append(
                         Page(
                             unicodedata.normalize("NFC", page_path.stem),

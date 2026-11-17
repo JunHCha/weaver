@@ -33,6 +33,25 @@ from .editing import canonical_threads, editing_router
 
 logger = logging.getLogger(__name__)
 
+
+class PresentedThread(Thread):
+    """Read-only presentation metadata; never persisted in Fabric."""
+
+    presentation: Literal["fact", "history"]
+
+
+def presentation(thread: Thread) -> Literal["fact", "history"]:
+    return (
+        "history"
+        if (
+            thread.kind in ("태그정정", "실행")
+            or thread.retracts is not None
+            or thread.thread_id.startswith("wiki-field:")
+        )
+        else "fact"
+    )
+
+
 Stage = Literal["spinner", "loom"]
 _LOG = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:,\d+)?) "
@@ -265,8 +284,11 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
         ]
 
     @app.get("/api/threads")
-    def threads(include_executions: bool = False) -> list[Thread]:
-        return canonical_threads(config, snapshot(include_executions))
+    def threads(include_executions: bool = False) -> list[PresentedThread]:
+        return [
+            PresentedThread(**thread.model_dump(), presentation=presentation(thread))
+            for thread in canonical_threads(config, snapshot(include_executions))
+        ]
 
     @app.get("/api/tags")
     def tags() -> list[dict[str, str | None]]:

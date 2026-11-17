@@ -33,7 +33,7 @@ from weaver.schema import (
 )
 from weaver.wiki.store import _properties
 
-RUN_KEY = "approval-rules-v3"
+RUN_KEY = "para-counterpart-v4"
 BOOTSTRAP_MAX_ENTRIES = 200
 BOOTSTRAP_MAX_BYTES = 32768
 JUNK_TAGS = frozenset({"todo", "확인", "확인필요", "tbd"})
@@ -269,14 +269,21 @@ def _wiki_entries(root: Path, errors: list[str]) -> list[NewEntry]:
                     raise ValueError("oversized frontmatter")
                 data = data[: frontmatter_end + 5] if frontmatter_end >= 0 else b""
             properties = _properties(data)
-            kind = properties.get("kind", "topic")
+            kind = {
+                "operation": "area",
+                "reference": "topic",
+                "project": "project",
+                "person": "person",
+                "organization": "organization",
+            }.get(str(properties.get("page_role")), properties.get("kind", "topic"))
             aliases = properties.get("aliases", [])
             result.append(
                 NewEntry.model_validate(
                     {
                         "name": unicodedata.normalize("NFC", path.stem),
                         "kind": kind
-                        if kind in ("person", "organization", "project", "topic")
+                        if kind
+                        in ("person", "organization", "project", "area", "topic")
                         else "topic",
                         "aliases": [
                             a for a in aliases if isinstance(a, str) and _meaningful(a)
@@ -341,6 +348,8 @@ def _bootstrap(
         "loom.reextract_bootstrap",
         (
             "기존 태그를 프로젝트·사람·조직·주제의 짧은 표준 이름 사전으로 정리한다."
+            " area는 지속 책임 영역이며 topic은 PARA resource다. 영역은 적고 넓게 유지한다."
+            " 새 project는 만들지 않는다. Wiki project는 사람이 편집하기 전까지 태그 후보가 아니다."
             " TODO/확인 같은 상태는 버린다. wiki 이름과 사람의 편집은 유지한다."
             " aliases는 실제 다른 호칭(약칭·영문/한글 표기·별명)만이다."
             " 오타·오인식·띄어쓰기·대소문자 변형은 aliases에 넣지 않고"
@@ -398,8 +407,22 @@ def _bootstrap(
         notices.append(f"이름 정리 제안 제외: {rejected}")
     # Keep page names even if the model omits them, but never invent a renamed
     # page to displace the canonical title. Only used proposals are later kept.
-    proposals = {p.name: p for p in pages}
+    proposals = {
+        p.name: p
+        for p in pages
+        if p.kind != "project"
+        or (
+            (existing_page := memory.snapshot().resolve(p.name))
+            and existing_page.human_edited
+        )
+    }
     for candidate in response.entries:
+        if candidate.kind == "project":
+            project = memory.snapshot().resolve(candidate.name)
+            if not project or (project.source == "wiki" and not project.human_edited):
+                if notices is not None:
+                    notices.append("미승격 프로젝트 제안 제외: 1")
+                continue
         if candidate.name in proposals:
             page = proposals[candidate.name]
             page.aliases = list(dict.fromkeys([*page.aliases, *candidate.aliases]))[:20]
@@ -925,9 +948,11 @@ def reextract(
                                 tags=tags,
                             )
                         )
-                used = {tag for t in plan.new for tag in t.tags} | {
-                    tag for change in plan.human_changes for tag in change.new_tags
-                }
+                used = (
+                    {tag for t in plan.new for tag in t.tags}
+                    | {t.counterpart for t in plan.new if t.counterpart}
+                    | {tag for change in plan.human_changes for tag in change.new_tags}
+                )
                 plan.additions = [e for e in plan.additions if e.name in used]
                 plan.renames = [c for c in plan.renames if c.canonical in used]
                 plan.tag_corrections = [
@@ -1150,7 +1175,7 @@ def render(report: Report) -> str:
             lines.append(label + (" →" if label == "기존 Threads" else ""))
             for t in items:
                 lines.append(
-                    f"  {t.kind}: {t.content} | tags={t.tags} | {t.field}={json.dumps(t.value, ensure_ascii=False)}"
+                    f"  {t.kind}: {t.content} | tags={t.tags} | counterpart={t.counterpart} | {t.field}={json.dumps(t.value, ensure_ascii=False)}"
                 )
         for change in plan.renames:
             lines.append(f"  자동 이름 정리: {change.observed} → {change.canonical}")

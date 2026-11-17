@@ -23,6 +23,7 @@ def response():
                 "content": "Send materials",
                 "occurred_at": "2026-01-01T00:00:00Z",
                 "tags": [],
+                "counterpart": None,
                 "field": None,
                 "value": None,
                 "direction": "받음",

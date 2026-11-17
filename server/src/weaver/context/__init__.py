@@ -17,9 +17,9 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-Kind = Literal["person", "organization", "project", "topic"]
+Kind = Literal["person", "organization", "project", "area", "topic"]
 Source = Literal["learn", "wiki", "contact"]
-_KINDS = {"person", "organization", "project", "topic"}
+_KINDS = {"person", "organization", "project", "area", "topic"}
 _VERSION = 2
 
 

@@ -3,6 +3,8 @@
 import json
 from datetime import UTC, datetime
 
+from server.tests.fake_responses import fixture_response
+
 from weaver.runtime.progress import PipelineJournal
 from weaver.schema import PipelineItem, Source, ThreadDraft
 
@@ -78,13 +80,15 @@ def runtime_capture(tmp_path, failure_limit=5):
 
         def generate_json(self, task, system, user, schema):
             if task == "loom.summary":
-                return schema.model_validate(
-                    {"script": "가상 메모", "body": "가상 요약", "questions": []}
+                return fixture_response(
+                    schema,
+                    {"script": "가상 메모", "body": "가상 요약", "questions": []},
                 )
             if task == "loom.approve":
                 if self.failing:
                     raise RuntimeError("synthetic error")
-                return schema.model_validate(
+                return fixture_response(
+                    schema,
                     {
                         "body": "가상 요약",
                         "new_entries": [{"name": "예시", "kind": "topic"}],
@@ -102,7 +106,7 @@ def runtime_capture(tmp_path, failure_limit=5):
                                 "retracts": None,
                             }
                         ],
-                    }
+                    },
                 )
             raise AssertionError(task)
 

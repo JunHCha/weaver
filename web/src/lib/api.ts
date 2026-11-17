@@ -16,12 +16,14 @@ export type Kind =
   | "실행";
 export type Stage = "spinner" | "loom";
 export interface Thread {
+  readonly presentation?: "fact" | "history";
   thread_id: string;
   seq: number;
   kind: Kind;
   content: string | null;
   occurred_at: string;
   recorded_at: string;
+  counterpart?: string | null;
   tags: string[];
   field: "deadline" | "schedule" | "assignees" | "status" | null;
   value: JsonValue;
@@ -37,7 +39,7 @@ export interface Thread {
 }
 export interface Tag {
   name: string;
-  kind: "project" | "person" | "organization" | "topic" | null;
+  kind: "project" | "area" | "person" | "organization" | "topic" | null;
 }
 export interface SourceView {
   id: string;

@@ -341,6 +341,7 @@ class ThreadDraft(Contract):
     occurred_at: Timestamp
     recorded_at: Timestamp
     tags: list[NonEmpty]
+    counterpart: NonEmpty | None = None
     field: Literal["deadline", "schedule", "assignees", "status"] | None
     value: JsonValue
     source_id: SourceId
@@ -353,7 +354,7 @@ class ThreadDraft(Contract):
     executes: NonEmpty | None = None
     updates: NonEmpty | None = None
 
-    @field_validator("content")
+    @field_validator("content", "counterpart")
     @classmethod
     def normalize_content(cls, value: str | None) -> str | None:
         return unicodedata.normalize("NFC", value) if value is not None else None
@@ -608,6 +609,7 @@ class PipelineThread(Contract):
     thread_id: NonEmpty
     kind: Literal["요청", "결정", "일정", "기록", "태그정정", "거절"]
     content: str = ""
+    counterpart: NonEmpty | None = None
 
 
 class PipelinePage(Contract):

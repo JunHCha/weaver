@@ -273,6 +273,17 @@
         }
       ]
     },
+    "counterpart": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "direction": {
       "anyOf": [
         {

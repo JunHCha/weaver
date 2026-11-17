@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
+from server.tests.fake_responses import fixture_response
 
 from weaver.context import ContextDictionary
 from weaver.loom.summary_review import SummaryReview
@@ -16,7 +17,8 @@ class FakeLlm:
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
     ) -> T:
-        return schema.model_validate(
+        return fixture_response(
+            schema,
             {
                 "new_entries": [{"name": "홍길동", "kind": "person"}],
                 "body": "홍길동이 결정했다.",
@@ -36,7 +38,7 @@ class FakeLlm:
                         "retracts": None,
                     }
                 ],
-            }
+            },
         )
 
     def generate_text(self, task: str, system: str, user: str) -> str:
@@ -206,7 +208,7 @@ def test_edit_reject_and_replay(tmp_path: Path) -> None:
         ) -> T:
             data = super().generate_json(task, system, user, schema).model_dump()
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     def make() -> SummaryReview:
         return SummaryReview(
@@ -314,7 +316,8 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
                 "resolves": None,
                 "retracts": None,
             }
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "요청을 마치면 회의한다. 별도 회의도 한다.",
                     "corrections": [],
@@ -348,7 +351,7 @@ def test_schedule_extraction_links_only_explicit_request_and_uses_timezone(
                             "blocked_by_index": None,
                         },
                     ],
-                }
+                },
             )
 
     sink = FakeSink()
@@ -391,7 +394,8 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
         def generate_json[T: BaseModel](
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": "회의",
                     "corrections": [],
@@ -409,7 +413,7 @@ def test_schedule_extraction_rejects_invalid_times_and_references(
                             "blocked_by_index": self.index,
                         }
                     ],
-                }
+                },
             )
 
     llm = Llm()
@@ -456,8 +460,8 @@ def test_freeform_answers_and_feedback_use_one_approval_request(tmp_path: Path) 
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
             self.calls.append((task, user))
-            return schema.model_validate(
-                {"body": "추가 답변 반영", "corrections": [], "threads": []}
+            return fixture_response(
+                schema, {"body": "추가 답변 반영", "corrections": [], "threads": []}
             )
 
     llm = RecordingLlm()
@@ -493,8 +497,8 @@ def test_edit_preserves_human_body_with_collected_answers(tmp_path: Path) -> Non
         def generate_json[T: BaseModel](
             self, task: str, system: str, user: str, schema: type[T]
         ) -> T:
-            return schema.model_validate(
-                {"body": "모델이 바꾼 문장", "corrections": [], "threads": []}
+            return fixture_response(
+                schema, {"body": "모델이 바꾼 문장", "corrections": [], "threads": []}
             )
 
     review = SummaryReview(
@@ -529,7 +533,7 @@ def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
                 {"observed": "홍길돈", "canonical": "직접 입력한 답", "kind": "person"},
                 {"observed": "원문에 없음", "canonical": "홍길동", "kind": "person"},
             ]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     sink = FakeSink()
     context = ContextDictionary(tmp_path / "state")
@@ -645,7 +649,8 @@ def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> 
             self.calls_made.append(1)
             self.calls_made[:] = self.calls_made
             plan = self.kind == "일정"
-            return schema.model_validate(
+            return fixture_response(
+                schema,
                 {
                     "body": f"회의를 옮긴다 {len(self.calls_made)}",
                     "corrections": [],
@@ -670,7 +675,7 @@ def test_schedule_change_links_only_a_real_existing_schedule(tmp_path: Path) -> 
                             "updates": self.link,
                         }
                     ],
-                }
+                },
             )
 
     llm = Llm()
@@ -771,7 +776,7 @@ def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> 
                 "newalias",
                 "비공개미확인태그",
             ]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     class InterruptedSink:
         failed = False
@@ -809,8 +814,8 @@ def test_dictionary_tags_prompt_validation_and_retry(tmp_path: Path, caplog) -> 
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     assert llm.calls == 1
-    assert fabric.entries(ThreadQuery())[-1].tags == ["표준", "새사람"]
-    assert len(context.list_entries()) == 2
+    assert fabric.entries(ThreadQuery())[-1].tags == ["표준", "새사람", "업무 운영"]
+    assert len(context.list_entries()) == 3
     assert context.resolve("NewAlias").human_edited
     assert context.kind_of("새사람") == "organization"
     assert "dropped unresolved approval tag" in caplog.text
@@ -843,13 +848,13 @@ def test_apply_racing_alias_collision_never_wedges_append(
             data["new_entries"] = [
                 {
                     "name": "새항목",
-                    "kind": "project",
+                    "kind": "topic",
                     "aliases": ["경쟁별칭", "안전별칭"],
                 }
             ]
             data["corrections"] = []
             data["threads"][0]["tags"] = ["경쟁별칭"]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     monkeypatch.setattr(context, "add_entry", racing_add)
     sink, llm = FakeSink(), Llm()
@@ -868,7 +873,7 @@ def test_apply_racing_alias_collision_never_wedges_append(
     result = review.approve(package(), "원문", verdict, now=NOW)
     assert review.approve(package(), "원문", verdict, now=NOW) == result
     assert len(sink.drafts) == 1 and llm.calls == 1
-    assert sink.drafts[0].tags == ["새항목"]
+    assert sink.drafts[0].tags == ["새항목", "업무 운영"]
     assert context.resolve("안전별칭").name == "새항목"
     assert context.resolve("경쟁별칭").name == "개인항목"
     assert "dropped conflicting dictionary aliases" in caplog.text
@@ -891,12 +896,12 @@ def test_prepare_keeps_safe_aliases_and_only_used_proposals(
         def generate_json(self, task, system, user, schema):
             data = super().generate_json(task, system, user, schema).model_dump()
             data["new_entries"] = [
-                {"name": "사용", "kind": "project", "aliases": ["충돌", "안전"]},
+                {"name": "사용", "kind": "topic", "aliases": ["충돌", "안전"]},
                 {"name": "미사용", "kind": "topic", "aliases": []},
             ]
             data["threads"][0]["tags"] = ["안전", "충돌", "사용"]
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     monkeypatch.setattr(context, "snapshot", counted_snapshot)
     sink = FakeSink()
@@ -914,7 +919,7 @@ def test_prepare_keeps_safe_aliases_and_only_used_proposals(
     )
     review.approve(package(), "원문", verdict, now=NOW)
     assert len(reads) == 1
-    assert sink.drafts[0].tags == ["사용", "기존"]
+    assert sink.drafts[0].tags == ["사용", "기존", "업무 운영"]
     assert snapshot().resolve("사용").aliases == ("안전",)
     assert snapshot().resolve("미사용") is None
 
@@ -935,7 +940,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
                 for i in range(650)
             ),
             Page("ZrecentUnique", "person"),
-            Page("ZtranscriptUnique", "project"),
+            Page("ZtranscriptUnique", "topic"),
         ]
     )
     thread = ThreadDraft(
@@ -990,7 +995,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
             data = super().generate_json(task, system, user, schema).model_dump()
             data["threads"][0]["tags"] = ["A0649DictionaryEntry"]
             data["corrections"] = []
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     sink = Sink()
     review = SummaryReview(
@@ -1007,7 +1012,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
     )
     review.approve(package(), "ZtranscriptUnique", verdict, now=NOW)
     # Tags outside the prompt budget still validate against the complete snapshot.
-    assert sink.drafts[0].tags == ["A0649DictionaryEntry"]
+    assert sink.drafts[0].tags == ["A0649DictionaryEntry", "업무 운영"]
 
 
 def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog):
@@ -1042,7 +1047,7 @@ def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog)
                 {"name": "지원팀 김영희 팀장님", "kind": "person", "aliases": []},
             ]
             data["threads"][0]["tags"] = ["홍 길동", "지원팀 김영희 팀장님"]
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     verdict = Verdict(
         schema_version=2,
@@ -1057,7 +1062,7 @@ def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog)
         RulesLlm(), context, FakeSink(), contact_name="홍길동"
     ).prepare(package(), "합성 원문", verdict, now=NOW)
     assert prepared.new_entries[0].aliases == ["별명"]
-    assert prepared.threads[0].tags == ["홍길동"]
+    assert prepared.threads[0].tags == ["홍길동", "업무 운영"]
     assert "approved body has untagged dictionary names: 2" in caplog.text
     assert "김철수" not in caplog.text and "가상연구소" not in caplog.text
 
@@ -1130,7 +1135,7 @@ def test_open_requests_are_active_budgeted_ranked_and_validated(tmp_path, caplog
             )
             data = super().generate_json(task, system, user, schema).model_dump()
             data["threads"][0]["resolves"] = self.target
-            return schema.model_validate(data)
+            return fixture_response(schema, data)
 
     llm = Llm()
     verdict = Verdict(

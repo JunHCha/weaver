@@ -66,3 +66,10 @@ mapping proposals. Reports include full synthetic predictions and prompt hashes.
 Inspect the predicted text too: the fragment metrics cannot recognize every
 paraphrase of a spurious interpretation fact. Do not replace these inputs with
 real conversations or a user vault to run this regression set.
+
+The replay fixtures now include exactly one broad area per business fact and a
+scalar counterpart where known. The synthetic project case seeds an explicitly
+curated project in the dictionary; approval never creates it. Tests of missing
+or multiple areas, automatic project rejection and invalid counterparts call the
+production extraction guards directly, without the legacy fake-response fixture
+builder. Recreate older re-extraction plans after the `para-counterpart-v4` change.

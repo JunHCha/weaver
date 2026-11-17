@@ -7,9 +7,10 @@ export interface Fact {
 }
 export const tagKinds: Record<string, string> = {
   project: "프로젝트",
+  area: "영역",
   person: "사람",
   organization: "조직",
-  topic: "주제",
+  topic: "자료",
 };
 export function groupKeys(
   t: Fact,

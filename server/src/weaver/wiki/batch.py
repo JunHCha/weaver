@@ -323,9 +323,9 @@ class BatchCompiler(Compiler):
                     "assignees": list[JsonValue](sorted(page_state.assignees))
                     if page_state
                     else [],
-                    "kind": page.role
-                    if page.role in ("project", "person", "organization")
-                    else "topic",
+                    "kind": {"operation": "area", "reference": "topic"}.get(
+                        page.role, page.role
+                    ),
                     "page_role": page.role,
                     "state_tag": page.state_tag,
                     "aliases": list[JsonValue](page.aliases),

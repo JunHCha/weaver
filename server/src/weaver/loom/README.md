@@ -167,7 +167,7 @@ completion, answer or cancellation can produce a decision's `resolves`; similari
 is insufficient. The server drops targets outside the full active unresolved
 request set. Re-extraction excludes the source's own old requests and schedules.
 
-Re-extraction run `approval-rules-v3` separates bootstrap `renames` from
+Re-extraction run `para-counterpart-v4` separates bootstrap `renames` from
 `tag_corrections` (both observed → canonical). Only unedited learned
 people/organizations may be renamed automatically; wiki and human names stay
 protected. Apply uses `rename(..., human_edited=False)`, stores the former
@@ -179,3 +179,36 @@ canonical names are used survive into a source plan. Preview includes automatic
 renames and tag mappings, and apply/retry journals both before Fabric append.
 Synthetic replay and optional real-model evaluation are documented in
 [`server/evals/README.md`](../../../evals/README.md).
+
+## PARA area and exchanged party
+
+Every newly extracted business Thread has exactly one `area` tag. Prefer the
+few broad areas already present; propose an area only when none fits. Area hints
+come first within the shared dictionary budget. The server rejects an extraction
+with zero or multiple resolved area tags before journaling any facts. A project
+must already exist and clearly fit; `new_entries` of kind `project` are dropped
+with a content-free warning. Unedited Wiki project pages are excluded from both
+dictionary and recent-tag hints and cannot pass tag validation. Bootstrap also
+cannot create projects; curation/promotion belongs to #149. `topic` means PARA
+resource. Wiki human-edit business facts use these same guards; tag corrections
+and code-produced field history have their own contracts below.
+
+`Thread.counterpart` is one canonical person/organization or null: the party the
+work was exchanged with, usually the contact, requester for a received request,
+or recipient for a sent request. It is separate from the set of involved-party
+tags. The server validates it against the complete eligible dictionary plus
+accepted new entries; invalid kinds/unknown names become null with a content-free
+warning. An entry used only by counterpart is still persisted. Old Fabric rows
+and cached plans read the missing field as null. Tag corrections change tags
+only. Re-extraction's `para-counterpart-v4` plan stores area and counterpart and
+prints counterpart in preview; older saved plan versions must be recreated.
+The phone's `PipelineThread` projection also carries the optional scalar party.
+
+Human Wiki frontmatter changes produce deterministic Korean history sentences
+for assignees, deadline, schedule and status. Their IDs start `wiki-field:`;
+semantic human facts still start `wiki:`. These field histories use the current
+`state_tag` resolved through the full dictionary, plus the entity's area when a
+single area is determinable from active related Threads, and counterpart is
+always null. They never use the page filename as a tag. A missing/unresolved
+state_tag leaves the edit in Wiki without a field Thread and logs a content-free
+warning. New entries for semantic edits remain journaled before append.

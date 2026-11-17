@@ -49,3 +49,12 @@ Thread lookup errors return 404 and missing token or invalid origin returns 403.
 Thread and state reads resolve effective tags through one dictionary snapshot,
 so renames and merges need no historical log rewrite. The legacy tags endpoint
 also retains historical labels for existing consumers.
+
+Dictionary kinds include PARA `area` (ongoing responsibility) and `topic`
+(resource). `/api/tags` and dictionary edit requests support `area`.
+`GET /api/threads` adds a derived read-only `presentation: fact | history`:
+`history` covers tag corrections, executions, retractions (`retracts` set), and
+code-generated Wiki field histories identified by the `wiki-field:` ID prefix.
+All other Threads are `fact`. This attribute is never stored in Fabric and adds
+no field to the shared Fabric schema. Thread `counterpart` is a single canonical
+person/organization or null, independent of tag corrections.
