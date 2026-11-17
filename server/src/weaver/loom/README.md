@@ -134,3 +134,48 @@ Other schedules show 유지, update, remove+register, register or remove accordi
 to the same Action derivation used by the engine. Review these effects before
 applying. The next daemon start may cause the wiki compiler to recompile pages
 whose tags changed, making additional LLM calls and incurring their normal cost.
+
+## Approval extraction rules
+
+`loom.approve` extracts business requests, decisions, schedules and records.
+Review questions/answers, transcript interpretation, identity checks and
+unconfirmed statements are not independent facts; answers only repair the
+underlying business fact. This is a prompt rule, without text heuristics that
+could delete valid business facts. Every involved person/organization, project
+and topic belongs in the Thread tags; the record owner does not. Canonical
+person names omit titles, affiliations and notes. Deterministic structural
+checks drop malformed/titled proposed names, with content-free warnings.
+
+`contact_name` comes from optional package metadata in `summary.sqlite3`
+(`contacts`, keyed by package ID), saved from Source.hints.counterpart during
+drafting. Legacy packages fall back to Spinner's stored Source metadata when
+available; otherwise the input is null. No phone/schema change is needed.
+
+Actual alternate names alone belong in aliases. Typographical errors and
+misrecognitions belong in transcript corrections; spacing/case variants resolve
+without aliases and are dropped from automatic proposals. A count-only warning
+reports input dictionary people/organizations present in the approved body but
+absent from every extracted Thread's tags; no name, body or source ID is logged.
+Wiki human-edit extraction shares the dictionary budget, tag rules and proposal
+validation, journals new entries before append, and leaves frontmatter changes
+to code. Unknown generated tags are dropped rather than stored.
+
+`open_requests` contains at most 50 active unresolved requests within an 8,000
+UTF-8 byte JSON budget, ranked by shared relevant tags then newest sequence.
+Each hint has id, content, tags, direction and occurred_at. Only an explicit
+completion, answer or cancellation can produce a decision's `resolves`; similarity
+is insufficient. The server drops targets outside the full active unresolved
+request set. Re-extraction excludes the source's own old requests and schedules.
+
+Re-extraction run `approval-rules-v3` separates bootstrap `renames` from
+`tag_corrections` (both observed → canonical). Only unedited learned
+people/organizations may be renamed automatically; wiki and human names stay
+protected. Apply uses `rename(..., human_edited=False)`, stores the former
+spelling as a transcript correction, and adds no former-name tag alias.
+Invalid/uncleanable names are omitted from automatic dictionary planning and
+reported by count. Tag mappings are plan-only, including old typos and spacing
+variants; independent human facts receive tag corrections. Only operations whose
+canonical names are used survive into a source plan. Preview includes automatic
+renames and tag mappings, and apply/retry journals both before Fabric append.
+Synthetic replay and optional real-model evaluation are documented in
+[`server/evals/README.md`](../../../evals/README.md).

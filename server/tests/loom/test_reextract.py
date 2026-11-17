@@ -517,3 +517,75 @@ def test_failed_source_does_not_leak_uncommitted_dictionary_to_next(
     assert by_source[SOURCE].error == "OSError" and by_source[OTHER].done
     assert ContextDictionary(tmp_path).resolve("홍길동")
     assert any(e.name == "홍길동" for e in by_source[OTHER].additions)
+
+
+def test_bootstrap_clean_rename_transcript_only_and_plan_tag_mapping(tmp_path):
+    root = tmp_path / "state"
+    seed(root)
+    context = ContextDictionary(root)
+    context.add_entry("지원팀 김철수 팀장님", "person", human_edited=False)
+    context.add_entry("이름 미확인(수정 필요)", "person", human_edited=False)
+    fabric = FabricStore(root / "fabric.sqlite3")
+    fabric.append(
+        [
+            draft(
+                "human",
+                actor="human",
+                tags=["지원팀 김철수 팀장님", "김 철수", "김철쑤"],
+            )
+        ]
+    )
+
+    class Llm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            if task == "loom.reextract_bootstrap":
+                for rule in (
+                    "오타·오인식·띄어쓰기",
+                    "직함·소속·메모",
+                    "녹취 교정으로만",
+                    "이름이 아니면",
+                    "tag_corrections",
+                ):
+                    assert rule in system
+                return schema.model_validate(
+                    {
+                        "entries": [
+                            {
+                                "name": "김철수",
+                                "kind": "person",
+                                "aliases": ["김 철수", "김철쑤"],
+                            }
+                        ],
+                        "renames": [
+                            {"observed": "지원팀 김철수 팀장님", "canonical": "김철수"},
+                            {
+                                "observed": "이름 미확인(수정 필요)",
+                                "canonical": "확인 필요",
+                            },
+                        ],
+                        "tag_corrections": [
+                            {"observed": "김철쑤", "canonical": "김철수"}
+                        ],
+                    }
+                )
+            return schema.model_validate(
+                {"body": "김철수가 자료를 전달했다.", "corrections": [], "threads": []}
+            )
+
+    report = plan_reextract(root, tmp_path / "wiki", Llm())
+    assert not report.errors and not report.sources[0].error
+    plan = report.sources[0]
+    assert [(c.observed, c.canonical) for c in plan.renames] == [
+        ("지원팀 김철수 팀장님", "김철수")
+    ]
+    assert plan.human_changes[0].new_tags == ["김철수"]
+    assert report.notices
+    assert not any(e.aliases for e in plan.additions)
+    applied = apply_report(root, report)
+    assert applied.sources[0].done
+    entry = context.resolve("김철수")
+    assert not entry.human_edited and not entry.aliases
+    assert "지원팀 김철수 팀장님" in entry.misrecognitions
+    assert context.resolve("지원팀 김철수 팀장님") is None
+    assert context.resolve("김철쑤") is None
+    assert context.resolve("김 철수").name == "김철수"

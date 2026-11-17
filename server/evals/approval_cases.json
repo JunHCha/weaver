@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case_id": "misrecognition-not-alias",
+      "script": "김철쑤가 2032년 1월 2일 자료를 보내기로 했다.",
+      "body": "김철쑤가 2032년 1월 2일 자료를 보내기로 했다.",
+      "contact_name": "김철수",
+      "answers": [
+        "김철수"
+      ],
+      "question": "김철쑤의 표준 이름은 무엇인가요?",
+      "dictionary": [],
+      "responses": {
+        "loom.approve": {
+          "body": "김철수가 2032년 1월 2일 자료를 보내기로 했다.",
+          "threads": [
+            {
+              "kind": "결정",
+              "occurred_at": "2032-01-01T00:00:00Z",
+              "field": null,
+              "value": null,
+              "direction": null,
+              "resolves": null,
+              "retracts": null,
+              "content": "김철수가 2032년 1월 2일 자료를 보내기로 했다.",
+              "tags": [
+                "김철수"
+              ]
+            }
+          ],
+          "new_entries": [
+            {
+              "name": "김철수",
+              "kind": "person",
+              "aliases": []
+            }
+          ],
+          "corrections": [
+            {
+              "observed": "김철쑤",
+              "canonical": "김철수",
+              "kind": "person"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "count": 1,
+        "tags": [
+          "김철수"
+        ],
+        "forbidden_content": [],
+        "forbidden_aliases": [
+          "김철쑤",
+          "김 철수"
+        ],
+        "corrections": [
+          {
+            "observed": "김철쑤",
+            "canonical": "김철수",
+            "kind": "person"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "review-qa-not-facts",
+      "script": "김철쑤가 자료를 보냈고 알로 확인을 요청했다.",
+      "body": "김철쑤가 자료를 보냈고 알로 확인을 요청했다.",
+      "contact_name": "김철수",
+      "answers": [
+        "김철수와 같은 사람이며 알로는 allow의 오인식이다."
+      ],
+      "question": "김철쑤와 알로는 무슨 뜻인가요?",
+      "dictionary": [],
+      "responses": {
+        "loom.approve": {
+          "body": "김철수가 자료를 보냈다.",
+          "threads": [
+            {
+              "kind": "결정",
+              "occurred_at": "2032-01-01T00:00:00Z",
+              "field": null,
+              "value": null,
+              "direction": null,
+              "resolves": null,
+              "retracts": null,
+              "content": "김철수가 자료를 보냈다.",
+              "tags": [
+                "김철수"
+              ]
+            }
+          ],
+          "new_entries": [
+            {
+              "name": "김철수",
+              "kind": "person",
+              "aliases": []
+            }
+          ],
+          "corrections": []
+        }
+      },
+      "expected": {
+        "count": 1,
+        "tags": [
+          "김철수"
+        ],
+        "forbidden_content": [
+          "allow",
+          "같은 사람",
+          "미확인",
+          "오인식",
+          "알로"
+        ],
+        "forbidden_aliases": [
+          "김철쑤",
+          "김 철수"
+        ],
+        "corrections": []
+      }
+    },
+    {
+      "case_id": "all-parties-clean-names",
+      "script": "지원팀 김철수 팀장님은 가상연구소의 김영희 수석에게 새봄 사업 자료를 보내기로 했다.",
+      "body": "지원팀 김철수 팀장님은 가상연구소의 김영희 수석에게 새봄 사업 자료를 보내기로 했다.",
+      "contact_name": "김철수",
+      "answers": [],
+      "question": null,
+      "dictionary": [],
+      "responses": {
+        "loom.approve": {
+          "body": "김철수는 가상연구소의 김영희에게 새봄 사업 자료를 보내기로 했다.",
+          "threads": [
+            {
+              "kind": "결정",
+              "occurred_at": "2032-01-01T00:00:00Z",
+              "field": null,
+              "value": null,
+              "direction": null,
+              "resolves": null,
+              "retracts": null,
+              "content": "김철수는 가상연구소의 김영희에게 새봄 사업 자료를 보내기로 했다.",
+              "tags": [
+                "김철수",
+                "가상연구소",
+                "김영희",
+                "새봄 사업"
+              ]
+            }
+          ],
+          "new_entries": [
+            {
+              "name": "김철수",
+              "kind": "person",
+              "aliases": []
+            },
+            {
+              "name": "가상연구소",
+              "kind": "organization",
+              "aliases": []
+            },
+            {
+              "name": "김영희",
+              "kind": "person",
+              "aliases": []
+            },
+            {
+              "name": "새봄 사업",
+              "kind": "project",
+              "aliases": []
+            }
+          ],
+          "corrections": []
+        }
+      },
+      "expected": {
+        "count": 1,
+        "tags": [
+          "김철수",
+          "가상연구소",
+          "김영희",
+          "새봄 사업"
+        ],
+        "forbidden_content": [],
+        "forbidden_aliases": [
+          "김철쑤",
+          "김 철수"
+        ],
+        "corrections": []
+      }
+    }
+  ],
+  "bootstrap": {
+    "dictionary": [
+      {
+        "name": "지원팀 김철수 팀장님",
+        "kind": "person",
+        "source": "learn",
+        "human_edited": false
+      }
+    ],
+    "tags": [
+      "지원팀 김철수 팀장님",
+      "김철쑤",
+      "김 철수"
+    ],
+    "responses": {
+      "loom.reextract_bootstrap": {
+        "entries": [
+          {
+            "name": "김철수",
+            "kind": "person",
+            "aliases": []
+          }
+        ],
+        "renames": [
+          {
+            "observed": "지원팀 김철수 팀장님",
+            "canonical": "김철수"
+          }
+        ],
+        "tag_corrections": [
+          {
+            "observed": "김철쑤",
+            "canonical": "김철수"
+          },
+          {
+            "observed": "김 철수",
+            "canonical": "김철수"
+          }
+        ]
+      }
+    },
+    "expected_name": "김철수"
+  }
+}

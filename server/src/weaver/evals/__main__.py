@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from .approval_runner import APPROVAL_CASES
 from .client import ReplayClient
 from .summary_runner import SUMMARY_CASES, evaluate_summary
 
@@ -41,6 +42,33 @@ def summary_command(
     except (OSError, ValueError, KeyError, TypeError) as error:
         typer.echo(f"Evaluation error: {error}", err=True)
         raise typer.Exit(2) from None
+
+
+@app.command("approval")
+def approval_command(
+    cases: Path = APPROVAL_CASES,
+    output: Path = Path("reports/approval-evals.json"),
+) -> None:
+    """Replay synthetic approval and bootstrap cases without a provider."""
+    from .approval_runner import evaluate_approval, evaluate_bootstrap
+
+    dataset = json.loads(cases.read_text())
+    rows = [
+        evaluate_approval(case, ReplayClient(case["responses"]))
+        for case in dataset["cases"]
+    ]
+    rows.append(
+        evaluate_bootstrap(
+            dataset["bootstrap"], ReplayClient(dataset["bootstrap"]["responses"])
+        )
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps({"version": 1, "cases": rows}, ensure_ascii=False, indent=2) + "\n"
+    )
+    typer.echo(f"Approval evaluation: {len(rows)} cases")
+    if any(not all(row["metrics"].values()) for row in rows):
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ def _nfc(value: str) -> str:
 
 
 def _key(value: str) -> str:
-    return _nfc(value).casefold()
+    return "".join(_nfc(value).casefold().split())
 
 
 def _validate(name: str, kind: Kind) -> None:
@@ -96,9 +96,11 @@ class DictionarySnapshot:
 
     def __init__(self, entries: list[ContextEntry]) -> None:
         self.entries = tuple(entries)
-        self._names = {_key(e.name): e for e in entries}
+        self._names: dict[str, ContextEntry] = {}
+        for entry in sorted(entries, key=lambda e: e.name):
+            self._names.setdefault(_key(entry.name), entry)
         self._aliases: dict[str, ContextEntry] = {}
-        for entry in entries:
+        for entry in sorted(entries, key=lambda e: e.name):
             for alias in entry.aliases:
                 self._aliases.setdefault(_key(alias), entry)
 
@@ -266,12 +268,12 @@ class ContextDictionary:
             raise SchemaVersionError("unsupported context database version")
         entries = {
             _key(n): ContextEntry(_nfc(n), k, source="learn")
-            for n, k in db.execute("SELECT name, kind FROM learned ORDER BY name")
+            for n, k in db.execute("SELECT name, kind FROM learned ORDER BY name DESC")
         }
         wiki = {
             _key(n): ContextEntry(_nfc(n), k, summary=summary)
             for n, k, summary in db.execute(
-                "SELECT name, kind, summary FROM wiki ORDER BY name"
+                "SELECT name, kind, summary FROM wiki ORDER BY name DESC"
             )
         }
         aliases: dict[str, list[str]] = {}
@@ -290,7 +292,7 @@ class ContextDictionary:
         entries.update(wiki)
         edits = (
             {
-                k: _decode_edit(p)
+                _key(k): _decode_edit(p)
                 for k, p in db.execute("SELECT name, payload FROM edited ORDER BY name")
             }
             if version == _VERSION
@@ -424,8 +426,10 @@ class ContextDictionary:
                 _key(edit.name) in other_labels and not prior_name
             ) or new_aliases & other_labels:
                 raise ValueError("dictionary name or alias collision")
-        for name in hidden:
-            db.execute("DELETE FROM edited WHERE name=?", (_key(name),))
+        hidden_keys = {_key(edit.name), *map(_key, hidden)}
+        for (stored_key,) in db.execute("SELECT name FROM edited").fetchall():
+            if _key(stored_key) in hidden_keys:
+                db.execute("DELETE FROM edited WHERE name=?", (stored_key,))
         learned = [
             (name, kind)
             for name, kind in db.execute("SELECT name, kind FROM learned")
@@ -486,22 +490,48 @@ class ContextDictionary:
             )
             return self._save(db, snapshot, edit)
 
-    def rename(self, name: str, new_name: str) -> ContextEntry:
+    def rename(
+        self, name: str, new_name: str, *, human_edited: bool = True
+    ) -> ContextEntry:
         with self._writing() as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             target = snapshot.resolve(new_name)
             if target and target.name != entry.name:
                 raise ValueError("dictionary name or alias collision")
+            if not human_edited and (entry.source != "learn" or entry.human_edited):
+                raise ValueError("automatic rename requires an unedited learned entry")
             edit = self._edit_for(entry, edits)
             edit = replace(
                 edit,
                 name=_nfc(new_name),
-                human_edited=True,
+                human_edited=human_edited,
+                automatic_aliases=tuple(
+                    a
+                    for a in edit.automatic_aliases
+                    if human_edited or _key(a) != _key(entry.name)
+                ),
                 added=tuple(
-                    sorted((set(edit.added) | {entry.name}) - {_nfc(new_name)})
+                    sorted(
+                        {
+                            alias
+                            for alias in (
+                                set(edit.added)
+                                | ({entry.name} if human_edited else set())
+                            )
+                            if _key(alias) != _key(new_name)
+                            and (human_edited or _key(alias) != _key(entry.name))
+                        }
+                    )
                 ),
             )
-            return self._save(db, snapshot, edit, (entry.name,))
+            result = self._save(db, snapshot, edit, (entry.name,))
+            if not human_edited and entry.name != result.name:
+                db.execute(
+                    "INSERT INTO corrections VALUES (?, ?) ON CONFLICT(observed) DO UPDATE SET name=excluded.name",
+                    (entry.name, result.name),
+                )
+                return self._require(self._load(db)[0], result.name)
+            return result
 
     def set_kind(self, name: str, kind: Kind) -> ContextEntry:
         with self._writing() as (db, snapshot, edits):

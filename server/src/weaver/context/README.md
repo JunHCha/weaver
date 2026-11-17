@@ -13,7 +13,8 @@ Public API for CLI and web callers:
 - `snapshot()` reads the dictionary once in a transaction and returns a
   `DictionarySnapshot` for repeated in-memory `resolve(name)` and `candidates`.
   Canonical names take precedence over aliases, compared in NFC with Unicode
-  casefold; colliding aliases resolve in stable canonical name order. A new wiki
+  casefold with all Unicode whitespace removed; canonical and alias collisions
+  resolve in stable canonical name order (canonical names always win). A new wiki
   page whose canonical name equals an existing alias remains a distinct entry.
 - `list_entries(limit=None)` returns stable name-sorted `ContextEntry` values.
   `resolve(name)` returns an entry or `None`; `kind_of(name)` uses that resolution.
@@ -27,7 +28,10 @@ Public API for CLI and web callers:
   became occupied after preparation; it logs a content-free warning and still
   creates the entry, so Fabric append can proceed. A now-occupied canonical name
   returns the existing entry instead.
-- `rename(name, new_name)` retains the old name as an alias. `set_kind(name, kind)`,
+- `rename(name, new_name, human_edited=True)` retains the old name as an alias.
+  The automatic `human_edited=False` path accepts only unedited learned entries,
+  keeps that flag false and stores the former spelling only as a transcript
+  correction (never a tag alias). `set_kind(name, kind)`,
   `add_alias(name, alias, human_edited=True)`, `remove_alias(name, alias)` and `merge(source, target)`
   return the updated entry and mark it `human_edited`. Every edit reads and writes
   within one `BEGIN IMMEDIATE` transaction. Merge retains the target kind,

@@ -16,10 +16,12 @@ from pydantic import BaseModel, Field
 from weaver.action.calendar import baseline_schedule_ids, derive_calendar_actions
 from weaver.action.outbox import ActionRecord, _record
 from weaver.config import ServerConfig
-from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot
+from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot, _key
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.types import LlmClient
-from weaver.loom.summary_review import ApprovalExtractor, NewEntry, Prepared
+from weaver.loom.summary_review import ApprovalExtractor, Prepared
+from weaver.loom.summary_state import read_contact_name
+from weaver.loom.tagging import NewEntry, clean_name
 from weaver.readonly import connect_snapshot
 from weaver.schema import (
     ReviewPackage,
@@ -31,7 +33,7 @@ from weaver.schema import (
 )
 from weaver.wiki.store import _properties
 
-RUN_KEY = "canonical-tags-v2"
+RUN_KEY = "approval-rules-v3"
 BOOTSTRAP_MAX_ENTRIES = 200
 BOOTSTRAP_MAX_BYTES = 32768
 JUNK_TAGS = frozenset({"todo", "확인", "확인필요", "tbd"})
@@ -40,10 +42,6 @@ JUNK_TAGS = frozenset({"todo", "확인", "확인필요", "tbd"})
 def wiki_root(config: ServerConfig) -> Path:
     """Same location as WikiStore in runtime assembly; never the whole vault."""
     return (config.wiki.vault_root or config.vault_root) / config.wiki.folder
-
-
-def _key(value: str) -> str:
-    return unicodedata.normalize("NFC", value).casefold().strip()
 
 
 def _meaningful(value: str) -> bool:
@@ -104,12 +102,25 @@ def _signatures(root: Path) -> dict[str, str]:
         "fabric_head": str(max((t.seq for t in threads), default=0)),
         "dictionary": _db_fingerprint(root / "context.sqlite3"),
         "summary": _db_fingerprint(root / "summary.sqlite3"),
+        "spinner": _db_fingerprint(root / "spinner.sqlite3"),
         "outbox": _db_fingerprint(root / "action-outbox.sqlite3"),
     }
 
 
+class NameChange(BaseModel):
+    observed: str
+    canonical: str
+
+
 class Bootstrap(BaseModel):
     entries: list[NewEntry] = Field(
+        default_factory=list, max_length=BOOTSTRAP_MAX_ENTRIES
+    )
+
+    renames: list[NameChange] = Field(
+        default_factory=list, max_length=BOOTSTRAP_MAX_ENTRIES
+    )
+    tag_corrections: list[NameChange] = Field(
         default_factory=list, max_length=BOOTSTRAP_MAX_ENTRIES
     )
 
@@ -133,6 +144,8 @@ class SourcePlan(BaseModel):
     old: list[Thread] = Field(default_factory=list)
     new: list[ThreadDraft] = Field(default_factory=list)
     additions: list[NewEntry] = Field(default_factory=list)
+    renames: list[NameChange] = Field(default_factory=list)
+    tag_corrections: list[NameChange] = Field(default_factory=list)
     human_changes: list[HumanChange] = Field(default_factory=list)
     calendar_effects: list[CalendarEffect] = Field(default_factory=list)
     batch: list[ThreadDraft] = Field(default_factory=list)
@@ -152,6 +165,7 @@ class Report(BaseModel):
     bootstrap: list[NewEntry] = Field(default_factory=list)
     sources: list[SourcePlan] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    notices: list[str] = Field(default_factory=list)
 
 
 def _seal(report: Report) -> Report:
@@ -195,6 +209,7 @@ class MemoryDictionary:
                     unicodedata.normalize("NFC", a)
                     for a in proposal.aliases
                     if _meaningful(a)
+                    and _key(a) != _key(name)
                     and not snapshot.resolve(a)
                     and _key(a) not in self.blocked.get(_key(name), set())
                 }
@@ -282,6 +297,8 @@ def _bootstrap(
     threads: list[Thread],
     wiki: Path,
     errors: list[str],
+    changes: Bootstrap | None = None,
+    notices: list[str] | None = None,
 ) -> list[NewEntry]:
     pages = _wiki_entries(wiki, errors)
     tags = sorted({tag for t in threads for tag in t.tags if _meaningful(tag)})
@@ -308,7 +325,13 @@ def _bootstrap(
     take(
         "dictionary",
         [
-            {"name": e.name, "kind": e.kind, "aliases": e.aliases}
+            {
+                "name": e.name,
+                "kind": e.kind,
+                "aliases": e.aliases,
+                "source": e.source,
+                "human_edited": e.human_edited,
+            }
             for e in memory.snapshot().entries
         ],
     )
@@ -316,10 +339,63 @@ def _bootstrap(
         return []
     response = llm.generate_json(
         "loom.reextract_bootstrap",
-        "기존 태그를 프로젝트·사람·조직·주제의 짧은 표준 이름 사전으로 정리한다. TODO/확인 같은 상태는 버린다. 원래 태그 표기는 aliases로 보존한다. wiki 페이지 이름은 유지하고 명백한 짧은 별칭만 추가한다. 기존 사전 표준 이름을 존중한다. entries만 반환한다.",
+        (
+            "기존 태그를 프로젝트·사람·조직·주제의 짧은 표준 이름 사전으로 정리한다."
+            " TODO/확인 같은 상태는 버린다. wiki 이름과 사람의 편집은 유지한다."
+            " aliases는 실제 다른 호칭(약칭·영문/한글 표기·별명)만이다."
+            " 오타·오인식·띄어쓰기·대소문자 변형은 aliases에 넣지 않고"
+            " tag_corrections의 observed → canonical로만 매핑한다."
+            " 학습된 미편집 사람·조직 이름의 직함·소속·메모를 떼고"
+            " renames의 observed → canonical에 깨끗한 이름을 제안한다."
+            " 기존 학습 표기는 녹취 교정으로만 보존하며 태그 별칭으로 만들지 않는다."
+            " 정리한 결과가 이름이 아니면 entries와 renames에서 제외한다."
+            " entries, renames, tag_corrections를 반환한다."
+        ),
         json.dumps(payload, ensure_ascii=False),
         Bootstrap,
     )
+    changes = changes if changes is not None else Bootstrap()
+    rejected = 0
+    for change in response.renames:
+        old = memory.snapshot().resolve(change.observed)
+        if (
+            not old
+            or old.name != change.observed
+            or old.source != "learn"
+            or old.human_edited
+            or old.kind not in ("person", "organization")
+            or not clean_name(change.canonical, old.kind)
+            or memory.snapshot().resolve(change.canonical)
+        ):
+            rejected += 1
+            continue
+        memory.entries[memory.entries.index(old)] = replace(
+            old,
+            name=change.canonical,
+            aliases=tuple(a for a in old.aliases if _key(a) != _key(old.name)),
+            misrecognitions=(*old.misrecognitions, old.name),
+        )
+        changes.renames.append(change)
+        changes.tag_corrections.append(change)
+    excluded = [
+        e
+        for e in memory.entries
+        if e.source == "learn"
+        and not e.human_edited
+        and e.kind in ("person", "organization")
+        and not clean_name(e.name, e.kind)
+    ]
+    memory.entries = [e for e in memory.entries if e not in excluded]
+    if excluded and notices is not None:
+        notices.append(f"이름이 아닌 학습 항목 제외: {len(excluded)}")
+    for change in response.tag_corrections:
+        canonical = memory.snapshot().resolve(change.canonical)
+        if change.observed in tags and (
+            canonical or any(e.name == change.canonical for e in response.entries)
+        ):
+            changes.tag_corrections.append(change)
+    if rejected and notices is not None:
+        notices.append(f"이름 정리 제안 제외: {rejected}")
     # Keep page names even if the model omits them, but never invent a renamed
     # page to displace the canonical title. Only used proposals are later kept.
     proposals = {p.name: p for p in pages}
@@ -327,8 +403,16 @@ def _bootstrap(
         if candidate.name in proposals:
             page = proposals[candidate.name]
             page.aliases = list(dict.fromkeys([*page.aliases, *candidate.aliases]))[:20]
-        else:
+        elif candidate.kind not in ("person", "organization") or clean_name(
+            candidate.name, candidate.kind
+        ):
             proposals[candidate.name] = candidate
+        elif notices is not None:
+            notices.append("이름이 아닌 사전 제안 제외: 1")
+    # A spelling explicitly classified as an error must never become an alias.
+    observed = {_key(c.observed) for c in changes.tag_corrections}
+    for candidate in proposals.values():
+        candidate.aliases = [a for a in candidate.aliases if _key(a) not in observed]
     return memory.add(list(proposals.values()))
 
 
@@ -372,7 +456,7 @@ class ExtractionView:
         self.threads = [
             t.model_copy(update={"tags": [tag for tag in t.tags if _meaningful(tag)]})
             for t in threads
-            if not (t.kind == "일정" and t.source_id == source_id)
+            if not (t.kind in ("일정", "요청") and t.source_id == source_id)
         ]
 
     def entries(self, query: ThreadQuery) -> list[Thread]:
@@ -729,6 +813,7 @@ def reextract(
         if not plan.done and not plan.skipped and not plan.batch:
             pending.append(plan)
     if pending:
+        changes = Bootstrap()
         try:
             bootstrap = _bootstrap(
                 llm,
@@ -736,6 +821,8 @@ def reextract(
                 threads,
                 wiki,
                 report.errors,
+                changes,
+                report.notices,
             )
         except Exception as error:
             for plan in pending:
@@ -758,6 +845,24 @@ def reextract(
             try:
                 now = datetime.now(UTC)
                 memory = MemoryDictionary(entries.copy(), blocked)
+                plan.renames = list(changes.renames)
+                plan.tag_corrections = list(changes.tag_corrections)
+                for change in plan.renames:
+                    prior_entry = memory.snapshot().resolve(change.observed)
+                    if prior_entry:
+                        memory.entries[memory.entries.index(prior_entry)] = replace(
+                            prior_entry, name=change.canonical
+                        )
+                memory.entries = [
+                    e
+                    for e in memory.entries
+                    if not (
+                        e.source == "learn"
+                        and not e.human_edited
+                        and e.kind in ("person", "organization")
+                        and not clean_name(e.name, e.kind)
+                    )
+                ]
                 plan.additions = memory.add(bootstrap)
                 if plan.source_id in selected:
                     package, script, verdict = selected[plan.source_id]
@@ -766,6 +871,9 @@ def reextract(
                         memory,
                         ExtractionView(threads, plan.source_id),
                         timezone=timezone,
+                        contact_name=read_contact_name(
+                            root, package.package_id, package.source_id
+                        ),
                     ).prepare(package, script, verdict, now=now)
                     plan.additions.extend(memory.add(prepared.new_entries))
                     # prepared.corrections intentionally do not teach/learn.
@@ -783,9 +891,20 @@ def reextract(
                         or thread.thread_id in old_ids
                     ):
                         continue
+                    mapping = {
+                        _key(c.observed): c.canonical for c in plan.tag_corrections
+                    }
                     tags = list(
                         dict.fromkeys(
-                            (e.name if (e := memory.snapshot().resolve(tag)) else tag)
+                            (
+                                e.name
+                                if (
+                                    e := memory.snapshot().resolve(
+                                        mapping.get(_key(tag), tag)
+                                    )
+                                )
+                                else tag
+                            )
                             for tag in thread.tags
                             if _meaningful(tag)
                         )
@@ -810,6 +929,10 @@ def reextract(
                     tag for change in plan.human_changes for tag in change.new_tags
                 }
                 plan.additions = [e for e in plan.additions if e.name in used]
+                plan.renames = [c for c in plan.renames if c.canonical in used]
+                plan.tag_corrections = [
+                    c for c in plan.tag_corrections if c.canonical in used
+                ]
             except Exception as error:
                 plan.error = type(error).__name__
                 plan.batch = []
@@ -817,6 +940,12 @@ def reextract(
         for plan in report.sources:
             if plan.error or plan.skipped or plan.done:
                 continue
+            for change in plan.renames:
+                prior_entry = global_names.snapshot().resolve(change.observed)
+                if prior_entry:
+                    global_names.entries[global_names.entries.index(prior_entry)] = (
+                        replace(prior_entry, name=change.canonical)
+                    )
             safe = []
             for entry in plan.additions:
                 snapshot = global_names.snapshot()
@@ -901,6 +1030,9 @@ def _apply(root: Path, fabric: FabricStore, plan: SourcePlan) -> None:
     # Dictionary operations precede the atomic Fabric batch, so no committed
     # fact can reference a dictionary entry that has not yet been persisted.
     context = ContextDictionary(root)
+    for change in plan.renames:
+        if context.resolve(change.canonical) is None:
+            context.rename(change.observed, change.canonical, human_edited=False)
     for entry in plan.additions:
         actual = context.add_entry(
             entry.name,
@@ -1008,6 +1140,7 @@ def render(report: Report) -> str:
         + json.dumps([e.model_dump() for e in report.bootstrap], ensure_ascii=False),
     ]
     lines.extend(f"오류: {error}" for error in report.errors)
+    lines.extend(f"알림: {notice}" for notice in report.notices)
     for plan in report.sources:
         lines.append(f"출처 {plan.source_id}" + (" (반영됨)" if plan.done else ""))
         if plan.skipped:
@@ -1019,9 +1152,13 @@ def render(report: Report) -> str:
                 lines.append(
                     f"  {t.kind}: {t.content} | tags={t.tags} | {t.field}={json.dumps(t.value, ensure_ascii=False)}"
                 )
-        for change in plan.human_changes:
+        for change in plan.renames:
+            lines.append(f"  자동 이름 정리: {change.observed} → {change.canonical}")
+        for change in plan.tag_corrections:
+            lines.append(f"  태그 매핑: {change.observed} → {change.canonical}")
+        for human_change in plan.human_changes:
             lines.append(
-                f"  사람 작성 {change.thread_id}: {change.old_tags} → {change.new_tags}"
+                f"  사람 작성 {human_change.thread_id}: {human_change.old_tags} → {human_change.new_tags}"
             )
         for effect in plan.calendar_effects:
             lines.append(

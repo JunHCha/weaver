@@ -91,6 +91,8 @@ def test_human_edit_retry_and_fields(tmp_path):
     context = ContextDictionary(tmp_path / "context")
     fabric.append([draft()])
 
+    context.sync_from_pages([Page("홍길동", "person"), Page("김철수", "person")])
+
     class Edits(FakeLLM):
         def generate_json(self, task, system, user, schema):
             from weaver.schema import TagCorrection
@@ -260,3 +262,90 @@ def test_frontmatter_follows_projected_fields_and_context(tmp_path):
         "kind": "person",
         "aliases": ["별명"],
     }
+
+
+def test_edit_uses_shared_rules_dictionary_validation_and_durable_proposals(
+    tmp_path, caplog
+):
+    import json
+
+    from weaver.loom.tagging import TAG_CONTEXT_TOKEN_BUDGET, NewEntry
+    from weaver.wiki.compiler import EditChange
+    from weaver.wiki.store import HumanEdit
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=0)
+    store.acknowledge = lambda edit: None
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.add_entry("홍길동", "person", ("가명",))
+
+    class Llm(FakeLLM):
+        calls = 0
+
+        def generate_json(self, task, system, user, schema):
+            self.calls += 1
+            for rule in (
+                "검토 질문과 답 자체는 Thread로 만들지 않는다",
+                "직함·소속",
+                "new_entries",
+                "오인식·오타·띄어쓰기",
+                "frontmatter 필드 변경은 코드",
+            ):
+                assert rule in system
+            payload = json.loads(user)
+            assert (
+                len(
+                    json.dumps(
+                        {key: payload[key] for key in ("dictionary", "existing_tags")},
+                        ensure_ascii=False,
+                    ).encode()
+                )
+                <= TAG_CONTEXT_TOKEN_BUDGET
+            )
+            return EditResult(
+                new_entries=[
+                    NewEntry(name="김철수", kind="person", aliases=["김 철수"]),
+                    NewEntry(name="지원팀 김영희 팀장님", kind="person"),
+                ],
+                changes=[
+                    EditChange(
+                        content="홍길동과 김철수가 자료를 전달했다.",
+                        tags=[
+                            "가명",
+                            "김 철수",
+                            "비공개미등록",
+                            "지원팀 김영희 팀장님",
+                        ],
+                    )
+                ],
+            )
+
+    llm = Llm()
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        llm,
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    edit = HumanEdit("pages/자료.md", "old", "new", "합성 변경", {}, {})
+    original = fabric.append
+
+    def fail(drafts):
+        assert context.resolve("김철수") is not None
+        raise RuntimeError("synthetic interruption")
+
+    fabric.append = fail
+    with pytest.raises(RuntimeError):
+        compiler._edit(edit)
+    fabric.append = original
+    compiler._edit(edit)
+    assert llm.calls == 1
+    assert fabric.entries(ThreadQuery())[0].tags == ["홍길동", "김철수"]
+    assert not context.resolve("김철수").human_edited
+    assert context.resolve("김철수").aliases == ()
+    assert "dropped unresolved approval tag" in caplog.text
+    assert "비공개미등록" not in caplog.text

@@ -12,12 +12,19 @@ from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
 from weaver.context import ContextDictionary, ContextEntry, Kind, Page
 from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
+from weaver.loom.tagging import (
+    MAX_NEW_ENTRIES,
+    NewEntry,
+    canonical_tags,
+    proposals,
+    tag_context,
+)
 from weaver.schema import TagCorrection, ThreadDraft
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
@@ -44,6 +51,9 @@ class EditChange(BaseModel):
 class EditResult(BaseModel):
     """Semantic changes; an empty list means formatting or typo only."""
 
+    new_entries: list[NewEntry] = Field(
+        default_factory=list, max_length=MAX_NEW_ENTRIES
+    )
     changes: list[EditChange]
 
 
@@ -66,6 +76,7 @@ class Compiler:
             db.executescript(
                 "CREATE TABLE IF NOT EXISTS bookmark (seq INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edits (rev TEXT PRIMARY KEY, drafts TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS edit_entries (rev TEXT PRIMARY KEY, entries TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS compiled_pages "
                 "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, hash TEXT NOT NULL);"
             )
@@ -86,11 +97,14 @@ class Compiler:
                 "SELECT drafts FROM edits WHERE rev=?", (edit.new_rev,)
             ).fetchone()
             if row is None:
+                dictionary = self.context.snapshot()
+                threads = self.fabric.entries(ThreadQuery())
                 result = self.llm.generate_json(
                     "wiki.human_edit",
                     HUMAN_EDIT_PROMPT,
                     json.dumps(
                         {
+                            **tag_context(dictionary, edit.diff, threads),
                             "diff": edit.diff,
                             "threads": [
                                 {
@@ -98,7 +112,7 @@ class Compiler:
                                     "content": t.content,
                                     "tags": t.tags,
                                 }
-                                for t in self.fabric.entries(ThreadQuery())
+                                for t in threads
                             ],
                         },
                         ensure_ascii=False,
@@ -151,8 +165,32 @@ class Compiler:
                     if isinstance(state_tag, str) and state_tag
                     else Path(edit.path).stem,
                 )
+                additions, names = proposals(dictionary, result.new_entries)
                 for change in result.changes:
-                    make(change.content, change.tags, correction=change.correction)
+                    tags = canonical_tags(dictionary, names, change.tags)
+                    correction = change.correction
+                    if correction:
+                        if correction.target not in {t.thread_id for t in threads}:
+                            continue
+                        correction = correction.model_copy(
+                            update={
+                                "add": canonical_tags(dictionary, names, correction.add)
+                            }
+                        )
+                    make(change.content, tags, correction=correction)
+                used = {tag for d in drafts for tag in d.tags} | {
+                    tag for d in drafts if d.correction for tag in d.correction.add
+                }
+                db.execute(
+                    "INSERT INTO edit_entries VALUES (?, ?)",
+                    (
+                        edit.new_rev,
+                        json.dumps(
+                            [e.model_dump() for e in additions if e.name in used],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
                 for field in ("deadline", "schedule", "assignees", "status"):
                     before, after = (
                         edit.frontmatter_before.get(field),
@@ -173,6 +211,18 @@ class Compiler:
                 db.execute("INSERT INTO edits VALUES (?, ?)", (edit.new_rev, payload))
             else:
                 payload = row[0]
+            entry_row = db.execute(
+                "SELECT entries FROM edit_entries WHERE rev=?", (edit.new_rev,)
+            ).fetchone()
+        for raw in json.loads(entry_row[0]) if entry_row else []:
+            entry = NewEntry.model_validate(raw)
+            self.context.add_entry(
+                entry.name,
+                entry.kind,
+                tuple(entry.aliases),
+                human_edited=False,
+                drop_conflicting_aliases=True,
+            )
         self.fabric.append([ThreadDraft.model_validate(d) for d in json.loads(payload)])
         self.store.acknowledge(edit)
         if self.on_progress is not None:

@@ -4,19 +4,28 @@ import hashlib
 import json
 import logging
 import re
-import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, Protocol, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field
 
-from weaver.context import ContextDictionary, DictionarySnapshot, Kind
+from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_state import SummaryState
+from weaver.loom.tagging import (
+    FACT_RULES,
+    MAX_NEW_ENTRIES,
+    TAG_RULES,
+    NewEntry,
+    canonical_tags,
+    proposals,
+    tag_context,
+)
+from weaver.loom.tagging import TAG_CONTEXT_TOKEN_BUDGET as TAG_CONTEXT_TOKEN_BUDGET
 from weaver.schema import (
     EventSummary,
     ReviewPackage,
@@ -98,23 +107,6 @@ type ExtractedThread = (
 )
 
 
-# UTF-8 bytes conservatively bound tokens without depending on a provider tokenizer.
-TAG_CONTEXT_TOKEN_BUDGET = 8000
-EXISTING_TAG_TOKEN_BUDGET = 2000
-MAX_NEW_ENTRIES = 50
-MAX_LABEL_LENGTH = 120
-type EntryLabel = Annotated[NonEmpty, StringConstraints(max_length=MAX_LABEL_LENGTH)]
-
-
-class NewEntry(BaseModel):
-    """A canonical tag proposed together with its dictionary classification."""
-
-    model_config = ConfigDict(extra="forbid")
-    name: EntryLabel
-    kind: Kind
-    aliases: list[EntryLabel] = Field(default_factory=list, max_length=20)
-
-
 class ApprovedResponse(BaseModel):
     """Final answer-applied text, reviewer corrections, and extracted facts."""
 
@@ -152,7 +144,9 @@ class ApprovalExtractor:
         sink: ThreadSink,
         *,
         timezone: str = "Asia/Seoul",
+        contact_name: str | None = None,
     ) -> None:
+        self.contact_name = contact_name
         self.llm, self.context, self.sink = llm, context, sink
         self.timezone = ZoneInfo(timezone).key
 
@@ -167,42 +161,6 @@ class ApprovalExtractor:
         if verdict.action not in ("approve", "edit"):
             raise ValueError("only approved reviews can be extracted")
         return self._prepare(package, script, verdict, now, None)
-
-    def _tag_context(self, snapshot: DictionarySnapshot, script: str) -> dict[str, Any]:
-        """Bound prompt hints; full snapshot still validates every returned tag."""
-        entries = getattr(self.sink, "entries", None)
-        threads: list[Thread] = entries(ThreadQuery()) if callable(entries) else []
-        recent_tags = list(
-            dict.fromkeys(
-                unicodedata.normalize("NFC", tag)
-                for thread in sorted(threads, key=lambda t: t.seq, reverse=True)
-                for tag in thread.tags
-            )
-        )
-        existing: list[str] = []
-        cost = len(json.dumps({"dictionary": [], "existing_tags": []}).encode("utf-8"))
-        for tag in recent_tags:
-            size = len(json.dumps(tag, ensure_ascii=False).encode("utf-8")) + 2
-            if cost + size <= EXISTING_TAG_TOKEN_BUDGET:
-                existing.append(tag)
-                cost += size
-        candidates = snapshot.candidates(script, limit=30)
-        recent_entries = [
-            entry for tag in recent_tags if (entry := snapshot.resolve(tag))
-        ]
-        ranked = [*candidates, *recent_entries, *snapshot.entries]
-        dictionary: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for entry in ranked:
-            if entry.name in seen:
-                continue
-            seen.add(entry.name)
-            hint = {"name": entry.name, "kind": entry.kind, "aliases": entry.aliases}
-            size = len(json.dumps(hint, ensure_ascii=False).encode("utf-8")) + 2
-            if cost + size <= TAG_CONTEXT_TOKEN_BUDGET:
-                dictionary.append(hint)
-                cost += size
-        return {"dictionary": dictionary, "existing_tags": existing}
 
     def _schedules(self) -> tuple[set[str], list[Thread]]:
         """Schedule Threads already in Fabric: every valid link target, and the
@@ -230,7 +188,43 @@ class ApprovalExtractor:
         timestamp = now or datetime.now(UTC)
         known, existing_active = self._schedules()
         dictionary = self.context.snapshot()
-        tag_context = self._tag_context(dictionary, script)
+        entries = getattr(self.sink, "entries", None)
+        all_threads: list[Thread] = entries(ThreadQuery()) if callable(entries) else []
+        hints = tag_context(dictionary, script, all_threads)
+        retracted = {t.retracts for t in all_threads if t.retracts}
+        active = [
+            t
+            for t in all_threads
+            if t.thread_id not in retracted and t.retracts is None
+        ]
+        resolved = {t.resolves for t in active if t.resolves}
+        requests = [
+            t for t in active if t.kind == "요청" and t.thread_id not in resolved
+        ]
+        request_ids = {t.thread_id for t in requests}
+        related = {
+            e.name
+            for e in dictionary.entries
+            if any(
+                _key(label) in _key(script + package.draft_body)
+                for label in (e.name, *e.aliases)
+            )
+        }
+        requests.sort(key=lambda t: (-len(set(t.tags) & related), -t.seq, t.thread_id))
+        open_requests: list[dict[str, Any]] = []
+        cost = 2
+        for request in requests:
+            hint = {
+                "id": request.thread_id,
+                "content": request.content,
+                "tags": request.tags,
+                "direction": request.direction,
+                "occurred_at": request.occurred_at.isoformat(),
+            }
+            size = len(json.dumps(hint, ensure_ascii=False).encode()) + 2
+            if len(open_requests) < 50 and cost + size <= 8000:
+                open_requests.append(hint)
+                cost += size
         response = self.llm.generate_json(
             "loom.approve",
             (
@@ -239,38 +233,42 @@ class ApprovalExtractor:
                 else "검토 답과 추가 피드백을 문서에 반영하고 승인된 사실과 명시된 이름 교정만 추출한다."
             )
             + (
-                " tags는 관련 프로젝트·사람·조직·주제의 사전 표준 이름만 쓴다."
-                " dictionary의 aliases는 표준 name으로 바꾼다. 기존 태그도 사전으로 확인한다."
-                " 사전에 없는 이름은 new_entries에 name, kind(person/organization/project/topic),"
-                " 선택적 aliases와 함께 반환한 경우에만 태그로 쓸 수 있다."
-                " TODO나 확인 같은 작업 상태를 태그로 만들지 않는다."
-                " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
-                " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
-                " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
-                " blocked_by_index에 같은 응답 threads 배열의 요청 인덱스(0부터)를 쓴다."
-                " 의존 관계를 추측하지 말고 없거나 불확실하면 null로 둔다."
-                " 요청에만 direction을 받음/보냄으로 쓰고 나머지는 null로 둔다."
-                " resolves는 결정에서만 기존 요청 ID를 쓰고 나머지는 null로 둔다."
-                " field가 없으면 value도 null이다. deadline/status 값은 문자열,"
-                " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
-                " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
-                " occurred_at은 시간대를 포함한 RFC 3339 시각이다."
-                " 일정 start는 유효한 ISO 8601 시각이며 end는 start보다 늦어야 한다."
-                " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
-                " 해당 시간대에 존재하지 않는 현지 시각을 만들지 않는다."
-                " blocked_by_index는 반드시 이 배열 범위 안의 요청을 가리킨다."
-                " existing_schedules는 이미 승인된 일정이다. 문서가 그중 하나의 변경"
-                "(시각 이동 등)이라고 명시한 일정에만 updates에 그 id를 쓴다."
-                " 제목이나 태그가 비슷하다는 이유로 연결하지 말고, 새 일정이거나"
-                " 불확실하면 null로 둔다. 일정이 아닌 Thread의 updates는 항상 null이다."
-                " 태그정정/거절 Thread는 추출하지 않는다. correction은 서버가 null로 둔다."
-                " corrections의 observed는 원문에 실제로 있는 표기이고 canonical은"
-                " 검토 답 하나와 정확히 일치해야 한다. edit에서는 corrections를 비운다."
+                FACT_RULES
+                + TAG_RULES
+                + " 오인식은 corrections(observed → canonical)로만 제안한다."
+                + (
+                    " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
+                    " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
+                    " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
+                    " blocked_by_index에 같은 응답 threads 배열의 요청 인덱스(0부터)를 쓴다."
+                    " 의존 관계를 추측하지 말고 없거나 불확실하면 null로 둔다."
+                    " 요청에만 direction을 받음/보냄으로 쓰고 나머지는 null로 둔다."
+                    " open_requests는 활성 미해결 요청이다. 문서가 해당 요청의 완료·응답·취소를"
+                    " 명시한 결정에만 resolves로 그 id를 쓴다. 유사성만으로 연결하지 않는다."
+                    " 그 외 resolves는 null로 둔다."
+                    " field가 없으면 value도 null이다. deadline/status 값은 문자열,"
+                    " assignees 값은 {add: [이름], remove: [이름]} 집합 연산이다."
+                    " content, tags 항목, resolves/retracts ID는 공백뿐이면 안 된다."
+                    " occurred_at은 시간대를 포함한 RFC 3339 시각이다."
+                    " 일정 start는 유효한 ISO 8601 시각이며 end는 start보다 늦어야 한다."
+                    " timezone은 유효한 IANA 이름이나 null이고 null은 설정 시간대를 쓴다."
+                    " 해당 시간대에 존재하지 않는 현지 시각을 만들지 않는다."
+                    " blocked_by_index는 반드시 이 배열 범위 안의 요청을 가리킨다."
+                    " existing_schedules는 이미 승인된 일정이다. 문서가 그중 하나의 변경"
+                    "(시각 이동 등)이라고 명시한 일정에만 updates에 그 id를 쓴다."
+                    " 제목이나 태그가 비슷하다는 이유로 연결하지 말고, 새 일정이거나"
+                    " 불확실하면 null로 둔다. 일정이 아닌 Thread의 updates는 항상 null이다."
+                    " 태그정정/거절 Thread는 추출하지 않는다. correction은 서버가 null로 둔다."
+                    " corrections의 observed는 원문에 실제로 있는 표기이고 canonical은"
+                    " 검토 답 하나와 정확히 일치해야 한다. edit에서는 corrections를 비운다."
+                )
             ),
             json.dumps(
                 {
-                    **tag_context,
+                    **hints,
+                    "contact_name": self.contact_name,
                     "timezone": self.timezone,
+                    "open_requests": open_requests,
                     "existing_schedules": [
                         {
                             "id": t.thread_id,
@@ -313,47 +311,14 @@ class ApprovalExtractor:
         ]
         # Validate proposals without mutating the real dictionary until PREPARED
         # is durable. First declaration owns a spelling; existing names win.
-        new_entries: list[NewEntry] = []
-        proposed_names: dict[str, str] = {}
-        for entry in response.new_entries:
-            canonical = unicodedata.normalize("NFC", entry.name)
-            if dictionary.resolve(canonical):
-                continue
-            key = canonical.casefold()
-            if key in proposed_names:
-                continue
-            aliases = [unicodedata.normalize("NFC", a) for a in entry.aliases]
-            safe_aliases = [
-                a
-                for a in aliases
-                if not dictionary.resolve(a) and a.casefold() not in proposed_names
-            ]
-            if len(safe_aliases) < len(aliases):
-                logger.warning("dropped conflicting dictionary aliases")
-            aliases = safe_aliases
-            new_entries.append(
-                NewEntry(name=canonical, kind=entry.kind, aliases=aliases)
-            )
-            for label in (canonical, *aliases):
-                proposed_names[label.casefold()] = canonical
+        new_entries, proposed_names = proposals(dictionary, response.new_entries)
         drafts: list[ThreadDraft] = []
         for thread in response.threads:
             data = thread.model_dump(exclude={"blocked_by_index", "updates"})
-            tags: list[str] = []
-            for tag in thread.tags:
-                resolved_entry = dictionary.resolve(tag)
-                canonical_tag = (
-                    resolved_entry.name
-                    if resolved_entry
-                    else proposed_names.get(
-                        unicodedata.normalize("NFC", tag).casefold()
-                    )
-                )
-                if canonical_tag is None:
-                    logger.warning("dropped unresolved approval tag")
-                elif canonical_tag not in tags:
-                    tags.append(canonical_tag)
-            data["tags"] = tags
+            data["tags"] = canonical_tags(dictionary, proposed_names, thread.tags)
+            if thread.resolves is not None and thread.resolves not in request_ids:
+                logger.warning("dropped invalid request resolution")
+                data["resolves"] = None
             updates = thread.updates
             if updates is not None and (
                 thread.kind != "일정" or thread.value is None or updates not in known
@@ -431,6 +396,15 @@ class ApprovalExtractor:
                 len(proposed),
             )
         used = {tag for draft in drafts for tag in draft.tags}
+        missing = sum(
+            entry.kind in ("person", "organization")
+            and _key(entry.name) in _key(summary.body)
+            and entry.name not in used
+            for entry in dictionary.entries
+            if entry.name in {hint["name"] for hint in hints["dictionary"]}
+        )
+        if missing:
+            logger.warning("approved body has untagged dictionary names: %d", missing)
         new_entries = [entry for entry in new_entries if entry.name in used]
         return Prepared(
             summary=summary,
@@ -624,4 +598,7 @@ class SummaryReview(ApprovalExtractor):
                     )
                 ]
             )
+        self.contact_name = self.state.contact_name(
+            package.package_id, package.source_id
+        )
         return self._prepare(package, script, verdict, timestamp, replaces)

@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1007,3 +1008,169 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
     review.approve(package(), "ZtranscriptUnique", verdict, now=NOW)
     # Tags outside the prompt budget still validate against the complete snapshot.
     assert sink.drafts[0].tags == ["A0649DictionaryEntry"]
+
+
+def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog):
+    from weaver.loom.summary_review import ApprovalExtractor
+
+    context = ContextDictionary(tmp_path / "state")
+    context.add_entry("김철수", "person")
+    context.add_entry("가상연구소", "organization")
+
+    class RulesLlm(FakeLlm):
+        def generate_json(self, task, system, user, schema):
+            for rule in (
+                "검토 질문과 답 자체는 Thread로 만들지 않는다",
+                "사람 동일성",
+                "미확인",
+                "직함·소속",
+                "화자 본인",
+                "오인식·오타·띄어쓰기",
+                "corrections(observed → canonical)",
+            ):
+                assert rule in system
+            assert json.loads(user)["contact_name"] == "홍길동"
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["body"] = "김철수가 가상연구소에 자료를 보냈다."
+            data["corrections"] = []
+            data["new_entries"] = [
+                {
+                    "name": "홍길동",
+                    "kind": "person",
+                    "aliases": ["홍 길동", "홍길동", "별명"],
+                },
+                {"name": "지원팀 김영희 팀장님", "kind": "person", "aliases": []},
+            ]
+            data["threads"][0]["tags"] = ["홍 길동", "지원팀 김영희 팀장님"]
+            return schema.model_validate(data)
+
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    prepared = ApprovalExtractor(
+        RulesLlm(), context, FakeSink(), contact_name="홍길동"
+    ).prepare(package(), "합성 원문", verdict, now=NOW)
+    assert prepared.new_entries[0].aliases == ["별명"]
+    assert prepared.threads[0].tags == ["홍길동"]
+    assert "approved body has untagged dictionary names: 2" in caplog.text
+    assert "김철수" not in caplog.text and "가상연구소" not in caplog.text
+
+
+def test_open_requests_are_active_budgeted_ranked_and_validated(tmp_path, caplog):
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.loom.reextract import ExtractionView
+    from weaver.loom.summary_review import ApprovalExtractor
+
+    context = ContextDictionary(tmp_path / "context")
+    context.add_entry("자료", "topic")
+    fabric = FabricStore(tmp_path / "fabric.db")
+    base = ThreadDraft(
+        thread_id="request",
+        kind="요청",
+        content="자료 전송",
+        occurred_at=NOW,
+        recorded_at=NOW,
+        tags=["자료"],
+        field=None,
+        value=None,
+        source_id=SOURCE,
+        actor="human",
+        direction="받음",
+        resolves=None,
+        retracts=None,
+        correction=None,
+    )
+    rows = [
+        base,
+        base.model_copy(update={"thread_id": "done"}),
+        base.model_copy(update={"thread_id": "gone"}),
+        base.model_copy(
+            update={
+                "thread_id": "resolved",
+                "kind": "결정",
+                "direction": None,
+                "resolves": "done",
+            }
+        ),
+        base.model_copy(
+            update={
+                "thread_id": "retracted",
+                "kind": "기록",
+                "direction": None,
+                "retracts": "gone",
+            }
+        ),
+    ]
+    rows.extend(
+        base.model_copy(
+            update={"thread_id": f"other-{i}", "tags": [], "content": "x" * 1000}
+        )
+        for i in range(70)
+    )
+    fabric.append(rows)
+
+    class Llm(FakeLlm):
+        target = "request"
+
+        def generate_json(self, task, system, user, schema):
+            payload = json.loads(user)
+            assert "완료·응답·취소" in system and "유사성만으로" in system
+            assert payload["open_requests"][0]["id"] == "request"
+            ids = {r["id"] for r in payload["open_requests"]}
+            assert "done" not in ids and "gone" not in ids
+            assert (
+                len(json.dumps(payload["open_requests"], ensure_ascii=False).encode())
+                <= 8000
+            )
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["threads"][0]["resolves"] = self.target
+            return schema.model_validate(data)
+
+    llm = Llm()
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    extractor = ApprovalExtractor(llm, context, fabric)
+    for target in ("request", "done", "gone", "resolved", "unknown"):
+        llm.target = target
+        prepared = extractor.prepare(package(), "자료", verdict, now=NOW)
+        assert prepared.threads[0].resolves == (
+            "request" if target == "request" else None
+        )
+    assert "dropped invalid request resolution" in caplog.text
+    assert not any(
+        t.kind == "요청"
+        for t in ExtractionView(fabric.entries(ThreadQuery()), SOURCE).threads
+    )
+
+
+def test_contact_metadata_survives_restart_and_legacy_spinner_fallback(tmp_path):
+    import sqlite3
+
+    from weaver.loom.summary_state import SummaryState, read_contact_name
+
+    state = SummaryState(tmp_path)
+    state.save_package(package(), "합성 원문", "김철수")
+    state.save_package(package(), "합성 원문")
+    assert SummaryState(tmp_path).contact_name("pkg", SOURCE) == "김철수"
+    with state.connect() as db:
+        db.execute("DROP TABLE contacts")
+    with sqlite3.connect(tmp_path / "spinner.sqlite3") as db:
+        db.execute("CREATE TABLE results (source_id TEXT, version TEXT, source TEXT)")
+        db.execute(
+            "INSERT INTO results VALUES (?, ?, ?)",
+            (SOURCE, "1", json.dumps({"hints": {"counterpart": "김영희"}})),
+        )
+    assert read_contact_name(tmp_path, "pkg", SOURCE) == "김영희"

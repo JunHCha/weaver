@@ -21,9 +21,10 @@ class Client:
         if task == "wiki.human_edit":
             return EditResult.model_validate(
                 {
+                    "new_entries": [{"name": "점검", "kind": "topic", "aliases": []}],
                     "changes": []
                     if self.formatting_only
-                    else [{"content": "현장 확인 후 진행", "tags": ["점검"]}]
+                    else [{"content": "현장 확인 후 진행", "tags": ["점검"]}],
                 }
             )
         if self.fail:
