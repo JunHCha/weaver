@@ -13,6 +13,7 @@ from weaver.context import ContextDictionary
 from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
 from weaver.fabric import FabricStore
 from weaver.llm import create_client
+from weaver.llm.cli import ClaudeCliClient
 from weaver.llm.types import LlmClient
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import SummaryReview
@@ -136,7 +137,14 @@ def build_runtime(
             journal=progress.journal,
         )
         maintenance.append(
-            MaintenanceTask("wiki", config.wiki.interval_seconds, job.run)
+            MaintenanceTask(
+                "wiki",
+                config.wiki.interval_seconds,
+                job.run,
+                allowed=real.wiki_available
+                if isinstance(real, ClaudeCliClient)
+                else None,
+            )
         )
 
     # Calendar commands: derived from Fabric, run by the phone, results come

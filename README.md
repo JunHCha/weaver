@@ -272,3 +272,48 @@ checks arrival in the phone's synchronized vault before opening a result.
 확인할 수 있습니다. `weaver web`은 loopback 호스트만 허용하며 쓰기 API가
 없습니다. `--port`, `--static-dir` 또는 `WEAVER_WEB_DIR`로 포트와 정적 파일
 위치를 지정할 수 있고, 빌드가 없으면 경고와 함께 API만 제공합니다.
+
+### CLI LLM 제한 시간과 재시도
+
+[`server/config.example.toml`](server/config.example.toml)의 `[llm]`에서
+Claude CLI와 Codex CLI의 제한 시간을 설정한다.
+
+```toml
+[llm]
+backend = "codex_cli" # 또는 "claude_cli"
+cli_timeout_seconds = 300
+wiki_cli_timeout_seconds = 600
+max_cli_calls_per_day = 30
+```
+
+두 제한 시간은 초 단위이며 0보다 크고 900 이하여야 한다. 일반 호출은 기본
+300초, `wiki.compile_batch`·`wiki.digest` 등 `wiki.*` 호출은 기본 600초를 쓴다.
+API 백엔드는 기존 120초 제한과 예산 규칙을 유지한다.
+
+소스 정리와 Wiki 작업이 연속으로 시간 초과되면 각 작업의 재시도 간격을
+기본 주기의 2배, 4배, 8배로 늘리며 최대 1시간을 기다린다. 성공하면 초기화한다.
+다른 오류가 끼어도 소스의 대기 간격은 줄어들지 않으며, Wiki의 시간 초과
+백오프도 성공할 때까지 유지한다.
+소스별 대기 시각과 연속 시간 초과 횟수는 재시작 뒤에도 유지하고, Wiki의
+재시도 간격은 프로세스 안에서 관리한다. 소스의 기존 최대 20회 재시도 규칙은 유지한다.
+
+두 CLI가 공유하는 일일 호출 한도의 절반 이상을 시간 초과로 사용하면 그날의
+Wiki CLI 호출을 중지한다. 예를 들어 한도가 30이면 시간 초과 15회부터 중지하며,
+홀수 한도는 올림한다. 이 집계에는 소스 호출의 시간 초과와 **배포 전에 오늘
+이미 기록된 CLI 시간 초과**도 포함한다. 차단 중에는 Wiki 컴파일을 건너뛰며
+호출 ledger 행을 추가하지 않고 차단 경고는 하루 한 번만 남긴다. 집계는
+`state_root/llm.sqlite3`에 보관해 재시작 뒤에도 적용하며, 호출을 시작한 서버 현지
+날짜를 기준으로 다음 날 다시 허용한다. 소스 처리는 남은 일일 한도 안에서 계속한다.
+경고 로그에는 원문·프롬프트·응답을 남기지 않는다.
+
+Codex 시간 초과 경고에는 마지막 `--json` 이벤트 유형(`last_event`), 경과 초,
+이벤트 스트림 크기(`stdout_bytes`), 최종 출력 파일 크기(`output_bytes`),
+직렬화한 입력과 스키마 크기(`input_bytes`, `schema_bytes`)를 남긴다.
+같은 수치를 호출 ledger의 `timeout_diagnostics`에도 저장한다. 이벤트 이름은
+허용 목록으로 제한하고 알 수 없는 유형은 `unknown`, 이벤트가 없으면 `none`으로
+기록한다. 이 수치는 입력·스키마 규모와 마지막으로 관찰한 진행 단계를 보여주며,
+모델 내부 추론이나 스키마 처리 중 어느 쪽이 원인인지를 확정하지는 않는다.
+
+상주 서버의 SIGTERM·SIGINT 종료 요청은 실행 중인 CLI에도 전달한다. runner는
+종료 이벤트를 확인해 자식 프로세스 그룹을 종료하고 회수하며, Codex 임시 폴더도
+정리한다. 중단은 시간 초과나 소스 실패로 집계하지 않는다.

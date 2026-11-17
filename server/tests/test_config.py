@@ -699,3 +699,25 @@ def test_llm_option_with_config_check_and_initialization(tmp_path):
         cli, ["run", "--config", str(path), "--llm", "bad", "--check-config"]
     )
     assert result.exit_code == 2
+
+
+def test_cli_timeouts_load_defaults_and_overrides(tmp_path):
+    defaults = load_config(write_config(tmp_path), environ={}).llm
+    assert defaults.cli_timeout_seconds == 300
+    assert defaults.wiki_cli_timeout_seconds == 600
+    settings = load_config(
+        write_config(
+            tmp_path,
+            "[llm]\ncli_timeout_seconds = 450\nwiki_cli_timeout_seconds = 900\n",
+        ),
+        environ={},
+    ).llm
+    assert settings.cli_timeout_seconds == 450
+    assert settings.wiki_cli_timeout_seconds == 900
+
+
+@pytest.mark.parametrize("field", ["cli_timeout_seconds", "wiki_cli_timeout_seconds"])
+@pytest.mark.parametrize("value", ["true", "0", "-1", "901", "nan", "inf", '"secret"'])
+def test_cli_timeouts_reject_invalid_toml(tmp_path, field, value):
+    with pytest.raises(ConfigError, match=field):
+        load_config(write_config(tmp_path, f"[llm]\n{field} = {value}\n"), environ={})

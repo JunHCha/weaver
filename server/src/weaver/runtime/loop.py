@@ -4,8 +4,9 @@ Every tick rescans Courier folders and the archive, so files that arrived
 while the process was stopped or the Mac was asleep are recovered without
 relying on file-system notifications. A wall-clock gap much longer than the
 scheduled wait is reported as a resume. SIGTERM/SIGINT are checked before each
-LLM/journal stage: a stage already running finishes, the rest is left for the
-next start, and nothing is recorded as failed.
+LLM/journal stage: an active CLI is cancelled with its process group; other
+stages already running finish. Remaining work is left for the next start,
+and interrupted Sources are not recorded as failed.
 
 Failure classes (per Source):
 - ValueError (invalid archive row, unsupported input): ``failed`` at once.
@@ -38,16 +39,19 @@ from types import FrameType
 from typing import Literal, Protocol
 
 from weaver.courier.atomic import write_bytes_atomic
+from weaver.llm.cli import cancel_cli_on_stop
 from weaver.llm.errors import (
     AuthenticationError,
     BudgetExceeded,
     InsufficientCredit,
     InvalidJson,
+    LlmTimeout,
     MissingOutput,
     RateLimited,
     Refusal,
     SchemaMismatch,
     UsageLimited,
+    WikiTimeoutBudgetExceeded,
 )
 
 from .gate import Interrupted, LlmGate, LlmUnavailable
@@ -151,6 +155,7 @@ class MaintenanceTask:
     name: str
     interval_seconds: float
     run: Callable[[], object]
+    allowed: Callable[[], bool] | None = None
 
 
 @contextlib.contextmanager
@@ -205,6 +210,8 @@ class Runtime[S: HasSourceId]:
         self._last_run: dict[str, float] = {}
         self._last_llm_check: float | None = None
         self._wiki_rate_failures = 0
+        self._wiki_timeout_failures = 0
+        self._wiki_timeout_until = 0.0
         self._started_at = datetime.now(UTC).isoformat()
 
     # ---- process lifecycle -----------------------------------------------------
@@ -255,6 +262,10 @@ class Runtime[S: HasSourceId]:
     # ---- one pass ----------------------------------------------------------------
 
     def _tick(self, stop: threading.Event) -> float:
+        with cancel_cli_on_stop(stop):
+            return self._tick_running(stop)
+
+    def _tick_running(self, stop: threading.Event) -> float:
         was_available = self.gate.available
         try:
             self._recheck_llm()
@@ -264,6 +275,8 @@ class Runtime[S: HasSourceId]:
             if not stop.is_set():
                 self.publisher.publish()
                 self._run_maintenance()
+        except Interrupted:
+            return self.interval
         except Exception as error:
             if was_available and not self.gate.available:
                 self._last_llm_check = self.clock()
@@ -366,7 +379,14 @@ class Runtime[S: HasSourceId]:
             logger.warning("source failed: %s %s", sid, type(error).__name__)
         except Exception as error:
             self._retry_or_fail(
-                sid, error, attempts, contract, attempts >= MAX_RETRY_ATTEMPTS
+                sid,
+                error,
+                attempts,
+                contract,
+                attempts >= MAX_RETRY_ATTEMPTS,
+                timeout_failures=(known.timeout_failures if known else 0) + 1
+                if isinstance(error, LlmTimeout)
+                else 0,
             )
         else:
             self.ledger.record(
@@ -375,7 +395,13 @@ class Runtime[S: HasSourceId]:
             logger.info("source %s: %s", outcome, sid)
 
     def _retry_or_fail(
-        self, sid: str, error: Exception, attempts: int, contract: int, give_up: bool
+        self,
+        sid: str,
+        error: Exception,
+        attempts: int,
+        contract: int,
+        give_up: bool,
+        timeout_failures: int = 0,
     ) -> None:
         name = type(error).__name__
         if give_up:
@@ -390,7 +416,10 @@ class Runtime[S: HasSourceId]:
                 "source failed after %d attempts: %s %s", attempts, sid, name
             )
             return
-        delay = min(self.interval * 2.0**attempts, MAX_RETRY_BACKOFF_SECONDS)
+        delay = min(
+            self.interval * 2.0 ** min(max(timeout_failures, attempts), 20),
+            MAX_RETRY_BACKOFF_SECONDS,
+        )
         self.ledger.record(
             sid,
             "retry",
@@ -398,6 +427,7 @@ class Runtime[S: HasSourceId]:
             contract_failures=contract,
             error_class=name,
             next_attempt_at=self.clock() + delay,
+            timeout_failures=timeout_failures,
         )
         logger.warning("source retry in %.0fs: %s %s", delay, sid, name)
 
@@ -406,12 +436,32 @@ class Runtime[S: HasSourceId]:
         for task in self.maintenance:
             if task.name == "wiki" and not self.gate.available:
                 continue
+            if task.allowed is not None and not task.allowed():
+                continue
+            if task.name == "wiki" and now < self._wiki_timeout_until:
+                continue
             last = self._last_run.get(task.name)
             if last is not None and now - last < task.interval_seconds:
                 continue
             self._last_run[task.name] = now
             try:
                 task.run()
+            except Interrupted:
+                return
+            except LlmTimeout:
+                if task.name == "wiki":
+                    self._wiki_timeout_failures += 1
+                    delay = min(
+                        task.interval_seconds
+                        * 2.0 ** min(self._wiki_timeout_failures, 20),
+                        MAX_RETRY_BACKOFF_SECONDS,
+                    )
+                    self._wiki_timeout_until = self.clock() + delay
+                    logger.warning("Wiki timeout; retry in %.0fs", delay)
+                else:
+                    logger.warning("maintenance timeout")
+            except WikiTimeoutBudgetExceeded:
+                pass  # The CLI guard logs once per day, before reserving a call.
             except (*_LLM_OFF, RateLimited) as error:
                 if task.name == "wiki":
                     if isinstance(error, RateLimited):
@@ -430,6 +480,8 @@ class Runtime[S: HasSourceId]:
             else:
                 if task.name == "wiki":
                     self._wiki_rate_failures = 0
+                    self._wiki_timeout_failures = 0
+                    self._wiki_timeout_until = 0.0
 
     # ---- status ------------------------------------------------------------------
 

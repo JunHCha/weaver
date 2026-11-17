@@ -5,6 +5,7 @@ The supported option/feature baseline is codex-cli 0.167.0.
 """
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -34,6 +35,7 @@ from .errors import (
     AuthenticationError,
     InvalidJson,
     LlmError,
+    LlmInterrupted,
     LlmTimeout,
     MissingOutput,
     SchemaMismatch,
@@ -67,6 +69,61 @@ _DISABLED_FEATURES = (
     "default_mode_request_user_input",
     "sleep_tool",
 )
+logger = logging.getLogger(__name__)
+_EVENT_TYPES = frozenset(
+    {
+        "thread.started",
+        "turn.started",
+        "turn.completed",
+        "turn.failed",
+        "item.started",
+        "item.updated",
+        "item.completed",
+        "error",
+    }
+)
+
+
+def _timeout_diagnostics(
+    stdout: bytes, output: Path, *, started: float, input_bytes: int, schema_bytes: int
+) -> dict[str, str | int | float]:
+    """Keep only bounded protocol labels and sizes, never event bodies or IDs."""
+    last_event = "none"
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            continue  # a killed process may leave its last event incomplete
+        if isinstance(event, dict):
+            kind = event.get("type")
+            last_event = (
+                kind if isinstance(kind, str) and kind in _EVENT_TYPES else "unknown"
+            )
+    try:
+        output_bytes = output.stat().st_size
+    except OSError:
+        output_bytes = 0
+    elapsed = time.monotonic() - started
+    logger.warning(
+        "Codex CLI timeout: last_event=%s elapsed_seconds=%.1f "
+        "stdout_bytes=%d output_bytes=%d input_bytes=%d schema_bytes=%d",
+        last_event,
+        elapsed,
+        len(stdout),
+        output_bytes,
+        input_bytes,
+        schema_bytes,
+    )
+    return {
+        "last_event": last_event,
+        "elapsed_seconds": round(elapsed, 3),
+        "stdout_bytes": len(stdout),
+        "output_bytes": output_bytes,
+        "input_bytes": input_bytes,
+        "schema_bytes": schema_bytes,
+    }
+
+
 _status_cache: dict[tuple[str, str | None], tuple[float, CliStatus]] = {}
 _status_lock = threading.Lock()
 
@@ -184,35 +241,54 @@ class CodexCliClient(ClaudeCliClient):
                     "-c",
                     "model_reasoning_effort=" + json.dumps(self.config.codex_effort),
                 ]
+            schema_bytes = 0
             if wire_schema is not None:
                 schema_file = root / "schema.json"
                 schema_file.write_text(json.dumps(wire_schema), encoding="utf-8")
                 schema_file.chmod(0o600)
+                schema_bytes = schema_file.stat().st_size
                 argv += ["--output-schema", str(schema_file)]
             argv += ["-o", str(output), "--json", "-"]
-            remaining = self.deadline_seconds - (time.monotonic() - started)
+            # stdin preserves privacy and explicit role boundaries. Codex exec
+            # has no separate system-prompt argument. Serialize before calculating
+            # the remaining wall-clock deadline.
+            prompt = json.dumps(
+                {"instructions": system, "input": user}, ensure_ascii=False
+            ).encode()
+            remaining = self._deadline(record["task"]) - (time.monotonic() - started)
             if remaining <= 0:
                 raise LlmTimeout()
             day = datetime.now().astimezone().date().isoformat()
-            if not self.ledger.take_daily_call(day, self.config.max_cli_calls_per_day):
+            if not self.ledger.take_daily_call(
+                day,
+                self.config.max_cli_calls_per_day,
+                wiki=record["task"].startswith("wiki."),
+            ):
                 raise UsageLimited()
+            record["cli_day"] = day
+            record["daily_day"] = day
             record["attempts"] = 1
             attempt: dict[str, Any] = {"status": "pending", "usage": None}
             record["attempt_records"].append(attempt)
-            # stdin preserves privacy. Explicitly serialize role boundaries;
-            # Codex exec has no separate system-prompt argument.
-            prompt = json.dumps(
-                {"instructions": system, "input": user}, ensure_ascii=False
-            )
             try:
                 res = self.runner(
                     argv,
-                    stdin=prompt.encode(),
+                    stdin=prompt,
                     env=child_env(self.environ),
                     cwd=cwd,
                     timeout=remaining,
                 )
+                if res.stopped:
+                    attempt["status"] = "interrupted"
+                    raise LlmInterrupted()
                 if res.timed_out:
+                    record["timeout_diagnostics"] = _timeout_diagnostics(
+                        res.stdout,
+                        output,
+                        started=started,
+                        input_bytes=len(prompt),
+                        schema_bytes=schema_bytes,
+                    )
                     raise LlmTimeout()
                 if res.overflow:
                     raise LlmError()

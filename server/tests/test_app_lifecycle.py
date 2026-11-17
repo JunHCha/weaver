@@ -567,3 +567,244 @@ def test_wiki_rate_limit_backoff_grows_caps_and_resets(tmp_path):
     clock.now += 1
     runtime._recheck_llm()
     assert runtime.gate.available
+
+
+def test_wiki_timeout_backoff_grows_caps_and_success_resets(tmp_path, caplog):
+    calls = []
+    fail = [True]
+
+    def run():
+        calls.append(1)
+        if fail[0]:
+            raise LlmTimeout()
+
+    runtime, _, _, clock = make(
+        tmp_path, maintenance=[MaintenanceTask("wiki", 60, run)]
+    )
+    runtime._run_maintenance()
+    for delay in (120, 240, 480, 960, 1920, 3600, 3600):
+        count = len(calls)
+        clock.now += delay - 1
+        runtime._run_maintenance()
+        assert len(calls) == count
+        clock.now += 1
+        runtime._run_maintenance()
+        assert len(calls) == count + 1
+        assert runtime.gate.available
+    fail[0] = False
+    clock.now += 3600
+    runtime._run_maintenance()
+    fail[0] = True
+    clock.now += 60
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_until - clock.now == 120
+    assert "Wiki timeout; retry in 3600s" in caplog.text
+
+
+def test_source_timeout_backoff_survives_restart_is_independent_and_success_resets(
+    tmp_path,
+):
+    processor = FakeProcessor({"src_a": LlmTimeout()})
+    sources = FakeSources([FakeSource("src_a"), FakeSource("src_b")])
+    runtime, stop, _, clock = make(tmp_path, processor=processor, sources=sources)
+    runtime._process_sources(stop)
+    assert processor.seen == ["src_a", "src_b"]
+    assert runtime.ledger.counts() == {"done": 1, "retry": 1}
+    for delay in (10, 20, 40, 80, 160, 320, 640, 1280, 2560, 3600):
+        progress = runtime.ledger.progress()["src_a"]
+        assert progress.next_attempt_at - clock.now == delay
+        clock.now += delay - 1
+        count = len(processor.seen)
+        runtime._process_sources(stop)
+        assert len(processor.seen) == count
+        clock.now += 1
+        # Re-open the durable source retry ledger on every attempt.
+        runtime.ledger = RuntimeLedger(tmp_path / "runtime.sqlite3")
+        runtime._process_sources(stop)
+    processor.outcomes["src_a"] = "done"
+    clock.now = runtime.ledger.progress()["src_a"].next_attempt_at
+    runtime._process_sources(stop)
+    assert runtime.ledger.counts() == {"done": 2}
+    with runtime.ledger._connect() as db:
+        assert db.execute(
+            "SELECT timeout_failures, next_attempt_at FROM sources WHERE source_id='src_a'"
+        ).fetchone() == (0, None)
+
+
+def test_wiki_daily_timeout_guard_keeps_gate_and_other_maintenance_available(
+    tmp_path, caplog
+):
+    from weaver.llm.errors import WikiTimeoutBudgetExceeded
+
+    calls = []
+
+    def wiki():
+        raise WikiTimeoutBudgetExceeded()
+
+    runtime, _, _, _ = make(
+        tmp_path,
+        maintenance=[
+            MaintenanceTask("wiki", 60, wiki),
+            MaintenanceTask("actions", 60, lambda: calls.append(1)),
+        ],
+    )
+    runtime._run_maintenance()
+    assert runtime.gate.available and calls == [1]
+    assert not caplog.records
+
+
+def test_source_timeout_streak_resets_after_other_error(tmp_path):
+    processor = FakeProcessor({"src_a": [LlmTimeout(), OSError(), LlmTimeout()]})
+    runtime, stop, _, clock = make(
+        tmp_path, processor=processor, sources=FakeSources([FakeSource("src_a")])
+    )
+    runtime._process_sources(stop)
+    clock.now = runtime.ledger.progress()["src_a"].next_attempt_at
+    runtime._process_sources(stop)
+    assert runtime.ledger.progress()["src_a"].timeout_failures == 0
+    clock.now = runtime.ledger.progress()["src_a"].next_attempt_at
+    runtime._process_sources(stop)
+    progress = runtime.ledger.progress()["src_a"]
+    assert progress.timeout_failures == 1
+    assert progress.next_attempt_at - clock.now == 40
+
+
+def test_runtime_ledger_upgrades_existing_source_rows(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE sources (source_id TEXT PRIMARY KEY, status TEXT NOT NULL, error_class TEXT, attempts INTEGER NOT NULL DEFAULT 0, contract_failures INTEGER NOT NULL DEFAULT 0, next_attempt_at REAL, updated_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO sources VALUES ('src_a', 'retry', 'LlmTimeout', 2, 0, 1234, '2026-01-01')"
+        )
+    ledger = RuntimeLedger(path)
+    progress = ledger.progress()["src_a"]
+    assert progress.attempts == 2 and progress.next_attempt_at == 1234
+    assert progress.timeout_failures == 0
+    ledger.record("src_a", "retry", timeout_failures=1, next_attempt_at=1244)
+    assert RuntimeLedger(path).progress()["src_a"].timeout_failures == 1
+
+
+@pytest.mark.parametrize("other", [OSError(), RateLimited(), UsageLimited()])
+def test_wiki_timeout_backoff_only_resets_on_success(tmp_path, other):
+    results = [LlmTimeout(), other, LlmTimeout(), None, LlmTimeout()]
+
+    def wiki():
+        error = results.pop(0)
+        if error is not None:
+            raise error
+
+    runtime, _, _, clock = make(
+        tmp_path, maintenance=[MaintenanceTask("wiki", 60, wiki)]
+    )
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_failures == 1
+    clock.now += 120
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_failures == 1
+    runtime.gate.refresh()
+    clock.now += 60
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_failures == 2
+    assert runtime._wiki_timeout_until - clock.now == 240
+    clock.now += 240
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_failures == 0
+    clock.now += 60
+    runtime._run_maintenance()
+    assert runtime._wiki_timeout_until - clock.now == 120
+
+
+def test_paused_wiki_skips_compile_reservations_and_warns_once_per_day(
+    tmp_path, monkeypatch, caplog
+):
+    from dataclasses import replace
+    from datetime import datetime as RealDatetime
+
+    import weaver.llm.cli as cli_module
+    from weaver.config import LlmConfig
+    from weaver.llm.cli import ClaudeCliClient, RunResult
+    from weaver.llm.errors import WikiTimeoutBudgetExceeded
+    from weaver.llm.ledger import Ledger
+
+    class Clock(RealDatetime):
+        current = RealDatetime(2026, 1, 1, 12).astimezone()
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz is None else cls.current.astimezone(tz)
+
+    monkeypatch.setattr(cli_module, "datetime", Clock)
+    binary = tmp_path / "fake"
+    binary.touch(mode=0o700)
+    calls = []
+
+    def runner(argv, *, stdin, env, cwd, timeout):
+        calls.append(1)
+        return RunResult(-9, b"", b"", timed_out=True)
+
+    config = LlmConfig("claude_cli", claude_path=binary, max_cli_calls_per_day=2)
+    ledger = Ledger(tmp_path / "llm.sqlite3")
+    client = ClaudeCliClient(config, ledger, state_root=tmp_path, runner=runner)
+    with pytest.raises(LlmTimeout):
+        client.generate_text("loom.summary", "s", "u")
+    compiles = []
+
+    def wiki():
+        compiles.append(1)
+        client.generate_text("wiki.compile_batch", "s", "u")
+
+    runtime, _, _, clock = make(
+        tmp_path,
+        maintenance=[MaintenanceTask("wiki", 60, wiki, allowed=client.wiki_available)],
+    )
+    before = ledger.records()
+    for _ in range(100):
+        runtime._run_maintenance()
+        clock.now += 60
+        with pytest.raises(WikiTimeoutBudgetExceeded):
+            client.generate_text("wiki.compile_batch", "s", "u")
+    assert not compiles and len(calls) == 1
+    assert ledger.records() == before
+    assert caplog.text.count("daily timeout allowance reached") == 1
+    # Warning deduplication survives a client/ledger restart, even for another CLI instance.
+    restarted = ClaudeCliClient(
+        replace(config), Ledger(ledger.path), state_root=tmp_path, runner=runner
+    )
+    assert not restarted.wiki_available()
+    assert caplog.text.count("daily timeout allowance reached") == 1
+    Clock.current = RealDatetime(2026, 1, 2, 12).astimezone()
+    runtime._run_maintenance()
+    assert len(calls) == 2 and compiles == [1]
+    clock.now += 120
+    runtime._run_maintenance()
+    assert caplog.text.count("daily timeout allowance reached") == 2
+    assert len(ledger.records()) == len(before) + 1
+
+
+def test_runtime_stop_cancels_cli_without_recording_source_failure(tmp_path):
+    from weaver.config import LlmConfig
+    from weaver.llm import create_client
+    from weaver.llm.ledger import Ledger
+
+    client = create_client(
+        LlmConfig("codex_cli", codex_path=tmp_path / "must-not-spawn"),
+        state_root=tmp_path,
+    )
+
+    class Processor:
+        def process(self, source, stop):
+            stop.set()
+            client.generate_text("loom.summary", "s", "u")
+            raise AssertionError("cancelled call returned")
+
+    runtime, stop, _, _ = make(
+        tmp_path, processor=Processor(), sources=FakeSources([FakeSource("src_a")])
+    )
+    runtime._tick(stop)
+    assert stop.is_set()
+    assert runtime.ledger.counts() == {}
+    assert Ledger(tmp_path / "llm.sqlite3").records() == []

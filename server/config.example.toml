@@ -38,6 +38,14 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Raw prompts/responses are excluded from the ledger and INFO call summary.
 # Daily call cap protecting the subscription allowance (integer >= 1):
 # max_cli_calls_per_day = 30
+# Both CLI backends: finite seconds > 0 and <= 900 (API keeps its 120s deadline).
+# cli_timeout_seconds = 300
+# wiki_cli_timeout_seconds = 600
+# The Wiki value applies to all wiki.* calls, including compile_batch/digest.
+# Consecutive timeouts double source/Wiki retry intervals, capped at one hour.
+# Success resets the interval; Wiki backoff is process-local, source retries persist.
+# When CLI timeouts consume >= half the daily call cap, Wiki CLI calls stop
+# for the rest of the local day. Source calls can still use the remaining cap.
 
 # All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
 # To create missing directories explicitly (existing data is preserved):

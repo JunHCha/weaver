@@ -3,17 +3,15 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from weaver.llm.errors import LlmError
+from weaver.llm.errors import LlmError, LlmInterrupted
+
+Interrupted = LlmInterrupted
 
 
 @dataclass(frozen=True)
 class LlmStatus:
     available: bool
     reason: str
-
-
-class Interrupted(Exception):
-    """Stop was requested before the next LLM/journal stage; not a failure."""
 
 
 class LlmGate:
