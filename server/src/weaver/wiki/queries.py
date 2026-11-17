@@ -130,10 +130,15 @@ def render_pages(
                 )
         deadlines.append("")
     contacts = ["# 사람별 연락", ""]
-    for tag in tags:
-        if context.kind_of(tag) != "person":
+    dictionary = context.snapshot()
+    contacts_by_person: dict[str, list[Thread]] = {}
+    for thread in active:
+        if thread.counterpart is None:
             continue
-        events = [t for t in active if tag in t.tags]
+        entry = dictionary.resolve(thread.counterpart)
+        if entry is not None and entry.kind == "person":
+            contacts_by_person.setdefault(entry.name, []).append(thread)
+    for tag, events in sorted(contacts_by_person.items()):
         latest = max(t.occurred_at for t in events)
         counts = [
             sum(t.occurred_at >= now - timedelta(days=days) for t in events)

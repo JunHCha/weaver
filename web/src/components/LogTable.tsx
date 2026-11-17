@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 import type { Tag, Thread } from "../lib/api";
 import {
   stateSummary,
@@ -14,9 +14,18 @@ import {
   mdhm,
   relations,
 } from "../lib/presentation";
+import {
+  adjacentHistory,
+  currentThread,
+  isHistory,
+  mentionOnly,
+  valueChanges,
+} from "../lib/history";
 import { projectRows } from "../lib/projection";
 import { Icon, References, Tags } from "./Common";
 export function LogTable({
+  fieldRows = [],
+  selectedTags = [],
   rows,
   threads,
   tags,
@@ -27,6 +36,8 @@ export function LogTable({
   selected,
   onPick,
 }: {
+  fieldRows?: Thread[];
+  selectedTags?: string[];
   rows: Thread[];
   threads: Thread[];
   tags: Tag[];
@@ -37,18 +48,6 @@ export function LogTable({
   selected: string | null;
   onPick: (id: string) => void;
 }) {
-  const rowsById = useMemo(
-    () => new Map(rows.map((t) => [t.thread_id, t])),
-    [rows],
-  );
-  const retractions = useMemo(() => {
-    const result = new Map<string, Thread[]>();
-    rows.forEach((t) => {
-      if (t.retracts)
-        result.set(t.retracts, [...(result.get(t.retracts) || []), t]);
-    });
-    return result;
-  }, [rows]);
   const state = relations(threads),
     grouped = group !== "none";
   return (
@@ -77,11 +76,24 @@ export function LogTable({
           ))}
         </div>
         {lanes.map((lane) => {
-          const candidates = rows.filter((t) => groups(t).includes(lane.key));
-          const section = candidates
-              .filter((t) => !t.retracts || !rowsById.has(t.retracts))
-              .flatMap((t) => [t, ...(retractions.get(t.thread_id) || [])]),
-            header = grouped ? 34 : 0;
+          const section = adjacentHistory(
+            rows.filter((t) => groups(t).includes(lane.key)),
+          );
+          const changes = valueChanges(
+            fieldRows.filter((t) => groups(t).includes(lane.key)),
+            threads,
+            tags,
+          );
+          const header = grouped || changes.length > 0 ? 34 : 0;
+          const heights = section.map((t) =>
+            isHistory(t) || state.retracted.has(t.thread_id) ? 28 : 34,
+          );
+          const centers = heights.map(
+            (height, i) =>
+              header +
+              heights.slice(0, i).reduce((sum, h) => sum + h, 0) +
+              height / 2,
+          );
           const summary =
             states[lane.key] ||
             projectRows(
@@ -90,12 +102,31 @@ export function LogTable({
             );
           return (
             <section className="lsec" key={lane.key}>
-              {grouped && (
+              {(grouped || changes.length > 0) && (
                 <div className="lsech">
-                  <b>{lane.key}</b>
+                  <b>{lane.key || "전체"}</b>
                   <span className="mut">{section.length}</span>
+                  {!!changes.length && (
+                    <details className="value-history">
+                      <summary>변경 {changes.length}</summary>
+                      <ul>
+                        {changes.map(({ thread, label }) => (
+                          <li key={thread.thread_id}>
+                            <time>{mdhm(thread.recorded_at)}</time>{" "}
+                            <button
+                              type="button"
+                              className="linkbtn"
+                              onClick={() => onPick(thread.thread_id)}
+                            >
+                              {label}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   <span className="sums">
-                    {stateSummary(summary).map(([k, v]) => (
+                    {(grouped ? stateSummary(summary) : []).map(([k, v]) => (
                       <span className="sm" key={k}>
                         <b>{k}</b> {v}
                       </span>
@@ -104,12 +135,16 @@ export function LogTable({
                 </div>
               )}
               {section.map((t) => {
-                const field = fieldText(t);
+                const field = fieldText(currentThread(t, threads, tags));
                 return (
                   <div
                     key={t.thread_id}
                     className={[
                       "lrow",
+                      isHistory(t) || state.retracted.has(t.thread_id)
+                        ? "history-item"
+                        : "",
+                      mentionOnly(t, selectedTags, tags) ? "mention-only" : "",
                       "k-" + kindClass[t.kind],
                       kindClass[t.kind] === "hol" ? "hol" : "",
                       selected === t.thread_id ? "sel" : "",
@@ -133,6 +168,10 @@ export function LogTable({
                     </div>
                     <div className="lc" title={t.content || ""}>
                       {t.content || <span className="mut">내용 없음</span>}
+                      {mentionOnly(t, selectedTags, tags) && (
+                        <span className="mention-mark"> 언급</span>
+                      )}
+                      {isHistory(t) && <span className="mut"> 이력</span>}
                       {t.kind === "요청" && state.resolved.has(t.thread_id) && (
                         <span className="mark"> 해결됨</span>
                       )}
@@ -172,15 +211,15 @@ export function LogTable({
               <svg
                 className="lsvg"
                 width={36}
-                height={header + section.length * 34}
+                height={header + heights.reduce((sum, h) => sum + h, 0)}
                 aria-hidden="true"
               >
                 {section.length > 1 && (
                   <line
                     x1={14}
                     x2={14}
-                    y1={header + 17}
-                    y2={header + (section.length - 1) * 34 + 17}
+                    y1={centers[0]}
+                    y2={centers.at(-1)}
                     stroke="var(--thread)"
                     strokeWidth="1.25"
                     opacity=".55"
@@ -190,7 +229,7 @@ export function LogTable({
                   <circle
                     key={t.thread_id}
                     cx={14}
-                    cy={header + i * 34 + 17}
+                    cy={centers[i]}
                     r="3.6"
                     fill={
                       kindClass[t.kind] === "hol"

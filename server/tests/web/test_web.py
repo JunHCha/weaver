@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from weaver.app import cli
 from weaver.config import load_config
 from weaver.context import ContextDictionary, Page
-from weaver.fabric import FabricStore
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.runtime.ledger import RuntimeLedger
 from weaver.schema import PipelineItem, ThreadDraft
 from weaver.web import create_app
@@ -581,3 +581,16 @@ def test_presentation_covers_legacy_fields_rejection_and_fact_lifecycle(tmp_path
     assert rows["old-fact"] == rows["request"] == rows["decision"] == "fact"
     assert rows["wiki:business:0"] == rows["ordinary"] == "fact"
     assert len(fabric.entries(ThreadQuery(include_executions=True))) == len(rows)
+
+
+def test_counterpart_tracks_dictionary_rename_without_rewriting_fabric(tmp_path):
+    config = config_at(tmp_path)
+    context = ContextDictionary(config.state_root)
+    context.sync_from_pages([Page("원래 이름", "person")])
+    store = FabricStore(config.state_root / "fabric.sqlite3")
+    store.append([draft("party", counterpart="원래 이름", tags=["원래 이름"])])
+    context.rename("원래 이름", "새 이름")
+    client = TestClient(create_app(config), base_url="http://127.0.0.1")
+    row = client.get("/api/threads").json()[0]
+    assert row["counterpart"] == "새 이름" and row["tags"] == ["새 이름"]
+    assert store.entries(ThreadQuery())[0].counterpart == "원래 이름"

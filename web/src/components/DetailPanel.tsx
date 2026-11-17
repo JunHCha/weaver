@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import type { SourceView, Tag, Thread } from "../lib/api";
 import {
   actorLabel,
+  fieldText,
   mdhm,
   fieldLabel,
   kindClass,
@@ -12,11 +13,19 @@ import {
   incomingRefLabels,
   relations,
 } from "../lib/presentation";
+import {
+  currentThread,
+  isHistory,
+  stateTag,
+  threadHistory,
+  valueChanges,
+} from "../lib/history";
 import { Icon, KindWord } from "./Common";
 export function DetailPanel({
   thread: t,
   threads,
   sources,
+  tags,
   onClose,
   onPick,
   onSaved,
@@ -38,7 +47,12 @@ export function DetailPanel({
   if (!t)
     return <aside className="panel" id="panel" aria-label="Thread 상세" />;
   const relation = relations(threads),
-    same = threads.filter((x) => x.source_id === t.source_id),
+    same = threads.filter(
+      (x) =>
+        x.source_id === t.source_id &&
+        !isHistory(x) &&
+        !relation.retracted.has(x.thread_id),
+    ),
     source = sources.find((s) => s.id === t.source_id);
   const copy = async (value: string) => {
     try {
@@ -86,6 +100,7 @@ export function DetailPanel({
     ],
     ["seq", t.seq],
     ["유형", t.kind],
+    ["상대", t.counterpart || "상대 없음"],
     ["발생 시각", t.occurred_at],
     [
       "기록 시각",
@@ -119,10 +134,33 @@ export function DetailPanel({
     ],
   ];
   if (t.correction) rows.push(["태그 정정", JSON.stringify(t.correction)]);
+  const history = threadHistory(t, threads);
+  const changes = valueChanges(
+    threads.filter((row) => row.tags.includes(stateTag(t, tags) || "")),
+    threads,
+    tags,
+  );
+  const effective = currentThread(t, threads, tags);
+  const historyRows = [
+    ...(JSON.stringify(effective.value) !== JSON.stringify(t.value)
+      ? [{ row: t, label: `원래 값 · ${fieldText(t)?.join(" ") || "없음"}` }]
+      : []),
+    ...history.map((row) => ({
+      row,
+      label: null as string | null,
+    })),
+    ...changes
+      .filter(({ thread }) => thread.thread_id !== t.thread_id)
+      .map(({ thread, label }) => ({ row: thread, label })),
+  ].sort(
+    (a, b) =>
+      Date.parse(a.row.recorded_at) - Date.parse(b.row.recorded_at) ||
+      a.row.seq - b.row.seq,
+  );
   const outbound = refs.filter((key) => t[key]),
     inbound = threads.flatMap((from) =>
       refs
-        .filter((key) => from[key] === t.thread_id)
+        .filter((key) => !isHistory(from) && from[key] === t.thread_id)
         .map((key) => ({ from, key })),
     );
   return (
@@ -162,44 +200,52 @@ export function DetailPanel({
           ))}
         </dl>
         <div className="sec tag-history">
-          <h3>태그 변경 이력</h3>
-          {threads.filter((row) => row.correction?.target === t.thread_id)
-            .length ? (
-            <ul aria-label="태그 변경 이력">
-              {threads
-                .filter((row) => row.correction?.target === t.thread_id)
-                .map((row) => (
-                  <li key={row.thread_id}>
-                    <time dateTime={row.recorded_at}>
-                      {mdhm(row.recorded_at)}
-                    </time>
-                    <span>
-                      {row.correction?.add.map((name) => (
-                        <span className="tag-added" key={name}>
-                          +{name}{" "}
-                        </span>
+          <h3>이력</h3>
+          {history.length > 0 ||
+          changes.length > 0 ||
+          JSON.stringify(effective.value) !== JSON.stringify(t.value) ? (
+            <ul aria-label="이력">
+              {historyRows.map(({ row, label }) => (
+                <li key={row.thread_id}>
+                  <time dateTime={row.recorded_at}>
+                    {mdhm(row.recorded_at)}
+                  </time>
+                  <span>
+                    {label ||
+                      (row.correction ? (
+                        <>
+                          {row.correction.add.map((name) => (
+                            <span className="tag-added" key={name}>
+                              +{name}{" "}
+                            </span>
+                          ))}
+                          {row.correction.remove.map((name) => (
+                            <span className="mut" key={name}>
+                              −{name}{" "}
+                            </span>
+                          ))}
+                        </>
+                      ) : (
+                        row.content || row.kind
                       ))}
-                      {row.correction?.remove.map((name) => (
-                        <span className="mut" key={name}>
-                          −{name}{" "}
-                        </span>
-                      ))}
-                    </span>
-                    <span className="mut">
-                      {actorLabel[row.actor]}
-                      {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
-                    </span>
-                  </li>
-                ))}
+                  </span>
+                  <span className="mut">
+                    {actorLabel[row.actor]}
+                    {relation.retracted.has(row.thread_id) ? " · 철회됨" : ""}
+                  </span>
+                </li>
+              ))}
             </ul>
           ) : (
-            <span className="mut">태그 변경 이력이 없습니다</span>
+            <span className="mut">이력이 없습니다</span>
           )}
         </div>
         <div className="sec">
           <h3>값</h3>
           <pre className="json">
-            {t.value === null ? "—" : JSON.stringify(t.value, null, 2)}
+            {effective.value === null
+              ? "—"
+              : JSON.stringify(effective.value, null, 2)}
           </pre>
         </div>
         <div className="sec">

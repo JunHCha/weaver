@@ -4,6 +4,7 @@ export interface Fact {
   kind: string;
   tags: string[];
   source_id: string;
+  counterpart?: string | null;
 }
 export const tagKinds: Record<string, string> = {
   project: "프로젝트",
@@ -19,6 +20,7 @@ export function groupKeys(
   sourceLabel: (id: string) => string,
   hiddenTags: ReadonlySet<string> = new Set(),
 ): string[] {
+  if (group === "person") return [t.counterpart || "상대 없음"];
   if (tagKinds[group]) {
     const names = t.tags.filter((name) => kinds[name] === group && !hiddenTags.has(name));
     return names.length

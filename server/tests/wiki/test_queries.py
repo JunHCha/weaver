@@ -18,6 +18,7 @@ def add(
     tags=None,
     at=None,
     resolves=None,
+    counterpart="홍길동",
 ):
     now = at or datetime(2026, 11, 10, tzinfo=UTC)
     fabric.append(
@@ -29,6 +30,7 @@ def add(
                 occurred_at=now,
                 recorded_at=now,
                 tags=tags or ["홍길동"],
+                counterpart=counterpart,
                 field=field,
                 value=value,
                 source_id="src_00000000000000000000000000",
@@ -186,3 +188,20 @@ def test_query_pages_do_not_list_executions(tmp_path):
     fabric.append([execution("exe_1", "1", now)])
     assert render_pages(fabric, context, now=now, inactive_days=1) == before
     assert "calendar.register" not in "".join(before.values())
+
+
+def test_contacts_count_counterpart_only_and_resolve_aliases(tmp_path):
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_from_pages(
+        [Page("상대", "person"), Page("언급", "person"), Page("회사", "organization")]
+    )
+    context.add_alias("상대", "별칭")
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    add(fabric, 1, tags=["상대", "언급"], counterpart="상대", at=now)
+    add(fabric, 2, tags=["언급"], counterpart="별칭", at=now)
+    add(fabric, 3, tags=["언급"], counterpart=None, at=now)
+    add(fabric, 4, tags=["언급", "회사"], counterpart="회사", at=now)
+    page = render_pages(fabric, context, now=now)["사람별 연락.md"]
+    assert "상대: 최근 2026-11-10, 7일 2건, 30일 2건" in page
+    assert "언급" not in page and "회사" not in page and "별칭" not in page

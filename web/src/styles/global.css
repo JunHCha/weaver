@@ -1385,3 +1385,70 @@ button:disabled { cursor: default; opacity: .5; }
 .tag-history time { color: var(--muted); }
 .tag-history li > .mut { grid-column: 2; }
 .tag-added { color: var(--c-sch); }
+
+/* History and mention annotations share the existing quiet, light palette. */
+.card.history-item,
+.lrow.history-item {
+  --k: var(--muted) !important;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  background: var(--bg);
+}
+.card.history-item .ctext {
+  font-size: 12px;
+  margin: 4px 0;
+}
+.card.history-item .cfoot {
+  display: none;
+}
+.mention-only {
+  background: var(--bg);
+  color: var(--muted);
+}
+.mention-mark {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.history-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: var(--bg);
+  z-index: 5;
+  cursor: pointer;
+}
+.value-history {
+  font-size: 11px;
+  color: var(--muted);
+  position: relative;
+}
+.value-history summary {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.value-history ul {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  min-width: 320px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  z-index: 8;
+  list-style: none;
+}
+.value-history li {
+  padding: 4px 0;
+}
+
+.history-spine { position: absolute; border-left: 1px solid var(--thread); opacity: .55; pointer-events: none; z-index: 1; }
+.card.history-item::before { background: none; border-left: 3px dashed var(--muted); }
+.lrow.history-item[data-id], .card.mention-only { background: var(--bg); }
+
+.lrow.history-item { height: 28px; font-size: 12px; }

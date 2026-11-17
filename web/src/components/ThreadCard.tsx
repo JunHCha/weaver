@@ -7,6 +7,7 @@ import {
   kindStyle,
   relations,
 } from "../lib/presentation";
+import { currentThread, isHistory } from "../lib/history";
 import { Icon, References, Tags } from "./Common";
 export interface CardProps {
   thread: Thread;
@@ -17,6 +18,7 @@ export interface CardProps {
   neighbor: string | undefined;
   flashing: boolean;
   ghost?: boolean;
+  mention?: boolean;
   style: CSSProperties;
   nodeRef: RefCallback<HTMLElement>;
   onHover: (id: string | null) => void;
@@ -31,13 +33,14 @@ export function ThreadCard({
   neighbor,
   flashing,
   ghost = false,
+  mention = false,
   style,
   nodeRef,
   onHover,
   onPick,
 }: CardProps) {
   const state = relations(threads),
-    field = fieldText(t),
+    field = fieldText(currentThread(t, threads, tags)),
     hollow = kindClass[t.kind] === "hol";
   return (
     <article
@@ -45,6 +48,8 @@ export function ThreadCard({
       className={[
         "card",
         ghost ? "ghost" : "",
+        isHistory(t) || state.retracted.has(t.thread_id) ? "history-item" : "",
+        mention ? "mention-only" : "",
         "k-" + kindClass[t.kind],
         hollow ? "hol" : "",
         state.retracted.has(t.thread_id) ? "retracted" : "",
@@ -74,6 +79,8 @@ export function ThreadCard({
     >
       <div className="ctop">
         <span className="kw">{t.kind}</span>
+        {mention && <span className="mention-mark">언급</span>}
+        {isHistory(t) && <span className="mut">이력</span>}
         {state.isOpen(t) && <span className="op">열림</span>}
         <span className="time">{dateLabel(t.occurred_at)}</span>
       </div>

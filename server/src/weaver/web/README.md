@@ -18,7 +18,7 @@ and the token is still required. There is no cross-origin access allowance.
   repeated edits return 200 with the current target Thread and append nothing.
   Removing a displayed canonical name removes all matching historical spellings.
 - `GET /api/dictionary`: name-sorted entries with `name`, `kind`, `aliases`,
-  `human_edited`, `promoted`, `archived` and `usage_count`. Usage counts active business Threads with
+  `human_edited` and `usage_count`. Usage counts active business Threads with
   effective tags, deduplicating aliases and excluding retraction pairs.
 - `PATCH /api/dictionary`: `{entry: string, name?: string, kind?: kind}`.
   Exactly one of name/kind is required; requests changing both are rejected with
@@ -63,6 +63,29 @@ This attribute is never stored in Fabric and adds no shared schema field.
 Thread `counterpart` is a single canonical person/organization or null and also
 appears in its tags; tag corrections do not change counterpart. The phone's
 strict PipelineItem wire format deliberately omits counterpart entirely.
+
+Fabric's person grouping uses the canonical `counterpart`, with one card in one
+person column and a `상대 없음` column for missing counterparts. Person tag filters
+also match mentions; mention-only matches carry a quiet `언급` label. Hovering or
+selecting a card highlights other cards sharing its counterpart or mentioned
+people. `area` is available in grouping and dictionary editing. Project grouping
+uses `Tag.archived` as its single archive source; `보관 프로젝트 표시` reveals
+archived project columns. Threads with only archived projects remain in
+`프로젝트 없음`, rather than disappearing. Status strings never decide archive
+visibility.
+
+Default card/log rows show facts only and hide retracted originals. `이력 포함`
+reveals compact neutral dashed history beside its target, including retraction
+pairs. Wiki field histories are dots and folded `변경 N` lists only in project/area
+columns. Other card groupings omit the dots; other log groupings collect all
+value changes once above the sections. Value histories never create columns or
+become separate cards/log rows. Opening an annotation preserves user filters. The Thread panel combines its own corrections, retractions and executions
+chronologically in `이력`; a field Thread also shows changes to its own field,
+never unrelated project fields. Each card and detail value belongs to that
+Thread, with effective corrections/retractions; only project/area headers show
+the latest server-projected state. Other group headers do not reuse tag states. The Wiki query page
+`사람별 연락` counts canonical person counterparts only, excluding mentions and
+organization counterparts.
 
 `GET /api/tags` includes `archived` on each tag. Archived projects remain
 readable and editable in the dictionary and in historical Threads. Project

@@ -1,11 +1,14 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import type { Tag, Thread } from "../lib/api";
 import { focusLayout, type Fact, type Lane } from "../lib/fabric";
 import { useCardGeometry, useFlip } from "../hooks/geometry";
+import { mentionOnly, people, valueChanges } from "../lib/history";
 import { Icon } from "./Common";
 import { ThreadCard } from "./ThreadCard";
 import { WeftLayer } from "./WeftLayer";
 export function CardBoard({
+  fieldRows = [],
+  selectedTags = [],
   rows,
   threads,
   tags,
@@ -17,6 +20,8 @@ export function CardBoard({
   onPick,
   onSelect,
 }: {
+  fieldRows?: Thread[];
+  selectedTags?: string[];
   rows: Thread[];
   threads: Thread[];
   tags: Tag[];
@@ -54,11 +59,20 @@ export function CardBoard({
     [rows, lanes, groups, focus, collapsed, group, measured],
   );
   const exiting = useFlip(nodes, layout.cards, focus);
-  const highlight = hover || (!focus ? selected : null),
+  const highlight = hover || selected,
     index = rows.findIndex((t) => t.thread_id === highlight);
   const keep = new Set(
     rows.slice(Math.max(0, index - 1), index + 2).map((t) => t.thread_id),
   );
+  const chosen = rows.find((t) => t.thread_id === highlight);
+  const relatedPeople = chosen ? people(chosen, tags) : new Set<string>();
+  if (relatedPeople.size)
+    rows.forEach((t) => {
+      if ([...people(t, tags)].some((name) => relatedPeople.has(name)))
+        keep.add(t.thread_id);
+    });
+  const changes = valueChanges(fieldRows, threads, tags);
+  const boardHeight = layout.height + changes.length * 10;
   return (
     <div className="scroller" id="scr" ref={container}>
       <div className="cwrap" id="cw" style={{ width: layout.width }}>
@@ -109,7 +123,7 @@ export function CardBoard({
         <div
           className={"cgrid" + (highlight ? " dimming" : "")}
           id="cg"
-          style={{ height: layout.height }}
+          style={{ height: boardHeight }}
         >
           {group !== "none" &&
             layout.lanes.map((l) => (
@@ -120,7 +134,7 @@ export function CardBoard({
                   left: l.x,
                   width: l.width,
                   top: 0,
-                  height: layout.height,
+                  height: boardHeight,
                 }}
               >
                 <span>
@@ -134,6 +148,7 @@ export function CardBoard({
             return (
               <ThreadCard
                 key={card.key}
+                mention={mentionOnly(t, selectedTags, tags)}
                 thread={t}
                 threads={threads}
                 tags={tags}
@@ -181,6 +196,50 @@ export function CardBoard({
                 onPick={() => {}}
               />
             ) : null;
+          })}
+          {layout.lanes.flatMap((lane, laneIndex) => {
+            if (
+              lane.collapsed &&
+              !fieldRows.some((t) => groups(t).includes(lane.key))
+            )
+              return [];
+            const cards = layout.cards.filter((c) => c.lane === laneIndex);
+            return changes
+              .filter(({ thread }) => groups(thread).includes(lane.key))
+              .map(({ thread, label }, i) => {
+                const next = cards.find(
+                  (card) =>
+                    Date.parse(
+                      rows.find((t) => t.thread_id === card.id)!.occurred_at,
+                    ) >= Date.parse(thread.occurred_at),
+                );
+                const y = next
+                  ? Math.max(0, next.y - 8)
+                  : Math.max(0, ...cards.map((c) => c.y + c.height)) + 12;
+                const dotY = y + i * 10;
+                const anchorY = (next || cards.at(-1))?.y ?? 0;
+                return (
+                  <Fragment key={`${lane.key}:${thread.thread_id}`}>
+                    <span
+                      aria-hidden="true"
+                      className="history-spine"
+                      style={{
+                        left: lane.x - 7,
+                        top: Math.min(anchorY + 18, dotY + 3),
+                        height: Math.abs(dotY + 3 - anchorY - 18),
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="history-dot"
+                      aria-label={label}
+                      title={label}
+                      style={{ left: lane.x - 10, top: dotY }}
+                      onClick={() => onSelect(thread.thread_id)}
+                    />
+                  </Fragment>
+                );
+              });
           })}
           <WeftLayer
             layout={layout}
