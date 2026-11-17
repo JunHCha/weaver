@@ -53,6 +53,9 @@ class Ledger:
                 "(day TEXT PRIMARY KEY, calls INTEGER NOT NULL)"
             )
 
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS cli_wiki_pauses (day TEXT PRIMARY KEY)"
+            )
             if not has_timeouts:
                 # Preserve pre-upgrade CLI timeouts, attributed to the local
                 # start day just like the subscription call cap.
@@ -135,6 +138,25 @@ class Ledger:
             logger.warning("LLM monthly budget warning threshold reached")
         return call_id
 
+    def wiki_available(self, day: str, limit: int) -> bool:
+        """Check before reservations; persist warning deduplication across restarts."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT calls FROM cli_timeouts WHERE day=?", (day,)
+            ).fetchone()
+            if not row or int(row[0]) * 2 < limit:
+                return True
+            first = (
+                db.execute(
+                    "INSERT OR IGNORE INTO cli_wiki_pauses VALUES (?)", (day,)
+                ).rowcount
+                == 1
+            )
+        if first:
+            logger.warning("Wiki CLI paused: daily timeout allowance reached")
+        return False
+
     def take_daily_call(self, day: str, limit: int, *, wiki: bool = False) -> bool:
         """Atomically count one subscription CLI call; False once at the cap."""
         with self._connect() as db:
@@ -144,7 +166,6 @@ class Ledger:
                     "SELECT calls FROM cli_timeouts WHERE day=?", (day,)
                 ).fetchone()
                 if timeouts and int(timeouts[0]) * 2 >= limit:
-                    logger.warning("Wiki CLI paused: daily timeout allowance reached")
                     raise WikiTimeoutBudgetExceeded()
             row = db.execute(
                 "SELECT calls FROM cli_daily WHERE day=?", (day,)

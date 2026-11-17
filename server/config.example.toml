@@ -39,8 +39,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Daily call cap protecting the subscription allowance (integer >= 1):
 # max_cli_calls_per_day = 30
 # Both CLI backends: finite seconds > 0 and <= 900 (API keeps its 120s deadline).
-cli_timeout_seconds = 300
-wiki_cli_timeout_seconds = 600
+# cli_timeout_seconds = 300
+# wiki_cli_timeout_seconds = 600
 # The Wiki value applies to all wiki.* calls, including compile_batch/digest.
 # Consecutive timeouts double source/Wiki retry intervals, capped at one hour.
 # Success resets the interval; Wiki backoff is process-local, source retries persist.

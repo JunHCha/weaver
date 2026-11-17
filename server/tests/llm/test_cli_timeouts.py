@@ -258,3 +258,87 @@ def test_existing_timeout_ledger_migrates_and_finish_is_idempotent(tmp_path):
     with pytest.raises(WikiTimeoutBudgetExceeded):
         reopened.take_daily_call(day, 2, wiki=True)
     assert reopened.take_daily_call(day, 3, wiki=True)
+
+
+@pytest.mark.parametrize("reason", ["timeout", "stop"])
+def test_codex_real_subprocess_timeout_or_signal_removes_process_group_and_temp_dir(
+    tmp_path, reason
+):
+    import os
+    import signal
+    import threading
+    import time
+
+    from weaver.llm.cli import cancel_cli_on_stop
+    from weaver.llm.errors import LlmInterrupted
+    from weaver.runtime.loop import stop_on_signals
+
+    pidfile = tmp_path / "pids.json"
+    binary = tmp_path / "fake-tree"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(pidfile)!r}, 'w').write(json.dumps([os.getpid(), child.pid]))\n"
+        "print(json.dumps({'type': 'turn.started'}), flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    binary.chmod(0o700)
+    client = create_client(
+        LlmConfig(
+            "codex_cli",
+            codex_path=binary,
+            cli_timeout_seconds=0.5 if reason == "timeout" else 900,
+        ),
+        state_root=tmp_path,
+    )
+    stop = threading.Event()
+
+    def send_stop():
+        for _ in range(300):
+            if pidfile.exists() and pidfile.stat().st_size:
+                break
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    sender = threading.Thread(target=send_stop) if reason == "stop" else None
+    with stop_on_signals(stop), cancel_cli_on_stop(stop):
+        if sender is not None:
+            sender.start()
+        with pytest.raises(LlmTimeout if reason == "timeout" else LlmInterrupted):
+            client.generate_text("loom.summary", "s", "u")
+        if sender is not None:
+            sender.join(timeout=5)
+            assert not sender.is_alive()
+    pids = json.loads(pidfile.read_text())
+    for pid in pids:
+        for _ in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail(f"fake process survived: {pid}")
+    assert list((tmp_path / "codex-cli-workdir").iterdir()) == []
+    [record] = Ledger(tmp_path / "llm.sqlite3").records()
+    assert record["status"] == ("timeout" if reason == "timeout" else "interrupted")
+    assert stop.is_set() == (reason == "stop")
+
+
+def test_already_stopped_runner_does_not_spawn(tmp_path):
+    import threading
+
+    from weaver.llm.cli import subprocess_runner
+
+    stop = threading.Event()
+    stop.set()
+    result = subprocess_runner(
+        ["/nonexistent/must-not-spawn"],
+        stdin=b"",
+        env={},
+        cwd=tmp_path,
+        timeout=900,
+        stop_event=stop,
+    )
+    assert result.stopped and not result.timed_out

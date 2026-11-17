@@ -4,8 +4,9 @@ Every tick rescans Courier folders and the archive, so files that arrived
 while the process was stopped or the Mac was asleep are recovered without
 relying on file-system notifications. A wall-clock gap much longer than the
 scheduled wait is reported as a resume. SIGTERM/SIGINT are checked before each
-LLM/journal stage: a stage already running finishes, the rest is left for the
-next start, and nothing is recorded as failed.
+LLM/journal stage: an active CLI is cancelled with its process group; other
+stages already running finish. Remaining work is left for the next start,
+and interrupted Sources are not recorded as failed.
 
 Failure classes (per Source):
 - ValueError (invalid archive row, unsupported input): ``failed`` at once.
@@ -38,6 +39,7 @@ from types import FrameType
 from typing import Literal, Protocol
 
 from weaver.courier.atomic import write_bytes_atomic
+from weaver.llm.cli import cancel_cli_on_stop
 from weaver.llm.errors import (
     AuthenticationError,
     BudgetExceeded,
@@ -153,6 +155,7 @@ class MaintenanceTask:
     name: str
     interval_seconds: float
     run: Callable[[], object]
+    allowed: Callable[[], bool] | None = None
 
 
 @contextlib.contextmanager
@@ -259,6 +262,10 @@ class Runtime[S: HasSourceId]:
     # ---- one pass ----------------------------------------------------------------
 
     def _tick(self, stop: threading.Event) -> float:
+        with cancel_cli_on_stop(stop):
+            return self._tick_running(stop)
+
+    def _tick_running(self, stop: threading.Event) -> float:
         was_available = self.gate.available
         try:
             self._recheck_llm()
@@ -268,6 +275,8 @@ class Runtime[S: HasSourceId]:
             if not stop.is_set():
                 self.publisher.publish()
                 self._run_maintenance()
+        except Interrupted:
+            return self.interval
         except Exception as error:
             if was_available and not self.gate.available:
                 self._last_llm_check = self.clock()
@@ -408,7 +417,7 @@ class Runtime[S: HasSourceId]:
             )
             return
         delay = min(
-            self.interval * 2.0 ** min(timeout_failures or attempts, 20),
+            self.interval * 2.0 ** min(max(timeout_failures, attempts), 20),
             MAX_RETRY_BACKOFF_SECONDS,
         )
         self.ledger.record(
@@ -427,6 +436,8 @@ class Runtime[S: HasSourceId]:
         for task in self.maintenance:
             if task.name == "wiki" and not self.gate.available:
                 continue
+            if task.allowed is not None and not task.allowed():
+                continue
             if task.name == "wiki" and now < self._wiki_timeout_until:
                 continue
             last = self._last_run.get(task.name)
@@ -435,6 +446,8 @@ class Runtime[S: HasSourceId]:
             self._last_run[task.name] = now
             try:
                 task.run()
+            except Interrupted:
+                return
             except LlmTimeout:
                 if task.name == "wiki":
                     self._wiki_timeout_failures += 1
@@ -448,20 +461,15 @@ class Runtime[S: HasSourceId]:
                 else:
                     logger.warning("maintenance timeout")
             except WikiTimeoutBudgetExceeded:
-                logger.warning("Wiki CLI paused: daily timeout allowance reached")
+                pass  # The CLI guard logs once per day, before reserving a call.
             except (*_LLM_OFF, RateLimited) as error:
                 if task.name == "wiki":
-                    self._wiki_timeout_failures = 0
-                    self._wiki_timeout_until = 0.0
                     if isinstance(error, RateLimited):
                         self._wiki_rate_failures += 1
                     self.gate.disable(error.code)
                     self._last_llm_check = self.clock()
                 logger.warning("maintenance failed: %s %s", task.name, error.code)
             except Exception as error:
-                if task.name == "wiki":
-                    self._wiki_timeout_failures = 0
-                    self._wiki_timeout_until = 0.0
                 reason = " validation_failed" if isinstance(error, ValueError) else ""
                 logger.error(
                     "maintenance failed: %s %s%s",

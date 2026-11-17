@@ -35,6 +35,7 @@ from .errors import (
     AuthenticationError,
     InvalidJson,
     LlmError,
+    LlmInterrupted,
     LlmTimeout,
     MissingOutput,
     SchemaMismatch,
@@ -265,6 +266,7 @@ class CodexCliClient(ClaudeCliClient):
             ):
                 raise UsageLimited()
             record["cli_day"] = day
+            record["daily_day"] = day
             record["attempts"] = 1
             attempt: dict[str, Any] = {"status": "pending", "usage": None}
             record["attempt_records"].append(attempt)
@@ -276,6 +278,9 @@ class CodexCliClient(ClaudeCliClient):
                     cwd=cwd,
                     timeout=remaining,
                 )
+                if res.stopped:
+                    attempt["status"] = "interrupted"
+                    raise LlmInterrupted()
                 if res.timed_out:
                     record["timeout_diagnostics"] = _timeout_diagnostics(
                         res.stdout,

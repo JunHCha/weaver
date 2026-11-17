@@ -262,3 +262,19 @@ def test_cached_status_uses_home_and_ttl(setup):
     assert len(calls) == 2
     codex_status(config, {"HOME": "/cache-a"}, runner=runner, now=61)
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize("error", [RateLimited, UsageLimited])
+def test_codex_provider_limits_refund_daily_call(setup, error):
+    config, ledger, state = setup
+    runner = FakeRunner(
+        RunResult(
+            1, b"", b"too many requests" if error is RateLimited else b"quota exceeded"
+        )
+    )
+    client = client_for(setup, runner, max_cli_calls_per_day=1)
+    with pytest.raises(error):
+        client.generate_text("loom.summary", "s", "u")
+    runner.result = RunResult(0, b'{"type":"turn.completed"}', b"")
+    assert client.generate_text("loom.summary", "s", "u") == runner.output
+    assert len(runner.calls) == 2

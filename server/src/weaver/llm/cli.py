@@ -17,7 +17,8 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,11 +34,13 @@ from .errors import (
     AuthenticationError,
     InvalidJson,
     LlmError,
+    LlmInterrupted,
     LlmTimeout,
     MissingOutput,
     RateLimited,
     SchemaMismatch,
     UsageLimited,
+    WikiTimeoutBudgetExceeded,
 )
 from .ledger import Ledger
 from .types import TokenUsage
@@ -58,6 +61,7 @@ class RunResult:
     stderr: bytes
     timed_out: bool = False
     overflow: bool = False
+    stopped: bool = False
 
 
 class Runner(Protocol):
@@ -105,11 +109,27 @@ def _drain(
         return
 
 
+_stop_event: ContextVar[threading.Event | None] = ContextVar(
+    "cli_stop_event", default=None
+)
+
+
+@contextlib.contextmanager
+def cancel_cli_on_stop(stop: threading.Event) -> Iterator[None]:
+    """Bind the daemon's signal event without changing injected runner contracts."""
+    token = _stop_event.set(stop)
+    try:
+        yield
+    finally:
+        _stop_event.reset(token)
+
+
 def _kill_group(proc: "subprocess.Popen[bytes]") -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
-        proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
 
 
 def subprocess_runner(
@@ -119,7 +139,11 @@ def subprocess_runner(
     env: Mapping[str, str],
     cwd: Path,
     timeout: float,
+    stop_event: threading.Event | None = None,
 ) -> RunResult:
+    stop = stop_event if stop_event is not None else _stop_event.get()
+    if stop is not None and stop.is_set():
+        return RunResult(-1, b"", b"", stopped=True)
     proc = subprocess.Popen(  # noqa: S603 - argv is built here, no shell
         list(argv),
         stdin=subprocess.PIPE,
@@ -153,24 +177,34 @@ def subprocess_runner(
         thread.start()
     deadline = time.monotonic() + timeout
     timed_out = False
-    while proc.poll() is None:
-        if overflow.is_set():
-            break
-        if time.monotonic() >= deadline:
-            timed_out = True
-            break
-        time.sleep(0.02)
-    if proc.poll() is None or timed_out or overflow.is_set():
+    stopped = False
+    try:
+        while proc.poll() is None:
+            if stop is not None and stop.is_set():
+                stopped = True
+                break
+            if overflow.is_set():
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(0.02)
+    finally:
+        # Also clean descendants after a leader exits, and on KeyboardInterrupt.
         _kill_group(proc)
-    proc.wait()
-    # Grandchildren holding the pipes were killed with the group.
-    for thread in readers:
-        thread.join(timeout=2)
-    for stream in (proc.stdin, proc.stdout, proc.stderr):
-        with contextlib.suppress(OSError, ValueError):
-            stream.close()
+        proc.wait()
+        for thread in (*readers, feeder):
+            thread.join(timeout=2)
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
     return RunResult(
-        proc.returncode, b"".join(out), b"".join(err), timed_out, overflow.is_set()
+        proc.returncode,
+        b"".join(out),
+        b"".join(err),
+        timed_out,
+        overflow.is_set(),
+        stopped,
     )
 
 
@@ -271,6 +305,10 @@ class ClaudeCliClient:
         self.deadline_seconds = deadline_seconds
         self.workdir = state_root / self.workdir_name
 
+    def wiki_available(self) -> bool:
+        day = datetime.now().astimezone().date().isoformat()
+        return self.ledger.wiki_available(day, self.config.max_cli_calls_per_day)
+
     def _deadline(self, task: str) -> float:
         if self.deadline_seconds is not None:
             return self.deadline_seconds
@@ -318,6 +356,11 @@ class ClaudeCliClient:
             or len(task) > 80
         ):
             raise ValueError("task must be a short machine identifier")
+        if task.startswith("wiki.") and not self.wiki_available():
+            raise WikiTimeoutBudgetExceeded()
+        stop = _stop_event.get()
+        if stop is not None and stop.is_set():
+            raise LlmInterrupted()
         started = time.monotonic()
         record: dict[str, Any] = {
             "task": task,
@@ -339,6 +382,9 @@ class ClaudeCliClient:
             result = self._run(record, started, system, user, schema)
             record["status"] = "succeeded"
             return result
+        except LlmInterrupted:
+            record["status"] = "interrupted"
+            raise
         except LlmError as exc:
             if isinstance(exc, (RateLimited, UsageLimited)) and "daily_day" in record:
                 self.ledger.refund_daily_call(record.pop("daily_day"))
@@ -391,6 +437,9 @@ class ClaudeCliClient:
         except OSError:
             attempt["status"] = LlmError.code
             raise LlmError() from None
+        if res.stopped:
+            attempt["status"] = "interrupted"
+            raise LlmInterrupted()
         if res.timed_out:
             attempt["status"] = LlmTimeout.code
             raise LlmTimeout()
