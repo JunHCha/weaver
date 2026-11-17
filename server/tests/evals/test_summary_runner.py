@@ -31,3 +31,23 @@ def test_summary_replay_reports_mismatch(tmp_path: Path) -> None:
     row = evaluate_summary(case, ReplayClient(case["responses"]))
     assert not row["metrics"]["draft.exact"]
     assert row["metrics"]["threads.exact"]
+
+
+def test_summary_eval_passes_case_source_time_to_approval():
+    from weaver.evals.client import ReplayClient
+    from weaver.evals.summary_runner import SUMMARY_CASES, evaluate_summary
+
+    class RecordingClient(ReplayClient):
+        approval = None
+
+        def generate_json(self, task, system, user, schema):
+            if task == "loom.approve":
+                self.approval = json.loads(user)
+            return super().generate_json(task, system, user, schema)
+
+    case = json.loads(SUMMARY_CASES.read_text())["cases"][0]
+    case["source_occurred_at"] = "2026-11-11T16:30:00Z"
+    client = RecordingClient(case["responses"])
+    evaluate_summary(case, client)
+    assert client.approval["source_occurred_at"] == "2026-11-12T01:30:00+09:00"
+    assert client.approval["source_time_is_fallback"] is False

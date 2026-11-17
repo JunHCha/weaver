@@ -222,3 +222,42 @@ journals an empty result, acknowledges the unchanged Wiki text, and emits a
 content-free warning; later ticks/restarts reuse the empty result without a new
 model call. Other edits remain independent. Re-extraction reports contract
 errors per source. Count-only untagged-name warnings use emitted tags alone.
+
+## Source time in approval and replay
+
+Runtime drafts persist `Source.occurred_at or Source.captured_at` and whether the
+reference is a fallback separately in `summary.sqlite3.source_times`, keyed by
+package ID; phone contracts stay stable. Approval and re-extraction pass that
+immutable `source_occurred_at`, `source_time_is_fallback`, configured `timezone`
+and its local `today` to the shared prompt. Explicit dates and date headers in
+the text take precedence over this reference when resolving relative dates.
+`recorded_at` and summary creation remain processing times.
+
+Legacy packages recover Source metadata from Spinner's `results.source`; if none
+exists, the earliest saved package stage is the stable fallback, with a
+content-free warning. A package with neither metadata nor stage timestamps is
+refused instead of using today's clock. Re-extraction marks fallback references
+as `출처 시각 추정` in its preview and `source_time_estimated` in JSON.
+
+For a known occurrence reference, the server allows facts up to one day after the
+source start (long calls), bounded by server now. Unsupported guesses later than
+that or more than 366 days before the source are replaced by the source time,
+clamped to server now, with content-free warnings. Invalid or past deadlines and
+schedules before the source lose both field and value (and schedule update links)
+with content-free warnings. Date-only deadlines compare local dates; timed
+values without a zone use the configured timezone. A same-day timed deadline
+before the source is dropped; a date-only deadline for that day remains valid.
+
+Capture-only and stage-time references may describe imported history, such as
+Kakao exports collected years after the conversation. For these fallback
+references, the server preserves historical occurrence times, past deadlines and
+past schedules, logging a content-free warning instead of applying the 366-day
+or past-value guards. These dates rely on the model reading explicit transcript
+dates correctly; the capture time cannot validate their historical accuracy.
+Rows saved before provenance was recorded are conservatively treated as fallback
+references. Invalid value types still lose their field/value, and every occurrence
+after server now is clamped even when the phone's reference clock is ahead.
+
+Re-extraction run `source-time-v5` supersedes `para-counterpart-v4`, so saved plans
+must be recreated and completed older runs can be deliberately planned again.
+Text preview includes occurrence and recording times alongside field values.

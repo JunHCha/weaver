@@ -73,9 +73,9 @@ def prepare(context, llm):
         edited_body=None,
         feedback=None,
     )
-    return ApprovalExtractor(llm, context, object(), contact_name="김철수").prepare(
-        package, package.draft_body, verdict, now=NOW
-    )
+    return ApprovalExtractor(
+        llm, context, object(), contact_name="김철수", source_occurred_at=NOW
+    ).prepare(package, package.draft_body, verdict, now=NOW)
 
 
 def test_existing_area_curated_project_and_canonical_counterpart(tmp_path, caplog):
