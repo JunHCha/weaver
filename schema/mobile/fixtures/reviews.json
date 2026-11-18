@@ -1,0 +1,344 @@
+{
+  "contract_version": 1,
+  "group": "reviews",
+  "description": "Open review packages, If-Match verdicts, and the operation lifecycle.",
+  "cases": [
+    {
+      "name": "list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/reviews",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "package_id": "pkg_a",
+              "revision": 1,
+              "source_id": "src_00000000000000000000000001",
+              "title": "합성 검토",
+              "source_type": "share_text",
+              "stage": "검토",
+              "etag": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\""
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "get_revision",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "etag": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "source_id": "src_00000000000000000000000001",
+          "revision": 1,
+          "title": "합성 검토",
+          "source_text": "합성 본문",
+          "source_type": "share_text",
+          "draft_body": "초안",
+          "questions": [],
+          "stage": "검토",
+          "stage_times": {
+            "검토": "2026-11-07T06:00:00Z"
+          }
+        }
+      }
+    },
+    {
+      "name": "verdict_without_if_match",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "revision": 1,
+          "action": "approve",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 428,
+        "body": {
+          "code": "if_match_required",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "verdict_wrong_etag",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "if-match": "\"nope\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "revision": 1,
+          "action": "approve",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 412,
+        "body": {
+          "code": "etag_mismatch",
+          "retryable": false,
+          "current_revision": 1
+        }
+      }
+    },
+    {
+      "name": "verdict_accepted",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "if-match": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "revision": 1,
+          "action": "approve",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "location": "/mobile/v1/operations/op_00000000000000000000000000000001"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "verdict",
+          "target_id": "pkg_a",
+          "target_revision": 1,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      },
+      "note": "202 = durably accepted, not applied. Poll the operation."
+    },
+    {
+      "name": "verdict_resent",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "if-match": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "revision": 1,
+          "action": "approve",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "location": "/mobile/v1/operations/op_00000000000000000000000000000001"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "verdict",
+          "target_id": "pkg_a",
+          "target_revision": 1,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      },
+      "note": "Same key and content returns the same operation."
+    },
+    {
+      "name": "verdict_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "if-match": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_a",
+          "revision": 1,
+          "action": "reject",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "verdict_conflict",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "operation_queued",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/operations/op_00000000000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "verdict",
+          "target_id": "pkg_a",
+          "target_revision": 1,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "operation_waiting",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/operations/op_00000000000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "verdict",
+          "target_id": "pkg_a",
+          "target_revision": 1,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "code": "apply_failed"
+        }
+      },
+      "note": "state stays queued while code says why it waits (apply_waiting, apply_failed, ...)."
+    },
+    {
+      "name": "operation_applied",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/operations/op_00000000000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "verdict",
+          "target_id": "pkg_a",
+          "target_revision": 1,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "verdict_stale_revision",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/reviews/pkg_b/revisions/1/verdict",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "if-match": "\"a74b6b49957d3d5a70cfeabc2494c5ac502ebac65efe5beb5b011a39217cd147\""
+        },
+        "body": {
+          "schema_version": 2,
+          "package_id": "pkg_b",
+          "revision": 1,
+          "action": "approve",
+          "answers": [],
+          "edited_body": null,
+          "feedback": null
+        }
+      },
+      "response": {
+        "status": 412,
+        "body": {
+          "code": "stale_revision",
+          "retryable": false,
+          "current_revision": 2
+        }
+      },
+      "note": "Keep the draft; fetch the new revision and review again."
+    },
+    {
+      "name": "package_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/reviews/pkg_a/revisions/9",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "package_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "operation_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/operations/op_missing",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "operation_not_found",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

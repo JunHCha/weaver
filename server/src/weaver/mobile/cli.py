@@ -31,12 +31,12 @@ def _settings(config: str | None, *, need_bind: bool = True) -> "ServerConfig":
 
 
 def build_whois(settings: "ServerConfig") -> "Whois":
-    from weaver.mobile.whois import CliWhois, LocalApiWhois
+    from weaver.mobile.whois import CachedWhois, CliWhois, LocalApiWhois
 
     mobile = settings.mobile
     if mobile.whois == "cli":
-        return CliWhois(mobile.tailscale_cli)
-    return LocalApiWhois(mobile.whois_socket)
+        return CachedWhois(CliWhois(mobile.tailscale_cli))
+    return CachedWhois(LocalApiWhois(mobile.whois_socket))
 
 
 @mobile_cli.command()
@@ -102,11 +102,20 @@ def pair(
         bool, typer.Option("--executor", help="Make this the one Action executor")
     ] = False,
     qr: Annotated[bool, typer.Option("--qr/--no-qr")] = True,
+    print_json: Annotated[
+        bool,
+        typer.Option(
+            "--print-json",
+            help="Also print the pairing payload (it contains the token) as text",
+        ),
+    ] = False,
 ) -> None:
     """Issue a token for one phone and print the pairing QR (shown once)."""
     from weaver.mobile.store import DeviceError, MobileStore
     from weaver.mobile.tls import ensure_certificates
 
+    if not qr and not print_json:
+        raise typer.BadParameter("--no-qr needs --print-json (the token is shown once)")
     settings = _settings(config)
     mobile = settings.mobile
     assert mobile.bind is not None
@@ -146,12 +155,13 @@ def pair(
         separators=(",", ":"),
     )
     typer.echo(f"device: {device.device_id} node: {node_id}")
-    typer.echo("The token below is shown once. Scan it with the Weaver app.")
+    typer.echo("The token is shown once. Scan the QR code with the Weaver app.")
     if qr:
         import segno
 
         segno.make(payload, error="l").terminal(compact=True)
-    typer.echo(payload)
+    if print_json:
+        typer.echo(payload)
 
 
 @mobile_cli.command()

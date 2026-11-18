@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from weaver.config import ServerConfig
 from weaver.context import EntryAlreadyExists
+from weaver.fabric import FabricStore, ThreadQuery
 from weaver.web.editing import (
     AliasEdit,
     BatchTagEdit,
@@ -140,13 +141,26 @@ class EditService:
                     new_id=new_id,
                     now=datetime.fromisoformat(operation.created_at),
                 )
-                corrections = result["corrections"]
-                assert isinstance(corrections, list)
+                # A replay (the first answer was lost) finds its own rows already
+                # written; report them by their deterministic IDs, not as skipped.
+                existing = {
+                    t.thread_id
+                    for t in FabricStore.from_config(self.config).entries(
+                        ThreadQuery(include_executions=True)
+                    )
+                }
+                targets = list(dict.fromkeys(plain.thread_ids))
+                made = [new_id(t) for t in targets if new_id(t) in existing]
+                skipped = [
+                    s
+                    for s in result["skipped_threads"]  # type: ignore[attr-defined]
+                    if new_id(s["thread_id"]) not in existing
+                ]
                 return {
-                    "correction_ids": [c.thread_id for c in corrections],
-                    "changed": result["changed"],
-                    "skipped": result["skipped"],
-                    "skipped_threads": result["skipped_threads"],
+                    "correction_ids": made,
+                    "changed": len(made),
+                    "skipped": len(skipped),
+                    "skipped_threads": skipped,
                 }
 
             return self._finish(operation, run)

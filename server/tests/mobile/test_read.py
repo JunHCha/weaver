@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from weaver.context import ContextDictionary
+from weaver.mobile.api import utc_z
 from weaver.mobile.read import ReadModel
 from weaver.web import create_app
 from weaver.wiki.store import WikiStore
@@ -165,7 +166,7 @@ def test_fact_history_split_matches_the_web(tmp_path):
 def test_open_requests_follow_resolve_and_retraction_rules(tmp_path):
     h = Harness(tmp_path)
     seed(h)
-    rows = {t.thread_id: t for t in ReadModel(h.config).threads(0, 100).items}
+    rows = {t.thread_id: t for t in ReadModel(h.config).threads(None, 100).items}
     assert rows["t1"].open is True and rows["t2"].open is False  # d1 resolves t2
     h.fabric.append(
         [
@@ -179,7 +180,7 @@ def test_open_requests_follow_resolve_and_retraction_rules(tmp_path):
             )
         ]
     )
-    rows = {t.thread_id: t for t in ReadModel(h.config).threads(0, 100).items}
+    rows = {t.thread_id: t for t in ReadModel(h.config).threads(None, 100).items}
     assert rows["t2"].open is True  # the retracted resolve no longer closes it
     assert rows["t3"].open is False  # not a request
 
@@ -190,17 +191,16 @@ def test_tag_states_and_dictionary_match_the_web(tmp_path):
     headers = h.pair("read")
     web = web_client(h)
     assert (
-        h.client.get(f"{READ}/tags", headers=headers).json()
+        h.client.get(f"{READ}/tags", headers=headers).json()["items"]
         == web.get("/api/tags").json()
     )
-    assert (
-        h.client.get(f"{READ}/states", headers=headers).json()
-        == web.get("/api/states").json()
+    assert h.client.get(f"{READ}/states", headers=headers).json() == utc_z(
+        web.get("/api/states").json()
     )
     one = h.client.get(
         f"{READ}/states", params={"tag": "네트워크"}, headers=headers
     ).json()
-    assert one == web.get("/api/states", params={"tag": "네트워크"}).json()
+    assert one == utc_z(web.get("/api/states", params={"tag": "네트워크"}).json())
     assert one["네트워크"]["status"] == "진행 중"
 
 
@@ -208,21 +208,22 @@ def test_threads_are_paged_by_seq_with_a_resumable_cursor(tmp_path):
     h = Harness(tmp_path)
     seed(h)
     headers = h.pair("read")
-    seen, cursor = [], 0
+    seen, cursor = [], None
     for _ in range(10):
-        page = h.client.get(
-            f"{READ}/threads", params={"after_seq": cursor, "limit": 3}, headers=headers
-        ).json()
+        params = {"limit": 3} | ({"cursor": cursor} if cursor else {})
+        page = h.client.get(f"{READ}/threads", params=params, headers=headers).json()
         seen += [t["seq"] for t in page["items"]]
         cursor = page["next_cursor"]
-        if not page["has_more"]:
+        if cursor is None:  # the last page
             break
     assert seen == sorted(seen) and len(seen) == len(set(seen)) == 10
     assert page["head"] == 10
     empty = h.client.get(
-        f"{READ}/threads", params={"after_seq": 10}, headers=headers
+        f"{READ}/threads", params={"cursor": "c10"}, headers=headers
     ).json()
-    assert empty["items"] == [] and empty["next_cursor"] == 10
+    assert empty["items"] == [] and empty["next_cursor"] is None
+    bad = h.client.get(f"{READ}/threads", params={"cursor": "x"}, headers=headers)
+    assert bad.json()["code"] == "invalid_cursor"
     assert (
         h.client.get(
             f"{READ}/threads", params={"limit": 501}, headers=headers
@@ -279,7 +280,10 @@ def test_timeline_membership_counterpart_mention_and_area(tmp_path):
         response = h.client.get(
             f"{READ}/timeline", params={"subject": subject, **params}, headers=headers
         )
-        return [(r["thread"]["thread_id"], r["membership"]) for r in response.json()]
+        return [
+            (r["thread"]["thread_id"], r["membership"])
+            for r in response.json()["items"]
+        ]
 
     # A person: threads where they are the counterpart (alias resolved, facts only).
     # (t5 was retracted but, as in the web, retracted facts stay visible.)
@@ -307,7 +311,7 @@ def test_timeline_membership_counterpart_mention_and_area(tmp_path):
 def test_wiki_pages_list_detail_and_conditional_get(tmp_path):
     h = Harness(tmp_path)
     headers = h.pair("read")
-    assert h.client.get(f"{READ}/wiki/pages", headers=headers).json() == []
+    assert h.client.get(f"{READ}/wiki/pages", headers=headers).json()["items"] == []
     store = WikiStore(
         h.config.vault_root, h.config.state_root, wiki_root=h.config.wiki.folder
     )
@@ -325,12 +329,12 @@ def test_wiki_pages_list_detail_and_conditional_get(tmp_path):
     )
     store.write("pages/네트워크.md", {"kind": "area"}, "사내망 영역", None)
     store.write("Digest/2026-11.md", {}, "digest is not a page", None)
-    pages = h.client.get(f"{READ}/wiki/pages", headers=headers).json()
+    pages = h.client.get(f"{READ}/wiki/pages", headers=headers).json()["items"]
     assert [p["title"] for p in pages] == ["네트워크", "방화벽 교체"]
     project = pages[1]
     assert (project["kind"], project["area"]) == ("project", "네트워크")
     assert pages[0]["area"] is None
-    detail = h.client.get(f"{READ}/wiki/pages/{project['page_id']}", headers=headers)
+    detail = h.client.get(f"{READ}/wiki/pages/{project['id']}", headers=headers)
     body = detail.json()
     assert body["title"] == "방화벽 교체" and "룰 3건" in body["body"]
     assert body["frontmatter"]["status"] == "진행 중"
@@ -340,7 +344,7 @@ def test_wiki_pages_list_detail_and_conditional_get(tmp_path):
     assert detail.headers["etag"] == f'"{body["sha256"]}"'
     assert body["sha256"] == project["sha256"]
     same = h.client.get(
-        f"{READ}/wiki/pages/{project['page_id']}",
+        f"{READ}/wiki/pages/{project['id']}",
         headers={**headers, "If-None-Match": detail.headers["etag"]},
     )
     assert same.status_code == 304
@@ -357,9 +361,9 @@ def test_wiki_pending_human_edit_is_not_published_to_the_phone(tmp_path):
         h.config.vault_root, h.config.state_root, wiki_root=h.config.wiki.folder
     )
     store.write("pages/메모.md", {"kind": "topic"}, "원문", None)
-    page = h.client.get(f"{READ}/wiki/pages", headers=headers).json()[0]
+    page = h.client.get(f"{READ}/wiki/pages", headers=headers).json()["items"][0]
     (store.root / "pages" / "메모.md").write_text(
         "---\nkind: topic\n---\n사람이 고친 중간 상태"
     )
-    after = h.client.get(f"{READ}/wiki/pages/{page['page_id']}", headers=headers).json()
+    after = h.client.get(f"{READ}/wiki/pages/{page['id']}", headers=headers).json()
     assert "원문" in after["body"] and "중간" not in after["body"]

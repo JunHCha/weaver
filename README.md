@@ -287,9 +287,9 @@ LAN 주소는 설정 오류이며, 주소를 비워 두면 API는 꺼진 채다.
 [mobile]
 bind = "100.106.199.83"      # 이 서버의 tailnet IP (100.64.0.0/10 또는 fd7a:115c:a1e0::/48)
 port = 8787
-whois = "localapi"           # tailscaled LocalAPI. "cli"면 `tailscale whois --json` 사용
-whois_socket = "/var/run/tailscaled.socket"
+whois = "cli"                # 기본: `tailscale whois --json`(App Store판 앱 번들 CLI 자동 사용). "localapi"는 소켓이 있는 배포판용
 # tailscale_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# whois_socket = "/var/run/tailscaled.socket"   # localapi일 때
 transport = "files"          # 기본값: Syncthing 경로 유지. "http"면 폰 HTTP 경로
 [mobile.features]            # 선택: 기능별로 덮어쓰기 (capture, review, action)
 # action = "http"
@@ -316,14 +316,14 @@ QR로 폰에 전달한다. 토큰(256비트)은 이때 한 번만 보이며 서�
 
 ```sh
 # 폰의 tailnet IP로 node ID를 whois에서 가져오거나, --node-id 로 직접 지정
-uv run --project server python -m weaver.app mobile pair --label fold --phone-ip 100.108.10.0 --executor
+uv run --project server python -m weaver.app mobile pair --label fold --phone-ip 100.108.10.0 --executor   # QR만 출력
 uv run --project server python -m weaver.app mobile devices
 uv run --project server python -m weaver.app mobile revoke dev_...   # 분실·교체 시 철회
 ```
 
 `--scope`로 `read`·`capture`·`review`·`action`·`edit` 권한을 나눈다(기본 `read capture
 review edit`, `--executor`면 `action` 추가). QR에는 서버 주소, token, 로컬 CA 인증서가
-들어 있다. Action 실행 폰은 한 대로 고정되며, 교체하려면 기존 기기를 `revoke`한 뒤 새로
+들어 있고(폰은 leaf가 아니라 CA를 고정한다), payload 텍스트는 `--print-json`을 줄 때만 출력한다. Action 실행 폰은 한 대로 고정되며, 교체하려면 기존 기기를 `revoke`한 뒤 새로
 `pair --executor` 한다(자동 이전 없음). 모든 요청은 (1) tailscaled whois로 실제 소켓
 peer를 확인해 등록된 node와 대조하고(확인 불가면 거부), (2) 그 node에 묶인 앱 토큰을
 확인한다. 브라우저 `Origin`, 다른 `Host`, CORS, 쿠키는 허용하지 않는다.
@@ -344,6 +344,9 @@ peer를 확인해 등록된 node와 대조하고(확인 불가면 거부), (2) �
 Action은 `actions/`에 다시 게시된다. ③ 폰 앱도 파일 경로로 바꾼다. 폰이 보낸 뒤 응답을 받지
 못한 capture·Verdict·결과는 원래 ID로 다시 보내도 공통 journal이 중복을 막는다.
 `mobile status`가 기능별 설정값·기록값과 미결 작업 수를 보여 준다.
+
+**재시작 순서.** 설정을 바꾼 뒤 `files → http`는 데몬 → `mobile serve`, `http → files`는 `mobile serve` → 데몬 순으로
+재시작한다(실행기 중복 방지; 이유는 mobile README의 "전송 전환 시 재시작 순서").
 
 로그에는 불투명 ID와 오류 코드만 남긴다. 계약 상세와 한계는
 [`server/src/weaver/mobile/README.md`](server/src/weaver/mobile/README.md)에 있다.

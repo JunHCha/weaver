@@ -105,7 +105,7 @@ max_backoff_seconds = 1800
 # [mobile]
 # bind = "100.106.199.83"   # this server's tailnet IP; wildcard/LAN addresses are rejected
 # port = 8787
-# whois = "localapi"        # or "cli" (tailscale whois --json)
+# whois = "cli"            # default: tailscale whois --json (app-bundle CLI auto-detected); "localapi" needs a socket
 # transport = "files"       # "http" moves capture/review/action to the phone API
 # [mobile.features]
 # action = "http"

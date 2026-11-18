@@ -163,7 +163,7 @@ class MobileSettings:
 
     bind: str | None = None
     port: int = 8787
-    whois: Literal["localapi", "cli"] = "localapi"
+    whois: Literal["localapi", "cli"] = "cli"
     whois_socket: Path = Path("/var/run/tailscaled.socket")
     tailscale_cli: Path | None = None
     transport: Transport = "files"
@@ -217,7 +217,7 @@ def _mobile_settings(
             values[key] = value[key]
     if "bind" in values and not isinstance(values["bind"], str):
         raise ConfigError("mobile.bind: expected string")
-    if values.get("whois", "localapi") not in ("localapi", "cli"):
+    if values.get("whois", "cli") not in ("localapi", "cli"):
         raise ConfigError("mobile.whois: expected localapi or cli")
     for key in ("whois_socket", "tailscale_cli"):
         if key in value:

@@ -22,7 +22,7 @@ from weaver.mobile.api import create_app
 from weaver.mobile.applier import MobileApplier
 from weaver.mobile.reviews import ReviewService
 from weaver.mobile.store import MobileStore
-from weaver.mobile.whois import PeerIdentity
+from weaver.mobile.whois import PeerIdentity, WhoisUnavailable
 from weaver.schema import Manifest, ReviewPackage, ThreadDraft, Verdict
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,10 +40,13 @@ class FakeWhois:
 
     def __init__(self) -> None:
         self.identity: PeerIdentity | None = PeerIdentity(NODE, LOGIN)
+        self.unavailable = False  # tailscaled could not answer
         self.calls: list[tuple[str, int]] = []
 
     def lookup(self, host: str, port: int) -> PeerIdentity | None:
         self.calls.append((host, port))
+        if self.unavailable:
+            raise WhoisUnavailable
         return self.identity
 
 
@@ -95,7 +98,7 @@ def write_config(root: Path, mobile: str = "") -> ServerConfig:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path, mobile: str = "") -> None:
+    def __init__(self, tmp_path: Path, mobile: str = "", clock: Any = None) -> None:
         self.config = write_config(tmp_path, mobile)
         self.whois = FakeWhois()
         self.store = MobileStore(self.config.state_root)
@@ -130,6 +133,7 @@ class Harness:
             archive=self.archive,
             summary=self.summary,
             actions=self.actions,
+            clock=clock,
         )
         self.client = TestClient(
             self.app, base_url="https://127.0.0.1:8787", client=("100.108.10.0", 40000)

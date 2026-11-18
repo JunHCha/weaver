@@ -259,7 +259,9 @@ class ActionOutbox:
             ).fetchall()
         return [_record(row) for row in rows]
 
-    def dispatchable(self, now: float) -> list[tuple[ActionRecord, str | None]]:
+    def dispatchable(
+        self, now: float, lineage: str | None = None
+    ) -> list[tuple[ActionRecord, str | None]]:
         """Pending Actions the phone may run now, with the event they target.
 
         Within a lineage Actions run strictly in order, so only the first
@@ -268,7 +270,7 @@ class ActionOutbox:
         """
         offered: list[tuple[ActionRecord, str | None]] = []
         by_lineage: dict[str, list[ActionRecord]] = {}
-        for record in self.all():
+        for record in self.lineage(lineage) if lineage is not None else self.all():
             by_lineage.setdefault(record.lineage, []).append(record)
         for records in by_lineage.values():
             records.sort(key=lambda r: r.position)

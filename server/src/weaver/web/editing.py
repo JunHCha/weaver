@@ -335,6 +335,46 @@ def merge(config: ServerConfig, edit: MergeEdit) -> dict[str, str]:
         return {"name": dictionary.merge(edit.entry, edit.target, kind=edit.kind).name}
 
 
+def dictionary_entries(config: ServerConfig) -> list[dict[str, object]]:
+    """Dictionary entries with usage counts, shared by the web and phone APIs."""
+    dictionary = dictionary_snapshot(config)
+    path = config.state_root / "fabric.sqlite3"
+    rows = (
+        FabricStore.open_readonly(path).entries(ThreadQuery(include_executions=True))
+        if path.is_file()
+        else []
+    )
+    retracted = {t.retracts for t in rows if t.retracts}
+    counts: dict[str, int] = {}
+    latest: dict[str, datetime] = {}
+    for thread in rows:
+        if (
+            thread.thread_id in retracted
+            or thread.retracts
+            or thread.kind in ("태그정정", "거절", "실행")
+        ):
+            continue
+        names = {
+            e.name if (e := dictionary.resolve(tag)) else tag for tag in thread.tags
+        }
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+            latest[name] = max(latest.get(name, thread.occurred_at), thread.occurred_at)
+    return [
+        {
+            "name": e.name,
+            "kind": e.kind,
+            "aliases": list(e.aliases),
+            "human_edited": e.human_edited,
+            "archived": e.archived,
+            "promoted": e.promoted,
+            "usage_count": counts.get(e.name, 0),
+            "last_used_at": latest[e.name].isoformat() if e.name in latest else None,
+        }
+        for e in dictionary.entries
+    ]
+
+
 def editing_router(config: ServerConfig) -> APIRouter:
     router = APIRouter(route_class=EditRoute)
     token = secrets.token_urlsafe(32)
@@ -396,48 +436,7 @@ def editing_router(config: ServerConfig) -> APIRouter:
 
     @router.get("/api/dictionary")
     def entries() -> list[dict[str, object]]:
-        dictionary = dictionary_snapshot(config)
-        path = config.state_root / "fabric.sqlite3"
-        rows = (
-            FabricStore.open_readonly(path).entries(
-                ThreadQuery(include_executions=True)
-            )
-            if path.is_file()
-            else []
-        )
-        retracted = {t.retracts for t in rows if t.retracts}
-        counts: dict[str, int] = {}
-        latest: dict[str, datetime] = {}
-        for thread in rows:
-            if (
-                thread.thread_id in retracted
-                or thread.retracts
-                or thread.kind in ("태그정정", "거절", "실행")
-            ):
-                continue
-            names = {
-                e.name if (e := dictionary.resolve(tag)) else tag for tag in thread.tags
-            }
-            for name in names:
-                counts[name] = counts.get(name, 0) + 1
-                latest[name] = max(
-                    latest.get(name, thread.occurred_at), thread.occurred_at
-                )
-        return [
-            {
-                "name": e.name,
-                "kind": e.kind,
-                "aliases": list(e.aliases),
-                "human_edited": e.human_edited,
-                "archived": e.archived,
-                "promoted": e.promoted,
-                "usage_count": counts.get(e.name, 0),
-                "last_used_at": latest[e.name].isoformat()
-                if e.name in latest
-                else None,
-            }
-            for e in dictionary.entries
-        ]
+        return dictionary_entries(config)
 
     @router.post("/api/threads/tags/batch", dependencies=writes)
     def batch_tags(edit: BatchTagEdit) -> dict[str, object]:

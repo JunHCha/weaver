@@ -1,0 +1,25 @@
+{
+  "contract_version": 1,
+  "group": "actions_files",
+  "description": "While actions use the files transport, HTTP dispatch is closed.",
+  "cases": [
+    {
+      "name": "transport_files",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "transport_files",
+          "retryable": false
+        }
+      },
+      "note": "Follow capabilities.transports.action; do not execute from files and HTTP at once."
+    }
+  ]
+}

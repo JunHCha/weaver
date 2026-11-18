@@ -18,7 +18,7 @@ import anyio.to_thread
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .store import Device, MobileStore
-from .whois import Whois
+from .whois import Whois, WhoisUnavailable
 
 logger = logging.getLogger("weaver.mobile")
 PREFIX = "/mobile/v1"
@@ -35,8 +35,11 @@ async def _respond(
     code: str,
     *,
     headers: list[tuple[bytes, bytes]] | None = None,
+    retryable: bool = False,
 ) -> None:
-    body = json.dumps({"code": code, "retryable": False}).encode()
+    body = json.dumps({"code": code, "retryable": retryable}).encode()
+    if retryable:
+        headers = [*(headers or []), (b"retry-after", b"2")]
     await send(
         {
             "type": "http.response.start",
@@ -87,9 +90,15 @@ class AuthMiddleware:
         if not client:
             await _respond(send, 403, "peer_unverified")
             return
-        identity = await anyio.to_thread.run_sync(
-            self.whois.lookup, str(client[0]), int(client[1])
-        )
+        try:
+            identity = await anyio.to_thread.run_sync(
+                self.whois.lookup, str(client[0]), int(client[1])
+            )
+        except WhoisUnavailable:
+            # Not a refusal of this peer: tailscaled could not answer. Retry.
+            logger.info("mobile deferred: whois_unavailable")
+            await _respond(send, 503, "whois_unavailable", retryable=True)
+            return
         if identity is None:
             logger.info("mobile refused: peer_unverified")
             await _respond(send, 403, "peer_unverified")

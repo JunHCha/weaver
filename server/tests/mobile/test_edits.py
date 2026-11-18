@@ -53,7 +53,7 @@ def test_single_and_batch_tag_corrections_reuse_the_web_rules(tmp_path):
     one = edit(h, headers, add=["Beta"], remove=["Alpha"])
     assert one.status_code == 200, one.text
     body = one.json()
-    assert body["status"] == "applied" and body["result"]["changed"] == 1
+    assert body["state"] == "applied" and body["result"]["changed"] == 1
     (correction,) = corrections(h)
     assert correction.correction.target == "record"
     assert (correction.correction.add, correction.correction.remove) == (
@@ -185,7 +185,7 @@ def test_a_crash_between_the_fabric_commit_and_the_journal_does_not_duplicate(tm
             ),
         )
     again = edit(h, headers, add=["Beta"])
-    assert again.status_code == 200 and again.json()["status"] == "applied"
+    assert again.status_code == 200 and again.json()["state"] == "applied"
     assert len(corrections(h)) == 1  # the deterministic ID found its own row
 
 

@@ -34,7 +34,10 @@ def operation(h, headers, response):
 def test_list_and_get_open_packages_with_etag(tmp_path):
     h = Harness(tmp_path)
     headers = h.pair()
-    assert h.client.get("/mobile/v1/reviews", headers=headers).json() == {"items": []}
+    assert h.client.get("/mobile/v1/reviews", headers=headers).json() == {
+        "items": [],
+        "next_cursor": None,
+    }
     h.add_package("pkg_a")
     h.add_package("pkg_a", 2)
     h.add_package("pkg_b")
@@ -59,13 +62,16 @@ def test_verdict_is_202_then_applied_only_after_domain_confirmation(tmp_path):
     response = submit(h, headers)
     assert response.status_code == 202
     assert response.headers["location"].endswith(response.json()["operation_id"])
-    assert operation(h, headers, response)["status"] == "queued"
+    assert operation(h, headers, response)["state"] == "queued"
     assert h.decisions.applied == []  # accepted is not applied
     h.applier.run()
     done = operation(h, headers, response)
-    assert done["status"] == "applied" and len(h.decisions.applied) == 1
+    assert done["state"] == "applied" and len(h.decisions.applied) == 1
     # The package is closed once applied.
-    assert h.client.get("/mobile/v1/reviews", headers=headers).json() == {"items": []}
+    assert h.client.get("/mobile/v1/reviews", headers=headers).json() == {
+        "items": [],
+        "next_cursor": None,
+    }
     # The accepted payload is not kept after it is applied.
     assert h.store.operation(response.json()["operation_id"]).payload is None
 
@@ -81,7 +87,7 @@ def test_retry_after_lost_response_returns_the_same_operation(tmp_path):
     h.applier.run()
     late = submit(h, headers, match='"stale-etag"')  # even after it was applied
     assert late.json()["operation_id"] == first.json()["operation_id"]
-    assert late.json()["status"] == "applied"
+    assert late.json()["state"] == "applied"
     assert len(h.decisions.applied) == 1
 
 
@@ -167,20 +173,20 @@ def test_applier_retries_transient_failures_then_stops_visibly(tmp_path):
     h.decisions.fail = RuntimeError("boom")
     h.tick()
     state = operation(h, headers, first)
-    assert (state["status"], state["error"]) == ("applying", "apply_failed")
+    assert (state["state"], state["code"]) == ("queued", "apply_failed")
     h.tick(0.1)  # still in backoff: not retried yet
-    assert operation(h, headers, first)["error"] == "apply_backoff"
+    assert operation(h, headers, first)["code"] == "apply_backoff"
     h.tick(10)
     h.tick(10)
     h.tick(10)
     stopped = operation(h, headers, first)
-    assert (stopped["status"], stopped["error"]) == ("failed", "apply_stopped")
+    assert (stopped["state"], stopped["code"]) == ("failed", "apply_stopped")
     h.decisions.fail = None  # code fixed; a restart retries stopped decisions
     h.tick(10)
-    assert operation(h, headers, first)["status"] == "failed"
+    assert operation(h, headers, first)["state"] == "failed"
     h.applier.recover()
     h.tick(10)
-    assert operation(h, headers, first)["status"] == "applied"
+    assert operation(h, headers, first)["state"] == "applied"
     assert len(h.decisions.applied) == 1
 
 
@@ -191,10 +197,10 @@ def test_applier_waits_while_the_llm_gate_is_closed(tmp_path):
     first = submit(h, headers)
     h.courier._can_apply = lambda: False
     h.tick()
-    assert operation(h, headers, first)["error"] == "apply_waiting"
+    assert operation(h, headers, first)["code"] == "apply_waiting"
     h.courier._can_apply = None
     h.tick()
-    assert operation(h, headers, first)["status"] == "applied"
+    assert operation(h, headers, first)["state"] == "applied"
 
 
 def test_verdict_applied_over_files_is_not_applied_twice(tmp_path):
@@ -206,7 +212,7 @@ def test_verdict_applied_over_files_is_not_applied_twice(tmp_path):
     (h.config.courier.decisions / "pkg_a.r1.json").write_text(json.dumps(verdict()))
     assert h.courier.scan_once().applied == [("pkg_a", 1)]
     h.applier.run()
-    assert operation(h, headers, first)["status"] == "applied"
+    assert operation(h, headers, first)["state"] == "applied"
     assert len(h.decisions.applied) == 1
 
 
@@ -225,7 +231,7 @@ def test_crash_after_apply_before_journal_update_does_not_apply_again(tmp_path):
             (json.dumps(verdict()).replace(" ", ""), first.json()["operation_id"]),
         )
     h.applier.run()
-    assert operation(h, headers, first)["status"] == "applied"
+    assert operation(h, headers, first)["state"] == "applied"
     assert len(h.decisions.applied) == 1
 
 
@@ -236,7 +242,7 @@ def test_stale_decision_after_new_revision_is_reported_stale(tmp_path):
     first = submit(h, headers)
     h.add_package("pkg_a", 2)  # a revision appears before the runtime applies it
     h.applier.run()
-    assert operation(h, headers, first)["status"] == "stale"
+    assert operation(h, headers, first)["state"] == "rejected"
     assert h.decisions.applied == []
 
 

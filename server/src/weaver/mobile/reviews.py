@@ -102,7 +102,7 @@ class ReviewService:
         if existing is not None:
             if existing.content_hash != digest:
                 raise ApiError(409, "verdict_conflict")
-            return existing, False
+            return self.store.adopt(existing, device_id), False
         latest = self.latest_rev(package_id)
         if latest is None or revision > latest:
             raise ApiError(404, "package_not_found")

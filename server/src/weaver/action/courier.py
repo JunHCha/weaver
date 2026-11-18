@@ -137,6 +137,18 @@ class ActionCourier:
             for record, external_id in self.outbox.dispatchable(self.clock())
         ]
 
+    def dispatchable_one(self, action_id: str) -> Action | None:
+        """One offered Action, looking only at its own lineage."""
+        record = self.outbox.get(action_id)
+        if record is None:
+            return None
+        for offered, external_id in self.outbox.dispatchable(
+            self.clock(), lineage=record.lineage
+        ):
+            if offered.action_id == action_id:
+                return to_wire(offered, external_id)
+        return None
+
     # ---- phone to server -------------------------------------------------------------
 
     def ingest(self) -> dict[str, str]:

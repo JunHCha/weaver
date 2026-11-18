@@ -1,0 +1,184 @@
+{
+  "contract_version": 1,
+  "group": "changes",
+  "description": "Change feed (epoch.seq cursor, compacted) and device checkpoint.",
+  "cases": [
+    {
+      "name": "snapshot",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "items": [
+            {
+              "seq": 1,
+              "kind": "fabric",
+              "id": "threads",
+              "revision": 0,
+              "op": "upsert",
+              "body": null
+            }
+          ],
+          "next_cursor": "ep_00000000000000000000000000000001.1",
+          "has_more": false
+        }
+      },
+      "note": "Without a cursor the feed is a complete snapshot. The feed is the one list whose next_cursor is never null: keep it as the resume point."
+    },
+    {
+      "name": "incremental",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "cursor": "ep_00000000000000000000000000000001.1",
+          "limit": "100"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "items": [
+            {
+              "seq": 2,
+              "kind": "review",
+              "id": "pkg_a",
+              "revision": 1,
+              "op": "upsert",
+              "body": {
+                "etag": "\"7dd5e16fc58e2d28df7714284df9dd4b710ce3d0686f180d61b1cb89c57c2292\"",
+                "stage": "검토"
+              }
+            }
+          ],
+          "next_cursor": "ep_00000000000000000000000000000001.2",
+          "has_more": false
+        }
+      }
+    },
+    {
+      "name": "up_to_date",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "cursor": "ep_00000000000000000000000000000001.2"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "items": [],
+          "next_cursor": "ep_00000000000000000000000000000001.2",
+          "has_more": false
+        }
+      }
+    },
+    {
+      "name": "checkpoint",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/devices/self/checkpoint",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "cursor": "ep_00000000000000000000000000000001.2"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "cursor": "ep_00000000000000000000000000000001.2"
+        }
+      }
+    },
+    {
+      "name": "tombstone",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "cursor": "ep_00000000000000000000000000000001.2"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "items": [
+            {
+              "seq": 3,
+              "kind": "review",
+              "id": "pkg_a",
+              "revision": 1,
+              "op": "tombstone",
+              "body": null
+            }
+          ],
+          "next_cursor": "ep_00000000000000000000000000000001.3",
+          "has_more": false
+        }
+      }
+    },
+    {
+      "name": "cursor_expired",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "cursor": "ep_00000000000000000000000000000001.9999"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "code": "cursor_expired",
+          "retryable": false
+        }
+      },
+      "note": "Epoch changed or cursor ahead of the server: start over from no cursor."
+    },
+    {
+      "name": "invalid_cursor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "cursor": "garbage"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_cursor",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

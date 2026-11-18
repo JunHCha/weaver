@@ -8,18 +8,22 @@ the web cannot drift apart.
 
 import hashlib
 import json
-from collections.abc import Mapping
+import os
+import threading
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
+from weaver.archive import ArchiveStore, SourceNotFound
 from weaver.config import ServerConfig
-from weaver.context import ContextDictionary
+from weaver.context import ContextDictionary, DictionarySnapshot
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.fabric.state import InvalidSetOperation, project
 from weaver.schema import Thread
-from weaver.web.editing import canonical_threads
+from weaver.web.editing import canonical_threads, dictionary_entries
 from weaver.web.presentation import presentation
 from weaver.wiki.store import WikiStore, _properties
 
@@ -37,12 +41,13 @@ class MobileThread(Thread):
     retracted: bool
     effective_deadline: str | None
     effective_schedule: dict[str, JsonValue] | None
+    mentions: list[str]
+    source: str
 
 
 class ThreadPage(BaseModel):
     items: list[MobileThread]
-    next_cursor: int
-    has_more: bool
+    next_cursor: str | None
     head: int
 
 
@@ -71,16 +76,16 @@ class TimelineRow(BaseModel):
 
 
 class WikiSummary(BaseModel):
-    page_id: str
+    id: str
     title: str
     kind: str | None
     area: str | None
     updated_at: datetime
+    frontmatter: dict[str, JsonValue]
     sha256: str
 
 
 class WikiPage(WikiSummary):
-    frontmatter: dict[str, JsonValue]
     body: str
 
 
@@ -129,8 +134,12 @@ def _object(value: JsonValue) -> dict[str, JsonValue] | None:
     return value if isinstance(value, dict) else None
 
 
-def decorate(rows: list[Thread]) -> list[MobileThread]:
-    """Attach presentation, open state and effective deadline/schedule."""
+def decorate(
+    rows: list[Thread],
+    parties: frozenset[str] = frozenset(),
+    source_of: Callable[[str], str] = lambda _id: "",
+) -> list[MobileThread]:
+    """Attach presentation, open state, effective values, mentions and source."""
     relation = Relations(rows)
     by_id = {t.thread_id: t for t in rows}
     deadline: dict[str, str | None] = {}
@@ -169,6 +178,8 @@ def decorate(rows: list[Thread]) -> list[MobileThread]:
             retracted=t.thread_id in relation.retracted,
             effective_deadline=deadline.get(t.thread_id),
             effective_schedule=schedule.get(t.thread_id),
+            mentions=[tag for tag in t.tags if tag in parties and tag != t.counterpart],
+            source=source_of(t.source_id),
         )
         for t in rows
     ]
@@ -181,61 +192,168 @@ def _day(value: str) -> date | None:
         return None
 
 
+@dataclass(frozen=True)
+class Snapshot:
+    """Everything derived from Fabric and the dictionary at one database state."""
+
+    key: tuple[tuple[int, int], ...]
+    rows: list[Thread]
+    raw: list[Thread]
+    threads: list[MobileThread]  # in seq order
+    dictionary: DictionarySnapshot | None
+    kinds: dict[str, str | None]
+    head: int
+
+
+_SOURCE_LABELS = {
+    "call": "통화",
+    "voice_memo": "메모",
+    "kakao": "카카오",
+    "share_text": "공유 텍스트",
+}
+
+
 class ReadModel:
-    def __init__(self, config: ServerConfig) -> None:
+    def __init__(
+        self,
+        config: ServerConfig,
+        archive: ArchiveStore | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.config = config
+        self.archive = archive
+        self.clock = clock or (lambda: datetime.now(config.time.zone))
+        self._lock = threading.Lock()
+        self._snapshot_cache: Snapshot | None = None
+        self._labels: dict[str, str] = {}
 
     # ---- Fabric ----------------------------------------------------------------
 
-    def rows(self) -> list[Thread]:
-        path = self.config.state_root / "fabric.sqlite3"
-        if not path.is_file():
-            return []
-        rows = FabricStore.open_readonly(path).entries(
-            ThreadQuery(include_executions=True)
-        )
-        return canonical_threads(self.config, rows)
+    def _key(self) -> tuple[tuple[int, int], ...]:
+        """Cheap change detector: size and mtime of the databases and their WAL."""
+        key = []
+        for name in ("fabric.sqlite3", "context.sqlite3"):
+            for suffix in ("", "-wal"):
+                try:
+                    info = os.stat(self.config.state_root / (name + suffix))
+                    key.append((info.st_mtime_ns, info.st_size))
+                except OSError:
+                    key.append((0, 0))
+        return tuple(key)
 
-    def raw_rows(self) -> list[Thread]:
-        path = self.config.state_root / "fabric.sqlite3"
-        if not path.is_file():
-            return []
-        return FabricStore.open_readonly(path).entries(
-            ThreadQuery(include_executions=True)
-        )
+    def _label(self, source_id: str) -> str:
+        label = self._labels.get(source_id)
+        if label is None:
+            label = "알 수 없음"
+            if self.archive is not None:
+                try:
+                    source = self.archive.get(source_id)
+                    label = (
+                        source.hints.counterpart
+                        if source.channel in ("call", "kakao")
+                        and source.hints.counterpart
+                        else _SOURCE_LABELS[source.channel]
+                    )
+                except (SourceNotFound, OSError):
+                    pass
+            self._labels[source_id] = label
+        return label
+
+    def snapshot(self) -> Snapshot:
+        """Decorated threads, rebuilt only when the databases changed.
+
+        Paging through ``/read/threads`` therefore reuses one computation.
+        """
+        with self._lock:
+            key = self._key()
+            cached = self._snapshot_cache
+            if cached is not None and cached.key == key:
+                return cached
+            fabric = self.config.state_root / "fabric.sqlite3"
+            raw = (
+                FabricStore.open_readonly(fabric).entries(
+                    ThreadQuery(include_executions=True)
+                )
+                if fabric.is_file()
+                else []
+            )
+            rows = canonical_threads(self.config, raw)
+            context = self.config.state_root / "context.sqlite3"
+            dictionary = (
+                ContextDictionary.open_readonly(context).snapshot()
+                if context.is_file()
+                else None
+            )
+            kinds: dict[str, str | None] = {}
+            for name in sorted({tag for t in raw for tag in t.tags}):
+                entry = dictionary.resolve(name) if dictionary else None
+                kinds[name] = entry.kind if entry else None
+            if dictionary:
+                kinds |= {entry.name: entry.kind for entry in dictionary.entries}
+            parties = frozenset(n for n, k in kinds.items() if k in PARTY_KINDS)
+            threads = sorted(decorate(rows, parties, self._label), key=lambda t: t.seq)
+            snapshot = Snapshot(
+                key,
+                rows,
+                raw,
+                threads,
+                dictionary,
+                kinds,
+                max((t.seq for t in rows), default=0),
+            )
+            self._snapshot_cache = snapshot
+            return snapshot
+
+    def rows(self) -> list[Thread]:
+        return self.snapshot().rows
 
     def head(self) -> int:
-        return max((t.seq for t in self.rows()), default=0)
+        return self.snapshot().head
 
-    def threads(self, after_seq: int, limit: int) -> ThreadPage:
-        if not 1 <= limit <= MAX_PAGE or after_seq < 0:
+    @staticmethod
+    def _cursor(raw: str | None) -> int:
+        if raw is None or raw == "":
+            return 0
+        if raw.startswith("c") and raw[1:].isdigit():
+            return int(raw[1:])
+        raise ApiError(422, "invalid_cursor")
+
+    def threads(self, cursor: str | None, limit: int) -> ThreadPage:
+        if not 1 <= limit <= MAX_PAGE:
             raise ApiError(422, "invalid_page")
-        rows = self.rows()
-        decorated = decorate(rows)
-        selected = sorted(
-            (t for t in decorated if t.seq > after_seq), key=lambda t: t.seq
-        )
+        after = self._cursor(cursor)
+        snapshot = self.snapshot()
+        selected = [t for t in snapshot.threads if t.seq > after]
         page = selected[:limit]
         return ThreadPage(
             items=page,
-            next_cursor=page[-1].seq if page else after_seq,
-            has_more=len(selected) > limit,
-            head=max((t.seq for t in rows), default=0),
+            next_cursor=f"c{page[-1].seq}" if len(selected) > limit else None,
+            head=snapshot.head,
         )
 
     def thread(self, thread_id: str) -> MobileThread:
-        for item in decorate(self.rows()):
+        for item in self.snapshot().threads:
             if item.thread_id == thread_id:
                 return item
         raise ApiError(404, "thread_not_found")
 
+    def dictionary(self) -> list[dict[str, object]]:
+        return [
+            {
+                "name": entry["name"],
+                "kind": entry["kind"],
+                "aliases": entry["aliases"],
+                "usage_count": entry["usage_count"],
+                "archived": entry["archived"],
+            }
+            for entry in dictionary_entries(self.config)
+        ]
+
     def tags(self) -> list[TagView]:
-        path = self.config.state_root / "context.sqlite3"
-        dictionary = (
-            ContextDictionary.open_readonly(path).snapshot() if path.is_file() else None
-        )
+        snapshot = self.snapshot()
+        dictionary = snapshot.dictionary
         # Like the web tag list: tags as written, plus the canonical entry names.
-        names = sorted({tag for t in self.raw_rows() for tag in t.tags})
+        names = sorted({tag for t in snapshot.raw for tag in t.tags})
         result: list[TagView] = []
         for name in names:
             entry = dictionary.resolve(name) if dictionary else None
@@ -272,13 +390,12 @@ class ReadModel:
 
     def now(self, at: datetime | None = None) -> NowView:
         zone = self.config.time.zone
-        moment = (at or datetime.now(zone)).astimezone(zone)
+        moment = (at or self.clock()).astimezone(zone)
         today = moment.date()
         facts = [
             t
-            for t in decorate(self.rows())
-            if t.presentation == "fact"
-            and t.thread_id not in {x.retracts for x in self.rows() if x.retracts}
+            for t in self.snapshot().threads
+            if t.presentation == "fact" and not t.retracted
         ]
 
         def schedule_start(t: MobileThread) -> datetime | None:
@@ -346,17 +463,14 @@ class ReadModel:
     def timeline(
         self, subject: str, mentions: bool, history: bool
     ) -> list[TimelineRow]:
-        tags = {tag.name: tag.kind for tag in self.tags()}
-        path = self.config.state_root / "context.sqlite3"
-        if path.is_file():
-            # A counterpart who is never a tag is still a person in the dictionary.
-            dictionary = ContextDictionary.open_readonly(path).snapshot()
-            tags |= {entry.name: entry.kind for entry in dictionary.entries}
-            known = dictionary.resolve(subject)
+        snapshot = self.snapshot()
+        if snapshot.dictionary is not None:
+            known = snapshot.dictionary.resolve(subject)
             subject = known.name if known else subject
-        parties = {name for name, kind in tags.items() if kind in PARTY_KINDS}
+        # A counterpart who is never a tag is still a person in the dictionary.
+        parties = {n for n, k in snapshot.kinds.items() if k in PARTY_KINDS}
         is_party = subject in parties
-        decorated = decorate(self.rows())
+        decorated = snapshot.threads
         by_id = {t.thread_id: t for t in decorated}
 
         def membership(t: MobileThread) -> Membership | None:
@@ -415,7 +529,7 @@ class ReadModel:
                 (
                     path,
                     WikiPage(
-                        page_id=store.page_id(path),
+                        id=store.page_id(path),
                         title=path.removeprefix("pages/").removesuffix(".md"),
                         kind=kind if isinstance(kind, str) else None,
                         area=area if isinstance(area, str) else None,
@@ -433,7 +547,7 @@ class ReadModel:
     def wiki_pages(self) -> list[WikiSummary]:
         return sorted(
             (
-                WikiSummary(**page.model_dump(exclude={"frontmatter", "body"}))
+                WikiSummary(**page.model_dump(exclude={"body"}))
                 for _, page in self._pages()
             ),
             key=lambda p: p.title,
@@ -441,7 +555,7 @@ class ReadModel:
 
     def wiki_page(self, page_id: str) -> WikiPage:
         for _, page in self._pages():
-            if page.page_id == page_id:
+            if page.id == page_id:
                 return page
         raise ApiError(404, "page_not_found")
 

@@ -73,12 +73,15 @@ def test_result_is_202_then_one_execution_thread_and_outbox_finished(tmp_path):
     status = h.client.get(
         f"/mobile/v1/operations/{response.json()['operation_id']}", headers=fold
     )
-    assert status.json()["status"] == "applied"
+    assert status.json()["state"] == "applied"
     (thread,) = executions(h)
     assert thread.executes == "s1"
     assert h.outbox.get(record.action_id).status == "completed"
     # Once finished it is no longer offered.
-    assert h.client.get("/mobile/v1/actions", headers=fold).json() == {"items": []}
+    assert h.client.get("/mobile/v1/actions", headers=fold).json() == {
+        "items": [],
+        "next_cursor": None,
+    }
 
 
 def test_resending_a_result_after_a_lost_response_is_idempotent(tmp_path):
@@ -93,7 +96,7 @@ def test_resending_a_result_after_a_lost_response_is_idempotent(tmp_path):
     third = h.client.put(
         url, json=result(record.action_id), headers=fold
     )  # after applied
-    assert third.status_code == 202 and third.json()["status"] == "applied"
+    assert third.status_code == 202 and third.json()["state"] == "applied"
     h.applier.run()
     assert len(executions(h)) == 1
 

@@ -72,7 +72,7 @@ def test_config_file_parsing_and_rejection(tmp_path):
     h = Harness(tmp_path / "ok", '[mobile.features]\nreview = "http"\n')
     assert h.config.mobile.transport_for("review") == "http"
     assert h.config.mobile.transport_for("capture") == "files"
-    assert h.config.mobile.whois == "localapi"
+    assert h.config.mobile.whois == "cli"
     for extra in (
         "bogus = 1\n",
         'whois = "magic"\n',
@@ -227,7 +227,7 @@ def test_resident_runtime_applies_phone_operations_through_the_real_journals(
     state = h.client.get(
         f"/mobile/v1/operations/{queued.json()['operation_id']}", headers=headers
     ).json()
-    assert state["status"] == "applying" and state["error"] == "apply_waiting"
+    assert state["state"] == "queued" and state["code"] == "apply_waiting"
     assert (
         BODY.decode() not in caplog.text and headers["Authorization"] not in caplog.text
     )

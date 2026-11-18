@@ -1,0 +1,223 @@
+{
+  "contract_version": 1,
+  "group": "captures",
+  "description": "payload, then manifest, then Receipt. A staged payload is not a Receipt.",
+  "cases": [
+    {
+      "name": "receipt_before_upload",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/receipt",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "receipt_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "manifest_before_payload",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/manifest",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body_text": "{\"schema_version\":1,\"capture_host\":null,\"capture_id\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0\",\"kind\":\"text\",\"channel\":\"share_text\",\"payload\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt\",\"sha256\":\"4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3\",\"size\":45,\"captured_at\":\"2026-11-07T15:32:00+09:00\",\"occurred_at\":null,\"hints\":{\"counterpart\":null}}"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "payload_missing",
+          "retryable": true
+        }
+      },
+      "note": "Retryable: upload the payload first."
+    },
+    {
+      "name": "payload_staged",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/payload",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "x-content-sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "content-type": "application/octet-stream"
+        },
+        "body_text": "합성 공유 텍스트: 내일 점검 회의"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "name": "payload_repeat",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/payload",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "x-content-sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "content-type": "application/octet-stream"
+        },
+        "body_text": "합성 공유 텍스트: 내일 점검 회의"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "name": "payload_wrong_sha",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA1/payload",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "x-content-sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "body_text": "합성 공유 텍스트: 내일 점검 회의"
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "sha256_mismatch",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "manifest_stored",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/manifest",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body_text": "{\"schema_version\":1,\"capture_host\":null,\"capture_id\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0\",\"kind\":\"text\",\"channel\":\"share_text\",\"payload\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt\",\"sha256\":\"4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3\",\"size\":45,\"captured_at\":\"2026-11-07T15:32:00+09:00\",\"occurred_at\":null,\"hints\":{\"counterpart\":null}}"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "schema_version": 1,
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "source_id": "src_00000000000000000000000001",
+          "sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "received_at": "2026-11-19T00:00:00Z"
+        }
+      },
+      "note": "201 Receipt: the capture is durably archived."
+    },
+    {
+      "name": "manifest_replay",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/manifest",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body_text": "{\"schema_version\":1,\"capture_host\":null,\"capture_id\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0\",\"kind\":\"text\",\"channel\":\"share_text\",\"payload\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt\",\"sha256\":\"4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3\",\"size\":45,\"captured_at\":\"2026-11-07T15:32:00+09:00\",\"occurred_at\":null,\"hints\":{\"counterpart\":null}}"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "schema_version": 1,
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "source_id": "src_00000000000000000000000001",
+          "sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "received_at": "2026-11-19T00:00:00Z"
+        }
+      },
+      "note": "Lost response: 200 with the original Receipt."
+    },
+    {
+      "name": "receipt",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/receipt",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "schema_version": 1,
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "source_id": "src_00000000000000000000000001",
+          "sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "received_at": "2026-11-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "payload_after_store",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/payload",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "x-content-sha256": "4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3",
+          "content-type": "application/octet-stream"
+        },
+        "body_text": "합성 공유 텍스트: 내일 점검 회의"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "state": "stored"
+        }
+      }
+    },
+    {
+      "name": "payload_other_content",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/payload",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "x-content-sha256": "a3ead5eedad5df82318c51685dbc1c147a36d1ff8584fc82de6b08d0bf63a795"
+        },
+        "body_text": "other bytes"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "capture_conflict",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "manifest_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/manifest",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body_text": "{\"schema_version\":1,\"capture_host\":null,\"capture_id\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0\",\"kind\":\"text\",\"channel\":\"share_text\",\"payload\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt\",\"sha256\":\"4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3\",\"size\":45,\"captured_at\":\"2026-11-08T00:00:00Z\",\"occurred_at\":null,\"hints\":{\"counterpart\":null}}"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "manifest_conflict",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
@@ -68,17 +69,51 @@ async def _body(request: Request, limit: int) -> bytes:
     return bytes(data)
 
 
+_STOPPED = {"apply_stopped", "payload_lost"}  # failed, not refused
+_DATETIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def utc_z(value: object) -> object:
+    """Rewrite every datetime string as UTC ending in ``Z`` (not frontmatter)."""
+    if isinstance(value, dict):
+        return {k: v if k == "frontmatter" else utc_z(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [utc_z(item) for item in value]
+    if isinstance(value, str) and _DATETIME.fullmatch(value):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        text = parsed.isoformat(
+            timespec="seconds" if not parsed.microsecond else "microseconds"
+        )
+        return text.removesuffix("+00:00") + "Z"
+    return value
+
+
 def operation_body(op: Operation) -> dict[str, object]:
+    """``{operation_id, state, code?, kind, target_id, target_revision, updated_at}``.
+
+    ``state``: ``queued`` (accepted or still being applied, ``code`` says why it
+    waits), ``applied``, ``rejected`` (refused by the domain; do not resend) or
+    ``failed`` (stopped; needs the operator).
+    """
+    state = {"queued": "queued", "applying": "queued", "applied": "applied"}.get(
+        op.status, ""
+    )
+    if not state:
+        state = (
+            "failed" if op.status == "failed" and op.error in _STOPPED else "rejected"
+        )
     body: dict[str, object] = {
         "operation_id": op.operation_id,
+        "state": state,
         "kind": op.kind,
-        "status": op.status,
         "target_id": op.target_id,
         "target_revision": op.target_revision,
         "updated_at": op.updated_at,
     }
-    if op.error is not None:
-        body["error"] = op.error
+    if op.error is not None and state != "applied":
+        body["code"] = op.error
     return body
 
 
@@ -90,6 +125,7 @@ def create_app(
     archive: ArchiveStore | None = None,
     summary: SummaryState | None = None,
     actions: ActionCourier | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     mobile = config.mobile
     if mobile.bind is None:
@@ -105,7 +141,7 @@ def create_app(
         max_payload_bytes=mobile.max_payload_bytes,
         staging_days=mobile.staging_days,
     )
-    read = ReadModel(config)
+    read = ReadModel(config, archive, clock)
     edits = EditService(config, store)
     feed = FeedProducer(
         store,
@@ -182,7 +218,7 @@ def create_app(
     def json_response(
         value: object, status: int = 200, headers: dict[str, str] | None = None
     ) -> JSONResponse:
-        payload = jsonable_encoder(value)
+        payload = utc_z(jsonable_encoder(value))
         return JSONResponse(
             payload,
             status_code=status,
@@ -214,6 +250,16 @@ def create_app(
                     "max_json_bytes": MAX_JSON_BYTES,
                     "max_feed_items": MAX_FEED_PAGE,
                     "max_feed_bytes": 4 * 1024 * 1024,
+                },
+                "features": {
+                    "capture": True,
+                    "review": True,
+                    "action": True,
+                    "read": True,
+                    "dictionary": True,
+                    "edits": True,
+                    "alerts": False,  # not served over HTTP yet: keep reading files
+                    "pipeline": False,
                 },
                 "feed_epoch": store.feed_epoch,
                 "device": {
@@ -258,7 +304,10 @@ def create_app(
     @router.get("/reviews")
     def list_reviews(_who: ReviewScope) -> JSONResponse:
         return json_response(
-            {"items": [ReviewEntry(p).summary for p in reviews.open_packages()]}
+            {
+                "items": [ReviewEntry(p).summary for p in reviews.open_packages()],
+                "next_cursor": None,
+            }
         )
 
     @router.get("/reviews/{package_id}/revisions/{revision}")
@@ -307,16 +356,16 @@ def create_app(
     def list_actions(_who: Executor) -> JSONResponse:
         if actions is None or mobile.transport_for("action") != "http":
             raise ApiError(409, "transport_files")
-        return json_response({"items": actions.dispatchable()})
+        return json_response({"items": actions.dispatchable(), "next_cursor": None})
 
     @router.get("/actions/{action_id}")
     def get_action(action_id: str, _who: Executor) -> JSONResponse:
         if actions is None or mobile.transport_for("action") != "http":
             raise ApiError(409, "transport_files")
-        for action in actions.dispatchable():
-            if action.action_id == action_id:
-                return json_response(action)
-        raise ApiError(404, "action_not_found")
+        action = actions.dispatchable_one(action_id)
+        if action is None:
+            raise ApiError(404, "action_not_found")
+        return json_response(action)
 
     @router.put("/actions/{action_id}/result")
     async def put_result(
@@ -420,10 +469,10 @@ def create_app(
     @router.get("/read/threads")
     def read_threads(
         _who: ReadScope,
-        after_seq: Annotated[int, Query(ge=0)] = 0,
-        limit: Annotated[int, Query(ge=1, le=500)] = 200,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 500,
     ) -> JSONResponse:
-        return json_response(read.threads(after_seq, limit))
+        return json_response(read.threads(cursor, limit))
 
     @router.get("/read/threads/{thread_id}")
     def read_thread(thread_id: str, _who: ReadScope) -> JSONResponse:
@@ -431,7 +480,9 @@ def create_app(
 
     @router.get("/read/tags")
     def read_tags(_who: ReadScope) -> JSONResponse:
-        return json_response([t.model_dump() for t in read.tags()])
+        return json_response(
+            {"items": [t.model_dump() for t in read.tags()], "next_cursor": None}
+        )
 
     @router.get("/read/states")
     def read_states(
@@ -448,15 +499,27 @@ def create_app(
         history: bool = False,
     ) -> JSONResponse:
         return json_response(
-            [
-                r.model_dump(mode="json")
-                for r in read.timeline(subject, mentions, history)
-            ]
+            {
+                "items": [
+                    r.model_dump(mode="json")
+                    for r in read.timeline(subject, mentions, history)
+                ],
+                "next_cursor": None,
+            }
         )
+
+    @router.get("/read/dictionary")
+    def read_dictionary(_who: ReadScope) -> JSONResponse:
+        return json_response({"items": read.dictionary(), "next_cursor": None})
 
     @router.get("/read/wiki/pages")
     def read_wiki_pages(_who: ReadScope) -> JSONResponse:
-        return json_response([p.model_dump(mode="json") for p in read.wiki_pages()])
+        return json_response(
+            {
+                "items": [p.model_dump(mode="json") for p in read.wiki_pages()],
+                "next_cursor": None,
+            }
+        )
 
     @router.get("/read/wiki/pages/{page_id}")
     def read_wiki_page(page_id: str, request: Request, _who: ReadScope) -> Response:

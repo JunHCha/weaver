@@ -14,9 +14,17 @@ import pytest
 from typer.testing import CliRunner
 
 from weaver.app import cli
+from weaver.mobile import whois as whois_module
 from weaver.mobile.store import DeviceError
 from weaver.mobile.tls import ensure_certificates
-from weaver.mobile.whois import CliWhois, LocalApiWhois, PeerIdentity, parse_whois
+from weaver.mobile.whois import (
+    CachedWhois,
+    CliWhois,
+    LocalApiWhois,
+    PeerIdentity,
+    WhoisUnavailable,
+    parse_whois,
+)
 
 from .helpers import LOGIN, NODE, Harness, write_config
 
@@ -226,29 +234,103 @@ def test_localapi_whois_asks_about_the_exact_peer(tmp_path):
     assert "Host: local-tailscaled.sock" in request
 
 
-def test_localapi_whois_fails_closed(tmp_path):
-    assert LocalApiWhois(tmp_path / "missing.sock").lookup("100.1.1.1", 1) is None
+def test_localapi_whois_distinguishes_unknown_peer_from_unavailable(tmp_path):
+    with pytest.raises(WhoisUnavailable):  # tailscaled not running
+        LocalApiWhois(tmp_path / "missing.sock").lookup("100.1.1.1", 1)
     path = Path("/tmp") / f"wv-{os.getpid()}-{os.urandom(3).hex()}.sock"
+    thread = serve_unix(path, 404, b"no", [])
+    try:
+        assert LocalApiWhois(path).lookup("100.1.1.1", 1) is None  # answered: unknown
+    finally:
+        thread.join(2)
+        path.unlink(missing_ok=True)
     thread = serve_unix(path, 403, b"no", [])
     try:
-        assert LocalApiWhois(path).lookup("100.1.1.1", 1) is None
+        with pytest.raises(WhoisUnavailable):  # any other status is not an answer
+            LocalApiWhois(path).lookup("100.1.1.1", 1)
     finally:
         thread.join(2)
         path.unlink(missing_ok=True)
 
 
-def test_cli_whois_uses_the_binary_and_fails_closed(tmp_path):
-    script = tmp_path / "tailscale"
-    script.write_text(
-        f"#!/bin/sh\n[ \"$1\" = whois ] || exit 9\nprintf '%s' '{WHOIS_JSON.decode()}'\n"
+def script(tmp_path, name, body):
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return path
+
+
+def test_cli_whois_uses_the_binary_and_separates_unknown_from_unavailable(tmp_path):
+    ok = script(
+        tmp_path,
+        "tailscale",
+        f"[ \"$1\" = whois ] || exit 9\nprintf '%s' '{WHOIS_JSON.decode()}'\n",
     )
-    script.chmod(0o755)
-    assert CliWhois(script).lookup("100.108.10.0", 5) == PeerIdentity(NODE, LOGIN)
-    broken = tmp_path / "broken"
-    broken.write_text("#!/bin/sh\nexit 1\n")
-    broken.chmod(0o755)
-    assert CliWhois(broken).lookup("100.108.10.0", 5) is None
-    assert CliWhois(tmp_path / "absent").lookup("100.108.10.0", 5) is None
+    assert CliWhois(ok).lookup("100.108.10.0", 5) == PeerIdentity(NODE, LOGIN)
+    unknown = script(tmp_path, "unknown", "echo 'no match for IP:port' >&2\nexit 1\n")
+    assert CliWhois(unknown).lookup("100.1.1.1", 5) is None
+    for body in ("exit 1\n", "printf junk\n", "sleep 0\nexit 3\n"):
+        with pytest.raises(WhoisUnavailable):
+            CliWhois(script(tmp_path, "broken", body)).lookup("100.1.1.1", 5)
+    with pytest.raises(WhoisUnavailable):
+        CliWhois(tmp_path / "absent").lookup("100.1.1.1", 5)
+
+
+def test_cli_whois_defaults_to_the_app_bundle_binary_when_present(
+    monkeypatch, tmp_path
+):
+    bundle = tmp_path / "Tailscale"
+    bundle.write_text("")
+    monkeypatch.setattr(whois_module, "APP_BUNDLE_CLI", bundle)
+    assert CliWhois()._executable == str(bundle)
+    monkeypatch.setattr(whois_module, "APP_BUNDLE_CLI", tmp_path / "none")
+    assert CliWhois()._executable == "tailscale"
+
+
+def test_whois_answers_are_cached_per_peer_for_five_seconds(tmp_path):
+    class Counting:
+        def __init__(self):
+            self.calls = []
+            self.answer = PeerIdentity(NODE, LOGIN)
+
+        def lookup(self, host, port):
+            self.calls.append((host, port))
+            if self.answer is None:
+                raise WhoisUnavailable
+            return self.answer
+
+    inner, now = Counting(), [100.0]
+    cached = CachedWhois(inner, 5.0, lambda: now[0])
+    assert cached.lookup("100.1.1.1", 1) == cached.lookup("100.1.1.1", 1)
+    assert len(inner.calls) == 1
+    cached.lookup("100.1.1.1", 2)  # a different connection is a different key
+    assert len(inner.calls) == 2
+    now[0] += 5.1
+    cached.lookup("100.1.1.1", 1)
+    assert len(inner.calls) == 3
+    inner.answer = None  # failures are never remembered
+    now[0] += 6
+    for _ in range(2):
+        with pytest.raises(WhoisUnavailable):
+            cached.lookup("100.1.1.1", 1)
+    assert len(inner.calls) == 5
+
+
+def test_transient_whois_failure_is_503_and_unknown_peer_is_403(tmp_path):
+    h = Harness(tmp_path)
+    headers = h.pair()
+    h.whois.unavailable = True
+    down = h.client.get(CAPS, headers=headers)
+    assert (down.status_code, down.json()) == (
+        503,
+        {"code": "whois_unavailable", "retryable": True},
+    )
+    assert down.headers["retry-after"] == "2"
+    h.whois.unavailable = False
+    h.whois.identity = None
+    assert h.client.get(CAPS, headers=headers).status_code == 403
+    h.whois.identity = PeerIdentity(NODE, LOGIN)
+    assert h.client.get(CAPS, headers=headers).status_code == 200
 
 
 # ---- pairing CLI ---------------------------------------------------------------
@@ -271,6 +353,7 @@ def test_pair_devices_and_revoke_commands(tmp_path, monkeypatch):
             NODE,
             "--executor",
             "--no-qr",
+            "--print-json",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -303,6 +386,7 @@ def test_pair_devices_and_revoke_commands(tmp_path, monkeypatch):
             "n2",
             "--executor",
             "--no-qr",
+            "--print-json",
         ],
     )
     assert twice.exit_code == 1 and "executor_exists" in twice.output
@@ -346,6 +430,7 @@ def test_pair_can_prefill_the_node_through_whois(tmp_path):
             "--phone-ip",
             "100.108.10.0",
             "--no-qr",
+            "--print-json",
         ],
     )
     assert result.exit_code == 0, result.output

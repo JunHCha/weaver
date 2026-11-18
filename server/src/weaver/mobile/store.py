@@ -14,7 +14,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -348,7 +348,16 @@ class MobileStore:
                 (kind, key),
             ).fetchone()
             if row is not None:
-                return self._operation(row), False
+                existing = self._operation(row)
+                if existing.device_id != device_id:
+                    # A resend from the current device takes over the operation
+                    # (for example after re-pairing), so it can poll it.
+                    db.execute(
+                        "UPDATE operations SET device_id=? WHERE operation_id=?",
+                        (device_id, existing.operation_id),
+                    )
+                    existing = replace(existing, device_id=device_id)
+                return existing, False
             operation_id = "op_" + uuid.uuid4().hex
             db.execute(
                 "INSERT INTO operations VALUES (?,?,?,?,?,?,NULL,?,?,?,NULL,?,?)",
@@ -369,6 +378,17 @@ class MobileStore:
         created = self.operation(operation_id)
         assert created is not None
         return created, True
+
+    def adopt(self, operation: Operation, device_id: str) -> Operation:
+        """Hand an operation to the device that resent it (for example re-paired)."""
+        if operation.device_id == device_id:
+            return operation
+        with self._write() as db:
+            db.execute(
+                "UPDATE operations SET device_id=? WHERE operation_id=?",
+                (device_id, operation.operation_id),
+            )
+        return replace(operation, device_id=device_id)
 
     def update_operation(
         self,
