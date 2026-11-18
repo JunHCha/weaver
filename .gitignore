@@ -2,6 +2,7 @@
 docs/domain
 docs/research
 docs/guides
+docs/evidence
 
 # Python development artifacts
 .venv/
