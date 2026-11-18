@@ -17,11 +17,13 @@ def link_label(title: str) -> str:
     return re.sub(r"[\[\]|\r\n]", " ", title).strip()
 
 
-def wikilink(target: str | None) -> str:
+def wikilink(target: str | None, label: str | None = None) -> str:
     """Missing source notes must not become phantom Obsidian pages."""
     if not target:
         return ""
     target = unicodedata.normalize("NFC", target)
+    if label is not None:
+        return f"[[{target}|{link_label(label)}]]"
     if target.startswith("summaries/") and "|" not in target:
         label = re.sub(
             r" src_[A-Za-z0-9]+$", "", target.rsplit("/", 1)[-1].removesuffix(".md")

@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -37,7 +37,18 @@ from weaver.loom.tagging import (
     tag_snapshot,
 )
 from weaver.schema import TagCorrection, Thread, ThreadDraft
-from weaver.wiki.document import HUMAN_KEYS, Hunk, hunks, sections, text_hash
+from weaver.wiki.document import (
+    HUMAN_KEYS,
+    MEMO,
+    Hunk,
+    heading_moves,
+    hunks,
+    restore_memo_heading,
+    sections,
+    text_hash,
+    with_memo,
+    without_memo,
+)
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
@@ -201,7 +212,9 @@ class Compiler:
     def _edit(self, edit: HumanEdit) -> None:
         """Retry contract violations per revision, then durably acknowledge no facts."""
         try:
-            self._apply_edit(edit)
+            prepared = self._prepare_edit(edit)
+            if prepared is not None:
+                self._apply_edit(prepared)
         except (InvalidJson, SchemaMismatch, MissingOutput, Refusal):
             with sqlite3.connect(self.state_path) as db:
                 db.execute(
@@ -225,6 +238,129 @@ class Compiler:
                 self._apply_edit(edit)
             else:
                 logger.warning("wiki edit contract violation; retry pending")
+
+    def _scope_tag(self, edit: HumanEdit) -> str | None:
+        meta = self.store.metadata(edit.path)
+        dictionary = self.context.snapshot()
+        value = meta.get("state_tag") or edit.frontmatter_before.get("state_tag")
+        if isinstance(value, str) and dictionary.resolve(value):
+            return value
+        ids = meta.get("thread_ids", [])
+        areas = {
+            entry.name
+            for t in self.fabric.entries(ThreadQuery())
+            if isinstance(ids, list) and t.thread_id in ids
+            for tag in t.tags
+            if (entry := dictionary.resolve(tag)) and entry.kind == "area"
+        }
+        return next(iter(areas)) if len(areas) == 1 else None
+
+    def _prepare_edit(self, edit: HumanEdit) -> HumanEdit | None:
+        if edit.body_before is None or edit.body_after is None:
+            return edit
+        edit = replace(
+            edit, body_after=restore_memo_heading(edit.body_before, edit.body_after)
+        )
+        assert edit.body_before is not None and edit.body_after is not None
+        changes = hunks(edit.body_before, edit.body_after)
+        for key in sorted(set(edit.frontmatter_before) | set(edit.frontmatter_after)):
+            if edit.frontmatter_before.get(key) != edit.frontmatter_after.get(key):
+                changes.append(
+                    Hunk(
+                        len(changes),
+                        "frontmatter:" + key,
+                        json.dumps(
+                            edit.frontmatter_before.get(key), ensure_ascii=False
+                        ),
+                        json.dumps(edit.frontmatter_after.get(key), ensure_ascii=False),
+                        "frontmatter" if key in HUMAN_KEYS else "metadata",
+                    )
+                )
+        old, new = (
+            {s.key: s.text for s in sections(edit.body_before)},
+            {s.key: s.text for s in sections(edit.body_after)},
+        )
+        # Renaming a heading changes identity, not business facts.
+        moved = heading_moves(edit.body_before, edit.body_after)
+        meta = self.store.metadata(edit.path)
+        mapping = meta.get("sections", {})
+        spans = meta.get("human_spans", [])
+        if moved and isinstance(mapping, dict):
+            for left, right in moved.items():
+                if left in mapping:
+                    mapping[right] = mapping.pop(left)
+                if isinstance(spans, list):
+                    for span in spans:
+                        if isinstance(span, dict) and span.get("section") == left:
+                            span["section"] = right
+            self.store.write_metadata(
+                edit.path, {"sections": mapping, "human_spans": spans}
+            )
+        code_body = ""
+        for key in new:
+            changed = [h for h in changes if h.section == key]
+            text = new[key]
+            if any(h.classification == "content" for h in changed):
+                previous_key = next(
+                    (left for left, right in moved.items() if right == key), key
+                )
+                text = old.get(previous_key, "")
+                for h in changed:
+                    if h.classification != "content" and h.before:
+                        text = text.replace(h.before, h.after, 1)
+            code_body += text
+        tag = self._scope_tag(edit)
+        field_changed = any(
+            edit.frontmatter_before.get(k) != edit.frontmatter_after.get(k)
+            for k in ("deadline", "schedule", "status", "assignees")
+        )
+        code_after = dict(edit.frontmatter_after)
+        if field_changed and not tag:
+            for key in ("deadline", "schedule", "status", "assignees"):
+                if key in edit.frontmatter_before:
+                    code_after[key] = edit.frontmatter_before[key]
+                else:
+                    code_after.pop(key, None)
+        code = replace(
+            edit,
+            new_rev=edit.new_rev + ":code",
+            body_after=code_body,
+            frontmatter_after=code_after,
+        )
+        self._apply_edit(code)
+        # Code decisions have a transaction independent of subsequent LLM work.
+        with sqlite3.connect(self.state_path) as db:
+            code_row = db.execute(
+                "SELECT drafts FROM edits WHERE rev=?", (code.new_rev,)
+            ).fetchone()
+            code_drafts = json.loads(code_row[0]) if code_row else []
+            db.execute("DELETE FROM edit_hunks WHERE rev=?", (code.new_rev,))
+            for h in changes:
+                if h.classification != "content":
+                    db.execute(
+                        "INSERT OR IGNORE INTO edit_hunks VALUES (?, ?, ?, ?, ?)",
+                        (
+                            edit.new_rev,
+                            h.id,
+                            edit.path,
+                            h.classification,
+                            json.dumps(
+                                h.payload()
+                                | {
+                                    "thread_ids": [
+                                        d["thread_id"]
+                                        for d in code_drafts
+                                        if h.section
+                                        == "frontmatter:" + str(d.get("field"))
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    )
+        if field_changed and not tag:
+            return None
+        return replace(edit, frontmatter_before=edit.frontmatter_after)
 
     def _apply_edit(self, edit: HumanEdit) -> None:
         with sqlite3.connect(self.state_path) as db:
@@ -263,16 +399,14 @@ class Compiler:
                 result = EditResult()
                 meta = self.store.metadata(edit.path)
                 if content:
-                    index = EvidenceIndex(self.state_path, threads)
+                    index = EvidenceIndex(self.state_path, threads, field_dictionary)
                     known_ids = meta.get("thread_ids", [])
                     ids = (
                         set(str(key) for key in known_ids)
                         if isinstance(known_ids, list)
                         else set()
                     )
-                    state_tag = meta.get("state_tag") or edit.frontmatter_before.get(
-                        "state_tag"
-                    )
+                    state_tag = self._scope_tag(edit)
                     ids.update(
                         index.related(
                             [state_tag] if isinstance(state_tag, str) else [],
@@ -318,6 +452,17 @@ class Compiler:
                 ):
                     raise SchemaMismatch()
                 meaningful = list(result.changes)
+                owners = {
+                    id(change): verdict.id
+                    for verdict in result.hunks
+                    if verdict.classification == "fact"
+                    for change in verdict.changes
+                }
+                produced_by_hunk: dict[int, list[str]] = {
+                    verdict.id: []
+                    for verdict in result.hunks
+                    if verdict.classification == "fact"
+                }
                 for h in changes:
                     verdict = verdicts.get(h.id)
                     kind = (
@@ -396,14 +541,20 @@ class Compiler:
                             h.id not in verdicts
                             or verdicts[h.id].classification != "structure"
                         ):
-                            spans.append({"section": h.section, "text": h.after})
+                            human_span: JsonValue = {
+                                "section": h.section,
+                                "text": h.after,
+                            }
+                            if human_span not in spans:
+                                spans.append(human_span)
                     if spans:
                         self.store.write_metadata(edit.path, {"human_spans": spans})
                 result.changes = meaningful
+                revision = edit.new_rev.removesuffix(":code")
                 now = datetime.now(UTC)
                 # Stable ID and cached drafts ensure append retries are byte-identical.
                 alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-                number = int(hashlib.sha256(edit.new_rev.encode()).hexdigest()[:32], 16)
+                number = int(hashlib.sha256(revision.encode()).hexdigest()[:32], 16)
                 ulid = "".join(
                     alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26))
                 )
@@ -421,7 +572,7 @@ class Compiler:
                 ) -> None:
                     drafts.append(
                         ThreadDraft(
-                            thread_id=f"{FIELD_THREAD_PREFIX if field else 'wiki:'}{edit.new_rev}:{len(drafts)}",
+                            thread_id=f"{FIELD_THREAD_PREFIX if field else 'wiki:'}{revision}:{len(drafts)}",
                             kind="태그정정" if correction else "기록",
                             content=content,
                             occurred_at=now,
@@ -439,9 +590,7 @@ class Compiler:
                         )
                     )
 
-                state_tag = meta.get("state_tag") or edit.frontmatter_before.get(
-                    "state_tag"
-                )
+                state_tag = self._scope_tag(edit)
                 additions, names = proposals(field_dictionary, result.new_entries)
                 for change in result.changes:
                     tags = (
@@ -473,6 +622,9 @@ class Compiler:
                         correction=correction,
                         counterpart=counterpart,
                     )
+                    owner = owners.get(id(change))
+                    if owner is not None:
+                        produced_by_hunk[owner].append(drafts[-1].thread_id)
                 used = (
                     {tag for d in drafts for tag in d.tags}
                     | {d.counterpart for d in drafts if d.counterpart}
@@ -507,6 +659,22 @@ class Compiler:
                         make(
                             _field_text(field, before, after), field_tags, field, after
                         )
+                for hunk_id, identifiers in produced_by_hunk.items():
+                    raw_hunk = db.execute(
+                        "SELECT payload FROM edit_hunks WHERE rev=? AND hunk=?",
+                        (edit.new_rev, hunk_id),
+                    ).fetchone()
+                    if raw_hunk:
+                        detail = json.loads(raw_hunk[0])
+                        detail["draft_ids"] = identifiers
+                        db.execute(
+                            "UPDATE edit_hunks SET payload=? WHERE rev=? AND hunk=?",
+                            (
+                                json.dumps(detail, ensure_ascii=False),
+                                edit.new_rev,
+                                hunk_id,
+                            ),
+                        )
                 payload = json.dumps(
                     [d.model_dump(mode="json") for d in drafts], ensure_ascii=False
                 )
@@ -525,26 +693,70 @@ class Compiler:
                 human_edited=False,
                 drop_conflicting_aliases=True,
             )
-        self.fabric.append([ThreadDraft.model_validate(d) for d in json.loads(payload)])
+        appended = self.fabric.append(
+            [ThreadDraft.model_validate(d) for d in json.loads(payload)]
+        )
+        with sqlite3.connect(self.state_path) as db:
+            for hunk_id, raw in db.execute(
+                "SELECT hunk, payload FROM edit_hunks WHERE rev=?", (edit.new_rev,)
+            ).fetchall():
+                detail = json.loads(raw)
+                expected_ids = detail.pop("draft_ids", detail.get("thread_ids"))
+                produced = [
+                    t.thread_id
+                    for t in appended
+                    if (
+                        t.thread_id in expected_ids
+                        if isinstance(expected_ids, list)
+                        else detail.get("section") == "frontmatter:" + str(t.field)
+                        if t.field is not None
+                        else detail.get("classification") == "content"
+                    )
+                ]
+                detail["thread_ids"] = list(
+                    dict.fromkeys([*detail.get("thread_ids", []), *produced])
+                )
+                db.execute(
+                    "UPDATE edit_hunks SET payload=? WHERE rev=? AND hunk=?",
+                    (json.dumps(detail, ensure_ascii=False), edit.new_rev, hunk_id),
+                )
         if edit.body_before is not None and edit.path.startswith("pages/"):
             try:
                 props, body, base = self.store.read(edit.path)
                 # Only restore this acknowledged version, never a newer edit.
                 if self.store.is_tracked_version(edit.path, base):
                     trusted = self.store.metadata(edit.path)
+                    disk_body = body
+                    body = restore_memo_heading(edit.body_before, body)
+                    memo_source = body
                     before_parts = {
                         part.key: part.text for part in sections(edit.body_before)
                     }
-                    body = "".join(
-                        before_parts.get(part.key, "")
-                        if part.key == "## 근거"
-                        else part.text
-                        for part in sections(body)
-                    )
+                    if "## 근거" in before_parts:
+                        body = without_memo(
+                            "".join(
+                                part.text
+                                for part in sections(body)
+                                if part.key not in ("## 근거", MEMO)
+                            )
+                        )
+                        body = with_memo(
+                            body.rstrip() + "\n\n" + before_parts["## 근거"],
+                            memo_source,
+                        )
+                    # Memo headings may vary in spacing; an unrelated rename is
+                    # restored without throwing away the person's note text.
+                    if MEMO in before_parts and not any(
+                        part.key == MEMO for part in sections(body)
+                    ):
+                        parts = sections(body)
+                        if parts and parts[-1].key not in before_parts:
+                            note = MEMO + "\n" + parts[-1].text.partition("\n")[2]
+                            body = "".join(part.text for part in parts[:-1]) + note
                     bad = any(
                         key not in HUMAN_KEYS and key != "weaver" for key in props
                     ) or props.get("weaver") != trusted.get("id")
-                    if bad or body != edit.body_after:
+                    if bad or body != disk_body:
                         self.store.write(
                             edit.path,
                             trusted
@@ -556,6 +768,7 @@ class Compiler:
                             body,
                             base,
                             metadata="restore private wiki fields",
+                            memo_source=memo_source,
                         )
             except FileNotFoundError:
                 pass

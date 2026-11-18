@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unicodedata
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -238,6 +239,7 @@ def _render(properties: dict[str, JsonValue], body: str) -> bytes:
 
 
 class WikiStore:
+    _readonly: bool = False
     """Manage pages rooted under a vault, with history outside that vault.
 
     ``clock`` returns Unix seconds; ``settle_seconds`` controls the quiet period.
@@ -291,9 +293,25 @@ class WikiStore:
             self._git("commit", "--allow-empty", "-m", "initialize wiki")
         self.db_path = state_root / "wiki.sqlite3"
         with self._db() as db:
-            db.executescript("""CREATE TABLE IF NOT EXISTS pages (path TEXT PRIMARY KEY, content BLOB NOT NULL, rev TEXT NOT NULL, readonly INTEGER NOT NULL, candidate TEXT, since REAL, mtime REAL);
+            db.executescript("""CREATE TABLE IF NOT EXISTS page_ids (path TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL);
+                CREATE TABLE IF NOT EXISTS pages (path TEXT PRIMARY KEY, content BLOB NOT NULL, rev TEXT NOT NULL, readonly INTEGER NOT NULL, candidate TEXT, since REAL, mtime REAL);
                 CREATE TABLE IF NOT EXISTS pending (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS human_edits (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);""")
+            for stored_path, stored_data in db.execute(
+                "SELECT path, content FROM pages"
+            ).fetchall():
+                try:
+                    identity = _properties(stored_data).get("weaver")
+                except (ValueError, UnicodeError):
+                    identity = None
+                if not isinstance(identity, str) or not re.fullmatch(
+                    r"[0-9a-f]{24}", identity
+                ):
+                    identity = _hash(normalize_path(stored_path).encode())[:24]
+                db.execute(
+                    "INSERT OR IGNORE INTO page_ids VALUES (?, ?)",
+                    (normalize_path(stored_path), identity),
+                )
             # Keep an existing canonical baseline; legacy aliases must never
             # become new human edits. This transaction is safe to repeat.
             for (path,) in db.execute(
@@ -338,8 +356,135 @@ class WikiStore:
                 "INSERT OR IGNORE INTO human_edits SELECT rev, payload FROM pending"
             )
 
+    @classmethod
+    def open_readonly(
+        cls, vault: Path, state_root: Path, *, wiki_root: str = "Weaver"
+    ) -> "WikiStore":
+        store = cls.__new__(cls)
+        store.vault, store.root = vault, vault / wiki_root
+        store.git_dir, store.db_path = (
+            state_root / "wiki.git",
+            state_root / "wiki.sqlite3",
+        )
+        store.clock, store.settle_seconds = time.time, 0
+        store._readonly = True
+        return store
+
+    def page_id(self, path: str) -> str:
+        with self._db() as db:
+            try:
+                row = db.execute(
+                    "SELECT id FROM page_ids WHERE path=?", (normalize_path(path),)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+        return str(row[0]) if row else _hash(normalize_path(path).encode())[:24]
+
+    def bootstrap(self, path: str, body: str) -> None:
+        if not path.startswith("pages/") or self.metadata(path).get("sections"):
+            return
+        from weaver.wiki.selection import section_map
+
+        mapping = section_map(body, [], {})
+        for data in mapping.values():
+            if isinstance(data, dict):
+                data["status"] = "미분류"
+        self.write_metadata(
+            path, {"sections": json.loads(json.dumps(mapping)), "thread_ids": []}
+        )
+
+    def _discover_identity(self, path: str) -> bool:
+        if not path.startswith("pages/"):
+            return False
+        props, body, digest = self.read(path)
+        with self._db() as db:
+            known = db.execute(
+                "SELECT 1 FROM page_ids JOIN pages USING(path) WHERE path=?", (path,)
+            ).fetchone()
+        if known:
+            self.bootstrap(path, body)
+            return False
+        identity = props.get("weaver")
+        if not isinstance(identity, str):
+            self.bootstrap(path, body)
+            return False
+        with self._db() as db:
+            row = db.execute(
+                "SELECT path FROM page_ids WHERE id=?", (identity,)
+            ).fetchone()
+            if row is None:
+                # Existing v1 metadata used path-derived IDs.
+                candidates = db.execute("SELECT path, content FROM pages").fetchall()
+                row = next(
+                    (
+                        (old,)
+                        for old, data in candidates
+                        if _properties(data).get("weaver") == identity
+                    ),
+                    None,
+                )
+            if row and row[0] != path and not self._path(row[0]).exists():
+                old = row[0]
+                baseline = db.execute(
+                    "SELECT content FROM pages WHERE path=?", (old,)
+                ).fetchone()
+                assert baseline is not None
+                self._commit(old, None, "weaver", "move wiki page")
+                rev = self._commit(path, baseline[0], "weaver", "move wiki page")
+                db.execute("DELETE FROM page_ids WHERE path=?", (old,))
+                db.execute(
+                    "INSERT OR REPLACE INTO page_ids VALUES (?, ?)", (path, identity)
+                )
+                db.execute(
+                    "UPDATE pages SET path=?, rev=?, mtime=NULL WHERE path=?",
+                    (path, rev, old),
+                )
+                for table in ("pending", "human_edits"):
+                    for rev_id, payload in db.execute(
+                        f"SELECT rev, payload FROM {table}"
+                    ).fetchall():
+                        value = json.loads(payload)
+                        if value["path"] == old:
+                            value["path"] = path
+                            db.execute(
+                                f"UPDATE {table} SET payload=? WHERE rev=?",
+                                (json.dumps(value, ensure_ascii=False), rev_id),
+                            )
+                db.commit()
+                # Read the old object directly; metadata() deliberately rejects
+                # documents belonging to another path.
+                raw = self._git("show", f"HEAD:meta/{identity}.json")
+                values = json.loads(raw)
+                self.write_metadata(path, values | {"path": path})
+                return True
+            if row and row[0] != path:
+                identity = uuid.uuid4().hex[:24]
+                db.execute(
+                    "INSERT OR REPLACE INTO page_ids VALUES (?, ?)", (path, identity)
+                )
+                db.commit()
+                data, _ = self.render(
+                    path, {k: v for k, v in props.items() if k in HUMAN_KEYS}, body
+                )
+                self._replace(path, data, digest)
+                rev = self._commit(path, data, "weaver", "assign copied page identity")
+                db.execute(
+                    "INSERT OR REPLACE INTO pages VALUES (?, ?, ?, 0, NULL, NULL, NULL)",
+                    (path, data, rev),
+                )
+                db.commit()
+                self.bootstrap(path, body)
+                return True
+            db.execute("INSERT OR IGNORE INTO page_ids VALUES (?, ?)", (path, identity))
+        self.bootstrap(path, body)
+        return False
+
     def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        return (
+            sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+            if getattr(self, "_readonly", False)
+            else sqlite3.connect(self.db_path)
+        )
 
     def _path(self, path: str) -> Path:
         relative = Path(normalize_path(path))
@@ -493,6 +638,7 @@ class WikiStore:
         body: str,
         *,
         readonly: bool = False,
+        memo_source: str | None = None,
     ) -> tuple[bytes, dict[str, JsonValue]]:
         """Preview exactly the bytes a write would publish, without mutations."""
         path = normalize_path(path)
@@ -500,8 +646,10 @@ class WikiStore:
             _, previous, _ = self.read(path)
         except FileNotFoundError:
             previous = ""
+        if memo_source is not None:
+            previous = memo_source
         if path.startswith("pages/"):
-            key = _hash(path.encode())[:24]
+            key = self.page_id(path)
             private = {
                 k: v
                 for k, v in frontmatter.items()
@@ -567,11 +715,14 @@ class WikiStore:
         *,
         metadata: str = "wiki update",
         readonly: bool = False,
+        memo_source: str | None = None,
     ) -> str:
         """Write and commit a page if its hash and quiet period permit it."""
         path = normalize_path(path)
         self.check_write(path, base_hash)
-        data, private = self.render(path, frontmatter, body, readonly=readonly)
+        data, private = self.render(
+            path, frontmatter, body, readonly=readonly, memo_source=memo_source
+        )
         self._replace(path, data, base_hash)
         rev = self._commit(path, data, "weaver", metadata)
         with self._db() as db:
@@ -592,20 +743,25 @@ class WikiStore:
 
     def metadata(self, path: str) -> dict[str, JsonValue]:
         """Read private page metadata from the bare Git repository only."""
-        key = _hash(normalize_path(path).encode())[:24]
-        try:
-            raw = self._git("show", f"HEAD:meta/{key}.json")
-        except subprocess.CalledProcessError:
+        key = self.page_id(path)
+        entry = self._git("ls-tree", "HEAD", "--", f"meta/{key}.json")
+        if not entry:
             return {}
+        raw = self._git("show", f"HEAD:meta/{key}.json")
         value = json.loads(raw)
         if not isinstance(value, dict):
             raise ValueError("invalid wiki metadata")
-        return value
+        return value if value.get("path") == normalize_path(path) else {}
 
     def write_metadata(self, path: str, values: dict[str, JsonValue]) -> None:
         """Commit a private metadata document without creating a vault file."""
-        key = _hash(normalize_path(path).encode())[:24]
+        key = self.page_id(path)
         current = self.metadata(path)
+        with self._db() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO page_ids VALUES (?, ?)",
+                (normalize_path(path), key),
+            )
         updated = current | values | {"id": key, "path": normalize_path(path)}
         if updated != current:
             self._commit(
@@ -685,6 +841,12 @@ class WikiStore:
 
     def scan(self, now: float) -> list[HumanEdit]:
         """Confirm stable human edits and return all unacknowledged edits."""
+        for file in sorted((self.root / "pages").rglob("*.md")):
+            path = normalize_path(file.relative_to(self.root).as_posix())
+            try:
+                self._discover_identity(path)
+            except (ValueError, UnicodeError, FileNotFoundError):
+                continue
         with self._db() as db:
             known = {row[0] for row in db.execute("SELECT path FROM pages")}
             for directory, dirs, files in os.walk(self.root, followlinks=False):

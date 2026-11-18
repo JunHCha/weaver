@@ -27,7 +27,7 @@ def draft(key, tag, **updates):
         content=f"합성 사실 {key}",
         occurred_at=datetime(2026, 11, 18, tzinfo=UTC),
         recorded_at=datetime(2026, 11, 18, tzinfo=UTC),
-        tags=[tag],
+        tags=["업무 운영", tag],
         source_id=SOURCE,
         actor="ai_approved",
         field=None,
@@ -172,9 +172,7 @@ def test_partial_compile_changes_only_selected_section_and_preserves_memo(tmp_pa
     assert store.metadata(PATH)["sections"]["## 도구"]["thread_ids"] == ["two"]
 
 
-def test_human_wording_in_selected_section_is_protected_and_bad_output_rejected(
-    tmp_path,
-):
+def test_human_wording_in_selected_section_is_preserved_with_latest_record(tmp_path):
     store, fabric, model, compiler = setup(tmp_path)
     settle_edit(
         store,
@@ -183,15 +181,9 @@ def test_human_wording_in_selected_section_is_protected_and_bad_output_rejected(
     )
     fabric.append([draft("three", "네트워크")])
     model.drop_human = True
-    before = (store.root / PATH).read_bytes()
-    with pytest.raises(WikiValidationError, match="human wording"):
-        compiler.run()
-    assert (store.root / PATH).read_bytes() == before
-    model.drop_human = False
-    # Change snapshot to retry an intentionally rejected result.
-    fabric.append([draft("four", "네트워크")])
     compiler.run()
-    assert "사람이 신중하게 쓴 문장" in store.read(PATH)[1]
+    body = store.read(PATH)[1]
+    assert "사람이 신중하게 쓴 문장" in body and "⚠ 최신 기록:" in body
 
 
 def test_unselected_model_section_rejected_before_any_write(tmp_path):
@@ -305,7 +297,7 @@ def test_structure_verdict_updates_correspondence_without_thread(tmp_path):
     edit = settle_edit(
         store, compiler, lambda text: text.replace("## 네트워크", "## 새 구조")
     )
-    assert len(model.calls) == 1
+    assert len(model.calls) == 0
     mapping = store.metadata(PATH)["sections"]
     assert mapping["## 새 구조"]["thread_ids"] == ["one"]
     assert "## 네트워크" not in mapping
@@ -392,7 +384,7 @@ def test_migration_preview_backup_apply_and_idempotency(tmp_path):
     assert (backup / "files" / PATH).read_bytes() == legacy
     assert (backup / "wiki.git/HEAD").exists() and (backup / "wiki.sqlite3").exists()
     assert "사람 메모" in file.read_text()
-    assert store.metadata(PATH)["sections"]["## 네트워크"]["thread_ids"] == ["one"]
+    assert store.metadata(PATH)["sections"]["## 네트워크"]["thread_ids"] == []
     assert migration.preview()["changes"] == []
     assert (
         migration.apply(migration.preview(), tmp_path / "unused-backup", confirmed=True)

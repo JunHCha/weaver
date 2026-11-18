@@ -54,6 +54,7 @@ class WikiJob:
             zone,
             self.source_link,
             lambda error: self._deferred("digest", error),
+            source_label=self.source_label,
         )
         self.compiler.digest = self.digest
         self._waiting: dict[str, tuple[str, float | None]] = {}
@@ -69,6 +70,12 @@ class WikiJob:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS bookmark (id INTEGER PRIMARY KEY, seq INTEGER NOT NULL)"
             )
+
+    def source_label(self, source_id: str) -> str | None:
+        try:
+            return self.lookup(source_id).title
+        except (ValueError, LookupError, FileNotFoundError):
+            return None
 
     def source_link(self, source_id: str) -> str | None:
         try:
@@ -193,6 +200,7 @@ class WikiJob:
                 self.store,
                 now=datetime.now(self.zone),
                 source_link=self.source_link,
+                source_label=self.source_label,
             )
         except HumanEditPending as error:
             self._deferred("queries", error)

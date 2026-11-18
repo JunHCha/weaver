@@ -9,6 +9,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
+from weaver.context import DictionarySnapshot
 from weaver.schema import Thread
 from weaver.wiki.document import MEMO, sections, text_hash
 
@@ -44,23 +45,39 @@ def assignment_map(values: SectionAssignments) -> dict[str, list[str]]:
 
 
 class EvidenceIndex:
-    def __init__(self, path: Path, threads: list[Thread]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        threads: list[Thread],
+        dictionary: DictionarySnapshot | None = None,
+    ) -> None:
         self.path = path
+        self.areas = (
+            {e.name for e in dictionary.entries if e.kind == "area"}
+            if dictionary
+            else {"업무 운영"}
+        )
         with closing(sqlite3.connect(path)) as db, db:
+            db.execute("DROP TABLE IF EXISTS wiki_evidence")
             db.executescript("""
-                CREATE TABLE IF NOT EXISTS wiki_evidence (id TEXT PRIMARY KEY, counterpart TEXT, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS wiki_evidence (id TEXT PRIMARY KEY, counterpart TEXT);
                 CREATE TABLE IF NOT EXISTS wiki_evidence_tags (id TEXT, tag TEXT, PRIMARY KEY (id, tag));
                 CREATE INDEX IF NOT EXISTS wiki_evidence_tag ON wiki_evidence_tags(tag);
                 CREATE VIRTUAL TABLE IF NOT EXISTS wiki_evidence_fts USING fts5(id UNINDEXED, content);
                 DELETE FROM wiki_evidence; DELETE FROM wiki_evidence_tags; DELETE FROM wiki_evidence_fts;
             """)
             db.executemany(
-                "INSERT INTO wiki_evidence VALUES (?, ?, ?)",
-                [(t.thread_id, t.counterpart, t.model_dump_json()) for t in threads],
+                "INSERT INTO wiki_evidence VALUES (?, ?)",
+                [(t.thread_id, t.counterpart) for t in threads],
             )
             db.executemany(
                 "INSERT OR IGNORE INTO wiki_evidence_tags VALUES (?, ?)",
-                [(t.thread_id, tag) for t in threads for tag in t.tags],
+                [
+                    (t.thread_id, tag)
+                    for t in threads
+                    for tag in t.tags
+                    if tag not in self.areas
+                ],
             )
             db.executemany(
                 "INSERT INTO wiki_evidence_fts VALUES (?, ?)",
@@ -73,6 +90,8 @@ class EvidenceIndex:
         ids: set[str] = set()
         with closing(sqlite3.connect(self.path)) as db:
             for tag in tags:
+                if tag in self.areas:
+                    continue
                 ids.update(
                     row[0]
                     for row in db.execute(
@@ -136,7 +155,16 @@ def affected(
             continue
         ids = set(data.get("thread_ids", []))
         related = index.related(data.get("tags", []), data.get("counterparts", []))
-        if not any(t.thread_id in related for t in new):
+        if (
+            (
+                not (set(data.get("tags", [])) - index.areas)
+                or any(
+                    not (set(t.tags) - index.areas) and not t.counterpart for t in new
+                )
+            )
+            and not data.get("counterparts")
+            and not any(t.thread_id in related for t in new)
+        ):
             related.update(index.related([], [], str(data.get("search_text", ""))))
         for thread in new:
             targets = {thread.thread_id, thread.retracts, thread.resolves}

@@ -86,7 +86,7 @@ contact date and the preceding 7-day/30-day counts in the injected local timezon
 ## Human pages and private metadata (#166)
 
 `pages/*.md` publishes only nonempty `deadline`, `schedule`, `status`,
-`assignees`, `next`, `area`, `aliases`, and the `weaver` page connection ID.
+`assignees`, `next`, `area`, `aliases`, `tags`, `cssclasses`, `date`, and the `weaver` page connection ID.
 Page roles, state tags, source/Thread IDs, section-to-fact assignments and hashes
 are JSON documents committed under `meta/` in the private `state/wiki.git` tree.
 No metadata worktree files are created in the vault, and `published_pages()`
@@ -98,14 +98,15 @@ and are restored from their committed baselines if edited.
 
 Initial generation advances through at most 32 new Threads per tick. Later
 calls use the section evidence map to find affected sections with SQL tag and
-counterpart matches; FTS5 supplements missing exact matches. At most 64 related
-facts and 32,000 source characters (12,000 per source) enter a page request.
+counterpart matches; FTS5 supplements missing exact matches. The evidence cap is 64 facts **per section**. Above that cap, merge-only mode
+supplies the existing section and new Threads and keeps old wording and evidence.
+Source excerpts have a 32,000-character total budget (12,000 per source).
 Only selected sections are supplied and replaced; other sections keep their
 exact text. The model supplies `section_threads` for precise section evidence;
 older cached/model responses without that map conservatively associate the
-page's supplied evidence with its sections. Selected sections also carry exact
-human wording that the validator requires the result to preserve. Rejected
-results do not publish or advance the bookmark. Generation cache and write
+page's supplied evidence with its sections. Selected sections carry exact human wording. Stale wording is retained with a
+deterministic `⚠ 최신 기록: …` line; it does not block newer facts. Two consecutive
+validation failures mark the section `검토 대기`, skip it and advance the bookmark. Generation cache and write
 hash/quiet-period checks still protect retries and concurrent human edits.
 
 Human revisions store their exact before/after bodies alongside their Git commit
@@ -143,3 +144,66 @@ wording and memo preservation, code/model hunk call counts, machine restoration,
 private metadata publication boundaries, SQL/FTS selectors, migration safety and
 idempotency. The synthetic input comparison uses the same UTF-8-bytes/4 token
 estimator on both sides; it is not provider token billing or a real-vault benchmark.
+
+## Review corrections and identity policy
+
+Selection excludes dictionary entries of kind `area`; common areas cannot select
+all sections. Topic/person/organization/project keys, counterpart, direct Thread
+references and auxiliary FTS5 determine scope. Missing section keys are dropped;
+heading renames and order-only moves are code-classified structural edits. A page
+without a section map gets a heading bootstrap. A migration section without a
+reliable Thread match is marked `미분류` with `thread_ids=[]`.
+
+The `weaver` ID is stable across filename/path moves. Move detection transfers
+private metadata and the tracked baseline without an LLM or new Thread. A copied
+ID gets a fresh identity and an empty map; it never inherits the source page's
+metadata. Changing a tracked file's connection key is ignored and restored.
+The filename change does not automatically rename business tags in Fabric.
+
+Code-classified frontmatter/memo/expression/metadata/structure hunks commit before
+the content-model call. Model outages leave only content hunks pending. Missing
+state_tag is inferred from a single area in the page's evidence; unresolved value
+changes stay pending. Hunk payloads include produced Thread IDs. Public fields
+come from deterministic Thread projections; model aliases do not replace human
+frontmatter. The code fills `area` from the unique area tag.
+
+Empty scope queues unmatched Threads. Three queued Threads or seven days in the
+queue allow a new-page proposal, including when no new Thread arrives that tick.
+Models can return `pages=[]` and `new_sections` rows with `page`, `after_section`,
+and `body`; existing sections remain untouched. When selected sections exceed
+half the page, or estimated prompt input exceeds 60K tokens (UTF-8 bytes / 4), the
+compiler logs a page-level full rewrite fallback. Memo and human wording protections
+still apply; oversized evidence sections retain merge-only protection. Promotion
+eligibility and duplicate checks receive the full active Fabric in code, while
+the prompt receives compact promotion candidates. Digest inputs retain the full
+period and are never narrowed to page-section evidence.
+
+Before migration, drain human edits with `run` and inspect the preview. File/baseline
+hash differences, candidates, pending/human-edit rows, and a mismatched legacy
+`weaver_content_sha256` cause `먼저 컴파일러로 처리` skips at preview and apply.
+Rows that remain in the human-edit history still cause a conservative skip; the
+converter never acknowledges or absorbs them. Per-page parse errors are listed
+as `변환 불가`; other pages remain reviewable. Preview lists keys moved into meta.
+
+Rollback: stop the resident server; first save the current vault and state in a
+new external directory to retain changes made after migration. Restore the
+backup's `files/` tree into the Wiki folder. Move the current `state/wiki.git`
+and `state/wiki.sqlite3` aside, then copy the backup's `wiki.git` and
+`wiki.sqlite3` into those paths. Do not roll back Fabric or remove newer user
+files. Inspect the restored files and pending edits before restarting `run`.
+
+## No-model measurement
+
+```sh
+uv run --project server python -m weaver.app wiki-measure --config /path/server.toml
+uv run --project server python -m weaver.app wiki-measure --config /path/server.toml --after-seq 0
+```
+
+This command uses read-only Wiki/Fabric/context connections and a temporary SQL
+index. It does not scan, bootstrap, advance bookmarks, initialize writable stores,
+or call an LLM. JSON reports each 32-Thread cycle's selected sections, compile
+mode and old-full versus new-partial **page-payload** bytes/token estimates.
+The estimator excludes provider billing, system-token overhead and full-period
+Digest payloads; it is an offline planning comparison, not a paid model run.
+The synthetic comparison includes four shared areas, one area per Thread,
+overlapping counterparts and skewed common topics rather than isolated tags.

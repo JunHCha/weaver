@@ -98,3 +98,16 @@ structure에는 section_threads 목록의 section과 thread_ids로 새 섹션↔
 각 입력 hunk를 정확히 한 번 판정한다. 표현·구조 변경으로 업무 Thread를 만들지 않는다.
 """
 )
+
+
+BATCH_PROMPT += """
+기존 페이지에는 path를 입력의 정확한 경로로 지정한다. 파일 이동은 문서의 내용이나 사실 변화가 아니다.
+compile_modes의 full은 선택 섹션이 절반을 넘거나 입력 추정이 60K 토큰을 넘은 경우의 페이지 단위 갱신이다.
+merge_only의 섹션은 기존 문장 전체를 유지하고 새 Thread에 따른 내용만 덧붙인다.
+protected_human_text는 사실이 오래되어도 삭제하지 않는다. 새 기록은 그 아래 최신 기록으로 구분한다.
+기존 페이지의 frontmatter는 코드가 계산하므로 aliases 등 사람 속성을 변경하려 하지 않는다.
+새 섹션만 필요하면 pages를 비우고 new_sections에 page(실제 경로), after_section(기존 섹션 키), body(새 H2 섹션)를 쓴다.
+불필요하면 pages=[]도 가능하며 입력 사실은 excluded_threads로 빠짐없이 설명한다.
+promotion_candidates는 전체 Fabric으로 코드가 계산한 간결한 후보 정보다. 실제 적격성과 중복은 코드가 확인한다.
+digest_targets.inputs는 해당 기간 전체 근거다. 페이지용으로 좁힌 threads로 기간의 사실을 대체하지 않는다.
+"""
