@@ -296,6 +296,9 @@ class WikiStore:
             for (path,) in db.execute(
                 "SELECT path FROM pages ORDER BY path"
             ).fetchall():
+                if Path(path).suffix != ".md":
+                    db.execute("DELETE FROM pages WHERE path=?", (path,))
+                    continue
                 canonical = normalize_path(path)
                 if path != canonical:
                     db.execute(
@@ -307,6 +310,9 @@ class WikiStore:
                 "SELECT rev, payload FROM pending"
             ).fetchall():
                 edit = json.loads(payload)
+                if Path(edit["path"]).suffix != ".md":
+                    db.execute("DELETE FROM pending WHERE rev=?", (rev,))
+                    continue
                 edit["path"] = normalize_path(edit["path"])
                 db.execute(
                     "UPDATE pending SET payload=? WHERE rev=?",
@@ -317,6 +323,9 @@ class WikiStore:
                 "SELECT rev, payload FROM human_edits"
             ).fetchall():
                 edit = json.loads(payload)
+                if Path(edit["path"]).suffix != ".md":
+                    db.execute("DELETE FROM human_edits WHERE rev=?", (rev,))
+                    continue
                 edit["path"] = normalize_path(edit["path"])
                 db.execute(
                     "UPDATE human_edits SET payload=? WHERE rev=?",
@@ -577,6 +586,8 @@ class WikiStore:
                     if not name.startswith(".") and not (base / name).is_symlink()
                 ]
                 for name in files:
+                    if Path(name).suffix != ".md":
+                        continue
                     path = normalize_path(
                         (base / name).relative_to(self.root).as_posix()
                     )

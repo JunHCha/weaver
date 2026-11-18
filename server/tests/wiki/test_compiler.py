@@ -1,3 +1,6 @@
+import json
+import os
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 import pytest
@@ -7,7 +10,7 @@ from weaver.context import ContextDictionary, Page
 from weaver.fabric.store import FabricStore, ThreadQuery
 from weaver.schema import ThreadDraft
 from weaver.wiki.compiler import Compiler, EditResult, Summary
-from weaver.wiki.store import WikiStore
+from weaver.wiki.store import HumanEdit, WikiStore
 
 NOW = datetime(2025, 1, 1, tzinfo=UTC)
 SOURCE = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -38,6 +41,52 @@ def draft():
         retracts=None,
         correction=None,
     )
+
+
+@pytest.mark.parametrize("legacy_confirmed", [False, True])
+def test_non_markdown_attachments_never_call_llm_or_create_threads(
+    tmp_path, legacy_confirmed
+):
+    now = [10000.0]
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", clock=lambda: now[0])
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+
+    class NoCalls(FakeLLM):
+        def generate_text(self, task, system, user):
+            pytest.fail(f"unexpected LLM call: {task}")
+
+        def generate_json(self, task, system, user, schema):
+            pytest.fail(f"unexpected LLM call: {task}")
+
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        NoCalls(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("합성 요약", "본문"),
+    )
+    for suffix in ("png", "apk", "txt", "json", "MD"):
+        path = store.root / f"attachment.{suffix}"
+        path.write_bytes(b"\xff" if suffix in ("png", "apk") else b"synthetic text")
+        os.utime(path, (now[0], now[0]))
+    if legacy_confirmed:
+        with store._db() as db:
+            for suffix in ("txt", "json", "MD"):
+                edit = HumanEdit(f"attachment.{suffix}", "base", suffix, "diff", {}, {})
+                payload = json.dumps(asdict(edit))
+                db.execute("INSERT INTO pending VALUES (?, ?)", (suffix, payload))
+                db.execute("INSERT INTO human_edits VALUES (?, ?)", (suffix, payload))
+        store = WikiStore(tmp_path / "vault", tmp_path / "wiki", clock=lambda: now[0])
+        compiler.store = store
+    compiler.run()
+    now[0] += 1801
+    compiler.run()
+    assert fabric.entries(ThreadQuery()) == []
+    assert store.edit_states() == []
+    with store._db() as db:
+        assert db.execute("SELECT path FROM pages").fetchall() == []
 
 
 def test_compile_and_bookmark_failure(tmp_path):

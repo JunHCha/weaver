@@ -1,6 +1,7 @@
 """Synthetic end-to-end compilations: no models, network or user vaults."""
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +19,15 @@ from weaver.wiki.store import WikiStore
 NOW = datetime(2026, 11, 17, tzinfo=UTC)
 NAME = "라우터 교체"
 AREA = "네트워크 운영"
+
+
+class FixedClockWikiStore(WikiStore):
+    """Keep synthetic file times on the same clock as lifecycle decisions."""
+
+    def _replace(self, path: str, data: bytes, expected: str | None) -> None:
+        super()._replace(path, data, expected)
+        now = self.clock()
+        os.utime(self._path(path), (now, now))
 
 
 def fact(key, *, day=0, **updates):
@@ -83,7 +93,7 @@ def setup(tmp_path):
     context.add_entry(AREA, "area")
     fabric = FabricStore(tmp_path / "fabric.sqlite3")
     fabric.append([fact("one", day=5), fact("two")])
-    store = WikiStore(
+    store = FixedClockWikiStore(
         tmp_path / "vault",
         tmp_path / "state",
         settle_seconds=0,
