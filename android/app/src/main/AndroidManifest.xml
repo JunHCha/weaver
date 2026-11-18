@@ -4,6 +4,8 @@
 
     <!-- Feature permissions. None is requested at launch; each feature asks on demand
          and the home screen stays usable when any of them is denied. -->
+    <!-- HTTPS to the paired Weaver server on the tailnet only (ADR-040); no other host is ever contacted. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission

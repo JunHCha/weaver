@@ -1,7 +1,9 @@
 package io.github.junhcha.weaver.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -73,12 +75,21 @@ internal fun areaEntries(snapshot: PhoneSnapshot) = areaDirectory(snapshot)
  * One person, organization or area as a single time-ordered column. People show counterpart threads only by
  * default; "언급 포함" adds mention-only threads dimmed with a 언급 badge; "이력 포함" follows the web fact/history rule.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun TimelineScreen(snapshot: PhoneSnapshot, subject: String, onBack: () -> Unit) {
+internal fun TimelineScreen(
+    snapshot: PhoneSnapshot, subject: String, onBack: () -> Unit,
+    tagHost: TagEditHost? = null, onEdited: () -> Unit = {},
+) {
     val isParty = snapshot.tags.firstOrNull { it.name == subject }?.kind?.isParty == true
     var mentions by rememberSaveable(subject) { mutableStateOf(false) }
     var history by rememberSaveable(subject) { mutableStateOf(false) }
     val rows = remember(snapshot, subject, mentions, history) { timeline(snapshot, subject, mentions, history) }
+    // Tag editing: a tap opens the sheet for one Thread; a long press starts a multi-selection for batch edits.
+    var selection by remember(subject) { mutableStateOf<Set<String>>(emptySet()) }
+    var sheet by remember(subject) { mutableStateOf<List<String>?>(null) }
+    var dictionary by remember(subject) { mutableStateOf(false) }
+    val byId = remember(rows) { rows.associate { it.thread.id to it.thread } }
     Column(Modifier.fillMaxSize().testTag("timeline-screen")) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(
@@ -88,6 +99,17 @@ internal fun TimelineScreen(snapshot: PhoneSnapshot, subject: String, onBack: ()
             Text(subject, style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
             val kind = snapshot.tags.firstOrNull { it.name == subject }?.kind
             if (kind != null) Muted(kind.label, Modifier.padding(start = 8.dp))
+            if (tagHost != null) {
+                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                TextButton(onClick = { dictionary = true }, Modifier.defaultMinSize(minHeight = 48.dp).testTag("dictionary-open")) { Text("사전") }
+            }
+        }
+        if (selection.isNotEmpty()) Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${selection.size}개 선택", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { selection = emptySet() }, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("취소") }
+            TextButton(onClick = { sheet = selection.toList() }, Modifier.defaultMinSize(minHeight = 48.dp).testTag("batch-edit")) { Text("태그 편집") }
         }
         Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (isParty) {
@@ -98,17 +120,36 @@ internal fun TimelineScreen(snapshot: PhoneSnapshot, subject: String, onBack: ()
         }
         if (rows.isEmpty()) Muted("보여 줄 Thread가 없어요", Modifier.padding(16.dp))
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp)) {
-            items(rows, key = { it.thread.id }) { TimelineEntry(it) }
+            items(rows, key = { it.thread.id }) { row ->
+                val id = row.thread.id
+                TimelineEntry(
+                    row, selected = id in selection,
+                    modifier = if (tagHost == null) Modifier else Modifier.combinedClickable(
+                        onLongClick = { selection = selection + id },
+                        onClick = { if (selection.isNotEmpty()) selection = if (id in selection) selection - id else selection + id else sheet = listOf(id) },
+                    ).testTag("thread-$id"),
+                )
+            }
         }
+    }
+    val editing = sheet
+    if (tagHost != null && editing != null) {
+        TagEditSheet(editing.mapNotNull { byId[it] }, snapshot.tags, tagHost) { changed ->
+            sheet = null; selection = emptySet()
+            if (changed) onEdited()
+        }
+    }
+    if (tagHost != null && dictionary) {
+        DictionarySheet(subject, snapshot.tags, tagHost) { changed -> dictionary = false; if (changed) onEdited() }
     }
 }
 
 @Composable
-private fun TimelineEntry(row: TimelineRow) {
+private fun TimelineEntry(row: TimelineRow, selected: Boolean = false, modifier: Modifier = Modifier) {
     val t = row.thread
     val mention = row.membership == Membership.MENTION
     val dateLabel = "${t.occurredAt.shortDate()} · ${t.source}"
-    Row(Modifier.height(IntrinsicSize.Min).padding(bottom = 8.dp)) {
+    Row(modifier.height(IntrinsicSize.Min).padding(bottom = 8.dp)) {
         // The only red on the phone: the time thread and its knots.
         Canvas(Modifier.width(14.dp).fillMaxHeight()) {
             val x = size.width / 2
@@ -126,6 +167,7 @@ private fun TimelineEntry(row: TimelineRow) {
                 ).joinToString(" · "),
                 muted = mention,
                 badge = when {
+                    selected -> "✓ 선택"
                     mention -> "언급"
                     row.isHistory -> "이력"
                     else -> null

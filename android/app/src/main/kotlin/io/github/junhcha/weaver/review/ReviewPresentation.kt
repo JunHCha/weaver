@@ -17,6 +17,7 @@ fun ReviewPackage.sourceLabel(): String = when (sourceType.lowercase()) {
 }
 
 fun ReviewStatus.reviewLabel(): String = when (this) {
+    ReviewStatus.APPLIED -> "답변이 반영되었습니다"
     ReviewStatus.PENDING, ReviewStatus.SENT, ReviewStatus.INFERRED -> "답변을 반영하고 있습니다"
     ReviewStatus.ERROR -> "답변을 보내지 못했습니다 · 다시 시도해 주세요"
     ReviewStatus.CONFLICT -> "다른 답변이 있습니다 · 최신 문서를 확인해 주세요"

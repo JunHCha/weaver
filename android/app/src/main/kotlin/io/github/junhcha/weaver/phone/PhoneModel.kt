@@ -22,6 +22,13 @@ enum class TagKind(val label: String) {
     PROJECT("프로젝트"), AREA("영역"), PERSON("사람"), ORGANIZATION("조직"), TOPIC("주제");
 
     val isParty: Boolean get() = this == PERSON || this == ORGANIZATION
+
+    /** Name on the wire (server `TagKind`). */
+    val wire: String get() = name.lowercase()
+
+    companion object {
+        fun fromWire(wire: String?): TagKind? = entries.firstOrNull { it.wire == wire }
+    }
 }
 
 data class PhoneTag(val name: String, val kind: TagKind?)
@@ -89,18 +96,37 @@ interface PhoneReadModel {
     /** True for made-up data; the UI then shows a persistent "예시 데이터" badge. */
     val isExample: Boolean get() = false
 
+    /** Non-null when the last [snapshot] came from the on-disk copy because the server could not be reached. */
+    val offlineSince: java.time.Instant? get() = null
+
     suspend fun snapshot(): PhoneSnapshot
 }
 
-/** Nothing connected yet (release builds until the Tailscale phone API lands). */
+/** Nothing connected: no pairing yet, so a release build has no data to show. */
 object EmptyPhoneReadModel : PhoneReadModel {
     override suspend fun snapshot() = PhoneSnapshot(emptyList(), emptyList(), emptyList())
 }
 
 val PhoneSnapshot.isEmpty: Boolean get() = threads.isEmpty() && tags.isEmpty() && wikiPages.isEmpty()
 
-/** Release builds never see synthetic data; debug builds may, always badged. */
+/** Release builds never see synthetic data; debug builds may, always badged. A paired phone reads the server. */
 object PhoneReadModels {
     fun forBuild(debug: Boolean, example: () -> PhoneReadModel = { SyntheticPhoneReadModel() }): PhoneReadModel =
         if (debug) example() else EmptyPhoneReadModel
+
+    /** Re-decided on every read, so pairing or unpairing in settings takes effect without restarting the screen. */
+    fun forContext(context: android.content.Context, debug: Boolean): PhoneReadModel = object : PhoneReadModel {
+        @Volatile private var current: PhoneReadModel = forBuild(debug)
+        override val isExample: Boolean get() = current.isExample
+        override val offlineSince: java.time.Instant? get() = current.offlineSince
+        override suspend fun snapshot(): PhoneSnapshot {
+            val app = context.applicationContext
+            val settings = io.github.junhcha.weaver.transport.TransportRuntime.settings(app)
+            current = if (!settings.paired) forBuild(debug) else HttpPhoneReadModel(
+                { io.github.junhcha.weaver.transport.TransportRuntime.api(app) },
+                java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/phone-snapshot.json"),
+            )
+            return current.snapshot()
+        }
+    }
 }

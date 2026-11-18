@@ -36,7 +36,7 @@ data class WidgetModel(
             ReviewStatus.ERROR -> "전송 오류"
             ReviewStatus.CONFLICT -> "전송 충돌"
             ReviewStatus.STALE -> "검토 보류"
-            ReviewStatus.SENT, ReviewStatus.INFERRED -> "전송됨"
+            ReviewStatus.SENT, ReviewStatus.INFERRED, ReviewStatus.APPLIED -> "전송됨"
         }
         fun load(context: Context, now: Long = System.currentTimeMillis()): WidgetModel = try {
             // Same lock order as the scan/review path; never acquire Courier while holding Inbox.

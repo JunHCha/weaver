@@ -65,6 +65,7 @@ fun ToolsScreen(showPendingCalls: Boolean = false) {
                 ShepherdPanel(showPendingCalls)
                 // Settings owns the one calendar panel; a review opened here must not draw a second one.
                 CompositionLocalProvider(LocalCalendarHostedBySettings provides true) { InboxPanel() }
+                ConnectionPanel()
                 CourierPanel()
                 CalendarPanel(alwaysShow = true)
                 Feature.entries.forEach { feature ->

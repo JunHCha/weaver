@@ -139,6 +139,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.kotlinx.serialization.json)
+    // QR pairing without a camera permission: Google's code scanner runs in Play services.
+    implementation(libs.play.services.code.scanner)
+    // The scanner pulls an old Fragment; ActivityResult (used across the app) needs >= 1.3.
+    implementation(libs.androidx.fragment)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
