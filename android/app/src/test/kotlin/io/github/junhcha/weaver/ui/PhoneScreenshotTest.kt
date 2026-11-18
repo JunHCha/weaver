@@ -66,4 +66,17 @@ class PhoneScreenshotTest {
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.waitForIdle(); shoot("3b-wiki-viewer")
     }
+
+    @Test fun releaseEmptyState() {
+        assumeTrue(System.getenv("WEAVER_SCREENSHOT_DIR") != null)
+        compose.activity.setContent {
+            WeaverTheme {
+                androidx.compose.material3.Surface {
+                    PhoneShell(io.github.junhcha.weaver.phone.PhoneReadModels.forBuild(debug = false), StatusCounts(0, 0, 0), { now }, {}, {})
+                }
+            }
+        }
+        compose.waitForIdle()
+        shoot("4-release-no-data")
+    }
 }

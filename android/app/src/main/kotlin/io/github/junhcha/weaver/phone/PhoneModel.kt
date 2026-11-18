@@ -51,8 +51,11 @@ data class PhoneThread(
     val retracts: String? = null,
     val updates: String? = null,
     val executes: String? = null,
-    val correctionTarget: String? = null,
+    val correction: TagCorrection? = null,
 )
+
+/** A 태그정정 row: [target] gets [add] tags and loses [remove] tags (web `correction`). */
+data class TagCorrection(val target: String, val add: List<String> = emptyList(), val remove: List<String> = emptyList())
 
 data class WikiFrontmatter(
     val status: String? = null,
@@ -83,5 +86,21 @@ data class PhoneSnapshot(
  * scope. The real implementation (Tailscale phone-only API, ADR-040 stage 2) plugs into this interface later.
  */
 interface PhoneReadModel {
+    /** True for made-up data; the UI then shows a persistent "예시 데이터" badge. */
+    val isExample: Boolean get() = false
+
     suspend fun snapshot(): PhoneSnapshot
+}
+
+/** Nothing connected yet (release builds until the Tailscale phone API lands). */
+object EmptyPhoneReadModel : PhoneReadModel {
+    override suspend fun snapshot() = PhoneSnapshot(emptyList(), emptyList(), emptyList())
+}
+
+val PhoneSnapshot.isEmpty: Boolean get() = threads.isEmpty() && tags.isEmpty() && wikiPages.isEmpty()
+
+/** Release builds never see synthetic data; debug builds may, always badged. */
+object PhoneReadModels {
+    fun forBuild(debug: Boolean, example: () -> PhoneReadModel = { SyntheticPhoneReadModel() }): PhoneReadModel =
+        if (debug) example() else EmptyPhoneReadModel
 }

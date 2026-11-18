@@ -125,6 +125,45 @@ class HomeScreenPermissionTest {
         }
     }
 
+    private fun back() {
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun tabsSystemBackAndRecreateRestore() {
+        compose.onNodeWithTag("now-screen").assertExists()
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("subject-list").assertExists()
+        compose.onNodeWithText("이서준").performClick()
+        compose.onNodeWithTag("timeline-screen").assertExists()
+        // System back: timeline -> list -> 지금.
+        back()
+        compose.onNodeWithTag("subject-list").assertExists()
+        back()
+        compose.onNodeWithTag("now-screen").assertExists()
+
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithText("이서준").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("timeline-screen").assertExists()
+        back()
+        back()
+        compose.onNodeWithTag("now-screen").assertExists()
+
+        compose.onNodeWithTag("tab-WIKI").performClick()
+        compose.onNodeWithText("네트워크").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("wiki-viewer").assertExists()
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun debugBuildShowsTheExampleBadge() {
+        compose.onNodeWithTag("example-badge").assertExists()
+    }
+
     @Test
     fun permissionsFollowTheSdkSplit() {
         assertTrue(Feature.NOTIFICATIONS.permissions(sdk = 32).isEmpty())

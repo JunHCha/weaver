@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +38,7 @@ internal fun NowScreen(
     view: NowView?,
     counts: StatusCounts,
     now: Instant,
+    connected: Boolean,
     onOpenMap: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -44,7 +47,7 @@ internal fun NowScreen(
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("지금", style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
             Muted("${today.shortDate()} (${today.dayOfWeekKo()})", Modifier.weight(1f).padding(start = 8.dp))
-            TextButton(onClick = onOpenSettings) { Text("수집·설정") }
+            TextButton(onClick = onOpenSettings, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("수집·설정") }
         }
         StatusStrip(counts, onOpenMap)
         Column(
@@ -53,9 +56,9 @@ internal fun NowScreen(
         ) {
             when {
                 view == null -> Muted("불러오는 중")
-                view.isEmpty -> Muted("지금 처리할 일이 없어요")
+                view.isEmpty -> Muted(if (connected) "지금 처리할 일이 없어요" else "연결된 데이터 없음")
                 else -> {
-                    NowSection("기한 지남", view.overdue) { entry ->
+                    NowSection("기한 지남", view.overdue, emphasis = true) { entry ->
                         "마감 ${entry.thread.deadline?.shortDate()} · ${entry.thread.typeLabel()} · ${entry.thread.counterpart.orEmpty()}"
                     }
                     NowSection("오늘", view.today) { entry ->
@@ -90,8 +93,8 @@ private fun StatusStrip(counts: StatusCounts, onOpen: () -> Unit) {
 @Composable
 private fun StatusCell(label: String, count: Int, modifier: Modifier) {
     Surface(
-        modifier, shape = RoundedCornerShape(WeaverTokens.number("radius.card").dp), color = WeaverTokens.surface,
-        border = BorderStroke(1.dp, WeaverTokens.line),
+        modifier.heightIn(min = 48.dp), shape = RoundedCornerShape(WeaverTokens.number("radius.card").dp),
+        color = WeaverTokens.surface, border = BorderStroke(1.dp, WeaverTokens.line),
     ) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("$count", style = MaterialTheme.typography.labelLarge, color = WeaverTokens.ink)
@@ -101,9 +104,9 @@ private fun StatusCell(label: String, count: Int, modifier: Modifier) {
 }
 
 @Composable
-private fun NowSection(title: String, entries: List<NowEntry>, detail: (NowEntry) -> String) {
+private fun NowSection(title: String, entries: List<NowEntry>, emphasis: Boolean = false, detail: (NowEntry) -> String) {
     if (entries.isEmpty()) return
-    SectionHeading(title)
+    SectionHeading(title, emphasis)
     entries.forEach { ThreadCard(it.thread, detail(it)) }
 }
 

@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,7 +35,7 @@ import kotlinx.coroutines.launch
 
 /** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
 @Composable
-fun ToolsScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
+fun ToolsScreen(showPendingCalls: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }
@@ -61,9 +62,9 @@ fun ToolsScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
             ) {
                 Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.home_subtitle), style = MaterialTheme.typography.bodyMedium)
-                if (showInbox) InboxPanel(openedFromNotification = true)
                 ShepherdPanel(showPendingCalls)
-                if (!showInbox) InboxPanel()
+                // Settings owns the one calendar panel; a review opened here must not draw a second one.
+                CompositionLocalProvider(LocalCalendarHostedBySettings provides true) { InboxPanel() }
                 CourierPanel()
                 CalendarPanel(alwaysShow = true)
                 Feature.entries.forEach { feature ->

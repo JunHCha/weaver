@@ -48,8 +48,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.phone.PhoneReadModel
-import io.github.junhcha.weaver.phone.SyntheticPhoneReadModel
-import io.github.junhcha.weaver.phone.statusCounts
 import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
 import java.time.Instant
@@ -58,9 +56,10 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun HomeScreen(
+    readModel: PhoneReadModel,
     showPendingCalls: Boolean = false,
     showInbox: Boolean = false,
-    readModel: PhoneReadModel = remember { SyntheticPhoneReadModel() },
+    onNotificationHandled: () -> Unit = {},
 ) {
     val activity = LocalActivity.current as ComponentActivity
     val model = remember(activity) {
@@ -83,9 +82,13 @@ fun HomeScreen(
     var map by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var replay by rememberSaveable { mutableIntStateOf(0) }
+    var pendingCalls by rememberSaveable { mutableStateOf(false) }
+    // Notification taps are one-shot: apply them, then tell the activity to drop its flags so recreation or
+    // back navigation never replays them. An inbox tap leaves settings and lands on the map's You node.
     LaunchedEffect(showPendingCalls, showInbox) {
-        if (showPendingCalls) tools = true
-        if (showInbox) { map = true; selected = MapNode.USER.name }
+        if (showPendingCalls) { tools = true; pendingCalls = true }
+        if (showInbox) { tools = false; map = true; selected = MapNode.USER.name }
+        if (showPendingCalls || showInbox) onNotificationHandled()
     }
     val changes by InboxRuntime.changes.collectAsState()
     LaunchedEffect(changes) { model.refresh() }
@@ -97,16 +100,19 @@ fun HomeScreen(
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             when {
                 tools -> {
-                    BackHandler { tools = false }
+                    val closeTools = { tools = false; pendingCalls = false }
+                    BackHandler(onBack = closeTools)
                     Column(Modifier.safeDrawingPadding()) {
-                        TextButton(onClick = { tools = false }) { Text(if (map) "‹ 데이터 흐름" else "‹ 지금") }
-                        ToolsScreen(showPendingCalls, showInbox)
+                        TextButton(onClick = closeTools, Modifier.defaultMinSize(minHeight = 48.dp)) {
+                            Text(if (map) "‹ 데이터 흐름" else "‹ 지금")
+                        }
+                        ToolsScreen(pendingCalls)
                     }
                 }
                 map -> {
                     BackHandler { map = false; selected = null }
                     Column(Modifier.safeDrawingPadding()) {
-                        TextButton(onClick = { map = false; selected = null }) { Text("‹ 지금") }
+                        TextButton(onClick = { map = false; selected = null }, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("‹ 지금") }
                         Box(Modifier.weight(1f)) {
                             PipelineContent(
                                 state,
@@ -123,7 +129,7 @@ fun HomeScreen(
                 else -> Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                     PhoneShell(
                         readModel,
-                        statusCounts(state.items.map { it.status }),
+                        state.items.statusCounts(),
                         { Instant.now() },
                         { map = true },
                         { tools = true },

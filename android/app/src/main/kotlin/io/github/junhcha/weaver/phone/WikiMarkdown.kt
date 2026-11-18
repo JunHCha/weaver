@@ -13,6 +13,7 @@ sealed interface MdBlock {
     data class Bullet(val text: List<Inline>) : MdBlock
 }
 
+private val headingPattern = Regex("^(#{1,6})\\s+(.*)$")
 private val inlinePattern = Regex("""\[\[([^\]|]+)(?:\|([^\]]+))?]]|\*\*([^*]+)\*\*""")
 
 fun parseInline(line: String): List<Inline> {
@@ -39,7 +40,7 @@ fun parseWikiBody(body: String): List<MdBlock> {
     }
     for (raw in body.lines()) {
         val line = raw.trim()
-        val heading = Regex("^(#{1,6})\\s+(.*)$").find(line)
+        val heading = headingPattern.find(line)
         when {
             line.isEmpty() -> flush()
             heading != null -> { flush(); blocks += MdBlock.Heading(heading.groupValues[1].length, parseInline(heading.groupValues[2])) }

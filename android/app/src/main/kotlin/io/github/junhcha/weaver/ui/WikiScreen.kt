@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -34,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.junhcha.weaver.phone.Inline
 import io.github.junhcha.weaver.phone.LinkTarget
 import io.github.junhcha.weaver.phone.MdBlock
@@ -43,11 +45,11 @@ import io.github.junhcha.weaver.phone.parseWikiBody
 import io.github.junhcha.weaver.phone.resolveLink
 
 @Composable
-internal fun WikiList(pages: List<WikiPage>, onOpen: (String) -> Unit) {
+internal fun WikiList(pages: List<WikiPage>, emptyText: String, onOpen: (String) -> Unit) {
     Column(Modifier.fillMaxSize().testTag("wiki-list")) {
         ScreenTitle("Wiki", "읽기 전용")
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp)) {
-            if (pages.isEmpty()) item { Muted("아직 페이지가 없어요") }
+            if (pages.isEmpty()) item { Muted(emptyText) }
             items(pages, key = { it.id }) { page ->
                 Column(Modifier.fillMaxWidth().clickable { onOpen(page.id) }.padding(vertical = 10.dp)) {
                     Text(page.title, style = MaterialTheme.typography.bodyLarge)
@@ -68,7 +70,7 @@ internal fun WikiViewer(
 ) {
     Column(Modifier.fillMaxSize().testTag("wiki-viewer")) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Wiki") }
+            TextButton(onClick = onBack, Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)) { Text("‹ Wiki") }
             Muted("읽기 전용", Modifier.weight(1f).padding(start = 8.dp))
         }
         Column(
@@ -114,7 +116,14 @@ private fun Frontmatter(snapshot: PhoneSnapshot, page: WikiPage, onLink: (LinkTa
 @Composable
 private fun WikiBlock(snapshot: PhoneSnapshot, block: MdBlock, onLink: (LinkTarget) -> Unit) {
     when (block) {
-        is MdBlock.Heading -> Text(inlineText(snapshot, block.text, onLink), Modifier.padding(top = 6.dp), style = MaterialTheme.typography.titleMedium)
+        is MdBlock.Heading -> Text(
+            inlineText(snapshot, block.text, onLink), Modifier.padding(top = 10.dp),
+            style = when (block.level) {
+                1 -> MaterialTheme.typography.titleLarge
+                2 -> MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp)
+                else -> MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            },
+        )
         is MdBlock.Paragraph -> Text(inlineText(snapshot, block.text, onLink), style = MaterialTheme.typography.bodyLarge)
         is MdBlock.Bullet -> Row {
             Text("•", Modifier.padding(end = 6.dp, start = 4.dp), style = MaterialTheme.typography.bodyLarge)

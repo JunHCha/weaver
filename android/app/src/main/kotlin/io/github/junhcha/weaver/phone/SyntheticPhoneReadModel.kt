@@ -10,6 +10,8 @@ import java.time.LocalTime
  * always has something overdue, due today and recent. Nothing here touches a real vault or the network.
  */
 class SyntheticPhoneReadModel(private val clock: Clock = Clock.systemUTC()) : PhoneReadModel {
+    override val isExample: Boolean = true
+
     override suspend fun snapshot(): PhoneSnapshot {
         val today = clock.instant().atZone(SeoulZone).toLocalDate()
         fun at(daysAgo: Long, hour: Int, minute: Int = 0): Instant =
@@ -37,7 +39,7 @@ class SyntheticPhoneReadModel(private val clock: Clock = Clock.systemUTC()) : Ph
                 listOf("이서준", "네트워크")),
             thread("t-14a", ThreadKind.RECORD, "스위치 펌웨어 일정 협의", 4, 10, "통화", "이서준", listOf("네트워크")),
             thread("t-14b", ThreadKind.REQUEST, "방화벽 룰 3건 반영 요청", 4, 11, "통화", "이서준",
-                listOf("협력사 A", "네트워크", "방화벽 장비 교체"), Direction.RECEIVED, deadline = today.plusDays(10)),
+                listOf("협력사 A", "네트워크", "방화벽 장비 교체"), Direction.RECEIVED, deadline = today.plusDays(14)),
             thread("t-14b-edit", ThreadKind.REQUEST, "마감 변경", 3, 9, "통화", "이서준", listOf("방화벽 장비 교체"),
                 deadline = today.plusDays(10), field = "deadline", presentation = Presentation.HISTORY, updates = "t-14b"),
             thread("t-17", ThreadKind.REQUEST, "협력사 A 견적서 회신", 1, 10, "통화", "이서준",

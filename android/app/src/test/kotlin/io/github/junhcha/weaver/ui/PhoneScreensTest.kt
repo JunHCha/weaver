@@ -17,6 +17,20 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
+import io.github.junhcha.weaver.phone.PhoneReadModels
+import io.github.junhcha.weaver.phone.PhoneSnapshot
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,8 +47,8 @@ class PhoneScreensTest {
     private var mapOpened = 0
     private var settingsOpened = 0
 
-    private fun show(counts: StatusCounts = StatusCounts(2, 1, 0)) = compose.setContent {
-        MaterialTheme { WeaverTheme { PhoneShell(model, counts, { now }, { mapOpened++ }, { settingsOpened++ }) } }
+    private fun show(counts: StatusCounts = StatusCounts(2, 1, 0), readModel: PhoneReadModel = model) = compose.setContent {
+        MaterialTheme { WeaverTheme { PhoneShell(readModel, counts, { now }, { mapOpened++ }, { settingsOpened++ }) } }
     }
 
     @Test fun nowShowsOnlyOverdueTodayAndNewThreadsWithTheStatusStrip() {
@@ -108,5 +122,84 @@ class PhoneScreensTest {
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.onNodeWithText("나, 이서준").performClick() // clickable annotation on the assignee link
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
+    }
+
+    // ── 합성 데이터는 실제처럼 보이면 안 된다 ─────────────────────────────────
+
+    @Test fun exampleDataIsAlwaysBadgedOnEveryTab() {
+        show()
+        PhoneTab.entries.forEach { tab ->
+            compose.onNodeWithTag("tab-${tab.name}").performClick()
+            compose.onNodeWithTag("example-badge").assertIsDisplayed()
+            compose.onNodeWithText("예시 데이터").assertIsDisplayed()
+        }
+    }
+
+    @Test fun releaseWiringShowsNoConnectedDataAndNoSyntheticStrings() {
+        val release = PhoneReadModels.forBuild(debug = false)
+        show(readModel = release)
+        val synthetic = kotlinx.coroutines.runBlocking { SyntheticPhoneReadModel(Clock.fixed(now, ZoneId.of("UTC"))).snapshot() }
+        val forbidden = synthetic.threads.map { it.content } + synthetic.tags.map { it.name } + synthetic.wikiPages.map { it.title } +
+            "예시 데이터"
+        PhoneTab.entries.forEach { tab ->
+            compose.onNodeWithTag("tab-${tab.name}").performClick()
+            compose.onNodeWithText("연결된 데이터 없음").assertIsDisplayed()
+            forbidden.forEach { compose.onNodeWithText(it).assertDoesNotExist() }
+            compose.onNodeWithTag("example-badge").assertDoesNotExist()
+        }
+    }
+
+    // ── 접근성 ───────────────────────────────────────────────────────────────
+
+    @Test fun timelineChipsAreCheckboxesWithStateAndBigTargets() {
+        show()
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithText("이서준").performClick()
+        val chip = compose.onNode(androidx.compose.ui.test.hasText("언급 포함") and androidx.compose.ui.test.isToggleable())
+        chip.assertIsOff()
+        chip.performClick()
+        chip.assertIsOn()
+        chip.assert(androidx.compose.ui.test.SemanticsMatcher.expectValue(
+            androidx.compose.ui.semantics.SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Checkbox))
+        chip.assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("status-strip").assertDoesNotExist()
+        compose.onNodeWithContentDescription("뒤로").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+    }
+
+    @Test fun statusStripAndBackButtonsMeetTheTouchTargetMinimum() {
+        show()
+        compose.onNodeWithTag("status-strip").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("수집·설정").assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test fun mutedMentionTextKeepsReadableContrast() {
+        // Muted ink on the lightest (surface) and the tinted record card, per WCAG AA for body text.
+        listOf(WeaverTokens.surface, kindBackground(WeaverTokens.record), kindBackground(WeaverTokens.request)).forEach {
+            assertTrue(contrastRatio(WeaverTokens.muted, it) >= 4.5)
+        }
+        assertTrue(contrastRatio(WeaverTokens.indigo, WeaverTokens.bg) >= 4.5) // "기한 지남" heading
+    }
+
+    @Test fun overdueHeadingIsStrongerThanTheOtherSections() {
+        show()
+        compose.onNodeWithText("기한 지남").assertIsDisplayed()
+    }
+
+    // ── 재개 시 다시 읽기 ───────────────────────────────────────────────────
+
+    @Test fun resumeReReadsTheSnapshot() {
+        var reads = 0
+        val counting = object : PhoneReadModel {
+            override suspend fun snapshot(): PhoneSnapshot { reads++; return model.snapshot() }
+        }
+        val scenario = ActivityScenario.launch(ComponentActivity::class.java)
+        scenario.onActivity { it.setContent { MaterialTheme { WeaverTheme { PhoneShell(counting, StatusCounts(0, 0, 0), { now }, {}, {}) } } } }
+        compose.waitForIdle()
+        val before = reads
+        scenario.moveToState(Lifecycle.State.STARTED)
+        scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitForIdle()
+        assertTrue("snapshot re-read on resume ($before -> $reads)", reads > before)
+        scenario.close()
     }
 }

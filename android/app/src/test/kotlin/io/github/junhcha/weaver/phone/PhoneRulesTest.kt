@@ -6,6 +6,9 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
+import io.github.junhcha.weaver.pipeline.MapItem
+import io.github.junhcha.weaver.pipeline.MapNode
+import io.github.junhcha.weaver.ui.statusCounts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,7 +28,7 @@ class PhoneRulesTest {
 
     private val tags = listOf(
         PhoneTag("이서준", TagKind.PERSON), PhoneTag("한지우", TagKind.PERSON),
-        PhoneTag("협력사 A", TagKind.ORGANIZATION), PhoneTag("네트워크", TagKind.AREA),
+        PhoneTag("협력사 A", TagKind.ORGANIZATION), PhoneTag("네트워크", TagKind.AREA), PhoneTag("총무", TagKind.AREA),
     )
 
     private fun snap(vararg threads: PhoneThread) = PhoneSnapshot(threads.toList(), tags, emptyList())
@@ -105,9 +108,91 @@ class PhoneRulesTest {
         assertTrue(view.recent.isEmpty())
     }
 
-    @Test fun statusStripCountsOnlyWhatNeedsAttention() {
-        val counts = statusCounts(listOf("review", "review", "apply_stopped", "working", "applying", "done", "rejected"))
-        assertEquals(StatusCounts(waitingReview = 2, processing = 2, stopped = 1), counts)
+    @Test fun statusStripUsesTheMapsStates() {
+        fun item(status: String, node: MapNode = MapNode.SPINNER) = MapItem(status, status, "call", node, status, emptyMap())
+        val counts = listOf(
+            item("review", MapNode.USER), item("review", MapNode.USER), item("apply_stopped"), item("working"),
+            item("applying"), item("waiting"), item("done"), item("rejected"),
+        ).statusCounts()
+        assertEquals(StatusCounts(waitingReview = 2, processing = 3, stopped = 1), counts)
+    }
+
+    @Test fun onlyOpenRequestsCanBeOverdue() {
+        val now = kst("2026-11-18", "09:00")
+        val past = LocalDate.parse("2026-11-10")
+        val request = thread("req", ThreadKind.REQUEST).copy(deadline = past)
+        val decision = thread("dec", ThreadKind.DECISION).copy(deadline = past)
+        val record = thread("rec").copy(deadline = LocalDate.parse("2026-11-18"))
+        val view = nowView(snap(request, decision, record), now)
+        assertEquals(listOf("req"), view.overdue.map { it.thread.id })
+        assertTrue(view.today.isEmpty())
+    }
+
+    // ── 실효 값: updates / retracts / 태그정정 ───────────────────────────────
+
+    private fun history(id: String, at: String, block: PhoneThread.() -> PhoneThread) =
+        block(thread(id, ThreadKind.REQUEST, at = kst(at, "12:00")).copy(presentation = Presentation.HISTORY))
+
+    @Test fun deadlineUpdatesFoldChronologicallyAndLastOneWins() {
+        val now = kst("2026-11-18", "09:00")
+        val request = thread("req", ThreadKind.REQUEST, at = kst("2026-11-01", "10:00")).copy(deadline = LocalDate.parse("2026-11-10"))
+        // Listed out of order on purpose: the later change (11/18) must win over the earlier one (11/25).
+        val later = history("u2", "2026-11-12") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-11-18")) }
+        val earlier = history("u1", "2026-11-11") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-11-25")) }
+        val view = nowView(snap(request, later, earlier), now)
+        assertTrue(view.overdue.isEmpty())
+        assertEquals(listOf("req"), view.today.map { it.thread.id })
+        // Pushed into the future, the request leaves 지금 completely.
+        assertTrue(nowView(snap(request, earlier), now).let { it.overdue.isEmpty() && it.today.isEmpty() })
+    }
+
+    @Test fun retractedDeadlineChangeIsSkipped() {
+        val now = kst("2026-11-18", "09:00")
+        val request = thread("req", ThreadKind.REQUEST, at = kst("2026-11-01", "10:00")).copy(deadline = LocalDate.parse("2026-11-10"))
+        val change = history("u1", "2026-11-11") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-12-31")) }
+        val retraction = history("r1", "2026-11-12") { copy(retracts = "u1") }
+        val view = nowView(snap(request, change, retraction), now)
+        assertEquals(listOf("req"), view.overdue.map { it.thread.id }) // original 11/10 stands
+    }
+
+    @Test fun scheduleUpdatesMoveTheEventToItsNewDay() {
+        val now = kst("2026-11-18", "09:00")
+        val event = thread("ev", ThreadKind.SCHEDULE).copy(scheduleAt = kst("2026-11-20", "10:00"))
+        val move = history("u1", "2026-11-15") { copy(updates = "ev", field = "schedule", scheduleAt = kst("2026-11-18", "16:00")) }
+        assertTrue(nowView(snap(event), now).today.isEmpty())
+        assertEquals(listOf("ev"), nowView(snap(event, move), now).today.map { it.thread.id })
+    }
+
+    @Test fun tagCorrectionsMoveThreadsBetweenSubjects() {
+        val fact = thread("f", counterpart = "한지우", tags = listOf("네트워크"))
+        val fix = history("fix", "2026-11-12") {
+            copy(kind = ThreadKind.TAG_CORRECTION, correction = TagCorrection("f", add = listOf("총무", "이서준"), remove = listOf("네트워크")))
+        }
+        val snapshot = snap(fact, fix)
+        assertTrue(timeline(snapshot, "네트워크").isEmpty())
+        assertEquals(listOf("f"), timeline(snapshot, "총무").map { it.thread.id })
+        // The added person tag makes it a mention of 이서준 (한지우 stays counterpart).
+        assertTrue(timeline(snapshot, "이서준").isEmpty())
+        assertEquals(Membership.MENTION, timeline(snapshot, "이서준", includeMentions = true).single().membership)
+        // A retracted correction changes nothing.
+        val undo = history("undo", "2026-11-13") { copy(retracts = "fix") }
+        assertEquals(listOf("f"), timeline(snap(fact, fix, undo), "네트워크").map { it.thread.id })
+    }
+
+    @Test fun resolvesCountOnlyFromLiveNonRetractionRows() {
+        val now = kst("2026-11-18", "09:00")
+        val past = LocalDate.parse("2026-11-10")
+        val a = thread("a", ThreadKind.REQUEST).copy(deadline = past)
+        val b = thread("b", ThreadKind.REQUEST).copy(deadline = past)
+        val c = thread("c", ThreadKind.REQUEST).copy(deadline = past)
+        val resolvesA = history("ra", "2026-11-12") { copy(resolves = "a") }
+        // Resolves b but is itself retracted: b stays open.
+        val resolvesB = history("rb", "2026-11-12") { copy(resolves = "b") }
+        val retractResolver = history("x", "2026-11-13") { copy(retracts = "rb") }
+        // A retraction row that also carries `resolves` must not resolve anything (web relations()).
+        val retractAndResolve = history("rc", "2026-11-12") { copy(retracts = "zzz", resolves = "c") }
+        val view = nowView(snap(a, b, c, resolvesA, resolvesB, retractResolver, retractAndResolve), now)
+        assertEquals(setOf("b", "c"), view.overdue.map { it.thread.id }.toSet())
     }
 
     // ── 사람·영역 타임라인 ────────────────────────────────────────────────────
@@ -206,5 +291,12 @@ class PhoneRulesTest {
         assertEquals(listOf(Inline.Link("이서준", "이서준"), Inline.Text("과 "), Inline.Bold("협의")), bullet.text)
         assertEquals(Inline.Link("이서준", "서준"), (blocks[2] as MdBlock.Bullet).text.first())
         assertEquals(listOf<Inline>(Inline.Text("첫 줄 둘째 줄")), (blocks[3] as MdBlock.Paragraph).text)
+    }
+
+    @Test fun releaseWiringNeverUsesSyntheticData() = runBlocking {
+        val release = PhoneReadModels.forBuild(debug = false)
+        assertFalse(release.isExample)
+        assertTrue(release.snapshot().isEmpty)
+        assertTrue(PhoneReadModels.forBuild(debug = true).isExample)
     }
 }

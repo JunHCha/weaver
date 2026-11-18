@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.phone.Direction
 import io.github.junhcha.weaver.phone.Membership
@@ -42,14 +46,14 @@ import io.github.junhcha.weaver.phone.timeline
 
 /** First level of the 사람 / 영역 tabs: pick one subject. */
 @Composable
-internal fun SubjectList(title: String, entries: List<Pair<PhoneTag, Int>>, onSelect: (String) -> Unit) {
+internal fun SubjectList(title: String, entries: List<Pair<PhoneTag, Int>>, emptyText: String, onSelect: (String) -> Unit) {
     Column(Modifier.fillMaxSize().testTag("subject-list")) {
         ScreenTitle(title)
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp)) {
-            if (entries.isEmpty()) item { Muted("아직 없어요") }
+            if (entries.isEmpty()) item { Muted(emptyText) }
             items(entries, key = { it.first.name }) { (tag, count) ->
                 Row(
-                    Modifier.fillMaxWidth().clickable { onSelect(tag.name) }.padding(vertical = 12.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onSelect(tag.name) }.padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(tag.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
@@ -77,7 +81,10 @@ internal fun TimelineScreen(snapshot: PhoneSnapshot, subject: String, onBack: ()
     val rows = remember(snapshot, subject, mentions, history) { timeline(snapshot, subject, mentions, history) }
     Column(Modifier.fillMaxSize().testTag("timeline-screen")) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹") }
+            TextButton(
+                onClick = onBack,
+                Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "뒤로" },
+            ) { Text("‹") }
             Text(subject, style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
             val kind = snapshot.tags.firstOrNull { it.name == subject }?.kind
             if (kind != null) Muted(kind.label, Modifier.padding(start = 8.dp))
@@ -109,7 +116,7 @@ private fun TimelineEntry(row: TimelineRow) {
             drawCircle(WeaverTokens.bg, 5.dp.toPx(), Offset(x, 10.dp.toPx()))
             drawCircle(WeaverTokens.thread, 5.dp.toPx(), Offset(x, 10.dp.toPx()), style = Stroke(2.dp.toPx()))
         }
-        Column(Modifier.padding(start = 8.dp).dim(mention)) {
+        Column(Modifier.padding(start = 8.dp)) {
             Muted(dateLabel)
             ThreadCard(
                 t,
@@ -117,6 +124,7 @@ private fun TimelineEntry(row: TimelineRow) {
                     t.direction?.let { if (it == Direction.RECEIVED) "받은 요청" else "보낸 요청" },
                     t.deadline?.let { "마감 ${it.shortDate()}" },
                 ).joinToString(" · "),
+                muted = mention,
                 badge = when {
                     mention -> "언급"
                     row.isHistory -> "이력"
@@ -127,4 +135,3 @@ private fun TimelineEntry(row: TimelineRow) {
     }
 }
 
-private fun Modifier.fillMaxHeight(): Modifier = this.then(Modifier.fillMaxHeight())

@@ -19,6 +19,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** True inside settings, where the settings screen already shows the calendar panel. */
+internal val LocalCalendarHostedBySettings = compositionLocalOf { false }
+
+/** The review document's calendar panel, unless the surrounding screen already shows one. */
+@Composable
+internal fun ReviewCalendarSlot() {
+    if (!LocalCalendarHostedBySettings.current) CalendarPanel()
+}
+
 /**
  * Calendar changes approved on the PC run on their own. The user only chooses the target calendar once and
  * watches the state here; until a calendar is chosen the actions wait. [alwaysShow] keeps the picker visible in

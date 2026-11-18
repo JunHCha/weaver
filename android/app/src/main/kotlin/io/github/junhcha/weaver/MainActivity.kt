@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.phone.PhoneReadModels
 import io.github.junhcha.weaver.shepherd.ShepherdRuntime
 import io.github.junhcha.weaver.ui.HomeScreen
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,13 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
         showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
+    }
+
+    /** The notification tap has been applied; drop it so recreation does not replay it. */
+    private fun consumeNotification() {
+        showPending.value = false
+        showInbox.value = false
+        setIntent(Intent(intent).setAction(null))
     }
 
     override fun onPause() {
@@ -50,6 +58,7 @@ class MainActivity : ComponentActivity() {
         )
         showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
         showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
-        setContent { HomeScreen(showPending.value, showInbox.value) }
+        val readModel = PhoneReadModels.forBuild(BuildConfig.DEBUG)
+        setContent { HomeScreen(readModel, showPending.value, showInbox.value, ::consumeNotification) }
     }
 }

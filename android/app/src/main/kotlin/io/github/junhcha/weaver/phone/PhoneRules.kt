@@ -20,17 +20,59 @@ fun PhoneThread.isHistory(): Boolean = when (presentation) {
         (id.startsWith("wiki:") && field != null && content == "$field 변경")
 }
 
-fun PhoneThread.historyTarget(): String? = correctionTarget ?: retracts ?: executes ?: resolves ?: updates
+fun PhoneThread.historyTarget(): String? = correction?.target ?: retracts ?: executes ?: resolves ?: updates
 
-/** Ids of facts a later history row retracted or resolved; they no longer count as open work. */
-private fun PhoneSnapshot.closedIds(): Set<String> =
-    threads.filter { it.isHistory() }.flatMap { listOfNotNull(it.retracts, it.resolves) }.toSet()
+/** Web `relations()`: any retraction retracts; a resolve counts only if its row is neither a retraction nor retracted. */
+private class Relations(threads: List<PhoneThread>) {
+    val retracted: Set<String> = threads.mapNotNull { it.retracts }.toSet()
+    val resolved: Set<String> = threads.mapNotNull { t ->
+        t.resolves.takeIf { t.retracts == null && t.id !in retracted }
+    }.toSet()
+
+    fun isOpen(t: PhoneThread) = t.kind == ThreadKind.REQUEST && t.id !in retracted && t.id !in resolved
+}
 
 private fun PhoneSnapshot.partyNames(): Set<String> =
     tags.filter { it.kind?.isParty == true }.map { it.name }.toSet()
 
 /** Newest first; seq breaks ties like the PC. */
 private val newestFirst = compareByDescending<PhoneThread> { it.occurredAt }.thenByDescending { it.seq }
+
+private fun rootTarget(row: PhoneThread, byId: Map<String, PhoneThread>): PhoneThread {
+    var current = row
+    val seen = mutableSetOf(row.id)
+    while (current.isHistory()) {
+        val next = current.historyTarget()?.let(byId::get) ?: break
+        if (!seen.add(next.id)) break
+        current = next
+    }
+    return current
+}
+
+/**
+ * Effective values like the web projection: history rows that `update` a fact's deadline/schedule are folded in
+ * chronological order, tag corrections add/remove tags, and retracted changes are skipped. Returns every thread, with
+ * [PhoneThread.deadline], [PhoneThread.scheduleAt] and [PhoneThread.tags] replaced on the facts they change.
+ */
+fun PhoneSnapshot.effective(): PhoneSnapshot {
+    val relation = Relations(threads)
+    val byId = threads.associateBy { it.id }
+    val changes = threads.filter { it.isHistory() && it.retracts == null && it.id !in relation.retracted }
+        .sortedWith(compareBy<PhoneThread> { it.recordedAt }.thenBy { it.seq })
+    val folded = threads.associateBy({ it.id }, { it }).toMutableMap()
+    for (change in changes) {
+        val root = rootTarget(change, byId).takeIf { !it.isHistory() } ?: continue
+        var value = folded.getValue(root.id)
+        if (change.updates != null && change.field == "deadline") value = value.copy(deadline = change.deadline)
+        if (change.updates != null && change.field == "schedule") value = value.copy(scheduleAt = change.scheduleAt)
+        change.correction?.let { fix -> value = value.copy(tags = (value.tags + fix.add).distinct() - fix.remove.toSet()) }
+        folded[root.id] = value
+    }
+    return copy(threads = threads.map { folded.getValue(it.id) })
+}
+
+/** Counts behind the 지금 status strip. */
+data class StatusCounts(val waitingReview: Int, val processing: Int, val stopped: Int)
 
 // ── 지금 ─────────────────────────────────────────────────────────────────────
 
@@ -47,26 +89,24 @@ data class NowView(
 }
 
 /**
- * Overdue: open requests whose deadline day is before today. Today: deadlines and schedules that fall on today's
- * date. Recent: facts recorded since the start of yesterday that are not already listed above. All day boundaries
- * are in [zone] (Asia/Seoul).
+ * Overdue: open requests (web `isOpen`) whose effective deadline day is before today. Today: open requests due today
+ * and schedules on today's date. Recent: facts recorded since the start of yesterday that are not already listed above.
+ * All day boundaries are in [zone] (Asia/Seoul).
  */
-fun nowView(snapshot: PhoneSnapshot, now: Instant, zone: ZoneId = SeoulZone): NowView {
+fun nowView(raw: PhoneSnapshot, now: Instant, zone: ZoneId = SeoulZone): NowView {
+    val snapshot = raw.effective()
     val today = now.atZone(zone).toLocalDate()
-    val closed = snapshot.closedIds()
-    val facts = snapshot.threads.filter { !it.isHistory() && it.id !in closed }
+    val relation = Relations(snapshot.threads)
+    val facts = snapshot.threads.filter { !it.isHistory() && it.id !in relation.retracted }
     fun scheduleDay(t: PhoneThread): LocalDate? = t.scheduleAt?.atZone(zone)?.toLocalDate()
 
-    val overdue = facts.filter { it.deadline?.isBefore(today) == true }
+    val openRequests = facts.filter(relation::isOpen)
+    val overdue = openRequests.filter { it.deadline?.isBefore(today) == true }
         .sortedWith(compareBy<PhoneThread> { it.deadline }.thenBy { it.seq })
         .map { NowEntry(it, DueKind.DEADLINE) }
-    val dueToday = facts.mapNotNull { t ->
-        when {
-            t.deadline == today -> NowEntry(t, DueKind.DEADLINE) to (t.scheduleAt ?: Instant.MAX)
-            scheduleDay(t) == today -> NowEntry(t, DueKind.SCHEDULE) to checkNotNull(t.scheduleAt)
-            else -> null
-        }
-    }.sortedBy { it.second }.map { it.first }
+    val dueToday = (openRequests.filter { it.deadline == today }.map { NowEntry(it, DueKind.DEADLINE) } +
+        facts.filter { it.kind == ThreadKind.SCHEDULE && scheduleDay(it) == today }.map { NowEntry(it, DueKind.SCHEDULE) })
+        .sortedBy { it.thread.scheduleAt ?: Instant.MAX }
     val listed = (overdue + dueToday).map { it.thread.id }.toSet()
     val since = today.minusDays(1).atStartOfDay(zone).toInstant()
     val recent = facts.filter { it.id !in listed && !it.recordedAt.isBefore(since) }
@@ -74,17 +114,6 @@ fun nowView(snapshot: PhoneSnapshot, now: Instant, zone: ZoneId = SeoulZone): No
         .map { NowEntry(it) }
     return NowView(overdue, dueToday, recent)
 }
-
-// ── 파이프라인 상태 줄 ────────────────────────────────────────────────────────
-
-data class StatusCounts(val waitingReview: Int, val processing: Int, val stopped: Int)
-
-/** Status values of pipeline items, as `MapItem.status` carries them. */
-fun statusCounts(statuses: List<String>): StatusCounts = StatusCounts(
-    waitingReview = statuses.count { it == "review" },
-    stopped = statuses.count { it == "apply_stopped" },
-    processing = statuses.count { it !in setOf("review", "apply_stopped", "done", "rejected") },
-)
 
 // ── 사람·영역 타임라인 ────────────────────────────────────────────────────────
 
@@ -99,17 +128,6 @@ data class TimelineRow(val thread: PhoneThread, val membership: Membership, val 
 fun mentionOnly(thread: PhoneThread, subject: String, parties: Set<String>): Boolean =
     subject in parties && thread.counterpart != subject && subject in thread.tags
 
-private fun PhoneSnapshot.rootTarget(row: PhoneThread, byId: Map<String, PhoneThread>): PhoneThread {
-    var current = row
-    val seen = mutableSetOf(row.id)
-    while (current.isHistory()) {
-        val next = current.historyTarget()?.let(byId::get) ?: break
-        if (!seen.add(next.id)) break
-        current = next
-    }
-    return current
-}
-
 /**
  * One person/organization/area as a single newest-first column. People default to threads where they are the
  * counterpart; [includeMentions] adds mention-only threads (marked `MENTION`). Areas match by tag. History rows are
@@ -117,11 +135,12 @@ private fun PhoneSnapshot.rootTarget(row: PhoneThread, byId: Map<String, PhoneTh
  * A history row belongs to the subject through its own tags or through the fact it changes.
  */
 fun timeline(
-    snapshot: PhoneSnapshot,
+    raw: PhoneSnapshot,
     subject: String,
     includeMentions: Boolean = false,
     includeHistory: Boolean = false,
 ): List<TimelineRow> {
+    val snapshot = raw.effective()
     val parties = snapshot.partyNames()
     val isParty = subject in parties
     val byId = snapshot.threads.associateBy { it.id }
@@ -133,7 +152,7 @@ fun timeline(
     }
     val rows = snapshot.threads.mapNotNull { t ->
         val own = membership(t)
-        val viaTarget = if (own == null && t.isHistory()) membership(snapshot.rootTarget(t, byId)) else null
+        val viaTarget = if (own == null && t.isHistory()) membership(rootTarget(t, byId)) else null
         (own ?: viaTarget)?.let { TimelineRow(t, it, t.isHistory()) }
     }.filter { includeHistory || !it.isHistory }
     if (!includeHistory) return rows.sortedWith(compareBy(newestFirst) { it.thread })
@@ -158,14 +177,16 @@ fun timeline(
 }
 
 /** People/organizations that have threads as counterpart or mention, busiest first. */
-fun partyDirectory(snapshot: PhoneSnapshot): List<Pair<PhoneTag, Int>> {
+fun partyDirectory(raw: PhoneSnapshot): List<Pair<PhoneTag, Int>> {
+    val snapshot = raw.effective()
     val facts = snapshot.threads.filter { !it.isHistory() }
     return snapshot.tags.filter { it.kind?.isParty == true }
         .map { tag -> tag to facts.count { it.counterpart == tag.name || tag.name in it.tags } }
         .sortedWith(compareByDescending<Pair<PhoneTag, Int>> { it.second }.thenBy { it.first.name })
 }
 
-fun areaDirectory(snapshot: PhoneSnapshot): List<Pair<PhoneTag, Int>> {
+fun areaDirectory(raw: PhoneSnapshot): List<Pair<PhoneTag, Int>> {
+    val snapshot = raw.effective()
     val facts = snapshot.threads.filter { !it.isHistory() }
     return snapshot.tags.filter { it.kind == TagKind.AREA }
         .map { tag -> tag to facts.count { tag.name in it.tags } }
