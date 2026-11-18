@@ -11,8 +11,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.junhcha.weaver.schema.PipelineItem
 import io.github.junhcha.weaver.schema.PipelineThread
+import io.github.junhcha.weaver.schema.Stage
 
 internal fun threadKindStyle(label: String?): WeaverTokens.Kind = when (label) {
     "요청", "request" -> WeaverTokens.request
@@ -47,12 +50,20 @@ internal fun KindCard(modifier: Modifier = Modifier, kind: String? = null, conte
 internal fun List<PipelineThread>.cardKind(): String? = map { it.kind }.distinct().singleOrNull()
 
 @Composable
-internal fun ThreadRows(threads: List<PipelineThread>) {
-    threads.forEach { thread ->
+internal fun ThreadRows(item: PipelineItem) {
+    item.threads.forEach { thread ->
         KindCard(kind = thread.kind) {
             Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Thread · ${threadKindLabel(thread.kind)}", style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
-                if (thread.content.isNotBlank()) Text(thread.content, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                Text(
+                    threadTitle(thread.content),
+                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOf(thread.kind, sourceTitle(item.title), "반영 ${mapTime(item.stageTimes[Stage.APPLY] ?: item.updatedAt)}").joinToString(" · "),
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                )
             }
         }
     }

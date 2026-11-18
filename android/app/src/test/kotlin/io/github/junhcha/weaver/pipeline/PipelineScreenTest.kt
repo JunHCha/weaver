@@ -64,7 +64,7 @@ class PipelineScreenTest {
         compose.onNodeWithText("2026-11-16").assertExists()
         compose.onNodeWithText("2026-11-19").assertExists()
         compose.onNodeWithText("Thread 1").performClick()
-        compose.onNodeWithText("Thread · Record").assertExists()
+        compose.onNodeWithText("Thread · Record").assertDoesNotExist()
         compose.onNodeWithText("마감을 11월 19일로 변경").assertExists()
         compose.onNodeWithText("결과물").performClick()
         compose.onNodeWithText("보안장비 점검 · 폰에 오는 중").assertIsNotEnabled()

@@ -170,7 +170,7 @@ object PipelineRuntime {
                                 (item.packageId to item.packageRevision) in submitted
                         MapItem(
                             item.captureId ?: item.sourceId,
-                            item.title.ifBlank { "${sourceLabel(item.sourceType)} 항목" },
+                            item.title.ifBlank { "저장한 항목" },
                             sourceLabel(item.sourceType),
                             if (sent) MapNode.LOOM else item.location.node(),
                             if (sent) "applying"
@@ -203,7 +203,7 @@ object PipelineRuntime {
                 observed.add(
                     MapItem(
                         sourceCaptures[pkg.sourceId]?.firstOrNull() ?: pkg.sourceId,
-                        pkg.title.ifBlank { "검토할 문서" },
+                        pkg.title.ifBlank { "저장한 항목" },
                         sourceLabel(pkg.sourceType),
                         if (sent) MapNode.LOOM else MapNode.USER,
                         if (sent) "applying" else "review",
@@ -230,7 +230,7 @@ object PipelineRuntime {
                     observed.add(
                         MapItem(
                             capture.manifest.captureId,
-                            "${sourceLabel(capture.manifest.channel.name.lowercase())} · ${capture.manifest.capturedAt.take(10)}",
+                            capture.manifest.hints.counterpart?.ifBlank { null } ?: "저장한 항목",
                             sourceLabel(capture.manifest.channel.name.lowercase()),
                             if (accepted) MapNode.SPINNER
                             else if (capture.state == "PENDING") MapNode.SHEPHERD

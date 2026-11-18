@@ -140,7 +140,7 @@ internal fun NodePanel(
             if (digests.isEmpty())
                 Text("오늘 Digest가 아직 없어요", style = MaterialTheme.typography.bodySmall)
             digests.forEach { page ->
-                PageLink(page, "오늘 Digest", availability, vault) { message = it }
+                PageLink(page, availability, vault) { message = it }
             }
             results.forEach { result ->
                 if (result.wikiEdit != null) {
@@ -151,7 +151,7 @@ internal fun NodePanel(
                 if (todayPages.isNotEmpty()) {
                     HorizontalDivider()
                     Text(
-                        result.title.ifBlank { "저장한 항목" },
+                        sourceTitle(result.title),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
@@ -165,11 +165,9 @@ internal fun NodePanel(
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
-                    ThreadRows(result.threads)
                     todayPages.forEach { page ->
                         PageLink(
                             page,
-                            page.path.removeSuffix(".md").substringAfterLast('/'),
                             availability,
                             vault,
                         ) {
@@ -224,7 +222,7 @@ internal fun NodePanel(
                             Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(item.title, style = MaterialTheme.typography.titleSmall)
+                            Text(sourceTitle(item.server?.title ?: item.title), style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "${item.source} · ${item.stateLabel}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -236,12 +234,7 @@ internal fun NodePanel(
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            item.server
-                                ?.threads
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { threads ->
-                                    ThreadRows(threads)
-                                }
+                            item.server?.let { ThreadRows(it) }
                         }
                     }
                 }
@@ -258,7 +251,6 @@ internal fun NodePanel(
 @Composable
 internal fun PageLink(
     page: PipelinePage,
-    label: String,
     availability: Set<String>,
     vault: String,
     onError: (String) -> Unit,
@@ -280,7 +272,16 @@ internal fun PageLink(
         },
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(if (arrived) "$label ↗" else "$label · 폰에 오는 중")
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                wikiPageTitle(page.path) + if (arrived) " ↗" else " · 폰에 오는 중",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                "${mapTime(page.updatedAt)} · ${wikiPageKind(page.path)}",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
@@ -312,7 +313,7 @@ internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
             Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(item.title, style = MaterialTheme.typography.titleSmall)
+            Text(sourceTitle(item.server?.title ?: item.title), style = MaterialTheme.typography.titleSmall)
             Text("${item.source} · ${item.stateLabel}", style = MaterialTheme.typography.bodySmall)
             Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

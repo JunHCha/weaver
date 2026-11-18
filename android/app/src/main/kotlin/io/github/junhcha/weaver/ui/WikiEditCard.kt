@@ -12,16 +12,6 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal fun threadKindLabel(kind: String): String = when (kind) {
-    "요청" -> "Request"
-    "결정" -> "Decision"
-    "일정" -> "Schedule"
-    "기록" -> "Record"
-    "태그정정" -> "Tag correction"
-    "거절" -> "Rejected"
-    else -> kind
-}
-
 private fun editTime(value: String): String =
     OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
@@ -36,7 +26,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
     KindCard(kind = item.threads.cardKind()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
-            Text(item.title, style = MaterialTheme.typography.titleMedium)
+            Text(sourceTitle(item.title), style = MaterialTheme.typography.titleMedium)
             Text(edit.path, style = MaterialTheme.typography.bodySmall)
             Text(when (edit.state) {
                 "settling" -> if (edit.readyAt == null) "수정 내용 확인 중" else "수정 감지 · 편집 안정 대기"
@@ -72,12 +62,12 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
                 }
                 1 -> {
                     if (item.threads.isEmpty()) Text("아직 발행된 Thread가 없어요.", style = MaterialTheme.typography.bodySmall)
-                    ThreadRows(item.threads)
+                    ThreadRows(item)
                 }
                 else -> {
                     if (outputs.isEmpty()) Text("Wiki 결과를 기다리고 있어요.", style = MaterialTheme.typography.bodySmall)
                     outputs.forEach { page ->
-                        PageLink(page, page.path.removeSuffix(".md").substringAfterLast('/'), availability, vault, onError)
+                        PageLink(page, availability, vault, onError)
                     }
                 }
             }
