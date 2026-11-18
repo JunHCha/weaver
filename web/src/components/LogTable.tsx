@@ -46,7 +46,7 @@ export function LogTable({
   const [checked, setChecked] = useState<string[]>([]);
   const checkedIds = new Set(checked);
   const selectedRows = rows.filter(
-    (row) => checkedIds.has(row.thread_id) && row.kind !== "실행",
+    (row) => checkedIds.has(row.thread_id) && !isHistory(row),
   );
   const grouped = group !== "none",
     targeted = group === "project" || group === "area";
@@ -68,25 +68,29 @@ export function LogTable({
               type="checkbox"
               aria-label="모든 Thread 선택"
               checked={
-                rows.some((t) => t.kind !== "실행") &&
+                rows.some((t) => !isHistory(t)) &&
                 rows
-                  .filter((t) => t.kind !== "실행")
+                  .filter((t) => !isHistory(t))
                   .every((t) => checkedIds.has(t.thread_id))
               }
               onChange={(e) =>
                 setChecked(
                   e.target.checked
-                    ? rows
-                        .filter((t) => t.kind !== "실행")
-                        .map((t) => t.thread_id)
+                    ? rows.filter((t) => !isHistory(t)).map((t) => t.thread_id)
                     : [],
                 )
               }
             />{" "}
             전체 선택
           </label>
-          <span>{selectedRows.length}개 선택</span>
-          {selectedRows.length > 0 && (
+          <span>선택한 {selectedRows.length}개에</span>
+          {selectedRows.length > 500 && (
+            <span role="alert">
+              한 번에 최대 500개 Thread를 편집할 수 있습니다. 선택을 줄여
+              주세요.
+            </span>
+          )}
+          {selectedRows.length > 0 && selectedRows.length <= 500 && (
             <TagEditor
               key={selectedRows.map((t) => t.thread_id).join("|")}
               thread={selectedRows[0]}
@@ -189,7 +193,7 @@ export function LogTable({
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => e.stopPropagation()}
                       >
-                        {editing && t.kind !== "실행" && (
+                        {editing && !isHistory(t) && (
                           <input
                             type="checkbox"
                             className="thread-check"
@@ -238,7 +242,7 @@ export function LogTable({
                         )}
                       </div>
                       <div className="mut">
-                        {editing && t.kind !== "실행" ? (
+                        {editing && !isHistory(t) ? (
                           <TagEditor thread={t} compact />
                         ) : (
                           <Tags thread={t} knownTags={view.knownTags} />

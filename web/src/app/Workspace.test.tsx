@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { api, type FabricData, type Thread } from "../lib/api";
+import { api, editing, type FabricData, type Thread } from "../lib/api";
 import Workspace from "./Workspace";
 afterEach(() => {
   vi.useRealTimers();
@@ -173,5 +173,71 @@ it("retains a collapsed counterpart-none column, selection and filters across a 
     "fact",
   );
   expect(screen.getByRole("button", { name: "전체 보기" })).toBeVisible();
+  app.unmount();
+});
+
+it("cancels an in-flight poll and pauses further polls while optimistic tags save", async () => {
+  vi.useFakeTimers();
+  const { fixture, thread } = await import("../test/fabricFixture");
+  const data = { ...fixture, threads: [thread("fact")] };
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  vi.spyOn(api, "fabric").mockResolvedValue(data);
+  vi.spyOn(editing, "dictionary").mockResolvedValue(
+    data.tags.map((tag) => ({
+      ...tag,
+      kind: tag.kind!,
+      aliases: [],
+      usage_count: 1,
+      human_edited: true,
+    })),
+  );
+  let stale!: (threads: Thread[]) => void, finish!: (thread: Thread) => void;
+  const load = vi
+    .spyOn(api, "threads")
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          stale = resolve;
+        }),
+    )
+    .mockResolvedValue([thread("fact", { tags: ["영역", "민수"] })]);
+  vi.spyOn(api, "tags").mockResolvedValue(data.tags);
+  vi.spyOn(api, "states").mockResolvedValue(data.states);
+  vi.spyOn(editing, "tags").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const app = render(<Workspace />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30000);
+  });
+  expect(load).toHaveBeenCalledTimes(1);
+  const card = screen.getByRole("article", { name: "기록 합성 fact" });
+  fireEvent.click(within(card).getByRole("button", { name: "A 태그 삭제" }));
+  await act(async () => {
+    stale([thread("fact")]);
+    await vi.advanceTimersByTimeAsync(60000);
+  });
+  expect(
+    within(card).queryByRole("button", { name: "A 태그 삭제" }),
+  ).not.toBeInTheDocument();
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    finish(
+      thread("web-correction", {
+        kind: "태그정정",
+        correction: { target: "fact", add: [], remove: ["A"] },
+      }),
+    ),
+  );
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(
+    within(card).queryByRole("button", { name: "A 태그 삭제" }),
+  ).not.toBeInTheDocument();
   app.unmount();
 });

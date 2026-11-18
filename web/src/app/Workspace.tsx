@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type FabricData, type Stage, type Status } from "../lib/api";
 import { DictionaryScreen } from "../components/DictionaryScreen";
 import { AppShell } from "../components/AppShell";
@@ -12,6 +12,12 @@ export default function Workspace({
 }: {
   screen?: "fabric" | "dictionary" | Stage;
 }) {
+  const editState = useRef({ busy: false, epoch: 0 });
+  const [editingBusy, setEditingBusy] = useState(false);
+  const onBusy = useCallback((busy: boolean) => {
+    editState.current = { busy, epoch: editState.current.epoch + 1 };
+    setEditingBusy(busy);
+  }, []);
   const [data, setData] = useState<FabricData | null>(null),
     [error, setError] = useState(false),
     [retry, setRetry] = useState(0),
@@ -33,13 +39,20 @@ export default function Workspace({
     return () => controller.abort();
   }, [retry]);
   const refresh = useCallback(async (signal: AbortSignal) => {
+    if (editState.current.busy) return;
+    const epoch = editState.current.epoch;
     try {
       const [threads, tags, states] = await Promise.all([
         api.threads(signal),
         api.tags(signal),
         api.states(signal),
       ]);
-      if (signal.aborted) return;
+      if (
+        signal.aborted ||
+        editState.current.busy ||
+        epoch !== editState.current.epoch
+      )
+        return;
       setData((old) => (old ? { ...old, threads, tags, states } : old));
       setRefreshedAt(Date.now());
     } catch {
@@ -49,7 +62,7 @@ export default function Workspace({
   useVisiblePolling(
     refresh,
     30000,
-    screen === "fabric" && data !== null,
+    screen === "fabric" && data !== null && !editingBusy,
     false,
   );
   const onStatus = useCallback(
@@ -77,6 +90,7 @@ export default function Workspace({
         >
           {screen === "fabric" ? (
             <FabricScreen
+              onBusy={onBusy}
               data={data}
               refreshedAt={refreshedAt}
               onSaved={() => void refresh(new AbortController().signal)}

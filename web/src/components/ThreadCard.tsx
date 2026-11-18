@@ -111,7 +111,7 @@ export const ThreadCard = memo(function ThreadCard({
       </div>
       <div className="cfoot">
         <div className="tags">
-          {editing && !ghost && t.kind !== "실행" ? (
+          {editing && !ghost && !isHistory(t) ? (
             <TagEditor thread={t} compact />
           ) : (
             <Tags thread={t} knownTags={view.knownTags} />

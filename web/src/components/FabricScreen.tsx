@@ -1,4 +1,4 @@
-import { TagEditingProvider } from "./TagEditing";
+import { TagEditingProvider, TagFeedback } from "./TagEditing";
 import { useKeyboardNavigation } from "../hooks/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FabricData, Thread } from "../lib/api";
@@ -92,6 +92,7 @@ function FabricContent({
 }: {
   data: FabricData;
   onSaved?: () => void;
+  onBusy?: (busy: boolean) => void;
   refreshedAt?: number | null;
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters),
@@ -257,6 +258,7 @@ function FabricContent({
               if (value.view === "log") setFocus(null);
             }}
           />
+          <TagFeedback />
           <FocusBar
             thread={focus ? view.byId.get(focus) || null : null}
             previous={Math.min(
@@ -334,7 +336,7 @@ function FabricContent({
 
 export function FabricScreen(props: Parameters<typeof FabricContent>[0]) {
   return (
-    <TagEditingProvider onSaved={props.onSaved}>
+    <TagEditingProvider onSaved={props.onSaved} onBusy={props.onBusy}>
       <FabricContent {...props} />
     </TagEditingProvider>
   );

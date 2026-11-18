@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   editing,
   type DictionaryEntry,
@@ -45,6 +45,9 @@ const thread: Thread = {
   blocked_by: null,
   correction: null,
 };
+beforeEach(() => {
+  vi.spyOn(editing, "dismissed").mockResolvedValue([]);
+});
 afterEach(() => vi.restoreAllMocks());
 describe("tag editing", () => {
   it("autocompletes aliases and requires a kind only for a new name", async () => {
@@ -54,7 +57,8 @@ describe("tag editing", () => {
     render(<TagEditor thread={{ ...thread, tags: [] }} onSaved={onSaved} />);
     const input = screen.getByLabelText("추가할 태그");
     await waitFor(() => expect(input).toBeEnabled());
-    expect(document.querySelector('option[value="Alpha"]')).toHaveTextContent(
+    fireEvent.focus(input);
+    expect(screen.getByRole("option", { name: /알파/ })).toHaveTextContent(
       "알파",
     );
     fireEvent.change(input, { target: { value: "Alpha" } });
@@ -166,8 +170,13 @@ describe("dictionary screen", () => {
     });
     fireEvent.click(within(row).getByText("합치기"));
     expect(merge).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("합친 뒤 종류"), {
+      target: { value: "project" },
+    });
     fireEvent.click(within(row).getByRole("button", { name: "합치기 확인" }));
-    await waitFor(() => expect(merge).toHaveBeenCalledWith("알파", "베타"));
+    await waitFor(() =>
+      expect(merge).toHaveBeenCalledWith("알파", "베타", "project"),
+    );
   });
   it("shows empty copy and write failures", async () => {
     vi.spyOn(editing, "dictionary").mockResolvedValueOnce([]);

@@ -1,3 +1,5 @@
+import { useTagEditing } from "./TagEditing";
+import { tagKinds } from "../lib/fabric";
 import type { Thread } from "../lib/api";
 import { kindClass, kindStyle, refs, refLabels } from "../lib/presentation";
 export function Icon({
@@ -43,13 +45,19 @@ export function Tags({
   thread: Thread;
   knownTags: ReadonlySet<string>;
 }) {
+  const editing = useTagEditing();
   return (
     <>
       {thread.tags.map((name, i) => (
         <span key={name}>
           {i > 0 ? " " : ""}
           <span
-            className={"tg" + (knownTags.has(name) ? "" : " unk")}
+            className={
+              "tg" +
+              (knownTags.has(name) ? "" : " unk") +
+              (editing?.byName.get(name)?.archived ? " archived-tag" : "")
+            }
+            aria-label={`${name} · ${tagKinds[editing?.byName.get(name)?.kind || ""] || "종류 미정"}${editing?.byName.get(name)?.archived ? " · 보관" : ""}`}
             title={
               knownTags.has(name)
                 ? undefined
@@ -57,6 +65,7 @@ export function Tags({
             }
           >
             #{name}
+            {editing?.byName.get(name)?.archived && <small> 보관</small>}
           </span>
         </span>
       ))}
