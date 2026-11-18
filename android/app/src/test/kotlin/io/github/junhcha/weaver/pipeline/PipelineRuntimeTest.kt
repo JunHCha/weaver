@@ -22,6 +22,7 @@ class PipelineRuntimeTest {
         val empty=CourierClient.Inbox(emptyList(),emptyList(),emptyList())
         PipelineRuntime.observe(context,identity,empty.copy(receipts=listOf(receipt.copy(sha256=if(manifest.sha256=="a".repeat(64))"b".repeat(64)else"a".repeat(64)))))
         assertEquals(MapNode.SHEPHERD,PipelineRuntime.snapshot(context).single().node)
+        assertEquals(manifest.hints.counterpart ?: "저장한 항목", PipelineRuntime.snapshot(context).single().title)
         assertEquals(listOf("수집: 이 폰"), PipelineRuntime.snapshot(context).single().captureLabels)
         PipelineRuntime.observe(context,identity,empty.copy(receipts=listOf(receipt)))
         PipelineRuntime.observe(context,identity,empty)

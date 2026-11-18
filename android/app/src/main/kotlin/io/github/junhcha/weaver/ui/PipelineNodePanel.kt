@@ -16,6 +16,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
@@ -140,7 +144,7 @@ internal fun NodePanel(
             if (digests.isEmpty())
                 Text("오늘 Digest가 아직 없어요", style = MaterialTheme.typography.bodySmall)
             digests.forEach { page ->
-                PageLink(page, "오늘 Digest", availability, vault) { message = it }
+                PageLink(page, availability, vault) { message = it }
             }
             results.forEach { result ->
                 if (result.wikiEdit != null) {
@@ -151,7 +155,7 @@ internal fun NodePanel(
                 if (todayPages.isNotEmpty()) {
                     HorizontalDivider()
                     Text(
-                        result.title.ifBlank { "저장한 항목" },
+                        sourceTitle(result.title),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
@@ -165,11 +169,9 @@ internal fun NodePanel(
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
-                    ThreadRows(result.threads)
                     todayPages.forEach { page ->
                         PageLink(
                             page,
-                            page.path.removeSuffix(".md").substringAfterLast('/'),
                             availability,
                             vault,
                         ) {
@@ -224,7 +226,7 @@ internal fun NodePanel(
                             Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(item.title, style = MaterialTheme.typography.titleSmall)
+                            Text(sourceTitle(item.server?.title ?: item.title), style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "${item.source} · ${item.stateLabel}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -236,12 +238,11 @@ internal fun NodePanel(
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            item.server
-                                ?.threads
-                                ?.takeIf { it.isNotEmpty() }
-                                ?.let { threads ->
-                                    ThreadRows(threads)
-                                }
+                            item.server?.let {
+                                val cardTime = it.stageTimes[Stage.APPLY] ?: it.updatedAt
+                                Text("반영 ${mapTime(cardTime)}", style = MaterialTheme.typography.labelSmall)
+                                ThreadRows(it, cardTime)
+                            }
                         }
                     }
                 }
@@ -258,7 +259,6 @@ internal fun NodePanel(
 @Composable
 internal fun PageLink(
     page: PipelinePage,
-    label: String,
     availability: Set<String>,
     vault: String,
     onError: (String) -> Unit,
@@ -278,9 +278,24 @@ internal fun PageLink(
                 }
                 .onFailure { onError("Obsidian을 열지 못했어요. 폰의 앱과 vault 이름을 확인해 주세요.") }
         },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (arrived) "폰 도착 확인 · Obsidian에서 열기" else "폰에 오는 중" },
+        contentPadding = PaddingValues(vertical = 8.dp),
+        shape = RectangleShape,
+        colors = ButtonDefaults.textButtonColors(contentColor = WeaverTokens.ink, disabledContentColor = WeaverTokens.ink),
     ) {
-        Text(if (arrived) "$label ↗" else "$label · 폰에 오는 중")
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                wikiPageTitle(page.path),
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(if (arrived) "Obsidian에서 열기 ↗" else "폰에 오는 중", style = MaterialTheme.typography.labelSmall)
+            Text(
+                "${mapTime(page.updatedAt)} · ${wikiPageKind(page.path)}",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
@@ -312,7 +327,7 @@ internal fun ApprovalCard(item: MapItem, onApprove: () -> Unit) {
             Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(item.title, style = MaterialTheme.typography.titleSmall)
+            Text(sourceTitle(item.server?.title ?: item.title), style = MaterialTheme.typography.titleSmall)
             Text("${item.source} · ${item.stateLabel}", style = MaterialTheme.typography.bodySmall)
             Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

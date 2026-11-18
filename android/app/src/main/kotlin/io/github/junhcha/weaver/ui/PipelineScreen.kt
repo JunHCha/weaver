@@ -255,7 +255,7 @@ internal fun PipelineContent(
                 contentColor = MaterialTheme.colorScheme.inverseOnSurface,
             ) {
                 Column(Modifier.widthIn(max = 300.dp).clickable { bubble = null }.padding(18.dp)) {
-                    Text(item.title, style = MaterialTheme.typography.titleSmall)
+                    Text(sourceTitle(item.title), style = MaterialTheme.typography.titleSmall)
                     Text(item.stateLabel, style = MaterialTheme.typography.bodySmall)
                     Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
                     Text("눌러서 닫기", style = MaterialTheme.typography.labelSmall)
@@ -528,7 +528,7 @@ private fun PipelineMap(
                                 .size(32.dp)
                                 .clickable { onBubble(item) }
                                 .semantics {
-                                    contentDescription = "${item.title}: ${item.stateLabel}"
+                                    contentDescription = "${sourceTitle(item.title)}: ${item.stateLabel}"
                                 }
                         ) {
                             Canvas(Modifier.fillMaxSize()) {
