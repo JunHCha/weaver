@@ -1416,3 +1416,45 @@ button:disabled { cursor: default; opacity: .5; }
 .lane-h { flex-wrap: wrap; }
 .lane-summary { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
 .lane-summary span { font-size: 12px; }
+
+.tag-editor.compact { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; position: relative; }
+.tag-editor.compact .editable-tags { gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.tag-editor.compact .tg, .tag-plus { flex-shrink: 0; }
+.tag-editor.compact form { flex-basis: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--line); }
+.tag-editor .tg[data-kind=person] { color: var(--c-sch); }
+.tag-editor .tg[data-kind=organization] { color: var(--c-dec); }
+.tag-editor .tg[data-kind=area] { color: var(--c-rec); }
+.tag-editor .tg[data-kind=project] { color: var(--indigo); }
+.tag-editor .tg[data-kind=topic] { color: var(--c-req); }
+.tag-editor .tg button { color: inherit; }
+.tag-plus { padding: 0 5px; }
+.tag-undo { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg); border: 1px solid var(--line); padding: 12px 20px; z-index: 100; box-shadow: 0 4px 20px #0002; }
+.bulk-tags { display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+.bulk-tags .tag-editor { width: auto; }
+.merge-suggestion { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tag-popup { display: flex; flex-wrap: wrap; width: 300px; gap: 8px; z-index: 110; padding: 12px; background: var(--bg); border: 1px solid var(--line); box-shadow: 0 4px 20px #0002; }
+
+.lrow .thread-check { margin-left: 28px; }
+.ltable:has(.thread-check) .lrow { grid-template-columns: var(--gw) 100px 84px minmax(240px, 1fr) 160px 56px 200px 76px 66px 48px; }
+.tag-editor .tg button { min-width: 24px; min-height: 24px; }
+.tag-kind-label { font-size: 10px; opacity: .8; }
+.archived-tag { opacity: .65; }
+.tag-popup { width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; }
+.tag-popup form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag-combobox { position: relative; }
+.tag-combobox ul { list-style: none; padding: 0; margin: 4px 0; max-height: 180px; overflow-y: auto; border: 1px solid var(--line); background: var(--bg); min-width: 220px; }
+.tag-combobox li { padding: 6px 8px; cursor: pointer; }
+.tag-combobox li:hover, .tag-combobox [aria-selected=true] { background: var(--sel-bg); }
+.tag-combobox li span { float: right; margin-left: 12px; font-size: 11px; }
+.tag-feedback { padding: 8px 24px; font-size: 12px; }
+.tag-feedback ul { max-height: 100px; overflow: auto; }
+.bulk-tags { flex-wrap: wrap; }
+.suggestion-group h2 { font-size: 14px; margin-top: 20px; }
+.dictionary-screen dialog { position: fixed; z-index: 120; inset: 20% auto auto 50%; transform: translateX(-50%); width: min(480px,90vw); border: 1px solid var(--line); padding: 24px; background: var(--bg); color: var(--ink); box-shadow: 0 4px 24px #0003; }
+.dictionary-screen dialog::backdrop { background: #0004; }
+.tag-popup { max-width: calc(100vw - 16px); }
+.tag-popup .tag-combobox { flex-basis: 100%; width: 100%; }
+.tag-popup .tag-combobox input, .tag-popup .tag-combobox ul { width: 100%; min-width: 0; }
+.bulk-tags .tag-combobox ul { position: absolute; top: 100%; left: 0; min-width: 240px; z-index: 120; }
+.tag-edit-error { position: fixed; bottom: 90px; right: 24px; z-index: 120; background: var(--bg); border: 1px solid var(--line); max-width: 400px; }
+.tag-feedback { flex-shrink: 0; border-bottom: 1px solid var(--line); }

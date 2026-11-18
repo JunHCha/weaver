@@ -73,7 +73,7 @@ describe("Grouping and projected state", () => {
     const kinds = { A: "project", B: "person", C: "area", unknown: null };
     expect(groupKeys({ ...rows[0], tags: ["C"] }, "area", kinds, String)).toEqual(["C"]);
     expect(groupKeys(rows[0], "project", kinds, String)).toEqual(["A"]);
-    expect(groupKeys(rows[0], "topic", kinds, String)).toEqual(["자료 없음"]);
+    expect(groupKeys(rows[0], "topic", kinds, String)).toEqual(["주제 없음"]);
     expect(
       groupKeys({ ...rows[0], tags: ["unknown"] }, "project", kinds, String),
     ).toEqual(["프로젝트 없음"]);

@@ -11,7 +11,7 @@ export const tagKinds: Record<string, string> = {
   area: "영역",
   person: "사람",
   organization: "조직",
-  topic: "자료",
+  topic: "주제",
 };
 export function groupKeys(
   t: Fact,

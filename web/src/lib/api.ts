@@ -116,17 +116,24 @@ export interface DictionaryEntry {
   aliases: string[];
   human_edited: boolean;
   usage_count: number;
+  last_used_at?: string | null;
+}
+export interface BatchTagResult {
+  corrections: Thread[];
+  changed: number;
+  skipped: number;
+  skipped_threads: { thread_id: string; reason: string }[];
 }
 export interface TagEdit {
   add: string[];
   remove: string[];
   kinds?: Record<string, TagKind>;
 }
-async function write(
+async function write<T = void>(
   path: string,
   method: string,
   body: unknown,
-): Promise<void> {
+): Promise<T> {
   const session = await get<{ token: string }>("/session");
   const response = await fetch("/api" + path, {
     method,
@@ -148,12 +155,23 @@ async function write(
           : "저장하지 못했습니다. 다시 시도하세요.",
     );
   }
+  return response.json() as Promise<T>;
 }
 export const editing = {
   dictionary: (signal?: AbortSignal) =>
     get<DictionaryEntry[]>("/dictionary", signal),
   tags: (id: string, edit: TagEdit) =>
-    write(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
+    write<Thread>(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
+  batchTags: (ids: string[], edit: TagEdit) =>
+    write<BatchTagResult>("/threads/tags/batch", "POST", {
+      thread_ids: ids,
+      ...edit,
+    }),
+  dismissed: () => get<[string, string][]>("/dictionary/dismissed"),
+  dismiss: (a: string, b: string) =>
+    write("/dictionary/dismissed", "POST", { a, b }),
+  undoTags: (id: string) =>
+    write(`/corrections/${encodeURIComponent(id)}/undo`, "POST", {}),
   entry: (name: string, edit: { name?: string; kind?: TagKind }) =>
     write("/dictionary", "PATCH", { entry: name, ...edit }),
   alias: (name: string, alias: string, remove = false) =>
@@ -161,6 +179,10 @@ export const editing = {
       entry: name,
       alias,
     }),
-  merge: (name: string, target: string) =>
-    write("/dictionary/merge", "POST", { entry: name, target }),
+  merge: (name: string, target: string, kind?: TagKind) =>
+    write("/dictionary/merge", "POST", {
+      entry: name,
+      target,
+      ...(kind ? { kind } : {}),
+    }),
 };

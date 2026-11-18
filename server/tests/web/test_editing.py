@@ -170,7 +170,7 @@ def test_all_dictionary_edits_and_effective_names(state):
         client.post(
             "/api/dictionary/merge",
             headers=headers,
-            json={"entry": "Renamed", "target": "Beta"},
+            json={"entry": "Renamed", "target": "Beta", "kind": "person"},
         ).status_code
         == 200
     )
@@ -226,14 +226,14 @@ def test_gets_remain_readonly_under_daemon_writer(state, endpoint):
 @pytest.mark.parametrize(
     "store",
     [
-        "weaver.web.editing.FabricStore.append",
+        "weaver.web.editing.FabricStore.web_edit",
         "weaver.web.editing.ContextDictionary.add_alias",
     ],
 )
 def test_locked_write_has_retry_hint(state, store):
     _, client, headers = state
     with patch(store, side_effect=sqlite3.OperationalError("database is locked")):
-        if store.endswith("append"):
+        if store.endswith("web_edit"):
             response = client.post(
                 "/api/threads/record/tags", headers=headers, json={"add": ["Beta"]}
             )
@@ -489,7 +489,11 @@ def test_value_errors_are_fixed_messages_and_only_edit_routes_translate(state):
         ("PATCH", "/api/dictionary", {"entry": "Alpha", "name": "Renamed"}),
         ("POST", "/api/dictionary/aliases", {"entry": "Alpha", "alias": "alias"}),
         ("DELETE", "/api/dictionary/aliases", {"entry": "Alpha", "alias": "A"}),
-        ("POST", "/api/dictionary/merge", {"entry": "Alpha", "target": "Beta"}),
+        (
+            "POST",
+            "/api/dictionary/merge",
+            {"entry": "Alpha", "target": "Beta", "kind": "person"},
+        ),
     ],
 )
 def test_running_v1_daemon_blocks_upgrade_on_every_write(tmp_path, method, path, body):
@@ -594,3 +598,293 @@ def test_archived_projects_remain_readable_with_lifecycle_flags(state):
     assert entry["archived"] and entry["promoted"] and entry["usage_count"] == 1
     assert client.get("/api/threads").json()[0]["tags"] == ["Alpha", "old"]
     assert (config.state_root / "context.sqlite3").read_bytes() == before
+
+
+def test_undo_tag_correction_appends_retraction_and_preserves_later_edits(state):
+    config, client, headers = state
+    first = client.post(
+        "/api/threads/record/tags",
+        headers=headers,
+        json={"add": ["Beta"], "remove": ["old"]},
+    ).json()
+    later = client.post(
+        "/api/threads/record/tags",
+        headers=headers,
+        json={"add": ["New"], "kinds": {"New": "area"}},
+    ).json()
+    endpoint = f"/api/corrections/{first['thread_id']}/undo"
+    assert client.post(endpoint, json={}).status_code == 403
+    assert (
+        client.post(
+            endpoint, headers={**headers, "Origin": "http://evil.example"}, json={}
+        ).status_code
+        == 403
+    )
+    response = client.post(endpoint, headers=headers, json={})
+    assert response.status_code == 200
+    undo = response.json()
+    assert undo["retracts"] == first["thread_id"]
+    assert undo["actor"] == "human"
+    assert client.post(endpoint, headers=headers, json={}).json() == undo
+    rows = FabricStore.from_config(config).entries(ThreadQuery())
+    assert len(rows) == 4
+    assert rows[0].tags == ["Alpha", "old", "New"]
+    assert rows[2].thread_id == later["thread_id"]
+
+
+@pytest.mark.parametrize("target,status", [("missing", 404), ("record", 422)])
+def test_undo_rejects_non_corrections(state, target, status):
+    _, client, headers = state
+    assert (
+        client.post(
+            f"/api/corrections/{target}/undo", headers=headers, json={}
+        ).status_code
+        == status
+    )
+
+
+def test_dictionary_last_used_tracks_effective_active_threads(state):
+    config, client, headers = state
+    from datetime import UTC, datetime
+
+    recent = datetime(2026, 11, 18, tzinfo=UTC)
+    FabricStore.from_config(config).append(
+        [
+            draft("recent", tags=["A"], occurred_at=recent),
+            draft("retired", tags=["Beta"], occurred_at=recent),
+            draft("retired-undo", tags=[], retracts="retired"),
+        ]
+    )
+    entries = {entry["name"]: entry for entry in client.get("/api/dictionary").json()}
+    assert entries["Alpha"]["usage_count"] == 2
+    assert entries["Alpha"]["last_used_at"] == recent.isoformat()
+    assert entries["Beta"]["last_used_at"] is None
+    client.post("/api/threads/recent/tags", headers=headers, json={"remove": ["A"]})
+    entries = {entry["name"]: entry for entry in client.get("/api/dictionary").json()}
+    assert entries["Alpha"]["usage_count"] == 1
+    assert entries["Alpha"]["last_used_at"] == draft("record").occurred_at.isoformat()
+
+
+def test_batch_atomic_counts_limit_and_unknown_removal(state):
+    config, client, headers = state
+    store = FabricStore.from_config(config)
+    store.append([draft("second", tags=["Beta", "old"])])
+    endpoint = "/api/threads/tags/batch"
+    body = {"thread_ids": ["record", "second"], "add": ["Beta"], "remove": ["old"]}
+    assert client.post(endpoint, json=body).status_code == 403
+    assert (
+        client.post(
+            endpoint, headers={**headers, "Origin": "https://evil.example"}, json=body
+        ).status_code
+        == 403
+    )
+    response = client.post(endpoint, headers=headers, json=body)
+    assert response.status_code == 200
+    assert response.json()["changed"] == 2
+    assert response.json()["skipped"] == 0
+    again = client.post(endpoint, headers=headers, json=body).json()
+    assert again["changed"] == 0 and again["skipped"] == 2
+    assert {r["thread_id"] for r in again["skipped_threads"]} == {"record", "second"}
+    assert all(r["reason"] for r in again["skipped_threads"])
+    before = store.entries(ThreadQuery())
+    invalid = {"thread_ids": ["record", "missing"], "remove": ["Beta"]}
+    assert client.post(endpoint, headers=headers, json=invalid).status_code == 404
+    assert store.entries(ThreadQuery()) == before
+    with patch(
+        "weaver.fabric.store.FabricStore._validate_references",
+        side_effect=ValueError("invalid"),
+    ):
+        assert (
+            client.post(
+                endpoint,
+                headers=headers,
+                json={"thread_ids": ["record", "second"], "remove": ["Beta"]},
+            ).status_code
+            == 422
+        )
+    assert store.entries(ThreadQuery()) == before
+    assert (
+        client.post(
+            endpoint,
+            headers=headers,
+            json={"thread_ids": ["record"] * 501, "remove": ["Beta"]},
+        ).status_code
+        == 422
+    )
+    accepted = client.post(
+        endpoint,
+        headers=headers,
+        json={"thread_ids": ["record"] * 500, "remove": ["Beta"]},
+    )
+    assert accepted.status_code == 200 and accepted.json()["changed"] == 1
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kind": "거절", "content": None},
+        {
+            "kind": "태그정정",
+            "correction": {"target": "record", "add": [], "remove": []},
+        },
+        {"retracts": "record"},
+        {"thread_id": "wiki-field:test", "field": "status", "value": "진행중"},
+        {
+            "thread_id": "wiki:old",
+            "field": "status",
+            "value": "진행중",
+            "content": "status 변경",
+        },
+        {
+            "kind": "실행",
+            "actor": "system",
+            "executes": "record",
+            "tags": [],
+            "value": {
+                "action_id": "act_00000000000000000000000000000000",
+                "action": "calendar.register",
+                "outcome": "completed",
+                "external_id": "synthetic",
+                "error": None,
+            },
+        },
+    ],
+)
+def test_history_rejects_single_and_batch_without_side_effects(state, changes):
+    config, client, headers = state
+    item = draft("history", **changes)
+    store = FabricStore.from_config(config)
+    store.append([item])
+    before = store.entries(ThreadQuery(include_executions=True))
+    edit = {"add": ["NewHistory"], "kinds": {"NewHistory": "topic"}}
+    assert (
+        client.post(
+            f"/api/threads/{item.thread_id}/tags", headers=headers, json=edit
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/threads/tags/batch",
+            headers=headers,
+            json={"thread_ids": ["record", item.thread_id], **edit},
+        ).status_code
+        == 422
+    )
+    assert store.entries(ThreadQuery(include_executions=True)) == before
+    assert ContextDictionary(config.state_root).resolve("NewHistory") is None
+
+
+def test_concurrent_undo_has_one_retraction_and_requires_explicit_provenance(state):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from weaver.schema import TagCorrection
+
+    config, client, headers = state
+    store = FabricStore.from_config(config)
+    store.append(
+        [
+            draft(
+                "foreign",
+                kind="태그정정",
+                content="웹에서 태그 정정",
+                tags=[],
+                correction=TagCorrection(target="record", add=["Beta"], remove=[]),
+            )
+        ]
+    )
+    assert (
+        client.post(
+            "/api/corrections/foreign/undo", headers=headers, json={}
+        ).status_code
+        == 422
+    )
+    correction = client.post(
+        "/api/threads/record/tags", headers=headers, json={"remove": ["old"]}
+    ).json()
+    url = f"/api/corrections/{correction['thread_id']}/undo"
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(
+            pool.map(lambda _: client.post(url, headers=headers, json={}), range(8))
+        )
+    assert all(response.status_code == 200 for response in responses)
+    assert len({response.json()["thread_id"] for response in responses}) == 1
+    rows = store.entries(ThreadQuery())
+    assert sum(row.retracts == correction["thread_id"] for row in rows) == 1
+    assert ContextDictionary(config.state_root).resolve("Beta") is not None
+
+
+def test_dismissal_persists_in_dictionary_and_cross_kind_merge_needs_choice(state):
+    config, client, headers = state
+    endpoint = "/api/dictionary/dismissed"
+    assert client.post(endpoint, json={"a": "Alpha", "b": "Other"}).status_code == 403
+    assert (
+        client.post(
+            endpoint, headers=headers, json={"a": "Alpha", "b": "Other"}
+        ).status_code
+        == 200
+    )
+    other = TestClient(create_app(config), base_url="http://127.0.0.1")
+    assert other.get(endpoint).json() == [["alpha", "other"]]
+    merge = {"entry": "Alpha", "target": "Beta"}
+    assert (
+        client.post("/api/dictionary/merge", headers=headers, json=merge).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/dictionary/merge", headers=headers, json={**merge, "kind": "area"}
+        ).status_code
+        == 200
+    )
+    entry = ContextDictionary(config.state_root).resolve("Alpha")
+    assert (
+        entry
+        and entry.name == "Beta"
+        and entry.kind == "area"
+        and "Alpha" in entry.aliases
+    )
+
+
+def test_new_tag_conflict_names_existing_entry_and_preserves_kind(state):
+    config, client, headers = state
+    response = client.post(
+        "/api/threads/record/tags",
+        headers=headers,
+        json={"add": ["A"], "kinds": {"A": "topic"}},
+    )
+    assert response.status_code == 422
+    assert "Alpha" in response.json()["detail"]
+    assert ContextDictionary(config.state_root).resolve("A").kind == "project"
+    response = client.post(
+        "/api/dictionary/aliases", headers=headers, json={"entry": "Beta", "alias": "A"}
+    )
+    assert response.status_code == 422 and "Alpha" in response.json()["detail"]
+
+
+def test_batch_rolls_back_first_insert_when_second_insert_fails(state):
+    config, client, headers = state
+    store = FabricStore.from_config(config)
+    store.append([draft("second", tags=[])])
+    before = store.entries(ThreadQuery())
+    with sqlite3.connect(store.path) as db:
+        db.execute("""CREATE TRIGGER synthetic_batch_failure BEFORE INSERT ON threads
+            WHEN json_extract(NEW.payload, '$.correction.target') = 'second'
+            BEGIN SELECT RAISE(ABORT, 'synthetic second insert failure'); END""")
+    safe_client = TestClient(
+        client.app, base_url="http://127.0.0.1", raise_server_exceptions=False
+    )
+    response = safe_client.post(
+        "/api/threads/tags/batch",
+        headers=headers,
+        json={"thread_ids": ["record", "second"], "add": ["Beta"]},
+    )
+    assert response.status_code == 500
+    assert store.entries(ThreadQuery()) == before
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='web_tag_corrections'"
+            ).fetchone()[0]
+            == 0
+        )

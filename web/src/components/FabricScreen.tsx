@@ -1,3 +1,4 @@
+import { TagEditingProvider, TagFeedback } from "./TagEditing";
 import { useKeyboardNavigation } from "../hooks/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FabricData, Thread } from "../lib/api";
@@ -84,13 +85,14 @@ function RefreshAge({ at }: { at: number | null }) {
     </span>
   );
 }
-export function FabricScreen({
+function FabricContent({
   data,
   refreshedAt = null,
   onSaved,
 }: {
   data: FabricData;
   onSaved?: () => void;
+  onBusy?: (busy: boolean) => void;
   refreshedAt?: number | null;
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters),
@@ -256,6 +258,7 @@ export function FabricScreen({
               if (value.view === "log") setFocus(null);
             }}
           />
+          <TagFeedback />
           <FocusBar
             thread={focus ? view.byId.get(focus) || null : null}
             previous={Math.min(
@@ -328,5 +331,13 @@ export function FabricScreen({
         />
       </div>
     </section>
+  );
+}
+
+export function FabricScreen(props: Parameters<typeof FabricContent>[0]) {
+  return (
+    <TagEditingProvider onSaved={props.onSaved} onBusy={props.onBusy}>
+      <FabricContent {...props} />
+    </TagEditingProvider>
   );
 }

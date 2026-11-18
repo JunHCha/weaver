@@ -146,8 +146,8 @@ export function DetailPanel({
     ],
     [
       "태그",
-      t.kind === "실행" ? (
-        "—"
+      isHistory(t) ? (
+        <span>{t.tags.map((tag) => `#${tag}`).join(" ") || "—"}</span>
       ) : (
         <TagEditor key={t.thread_id} thread={t} onSaved={onSaved} />
       ),
