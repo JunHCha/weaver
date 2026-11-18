@@ -35,22 +35,27 @@ class HttpExchange(
     private val spool: SpoolFolder,
     private val state: TransportState,
     private val route: (TransportFeature) -> TransportRoute,
+    private val offered: (ServerFeature) -> Boolean = { false },
 ) {
     val summary = ExchangeSummary()
     private class Abort : RuntimeException()
+    private val featureDenials = setOf("scope_denied", "not_executor")
 
     private fun http(feature: TransportFeature) = route(feature) == TransportRoute.HTTP
 
     fun pull(): ExchangeSummary = guarded {
         if (http(TransportFeature.VERDICT)) {
-            item("list:reviews", ::pullReviews); item("list:alerts", ::pullAlerts); item("list:pipeline", ::pullPipeline)
+            item(TransportFeature.VERDICT, "list:reviews", ::pullReviews)
+            // Alerts and the map are read over HTTP only while the server offers them; otherwise the Syncthing folder keeps feeding them.
+            if (offered(ServerFeature.ALERTS)) item(TransportFeature.VERDICT, "list:alerts", ::pullAlerts)
+            if (offered(ServerFeature.PIPELINE)) item(TransportFeature.VERDICT, "list:pipeline", ::pullPipeline)
         }
-        if (http(TransportFeature.ACTION_RESULT)) item("list:actions", ::pullActions)
+        if (http(TransportFeature.ACTION_RESULT)) item(TransportFeature.ACTION_RESULT, "list:actions", ::pullActions)
     }
 
     fun push(): ExchangeSummary = guarded {
         if (http(TransportFeature.CAPTURE)) pushCaptures()
-        if (http(TransportFeature.VERDICT)) { pushVerdicts(); pushAlertAcks() }
+        if (http(TransportFeature.VERDICT)) { pushVerdicts(); if (offered(ServerFeature.ALERTS)) pushAlertAcks() }
         if (http(TransportFeature.ACTION_RESULT)) pushResults()
     }
 
@@ -59,13 +64,25 @@ class HttpExchange(
         return summary
     }
 
-    /** Runs one item. Server errors are classified; a lost connection or a rejected token stops the whole run. */
-    private fun item(key: String, block: () -> Unit) {
-        if (key in state.load().blocked) return
+    /**
+     * Runs one item of [feature]. Errors are classified by the server's fixed codes: only 401 and `node_mismatch` mean
+     * "pair again" (and stop the run); `scope_denied` / `not_executor` block that feature alone; other confirmed 403s stop
+     * the run without asking for a new pairing; 409/412/413/422 block the item; 429/5xx (including 503 `whois_unavailable`)
+     * and lost connections are retried with backoff.
+     */
+    private fun item(feature: TransportFeature, key: String, block: () -> Unit) {
+        val data = state.load()
+        if (key in data.blocked || feature.wire in data.blockedFeatures) return
         try { block() }
         catch (error: ApiException) {
             when {
-                error.status == 401 || error.status == 403 -> { summary.needsRepair = true; summary.fail(error.code, false); throw Abort() }
+                error.status == 401 || error.code == "node_mismatch" -> { summary.needsRepair = true; summary.fail(error.code, false); throw Abort() }
+                error.status == 403 && error.code in featureDenials -> {
+                    state.update { it.copy(blockedFeatures = it.blockedFeatures + (feature.wire to error.code)) }
+                    summary.fail(error.code, false)
+                }
+                error.status == 403 -> { summary.fail(error.code, false); throw Abort() }
+                error.status == 409 && error.code == "transport_files" -> Unit // the server switched this feature back; the next capabilities read follows it
                 error.retryable -> summary.fail(error.code, true)
                 else -> { blockItem(key, error.code); summary.fail(error.code, false) }
             }
@@ -84,7 +101,7 @@ class HttpExchange(
         val wanted = refs.map { "${it.packageId}.r${it.revision}" }.toSet()
         refs.forEach { ref ->
             val key = "${ref.packageId}.r${ref.revision}"
-            item("review:$key") {
+            item(TransportFeature.VERDICT, "review:$key") {
                 if (!spool.exists("proposals", "$key.json")) {
                     val doc = api.review(ref.packageId, ref.revision)
                     val etag = doc.etag ?: throw ApiException(200, "etag_missing", false)
@@ -98,14 +115,17 @@ class HttpExchange(
             val match = CourierRules.revision.matchEntire(entry.name) ?: return@forEach
             if ("${match.groupValues[1]}.r${match.groupValues[2]}" !in wanted) spool.delete("proposals", entry.name)
         }
-        state.update { it.copy(etags = it.etags.filterKeys { key -> key in wanted }) }
+        // An answer still waiting for the server keeps its ETag even after its package left the list: when the first
+        // response was lost and the server already applied it, the same-key resend with the original ETag returns the
+        // same operation. Dropping the ETag would make that answer look stale.
+        state.update { it.copy(etags = it.etags.filterKeys { key -> key in wanted || spool.exists("decisions", "$key.json") }) }
     }
 
     private fun pullAlerts() {
         val listed = api.alerts().mapNotNull { (it as? JsonObject)?.let { o -> id(o, "alert_id") to it } }
         val ids = listed.map { it.first }.toSet()
         listed.forEach { (id, element) ->
-            item("alert:$id") {
+            item(TransportFeature.VERDICT, "alert:$id") {
                 if (id !in state.load().alertsSeen) {
                     spool.put("proposals", "alert_$id.json", element.toString().toByteArray())
                     state.update { it.copy(alertsSeen = it.alertsSeen + id) }
@@ -121,14 +141,12 @@ class HttpExchange(
     }
 
     private fun pullPipeline() {
-        val items = mutableListOf<JsonElement>()
-        var cursor: String? = null
-        do { val page = api.pipeline(cursor); items += page.items; cursor = page.nextCursor } while (cursor != null)
+        val items = Paging.all(HttpsMobileApi.PAGE, api::pipeline)
         val names = mutableSetOf<String>()
         items.forEach { element ->
             val id = (element as? JsonObject)?.let { id(it, "source_id") } ?: return@forEach
             names += "$id.json"
-            item("pipeline:$id") {
+            item(TransportFeature.VERDICT, "pipeline:$id") {
                 val bytes = element.toString().toByteArray()
                 if (!spool.exists("proposals/pipeline", "$id.json") ||
                     !spool.read("proposals/pipeline", "$id.json").use { it.readBytes() }.contentEquals(bytes)) {
@@ -147,7 +165,7 @@ class HttpExchange(
         val data = state.load()
         listed.forEach { (id, element) ->
             if (id in done) return@forEach
-            item("action:$id") {
+            item(TransportFeature.ACTION_RESULT, "action:$id") {
                 if (!spool.exists(CourierRules.ACTIONS, "$id.json")) spool.put(CourierRules.ACTIONS, "$id.json", element.toString().toByteArray())
             }
         }
@@ -166,7 +184,7 @@ class HttpExchange(
     private fun pushCaptures() {
         spool.list("outbox").filter { it.regular && CourierRules.capture.matches(it.name) }.forEach { entry ->
             val id = entry.name.removeSuffix(".json")
-            item("capture:$id") {
+            item(TransportFeature.CAPTURE, "capture:$id") {
                 val bytes = spool.read("outbox", entry.name).use { it.readBytes() }
                 val manifest = CourierClient.decoded<Manifest>(bytes.decodeToString())
                 check(manifest.captureId == id) { "id_mismatch" }
@@ -191,7 +209,7 @@ class HttpExchange(
         spool.list("decisions").filter { it.regular && !CourierRules.ignored(it.name) }.forEach { entry ->
             val match = CourierRules.revision.matchEntire(entry.name) ?: return@forEach
             val name = entry.name
-            item("verdict:$name") {
+            item(TransportFeature.VERDICT, "verdict:$name") {
                 val ops = state.load().verdictOps
                 val known = ops[name]
                 if (known != null) {
@@ -253,7 +271,7 @@ class HttpExchange(
     private fun pushResults() {
         spool.list(CourierRules.ACTION_RESULTS).filter { it.regular && !CourierRules.ignored(it.name) }.forEach { entry ->
             val id = entry.name.removeSuffix(".json")
-            item("result:$id") {
+            item(TransportFeature.ACTION_RESULT, "result:$id") {
                 val operation = state.load().resultOps[id] ?: api.putActionResult(
                     id, spool.read(CourierRules.ACTION_RESULTS, entry.name).use { it.readBytes() },
                 ).also { op -> state.update { it.copy(resultOps = it.resultOps + (id to op)) } }
@@ -276,7 +294,7 @@ class HttpExchange(
 
     private fun pushAlertAcks() {
         state.load().alertsSeen.forEach { id ->
-            if (!spool.exists("proposals", "alert_$id.json")) item("ack:$id") { api.ackAlert(id) }
+            if (!spool.exists("proposals", "alert_$id.json")) item(TransportFeature.VERDICT, "ack:$id") { api.ackAlert(id) }
         }
     }
 

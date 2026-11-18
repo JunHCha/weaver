@@ -84,7 +84,7 @@ class PhoneScreenshotTest {
                 androidx.compose.material3.Surface {
                     androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(16.dp)) {
                         when (shown.value) {
-                            0 -> ConnectionContent(ConnectionUi(), false, null, {}, {}, { _, _ -> }, {}, {})
+                            0 -> ConnectionContent(ConnectionUi(), false, null, {}, {}, {}, {})
                             1 -> ConnectionContent(
                                 ConnectionUi(true, "https://100.106.199.83:8787", false, syncedAt, null,
                                     io.github.junhcha.weaver.transport.QueueCounts(2, 1, 0, 0),
@@ -93,11 +93,11 @@ class PhoneScreenshotTest {
                                         io.github.junhcha.weaver.transport.TransportFeature.VERDICT to io.github.junhcha.weaver.transport.TransportRoute.HTTP,
                                         io.github.junhcha.weaver.transport.TransportFeature.ACTION_RESULT to io.github.junhcha.weaver.transport.TransportRoute.FILES,
                                     )),
-                                false, null, {}, {}, { _, _ -> }, {}, {})
+                                false, null, {}, {}, {}, {})
                             2 -> ConnectionContent(
                                 ConnectionUi(true, "https://100.106.199.83:8787", false, syncedAt, "unreachable",
                                     io.github.junhcha.weaver.transport.QueueCounts(3, 1, 1, 0)),
-                                false, null, {}, {}, { _, _ -> }, {}, {})
+                                false, null, {}, {}, {}, {})
                         }
                     }
                 }

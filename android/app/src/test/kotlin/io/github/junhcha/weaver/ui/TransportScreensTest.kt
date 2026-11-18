@@ -3,6 +3,7 @@ package io.github.junhcha.weaver.ui
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -65,9 +66,9 @@ class TransportScreensTest {
     // ---- connection / pairing ----
 
     private fun connection(ui: ConnectionUi, busy: Boolean = false, message: String? = null,
-                           onPair: (String) -> Unit = {}, onRoute: (TransportFeature, TransportRoute) -> Unit = { _, _ -> }) =
+                           onPair: (String) -> Unit = {}) =
         compose.setContent {
-            MaterialTheme { WeaverTheme { ConnectionContent(ui, busy, message, {}, onPair, onRoute, {}, {}) } }
+            MaterialTheme { WeaverTheme { ConnectionContent(ui, busy, message, {}, onPair, {}, {}) } }
         }
 
     @Test fun unpairedShowsTheQrScanAndPasteFormAndSendsTheCode() {
@@ -99,12 +100,19 @@ class TransportScreensTest {
         assertEquals("연결 안 됨", ConnectionUi().statusText())
     }
 
-    @Test fun eachFeatureHasItsOwnSyncthingOrHttpChoiceDefaultingToSyncthing() {
-        val chosen = mutableListOf<Pair<TransportFeature, TransportRoute>>()
-        connection(ConnectionUi(true, "https://x:1"), onRoute = { f, r -> chosen += f to r })
-        TransportFeature.entries.forEach { compose.onNodeWithTag("route-${it.wire}-FILES").assertIsDisplayed() }
-        compose.onNodeWithTag("route-verdict-HTTP").performClick()
-        assertEquals(listOf(TransportFeature.VERDICT to TransportRoute.HTTP), chosen)
+    @Test fun transportStateIsShownButNotSwitchableOnThePhone() {
+        connection(ConnectionUi(true, "https://x:1", routes = mapOf(
+            TransportFeature.CAPTURE to TransportRoute.HTTP, TransportFeature.VERDICT to TransportRoute.FILES,
+            TransportFeature.ACTION_RESULT to TransportRoute.FILES), blockedFeatures = mapOf("action" to "not_executor")))
+        compose.onNodeWithTag("route-capture").assertTextEquals("HTTP")
+        compose.onNodeWithTag("route-review").assertTextEquals("Syncthing")
+        compose.onNodeWithTag("route-action").assertTextEquals("막힘 · not_executor")
+        compose.onNodeWithText("전송 경로 (서버 설정을 따라요)").assertIsDisplayed()
+    }
+
+    @Test fun anotherServersQueuedItemsAreWarnedAbout() {
+        connection(ConnectionUi(true, "https://x:1", otherServerQueued = 3))
+        compose.onNodeWithTag("other-server-warning").assertIsDisplayed()
     }
 
     @Test fun blockedItemsAreCountedWithARetry() {

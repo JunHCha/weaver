@@ -124,7 +124,11 @@ object PhoneReadModels {
             val settings = io.github.junhcha.weaver.transport.TransportRuntime.settings(app)
             current = if (!settings.paired) forBuild(debug) else HttpPhoneReadModel(
                 { io.github.junhcha.weaver.transport.TransportRuntime.api(app) },
-                java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/phone-snapshot.json"),
+                java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/phone-snapshot-${settings.serverId}.json"),
+                onProblem = { code ->
+                    if (code != null) settings.lastError = code
+                    else if (settings.lastError?.let { it.startsWith("unknown_thread_kind") || it.startsWith("invalid_thread") } == true) settings.lastError = null
+                },
             )
             return current.snapshot()
         }

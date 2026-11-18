@@ -25,6 +25,8 @@ data class TransportData(
     val actionsDone: Set<String> = emptySet(),
     /** Item key -> stable error code for items that need the user (conflict, stale, schema). Retried only on request. */
     val blocked: Map<String, String> = emptyMap(),
+    /** Feature wire name -> code (`scope_denied`, `not_executor`): that feature is blocked, the others keep going. */
+    val blockedFeatures: Map<String, String> = emptyMap(),
     /** Verdict file name -> final outcome the review store shows (`APPLIED`, `STALE`, `CONFLICT`, `ERROR`). */
     val verdictOutcomes: Map<String, String> = emptyMap(),
 )

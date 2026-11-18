@@ -107,7 +107,7 @@ object CourierRuntime {
     }
 
     /** True when some feature has somewhere to go: a selected Syncthing folder or an HTTP route. */
-    fun active(context: Context): Boolean = tree(context) != null || TransportRuntime.settings(context).anyHttp
+    fun active(context: Context): Boolean = tree(context) != null || TransportRuntime.settings(context).paired
 
     /** The Syncthing side of the routed folder; a missing or lost folder stands in as [MissingFolder]. */
     fun files(context: Context): CourierFolder {
@@ -219,14 +219,19 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
         internal fun run(context: Context, network: Boolean): Result = synchronized(CourierRuntime.lock) {
             if (!CourierRuntime.active(context)) return@synchronized Result.success()
             val settings = TransportRuntime.settings(context)
+            // The server decides the routes: read them first (when the network is allowed), then move any unsent items a
+            // switch left behind, then run the pass.
+            val refresh = if (network) TransportRuntime.refresh(context) else null
             if (CourierRuntime.stopped(context) && !settings.anyHttp) return@synchronized Result.success()
+            TransportRuntime.migrateOrphans(context, CourierRuntime.files(context))
             val folder = CourierRuntime.routed(context)
             val exchange = if (network) TransportRuntime.exchange(context) else null
             CourierDatabase(context).use { db ->
                 try {
                     val ok = synchronize(context, folder, db, exchange)
-                    if (exchange != null) TransportRuntime.finished(context, exchange.summary)
-                    if (ok && exchange?.summary?.retry != true) Result.success() else Result.retry()
+                    val summary = exchange?.summary?.also { merge(it, refresh) } ?: refresh
+                    if (summary != null) TransportRuntime.finished(context, summary)
+                    if (ok && summary?.retry != true) Result.success() else Result.retry()
                 } catch (_: SecurityException) {
                     CourierRuntime.stop(context); Result.success()
                 } catch (error: Exception) {
@@ -235,6 +240,12 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
                     Result.retry()
                 }
             }
+        }
+
+        private fun merge(into: io.github.junhcha.weaver.transport.ExchangeSummary, other: io.github.junhcha.weaver.transport.ExchangeSummary?) {
+            if (other == null) return
+            into.retry = into.retry || other.retry; into.unreachable = into.unreachable || other.unreachable
+            into.needsRepair = into.needsRepair || other.needsRepair; into.errorCode = into.errorCode ?: other.errorCode
         }
 
         internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase,

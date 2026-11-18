@@ -28,6 +28,8 @@ class HttpPhoneReadModel(
     private val api: () -> MobileApi?,
     private val cache: File,
     private val now: () -> Instant = Instant::now,
+    /** Called after every read with a stable code when rows could not be understood (e.g. `unknown_thread_kind:2`), else null. */
+    private val onProblem: (String?) -> Unit = {},
 ) : PhoneReadModel {
     @Volatile override var offlineSince: Instant? = null
         private set
@@ -38,7 +40,7 @@ class HttpPhoneReadModel(
         if (fresh != null) {
             offlineSince = null
             runCatching { write(fresh) }
-            return parse(fresh)
+            return counted(fresh)
         }
         val cached = runCatching { json.parseToJsonElement(cache.readText()).jsonObject }.getOrNull()
         if (cached == null) {
@@ -46,22 +48,24 @@ class HttpPhoneReadModel(
             return PhoneSnapshot(emptyList(), emptyList(), emptyList())
         }
         offlineSince = Instant.ofEpochMilli(cache.lastModified())
-        return runCatching { parse(cached) }.getOrDefault(PhoneSnapshot(emptyList(), emptyList(), emptyList()))
+        return runCatching { counted(cached) }.getOrDefault(PhoneSnapshot(emptyList(), emptyList(), emptyList()))
+    }
+
+    private fun counted(root: JsonObject): PhoneSnapshot {
+        val unknown = java.util.concurrent.atomic.AtomicInteger()
+        val invalid = java.util.concurrent.atomic.AtomicInteger()
+        val snapshot = parse(root, unknown, invalid)
+        onProblem(when {
+            unknown.get() > 0 -> "unknown_thread_kind:${unknown.get()}"
+            invalid.get() > 0 -> "invalid_thread:${invalid.get()}"
+            else -> null
+        })
+        return snapshot
     }
 
     private fun fetch(client: MobileApi): JsonObject {
-        fun all(next: (String?) -> io.github.junhcha.weaver.transport.Page): JsonArray {
-            val items = mutableListOf<JsonElement>()
-            var cursor: String? = null
-            var pages = 0
-            do {
-                val page = next(cursor)
-                items += page.items
-                cursor = page.nextCursor
-                check(++pages <= MAX_PAGES) { "too_many_pages" }
-            } while (cursor != null)
-            return JsonArray(items)
-        }
+        fun all(next: (String?, Int) -> io.github.junhcha.weaver.transport.Page) =
+            JsonArray(io.github.junhcha.weaver.transport.Paging.all(io.github.junhcha.weaver.transport.HttpsMobileApi.PAGE, next))
         return buildJsonObject {
             put("threads", all(client::threads))
             put("tags", JsonArray(client.tags()))
@@ -83,8 +87,17 @@ class HttpPhoneReadModel(
         private const val MAX_PAGES = 500
         private val json = Json { ignoreUnknownKeys = true }
 
-        fun parse(root: JsonObject): PhoneSnapshot = PhoneSnapshot(
-            threads = root["threads"]!!.jsonArray.mapNotNull { runCatching { thread(it.jsonObject) }.getOrNull() },
+        private class UnknownKind : IllegalArgumentException("unknown_kind")
+
+        fun parse(
+            root: JsonObject, unknown: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
+            invalid: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
+        ): PhoneSnapshot = PhoneSnapshot(
+            // A row the phone cannot understand is skipped but counted, so the connection card can say so.
+            threads = root["threads"]!!.jsonArray.mapNotNull {
+                try { thread(it.jsonObject) } catch (_: UnknownKind) { unknown.incrementAndGet(); null }
+                catch (_: Exception) { invalid.incrementAndGet(); null }
+            },
             tags = root["tags"]!!.jsonArray.mapNotNull { runCatching { tag(it.jsonObject) }.getOrNull() }
                 .filter { it.name.isNotBlank() },
             wikiPages = root["wiki"]!!.jsonArray.mapNotNull { runCatching { page(it.jsonObject) }.getOrNull() },
@@ -98,7 +111,7 @@ class HttpPhoneReadModel(
             "요청" -> ThreadKind.REQUEST; "결정" -> ThreadKind.DECISION; "일정" -> ThreadKind.SCHEDULE
             "기록" -> ThreadKind.RECORD; "태그정정" -> ThreadKind.TAG_CORRECTION; "거절" -> ThreadKind.REJECTION
             "실행" -> ThreadKind.EXECUTION
-            else -> throw IllegalArgumentException("unknown_kind")
+            else -> throw UnknownKind()
         }
 
         private fun tagKind(wire: String?) = when (wire) {

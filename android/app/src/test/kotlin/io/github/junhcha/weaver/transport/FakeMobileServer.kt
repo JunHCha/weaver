@@ -22,10 +22,12 @@ import kotlinx.serialization.json.jsonObject
  * [dropResponse] processes the request and then closes the connection without answering (a lost response),
  * [fail] answers a fixed status instead.
  */
-class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
+class FakeMobileServer(
+    val serverId: String = SERVER_ID,
+    val token: String = "t".repeat(43), leaf: String = "ip:127.0.0.1", val pki: TestPki = TestPki.default,
+) : AutoCloseable {
     private val json = Json { ignoreUnknownKeys = true }
     private val server: HttpsServer
-    val fingerprint: String
     val port: Int get() = server.address.port
     val url: String get() = "https://127.0.0.1:$port"
 
@@ -61,13 +63,17 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
     val seenAuth = mutableListOf<String?>()
     val requests = mutableListOf<String>()
     private var nextOp = 0
+    var transports: Map<String, String> = emptyMap()
+    var features: Map<String, Boolean> = emptyMap()
+    /** Per path suffix: the fixed error code to answer with (default `injected_<status>`). */
+    val failCodes = mutableMapOf<String, String>()
+    var maxItemsPerResponse = Int.MAX_VALUE
 
     fun applyAll() { operations.keys.toList().forEach { operations[it] = "applied" } }
 
     init {
-        val (store, fp) = certificate()
-        fingerprint = fp
-        val keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, PASSWORD.toCharArray()) }
+        val store = pki.leaf(leaf)
+        val keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, TestPki.PASSWORD.toCharArray()) }
         val context = SSLContext.getInstance("TLS").apply { init(keys.keyManagers, null, null) }
         server = HttpsServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
         server.httpsConfigurator = HttpsConfigurator(context)
@@ -103,7 +109,7 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
         if (auth != "Bearer $token") return error(x, 401, "token_invalid")
         if (!full.startsWith("/mobile/v1")) return error(x, 404, "not_found")
         val path = full.removePrefix("/mobile/v1")
-        fail.entries.firstOrNull { path.endsWith(it.key) }?.let { return error(x, it.value, "injected_${it.value}") }
+        fail.entries.firstOrNull { path.endsWith(it.key) }?.let { return error(x, it.value, failCodes[it.key] ?: "injected_${it.value}") }
         val drop = dropResponse.firstOrNull { path.endsWith(it) }
         val respond: (Int, String, Map<String, String>) -> Unit = { status, text, headers ->
             if (drop != null) { dropResponse.remove(drop); x.close() } else reply(x, status, text, headers)
@@ -113,9 +119,12 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
 
     private fun page(items: List<String>, query: String, respond: (Int, String, Map<String, String>) -> Unit) {
         val start = Regex("cursor=([0-9]+)").find(query)?.groupValues?.get(1)?.toInt() ?: 0
-        val slice = items.drop(start).take(pageSize)
-        val next = if (start + pageSize < items.size) "\"${start + pageSize}\"" else "null"
-        respond(200, """{"items":[${slice.joinToString(",")}],"next_cursor":$next}""", emptyMap())
+        val limit = Regex("limit=([0-9]+)").find(query)?.groupValues?.get(1)?.toInt() ?: Int.MAX_VALUE
+        val size = minOf(pageSize, limit, maxItemsPerResponse)
+        val slice = items.drop(start).take(size)
+        val body = """{"items":[${slice.joinToString(",")}],"next_cursor":${if (start + size < items.size) "\"${start + size}\"" else "null"}}"""
+        // The phone only accepts 4 MiB: answer with an oversized body so the client's own limit trips.
+        respond(200, body, emptyMap())
     }
 
     private fun route(x: HttpExchange, method: String, path: String, query: String, body: ByteArray, respond: (Int, String, Map<String, String>) -> Unit) {
@@ -123,7 +132,9 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
         val none = emptyMap<String, String>()
         fun err(status: Int, code: String) = respond(status, """{"code":"$code","retryable":${status >= 500}}""", none)
         when {
-            method == "GET" && path == "/capabilities" -> respond(200, """{"server_id":"srv-test","transport":1}""", none)
+            method == "GET" && path == "/capabilities" -> respond(200, """{"server_id":"$serverId","transport_version":1,"transports":{${
+                transports.entries.joinToString(",") { "\"${it.key}\":\"${it.value}\"" }}},"features":{${
+                features.entries.joinToString(",") { "\"${it.key}\":${it.value}" }}}}""", none)
             parts[0] == "captures" && parts.size == 3 -> {
                 val id = parts[1]
                 when {
@@ -163,6 +174,9 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
             parts[0] == "reviews" && parts.size == 5 && method == "PUT" -> {
                 verdictPuts++
                 val key = parts[1] to parts[3].toLong()
+                val text0 = body.decodeToString()
+                // Same key and content: the first operation, even after the revision moved on or the verdict was applied.
+                verdicts[key]?.takeIf { it.first == text0 }?.let { return respond(202, """{"operation_id":"${it.second}"}""", none) }
                 val current = reviews[key]
                 val latest = reviews.keys.filter { it.first == key.first }.maxOfOrNull { it.second }
                 if (current == null || latest != key.second || x.requestHeaders.getFirst("If-Match") != current.second) {
@@ -216,22 +230,57 @@ class FakeMobileServer(val token: String = "t".repeat(43)) : AutoCloseable {
     var failThreadsFrom: String? = null
 
     companion object {
-        private const val PASSWORD = "changeit"
-        private val material: Pair<KeyStore, String> by lazy {
-            val dir = java.nio.file.Files.createTempDirectory("weaver-fake-server").toFile()
-            val file = File(dir, "server.p12")
-            val keytool = File(System.getProperty("java.home"), "bin/keytool").absolutePath
-            val process = ProcessBuilder(keytool, "-genkeypair", "-alias", "server", "-keyalg", "RSA", "-keysize", "2048",
-                "-validity", "30", "-dname", "CN=weaver-test", "-ext", "san=ip:127.0.0.1", "-keystore", file.path,
-                "-storetype", "PKCS12", "-storepass", PASSWORD, "-keypass", PASSWORD).redirectErrorStream(true).start()
-            check(process.waitFor() == 0) { process.inputStream.readBytes().decodeToString() }
-            val store = KeyStore.getInstance("PKCS12").apply { file.inputStream().use { load(it, PASSWORD.toCharArray()) } }
-            val digest = MessageDigest.getInstance("SHA-256").digest(store.getCertificate("server").encoded)
-            store to digest.joinToString("") { "%02x".format(it) }
-        }
-        private fun certificate() = material
+        const val SERVER_ID = "srv-test"
+        fun pairing(server: FakeMobileServer, pki: TestPki = server.pki, token: String = server.token) =
+            Pairing(server.url, server.serverId, "dev-1", token, pki.caSha256, pki.caDer)
 
-        fun pairing(server: FakeMobileServer, fingerprint: String = server.fingerprint, token: String = server.token) =
-            Pairing(server.url, fingerprint, token)
+        /** The QR payload the server prints, as the phone parses it. */
+        fun code(server: FakeMobileServer, pki: TestPki = server.pki, token: String = server.token, serverId: String = server.serverId, caDer: ByteArray = pki.caDer, caSha: String = pki.caSha256) =
+            """{"v":1,"server_url":"${server.url}","server_id":"$serverId","device_id":"dev-1","token":"$token","ca_sha256":"$caSha","ca_der_b64":"${java.util.Base64.getEncoder().encodeToString(caDer)}"}"""
+    }
+}
+
+/** A throwaway CA and the leaf certificates it issues (keytool, synthetic names). */
+class TestPki private constructor(private val dir: File) {
+    private val keytool = File(System.getProperty("java.home"), "bin/keytool").absolutePath
+    private val caStore = File(dir, "ca.p12")
+    private val leaves = mutableMapOf<String, KeyStore>()
+
+    private fun run(vararg args: String) {
+        val process = ProcessBuilder(listOf(keytool) + args).redirectErrorStream(true).start()
+        check(process.waitFor() == 0) { process.inputStream.readBytes().decodeToString() }
+    }
+
+    init {
+        run("-genkeypair", "-alias", "ca", "-keyalg", "RSA", "-keysize", "2048", "-validity", "30", "-dname", "CN=weaver-test-ca",
+            "-ext", "bc:c", "-ext", "ku:c=keyCertSign,cRLSign", "-keystore", caStore.path, "-storetype", "PKCS12",
+            "-storepass", PASSWORD, "-keypass", PASSWORD)
+        run("-exportcert", "-alias", "ca", "-keystore", caStore.path, "-storepass", PASSWORD, "-rfc", "-file", File(dir, "ca.pem").path)
+    }
+
+    val caDer: ByteArray by lazy {
+        java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(File(dir, "ca.pem").inputStream()).encoded
+    }
+    val caSha256: String by lazy { MessageDigest.getInstance("SHA-256").digest(caDer).joinToString("") { "%02x".format(it) } }
+
+    /** A leaf signed by this CA with the given SAN extension (e.g. `ip:127.0.0.1`), or none when [san] is blank. */
+    fun leaf(san: String): KeyStore = leaves.getOrPut(san) {
+        val tag = "leaf${leaves.size}"
+        val store = File(dir, "$tag.p12")
+        val sanArgs = if (san.isBlank()) emptyArray() else arrayOf("-ext", "san=$san")
+        run(*(arrayOf("-genkeypair", "-alias", "server", "-keyalg", "RSA", "-keysize", "2048", "-validity", "30", "-dname", "CN=weaver-test",
+            "-keystore", store.path, "-storetype", "PKCS12", "-storepass", PASSWORD, "-keypass", PASSWORD) + sanArgs))
+        run("-certreq", "-alias", "server", "-keystore", store.path, "-storepass", PASSWORD, "-file", File(dir, "$tag.csr").path)
+        run(*(arrayOf("-gencert", "-alias", "ca", "-keystore", caStore.path, "-storepass", PASSWORD, "-infile", File(dir, "$tag.csr").path,
+            "-outfile", File(dir, "$tag.pem").path, "-rfc", "-validity", "30", "-ext", "eku=sa") + sanArgs))
+        run("-importcert", "-alias", "ca", "-file", File(dir, "ca.pem").path, "-keystore", store.path, "-storepass", PASSWORD, "-noprompt")
+        run("-importcert", "-alias", "server", "-file", File(dir, "$tag.pem").path, "-keystore", store.path, "-storepass", PASSWORD, "-noprompt")
+        KeyStore.getInstance("PKCS12").apply { store.inputStream().use { load(it, PASSWORD.toCharArray()) } }
+    }
+
+    companion object {
+        const val PASSWORD = "changeit"
+        val default: TestPki by lazy { create() }
+        fun create() = TestPki(java.nio.file.Files.createTempDirectory("weaver-test-pki").toFile())
     }
 }

@@ -37,7 +37,7 @@ class HttpExchangeTest {
     @After fun stop() = server.close()
 
     private fun exchange(live: FakeMobileServer = server): HttpExchange = HttpExchange(
-        HttpsMobileApi(FakeMobileServer.pairing(live), connectTimeoutMs = 1000, readTimeoutMs = 1000), spool, state, allHttp,
+        HttpsMobileApi(FakeMobileServer.pairing(live), connectTimeoutMs = 1000, readTimeoutMs = 1000), spool, state, allHttp, { true },
     )
 
     private fun spoolCapture() {
@@ -125,9 +125,87 @@ class HttpExchangeTest {
         assertTrue(spool.exists("receipts", "$id.json"))
     }
 
+    // ---- 403 classification (contract item 10) ----
+
+    private fun denied(code: String, status: Int = 403) {
+        spoolCapture()
+        server.fail["/receipt"] = status; server.failCodes["/receipt"] = code
+    }
+
+    @Test fun nodeMismatchMeansPairAgainAndStopsTheRun() {
+        denied("node_mismatch")
+        val run = exchange().push()
+        assertTrue(run.needsRepair); assertFalse(run.retry)
+        assertTrue(spool.exists("outbox", "$id.json"))
+    }
+
+    @Test fun scopeDeniedBlocksOnlyThatFeatureAndKeepsTheOthersRunning() {
+        publishReview(); exchange().pull()
+        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict()).toByteArray()) }
+        denied("scope_denied")
+        val run = exchange().push()
+        assertFalse("not a re-pair", run.needsRepair); assertFalse(run.retry)
+        assertEquals("scope_denied", state.load().blockedFeatures["capture"])
+        assertTrue("capture stays queued, nothing is dropped", spool.exists("outbox", "$id.json"))
+        assertEquals("the verdict feature was not blocked", 1, server.verdictPuts)
+        server.fail.clear()
+        exchange().push()
+        assertEquals("the blocked feature does not retry by itself", 0, server.payloadPuts)
+        state.update { it.copy(blockedFeatures = emptyMap()) }
+        exchange().push()
+        assertTrue(spool.exists("receipts", "$id.json"))
+    }
+
+    @Test fun notExecutorBlocksTheActionFeatureOnly() {
+        server.actions[actionId] = example("Action")
+        server.fail["/actions"] = 403; server.failCodes["/actions"] = "not_executor"
+        val run = exchange().pull()
+        assertFalse(run.needsRepair)
+        assertEquals("not_executor", state.load().blockedFeatures["action"])
+    }
+
+    @Test fun whoisUnavailableIs503AndRetried() {
+        denied("whois_unavailable", status = 503)
+        val run = exchange().push()
+        assertTrue(run.retry); assertFalse(run.needsRepair)
+        assertTrue(state.load().blockedFeatures.isEmpty() && state.load().blocked.isEmpty())
+    }
+
+    @Test fun otherConfirmedForbiddenStopsTheRunWithoutAskingToPairAgain() {
+        denied("peer_unverified")
+        val run = exchange().push()
+        assertFalse(run.needsRepair); assertFalse(run.retry)
+        assertEquals("peer_unverified", run.errorCode)
+    }
+
+    @Test fun alertsAndPipelineAreOnlyRequestedWhenTheServerOffersThem() {
+        server.alerts["alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"] = example("Alert")
+        server.pipeline = listOf(example("PipelineItem"))
+        val off = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state, allHttp)
+        off.pull(); off.push()
+        assertTrue(server.requests.none { it.contains("/alerts") || it.contains("/pipeline") })
+        assertTrue(spool.list("proposals/pipeline").isEmpty())
+    }
+
+    @Test fun aLostVerdictResponseIsNotMistakenForStaleWhenTheNewRevisionAlreadyReplacedThePackage() {
+        publishReview(1); exchange().pull()
+        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict(1)).toByteArray()) }
+        server.dropResponse.add("/verdict")
+        assertTrue(exchange().push().retry) // the server accepted it, the answer was lost
+        // The package moves on and the old one leaves the list; the answer's ETag must survive that.
+        publishReview(2); server.reviews.remove(pkgId to 1L)
+        server.reviews[pkgId to 1L] = example("ReviewPackage") to "\"e1\""
+        exchange().pull()
+        assertTrue("etag kept for the pending answer", state.load().etags.containsKey("$pkgId.r1"))
+        exchange().push()
+        assertNull("not stale: the server returned the operation it already created", state.load().verdictOutcomes["$pkgId.r1.json"])
+        assertEquals(1, server.operations.size)
+        assertEquals(1, state.load().verdictOps.size)
+    }
+
     @Test fun aRejectedTokenStopsTheRunAndAsksForPairingAgain() {
         spoolCapture()
-        val bad = HttpExchange(HttpsMobileApi(Pairing(server.url, server.fingerprint, "x".repeat(43))), spool, state, allHttp)
+        val bad = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server, token = "x".repeat(43))), spool, state, allHttp)
         val run = bad.push()
         assertTrue(run.needsRepair); assertFalse(run.retry)
         assertTrue(spool.exists("outbox", "$id.json"))
@@ -278,9 +356,8 @@ class HttpExchangeTest {
 
     @Test fun onlyTheFeaturesRoutedOverHttpTouchTheServer() {
         spoolCapture()
-        val onlyVerdict = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state) {
-            if (it == TransportFeature.VERDICT) TransportRoute.HTTP else TransportRoute.FILES
-        }
+        val onlyVerdict = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state,
+            { if (it == TransportFeature.VERDICT) TransportRoute.HTTP else TransportRoute.FILES })
         onlyVerdict.pull(); onlyVerdict.push()
         assertTrue(server.requests.none { it.contains("captures") || it.contains("actions") })
         assertTrue(spool.exists("outbox", "$id.json"))

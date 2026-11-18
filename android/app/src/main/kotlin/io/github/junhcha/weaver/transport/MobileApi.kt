@@ -38,6 +38,33 @@ data class Operation(val id: String, val state: String, val code: String?) {
 data class Page(val items: List<JsonElement>, val nextCursor: String?)
 
 /**
+ * Reads every page of a cursor list. A page that exceeds the response limit is not a failure: the same cursor is asked
+ * again with half the page size (down to [MIN_LIMIT]), and the smaller size is kept for the rest of the list.
+ */
+object Paging {
+    const val MIN_LIMIT = 5
+    const val MAX_PAGES = 5000
+
+    fun all(startLimit: Int, fetch: (cursor: String?, limit: Int) -> Page): List<JsonElement> {
+        val items = mutableListOf<JsonElement>()
+        var cursor: String? = null
+        var limit = startLimit
+        var pages = 0
+        while (true) {
+            val page = try { fetch(cursor, limit) } catch (error: ApiException) {
+                if (error.code == "response_too_large" && limit > MIN_LIMIT) { limit = maxOf(MIN_LIMIT, limit / 2); continue }
+                throw error
+            }
+            items += page.items
+            cursor = page.nextCursor
+            check(++pages <= MAX_PAGES) { "too_many_pages" }
+            if (cursor == null) break
+        }
+        return items
+    }
+}
+
+/**
  * The phone side of the `/mobile/v1` contract (ADR-040). Every method is blocking and runs on an IO thread.
  * A 2xx for a write only means the step it names (stored, accepted); callers keep their copy until the
  * server's own confirmation (Receipt, operation `applied`).
@@ -57,19 +84,20 @@ interface MobileApi {
     fun ackAlert(alertId: String)
     fun actions(): List<JsonElement>
     fun putActionResult(actionId: String, result: ByteArray): String
-    fun pipeline(cursor: String?): Page
-    fun threads(cursor: String?): Page
+    fun pipeline(cursor: String?, limit: Int): Page
+    fun threads(cursor: String?, limit: Int): Page
     fun tags(): List<JsonElement>
-    fun wikiPages(cursor: String?): Page
+    fun wikiPages(cursor: String?, limit: Int): Page
     fun dictionary(): List<JsonElement>
     /** Idempotent write: the same [key] and body return the first answer. Returns the response JSON. */
     fun write(method: String, path: String, body: JsonObject?, key: String): JsonElement
 }
 
 /**
- * HTTPS only. The server certificate is accepted only when its SHA-256 matches the pairing fingerprint, so no
- * CA, no hostname check and no plaintext fallback are involved. Redirects are never followed, so the bearer
- * token cannot reach another host.
+ * HTTPS only. The server certificate must chain to the CA from the pairing QR (standard PKIX validation: signature,
+ * validity, server-auth usage) and its subject alternative names must contain the server address, so a re-issued
+ * leaf keeps working and any other certificate is refused. No system CA, no plaintext fallback. Redirects are
+ * never followed, so the bearer token cannot reach another host.
  */
 class HttpsMobileApi(
     private val pairing: Pairing,
@@ -80,16 +108,17 @@ class HttpsMobileApi(
 
     private val json = Json { ignoreUnknownKeys = true }
     private val sslContext: SSLContext = SSLContext.getInstance("TLS").apply {
-        init(null, arrayOf(PinnedTrustManager(pairing.fingerprint)), null)
+        init(null, arrayOf(CaTrustManager(pairing.caDer)), null)
     }
-    private val anyHost = HostnameVerifier { _, _ -> true }
+    @Volatile private var hostRefused = false
+    private val hostCheck = HostnameVerifier { host, session -> SanMatch.matches(host, session).also { if (!it) hostRefused = true } }
 
     private class Reply(val status: Int, val headers: Map<String, String>, val body: ByteArray)
 
     private fun open(method: String, path: String, headers: Map<String, String>): HttpsURLConnection {
         val connection = URL(pairing.baseUrl + BASE + path).openConnection() as HttpsURLConnection
         connection.sslSocketFactory = sslContext.socketFactory
-        connection.hostnameVerifier = anyHost
+        connection.hostnameVerifier = hostCheck
         connection.instanceFollowRedirects = false
         connection.connectTimeout = connectTimeoutMs
         connection.readTimeout = readTimeoutMs
@@ -128,10 +157,11 @@ class HttpsMobileApi(
             if (status >= 400) throw error(reply)
             return reply
         } catch (error: ApiException) { throw error
+        } catch (error: javax.net.ssl.SSLPeerUnverifiedException) { throw PinMismatchException()
         } catch (error: javax.net.ssl.SSLException) {
             throw if (generateSequence<Throwable>(error) { it.cause }.any { it is PinMismatchException }) PinMismatchException()
             else UnreachableException(error)
-        } catch (error: IOException) { throw UnreachableException(error)
+        } catch (error: IOException) { throw if (hostRefused) PinMismatchException() else UnreachableException(error)
         } finally { connection.disconnect() }
     }
 
@@ -168,8 +198,8 @@ class HttpsMobileApi(
             (root["next_cursor"] as? JsonPrimitive)?.contentOrNull)
     }
 
-    private fun cursor(path: String, cursor: String?) =
-        if (cursor == null) "$path?limit=$PAGE" else "$path?limit=$PAGE&cursor=" + java.net.URLEncoder.encode(cursor, "UTF-8")
+    private fun cursor(path: String, cursor: String?, limit: Int) =
+        if (cursor == null) "$path?limit=$limit" else "$path?limit=$limit&cursor=" + java.net.URLEncoder.encode(cursor, "UTF-8")
 
     override fun capabilities() = obj(call("GET", "/capabilities"))
 
@@ -211,10 +241,10 @@ class HttpsMobileApi(
     override fun putActionResult(actionId: String, result: ByteArray): String =
         operationId(call("PUT", "/actions/$actionId/result", mapOf("Content-Type" to "application/json"), result))
 
-    override fun pipeline(cursor: String?) = page(call("GET", cursor("/pipeline", cursor), limit = MAX_PAGE))
-    override fun threads(cursor: String?) = page(call("GET", cursor("/fabric/threads", cursor), limit = MAX_PAGE))
+    override fun pipeline(cursor: String?, limit: Int) = page(call("GET", cursor("/pipeline", cursor, limit), limit = MAX_PAGE))
+    override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/fabric/threads", cursor, limit), limit = MAX_PAGE))
     override fun tags() = items(call("GET", "/fabric/tags", limit = MAX_PAGE))
-    override fun wikiPages(cursor: String?) = page(call("GET", cursor("/wiki/pages", cursor), limit = MAX_PAGE))
+    override fun wikiPages(cursor: String?, limit: Int) = page(call("GET", cursor("/wiki/pages", cursor, limit), limit = MAX_PAGE))
     override fun dictionary() = items(call("GET", "/dictionary", limit = MAX_PAGE))
 
     override fun write(method: String, path: String, body: JsonObject?, key: String): JsonElement {
@@ -226,22 +256,50 @@ class HttpsMobileApi(
     private fun operationId(reply: Reply): String =
         (obj(reply)["operation_id"] as? JsonPrimitive)?.contentOrNull ?: throw UnreachableException()
 
-    private class PinnedTrustManager(private val expected: String) : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
-            throw CertificateException("client_auth_unsupported")
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-            val leaf = chain?.firstOrNull() ?: throw PinMismatchException().let { CertificateException(it) }
-            val actual = MessageDigest.getInstance("SHA-256").digest(leaf.encoded).joinToString("") { "%02x".format(it) }
-            if (!MessageDigest.isEqual(actual.toByteArray(), expected.toByteArray())) throw CertificateException(PinMismatchException())
-        }
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-    }
-
     companion object {
         const val BASE = "/mobile/v1"
-        const val PAGE = 100
+        const val PAGE = 500
         const val MAX_RESPONSE = 4 shl 20
         const val MAX_DOCUMENT = 1 shl 20
         const val MAX_PAGE = 4 shl 20
+    }
+}
+
+/** Validates the chain against only the paired CA; any failure surfaces as [PinMismatchException]. */
+internal class CaTrustManager(caDer: ByteArray) : X509TrustManager {
+    private val delegate: X509TrustManager = run {
+        val ca = java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(caDer.inputStream())
+        val store = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType()).apply {
+            load(null); setCertificateEntry("weaver-ca", ca)
+        }
+        val factory = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm())
+        factory.init(store)
+        factory.trustManagers.filterIsInstance<X509TrustManager>().first()
+    }
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+        throw CertificateException("client_auth_unsupported")
+    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+        try { delegate.checkServerTrusted(chain, authType) } catch (error: CertificateException) { throw CertificateException(PinMismatchException()) }
+    }
+    override fun getAcceptedIssuers(): Array<X509Certificate> = delegate.acceptedIssuers
+}
+
+/** Hostname check against the leaf's subject alternative names (IP entries compare as addresses, DNS names as text). */
+internal object SanMatch {
+    fun matches(host: String, session: javax.net.ssl.SSLSession): Boolean {
+        val leaf = session.peerCertificates.firstOrNull() as? X509Certificate ?: return false
+        val names = leaf.subjectAlternativeNames ?: return false
+        val bare = host.removePrefix("[").removeSuffix("]")
+        val literal = bare.all { it.isDigit() || it == '.' || it == ':' || it in 'a'..'f' || it in 'A'..'F' }
+        val address = if (literal) runCatching { java.net.InetAddress.getByName(bare) }.getOrNull() else null
+        return names.any { entry ->
+            val value = entry[1] as? String ?: return@any false
+            when (entry[0] as Int) {
+                7 -> address != null && runCatching { java.net.InetAddress.getByName(value) == address }.getOrDefault(false)
+                2 -> value.equals(bare, ignoreCase = true) ||
+                    (value.startsWith("*.") && bare.substringAfter('.', "").equals(value.drop(2), ignoreCase = true))
+                else -> false
+            }
+        }
     }
 }

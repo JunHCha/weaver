@@ -75,30 +75,56 @@ object MissingFolder : CourierFolder {
 
 /**
  * One [CourierFolder] over two backends: each Courier directory belongs to a feature, and the feature's route
- * decides whether it lives in the Syncthing folder or in the HTTP [spool]. `proposals/pipeline` follows the
- * verdict route (the map shows review state). [identity] is the verdict route's, because review records and the
- * inbox are keyed by it.
+ * (the server's `capabilities.transports`) decides whether it lives in the Syncthing folder or in the HTTP [spool].
+ * `proposals/` mixes three kinds of files: review packages follow the review route, alert files and `proposals/pipeline`
+ * follow it only while the server offers those features over HTTP; otherwise they keep coming from the Syncthing folder,
+ * so switching verdicts to HTTP never silences notifications or the map. [identity] is the verdict route's (bound to the
+ * server ID for HTTP), because review records and the inbox are keyed by it.
  */
 class RoutedFolder(
     private val files: CourierFolder,
     private val spool: SpoolFolder,
     private val route: (TransportFeature) -> TransportRoute,
+    private val offered: (ServerFeature) -> Boolean = { false },
+    private val httpIdentity: String = spool.identity,
 ) : CourierFolder {
-    fun featureOf(folder: String): TransportFeature = when (folder) {
-        "outbox", "receipts" -> TransportFeature.CAPTURE
-        "decisions", "proposals", "proposals/pipeline" -> TransportFeature.VERDICT
-        CourierRules.ACTIONS, CourierRules.ACTION_RESULTS -> TransportFeature.ACTION_RESULT
+    private enum class Kind { PACKAGE, ALERT, OTHER }
+    private fun kind(name: String) = when {
+        CourierRules.revision.matches(name) -> Kind.PACKAGE
+        CourierRules.alert.matches(name) -> Kind.ALERT
+        else -> Kind.OTHER
+    }
+
+    private fun reviewHttp() = route(TransportFeature.VERDICT) == TransportRoute.HTTP
+    private fun alertsHttp() = reviewHttp() && offered(ServerFeature.ALERTS)
+    private fun pipelineHttp() = reviewHttp() && offered(ServerFeature.PIPELINE)
+    private fun http(feature: TransportFeature) = route(feature) == TransportRoute.HTTP
+
+    private fun target(folder: String, name: String = ""): CourierFolder = when (folder) {
+        "outbox", "receipts" -> if (http(TransportFeature.CAPTURE)) spool else files
+        "decisions" -> if (reviewHttp()) spool else files
+        CourierRules.ACTIONS, CourierRules.ACTION_RESULTS -> if (http(TransportFeature.ACTION_RESULT)) spool else files
+        "proposals/pipeline" -> if (pipelineHttp()) spool else files
+        "proposals" -> when (kind(name)) {
+            Kind.PACKAGE -> if (reviewHttp()) spool else files
+            Kind.ALERT -> if (alertsHttp()) spool else files
+            Kind.OTHER -> files
+        }
         else -> throw IllegalArgumentException("unknown_folder")
     }
 
-    private fun target(folder: String): CourierFolder =
-        if (route(featureOf(folder)) == TransportRoute.HTTP) spool else files
+    override val identity: String get() = if (reviewHttp()) httpIdentity else files.identity
+    override fun created(folder: String): Boolean =
+        if (folder == "proposals") !(reviewHttp() && alertsHttp()) && files.created(folder)
+        else target(folder).created(folder)
 
-    override val identity: String
-        get() = if (route(TransportFeature.VERDICT) == TransportRoute.HTTP) spool.identity else files.identity
-    override fun created(folder: String) = target(folder).created(folder)
-    override fun list(folder: String) = target(folder).list(folder)
-    override fun read(folder: String, name: String) = target(folder).read(folder, name)
-    override fun publish(folder: String, name: String, write: (OutputStream) -> Unit) = target(folder).publish(folder, name, write)
-    override fun delete(folder: String, name: String) = target(folder).delete(folder, name)
+    override fun list(folder: String): List<CourierEntry> {
+        if (folder != "proposals") return target(folder).list(folder)
+        val fromFiles = files.list(folder).filter { e -> target(folder, e.name) === files }
+        val fromSpool = if (reviewHttp()) spool.list(folder).filter { e -> kind(e.name) != Kind.OTHER && target(folder, e.name) === spool } else emptyList()
+        return fromFiles + fromSpool
+    }
+    override fun read(folder: String, name: String) = target(folder, name).read(folder, name)
+    override fun publish(folder: String, name: String, write: (OutputStream) -> Unit) = target(folder, name).publish(folder, name, write)
+    override fun delete(folder: String, name: String) = target(folder, name).delete(folder, name)
 }
