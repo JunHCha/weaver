@@ -273,6 +273,81 @@ checks arrival in the phone's synchronized vault before opening a result.
 없습니다. `--port`, `--static-dir` 또는 `WEAVER_WEB_DIR`로 포트와 정적 파일
 위치를 지정할 수 있고, 빌드가 없으면 경고와 함께 API만 제공합니다.
 
+### 폰 전용 HTTPS API (Tailscale)
+
+폰이 Syncthing 없이 Mac(또는 개인 서버)에 직접 접속하는 `/mobile/v1` API다
+([ADR-040](docs/domain/decisions/040-tailscale-courier-http-transport.md)).
+`weaver web`(loopback)과 별개의 리스너·앱이며 세션 토큰을 공유하지 않는다.
+서버 위치는 Mac이든 개인 클라우드든 상관없고, 폰에는 서버 주소 하나만 설정한다.
+
+**1. 설정.** `[mobile]`에 이 서버의 tailnet 주소를 적는다. 와일드카드(`0.0.0.0`, `::`)와
+LAN 주소는 설정 오류이며, 주소를 비워 두면 API는 꺼진 채다.
+
+```toml
+[mobile]
+bind = "100.106.199.83"      # 이 서버의 tailnet IP (100.64.0.0/10 또는 fd7a:115c:a1e0::/48)
+port = 8787
+whois = "localapi"           # tailscaled LocalAPI. "cli"면 `tailscale whois --json` 사용
+whois_socket = "/var/run/tailscaled.socket"
+# tailscale_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+transport = "files"          # 기본값: Syncthing 경로 유지. "http"면 폰 HTTP 경로
+[mobile.features]            # 선택: 기능별로 덮어쓰기 (capture, review, action)
+# action = "http"
+```
+
+tailnet ACL에서 폰 → 서버 `tcp:8787`만 허용한다. tailscaled가 꺼졌거나 주소가 바뀌면
+리스너는 시작하지 않고(닫힌 채 실패) 와일드카드로 대체하지 않는다.
+
+**2. 실행.** 데몬(`weaver run`)과 별도 프로세스로 API를 띄운다. 데몬은 접수된
+Verdict·ActionResult를 기존 도메인 journal로 적용하므로 둘 다 떠 있어야 한다.
+
+```sh
+uv run --project server python -m weaver.app mobile serve --config server.toml
+```
+
+첫 실행이나 `pair`가 `state_root/mobile/tls/`에 로컬 CA와 서버 인증서를 만든다
+(0600, CA 10년·서버 인증서 1년). 공개 인증서(ts.net)를 쓰지 않으므로 기기 이름이
+CT 로그에 올라가지 않는다. tailnet IP가 바뀌면 `mobile cert`가 같은 CA로 서버
+인증서만 다시 발급하므로 폰은 다시 신뢰할 필요가 없다. 평문 HTTP나 인증서 검증
+해제 경로는 없다.
+
+**3. 페어링.** 네트워크로 토큰을 발급하는 엔드포인트는 없다. Mac에서 CLI로 발급하고
+QR로 폰에 전달한다. 토큰(256비트)은 이때 한 번만 보이며 서버에는 해시만 남는다.
+
+```sh
+# 폰의 tailnet IP로 node ID를 whois에서 가져오거나, --node-id 로 직접 지정
+uv run --project server python -m weaver.app mobile pair --label fold --phone-ip 100.108.10.0 --executor
+uv run --project server python -m weaver.app mobile devices
+uv run --project server python -m weaver.app mobile revoke dev_...   # 분실·교체 시 철회
+```
+
+`--scope`로 `read`·`capture`·`review`·`action`·`edit` 권한을 나눈다(기본 `read capture
+review edit`, `--executor`면 `action` 추가). QR에는 서버 주소, token, 로컬 CA 인증서가
+들어 있다. Action 실행 폰은 한 대로 고정되며, 교체하려면 기존 기기를 `revoke`한 뒤 새로
+`pair --executor` 한다(자동 이전 없음). 모든 요청은 (1) tailscaled whois로 실제 소켓
+peer를 확인해 등록된 node와 대조하고(확인 불가면 거부), (2) 그 node에 묶인 앱 토큰을
+확인한다. 브라우저 `Origin`, 다른 `Host`, CORS, 쿠키는 허용하지 않는다.
+
+**4. 전송 경로와 복귀.** `transport`(또는 `[mobile.features]`)가 기능별 쓰기 경로를
+고른다. 설정을 바꾼 뒤 데몬을 재시작하면(또는 `mobile reconcile`) 적용된다.
+
+- `capture`: 폰이 업로드한 capture는 파일 경로와 같은 archive에 들어간다. 어느 경로로
+  보내든 늦게 도착한 재전송은 같은 capture ID·sha로 흡수된다.
+- `review`: HTTP로 온 Verdict는 파일 경로와 같은 결정 journal로 한 번만 적용된다.
+- `action`: `http`일 때만 `GET /actions`가 Action을 내려 주고 `actions/` 폴더는 비워 둔다
+  (실행기 두 대가 같은 Action을 받지 않게 하려는 것이다). `files`로 돌아오면 outbox의
+  미결 Action을 폴더에 다시 게시한다. 이미 보낸 결과는 어느 경로로 늦게 와도 한 번만
+  반영된다.
+
+`http → files` 복귀 절차: ① `transport = "files"`(또는 기능별 값)로 바꾸고 ② 데몬을
+재시작하거나 `mobile reconcile`을 실행한다. 미결 검토 패키지는 `proposals/`에, 미결
+Action은 `actions/`에 다시 게시된다. ③ 폰 앱도 파일 경로로 바꾼다. 폰이 보낸 뒤 응답을 받지
+못한 capture·Verdict·결과는 원래 ID로 다시 보내도 공통 journal이 중복을 막는다.
+`mobile status`가 기능별 설정값·기록값과 미결 작업 수를 보여 준다.
+
+로그에는 불투명 ID와 오류 코드만 남긴다. 계약 상세와 한계는
+[`server/src/weaver/mobile/README.md`](server/src/weaver/mobile/README.md)에 있다.
+
 ### CLI LLM 제한 시간과 재시도
 
 [`server/config.example.toml`](server/config.example.toml)의 `[llm]`에서

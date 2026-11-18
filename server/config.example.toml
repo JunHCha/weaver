@@ -100,3 +100,12 @@ max_backoff_seconds = 4
 max_attempts = 5
 backoff_seconds = 30
 max_backoff_seconds = 1800
+
+# Phone-only HTTPS API over Tailscale (disabled until bind is set; see README).
+# [mobile]
+# bind = "100.106.199.83"   # this server's tailnet IP; wildcard/LAN addresses are rejected
+# port = 8787
+# whois = "localapi"        # or "cli" (tailscale whois --json)
+# transport = "files"       # "http" moves capture/review/action to the phone API
+# [mobile.features]
+# action = "http"

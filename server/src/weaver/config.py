@@ -4,6 +4,7 @@ No files or credentials are read on import. Data paths are relative to the
 selected configuration file, and validation never prints supplied values.
 """
 
+import ipaddress
 import math
 import os
 import re
@@ -129,6 +130,110 @@ class CourierSettings:
             raise ConfigError("courier: backoff exceeds maximum")
 
 
+Transport = Literal["files", "http"]
+TRANSPORT_FEATURES = ("capture", "review", "action")
+_TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
+_TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+
+
+def _check_bind(address: str) -> str:
+    """Only an explicit tailnet (or loopback, for tests) address; never wildcard."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        raise ConfigError("mobile.bind: expected an IP address") from None
+    if ip.is_unspecified:
+        raise ConfigError("mobile.bind: wildcard addresses are not allowed")
+    if not (
+        ip.is_loopback
+        or (ip.version == 4 and ip in _TAILNET_V4)
+        or (ip.version == 6 and ip in _TAILNET_V6)
+    ):
+        raise ConfigError("mobile.bind: expected a tailnet or loopback address")
+    return str(ip)
+
+
+@dataclass(frozen=True)
+class MobileSettings:
+    """Phone-only HTTPS API (ADR-040). Disabled until ``bind`` is configured.
+
+    ``transport`` picks the write path per feature: ``files`` (Syncthing folders,
+    the default) or ``http``. ``features`` overrides it for single features.
+    """
+
+    bind: str | None = None
+    port: int = 8787
+    whois: Literal["localapi", "cli"] = "localapi"
+    whois_socket: Path = Path("/var/run/tailscaled.socket")
+    tailscale_cli: Path | None = None
+    transport: Transport = "files"
+    features: tuple[tuple[str, Transport], ...] = ()
+    max_payload_bytes: int = 64 * 1024 * 1024
+    staging_days: int = 7
+
+    def __post_init__(self) -> None:
+        if self.bind is not None:
+            _check_bind(self.bind)
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ConfigError("mobile.port: expected 1-65535")
+        if self.transport not in ("files", "http"):
+            raise ConfigError("mobile.transport: expected files or http")
+        if type(self.max_payload_bytes) is not int or self.max_payload_bytes < 1:
+            raise ConfigError("mobile.max_payload_bytes: expected positive integer")
+        if type(self.staging_days) is not int or self.staging_days < 1:
+            raise ConfigError("mobile.staging_days: expected positive integer")
+
+    def transport_for(self, feature: str) -> Transport:
+        return dict(self.features).get(feature, self.transport)
+
+
+def _mobile_settings(
+    value: object, env: Mapping[str, str], base: Path
+) -> MobileSettings:
+    if not isinstance(value, dict):
+        raise ConfigError("mobile: expected a table")
+    if value.keys() - {
+        "bind",
+        "port",
+        "whois",
+        "whois_socket",
+        "tailscale_cli",
+        "transport",
+        "features",
+        "max_payload_bytes",
+        "staging_days",
+    }:
+        raise ConfigError("mobile: unknown fields")
+    values: dict[str, object] = {}
+    for key in (
+        "bind",
+        "port",
+        "whois",
+        "transport",
+        "max_payload_bytes",
+        "staging_days",
+    ):
+        if key in value:
+            values[key] = value[key]
+    if "bind" in values and not isinstance(values["bind"], str):
+        raise ConfigError("mobile.bind: expected string")
+    if values.get("whois", "localapi") not in ("localapi", "cli"):
+        raise ConfigError("mobile.whois: expected localapi or cli")
+    for key in ("whois_socket", "tailscale_cli"):
+        if key in value:
+            raw = value[key]
+            if not isinstance(raw, str):
+                raise ConfigError(f"mobile.{key}: expected path string")
+            values[key] = _path(raw, base, env, f"mobile.{key}")
+    features = value.get("features", {})
+    if not isinstance(features, dict) or features.keys() - set(TRANSPORT_FEATURES):
+        raise ConfigError("mobile.features: unknown feature")
+    if any(choice not in ("files", "http") for choice in features.values()):
+        raise ConfigError("mobile.features: expected files or http")
+    values["features"] = tuple(sorted(features.items()))
+    return MobileSettings(**values)  # type: ignore[arg-type]
+
+
 def _check_folder(enabled: object, folder: object) -> None:
     if type(enabled) is not bool:
         raise ConfigError("wiki.enabled: expected boolean")
@@ -207,6 +312,7 @@ class ServerConfig:
     spinner_settings: SpinnerSettings = SpinnerSettings()
     wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
     courier_settings: CourierSettings = CourierSettings()
+    mobile: MobileSettings = dataclass_field(default_factory=MobileSettings)
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -408,6 +514,7 @@ def load_config(
         "spinner",
         "courier",
         "wiki",
+        "mobile",
     }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
@@ -471,6 +578,7 @@ def load_config(
             wiki_values["vault_root"], config_file.parent, env, "wiki.vault_root"
         )
     wiki = WikiSettings(**wiki_values)
+    mobile = _mobile_settings(raw.get("mobile", {}), env, config_file.parent)
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
@@ -530,4 +638,5 @@ def load_config(
         spinner_settings=spinner_settings,
         courier_settings=courier_settings,
         wiki=wiki,
+        mobile=mobile,
     )

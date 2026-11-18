@@ -49,6 +49,7 @@ SCAN_INTERVAL_SECONDS = 5.0
 STALE_TEMPORARY_SECONDS = 600.0
 _HASH_CHUNK = 1 << 20
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+EXTERNAL_PREFIX = "external:"
 
 # Codes for conditions that normally resolve on their own (late sync arrival).
 _PENDING = {
@@ -336,76 +337,9 @@ class Courier:
                 if verdict.revision != name.rev:
                     raise CourierFileError("rev_mismatch")
                 pid, rev = name.package_id, name.rev
-                # Loom's optional guard checks conflicting resynced decisions
-                # before the applied-file cleanup shortcut.
-                validate = getattr(self._decisions, "validate_verdict", None)
-                if validate is not None:
-                    try:
-                        validate(verdict)
-                    except CourierFileError:
-                        raise
-                    except Exception as exc:
-                        logger.warning(
-                            "courier recovery failed: %s reason=%s (%s, %s)",
-                            type(exc).__name__,
-                            failure_reason(exc),
-                            pid,
-                            rev,
-                        )
-                        raise CourierFileError("store_failed") from None
-                if _ask(self._decisions.is_applied, pid, rev):
-                    self._clean_decision(path, pid, rev, report)
-                    continue
-                latest = _ask(self._revisions.latest_rev, pid)
-                if latest is None:
-                    raise CourierFileError("unknown_package")
-                if rev < latest:
-                    raise CourierFileError("stale_rev")
-                if rev > latest:
-                    raise CourierFileError("unknown_rev")
-                if self._can_apply is not None and not self._can_apply():
-                    raise CourierFileError("apply_waiting")
-                digest = hashlib.sha256(verdict.model_dump_json().encode()).hexdigest()
-                failure = self._apply_failures.get(path.name)
-                if failure is not None and failure.verdict_digest != digest:
-                    self._apply_failures.pop(path.name)
-                    failure = None
-                if failure is not None:
-                    if failure.attempts >= self._retry.max_attempts:
-                        if self._on_apply_stopped is not None:
-                            self._on_apply_stopped(verdict)
-                        raise CourierFileError("apply_stopped")
-                    if self._clock() < failure.next_attempt:
-                        raise CourierFileError("apply_backoff")
-                try:
-                    self._decisions.apply(verdict)
-                    if not _ask(self._decisions.is_applied, pid, rev):
-                        raise CourierFileError("apply_unconfirmed")
-                except Exception as exc:
-                    logger.warning(
-                        "courier apply failed: %s reason=%s (%s, %s)",
-                        type(exc).__name__,
-                        failure_reason(exc),
-                        pid,
-                        rev,
-                    )
-                    self._record_apply_failure(path.name, digest, exc)
-                    stopped = (
-                        self._apply_failures[path.name].attempts
-                        >= self._retry.max_attempts
-                    )
-                    if stopped and self._on_apply_stopped is not None:
-                        self._on_apply_stopped(verdict)
-                    code = (
-                        "apply_stopped"
-                        if stopped
-                        else exc.code
-                        if isinstance(exc, CourierFileError)
-                        else "apply_failed"
-                    )
-                    raise CourierFileError(code) from None
-                self._apply_failures.pop(path.name, None)
-                report.applied.append((pid, rev))
+                self._validate(verdict)
+                if self._apply_checked(path.name, verdict) == "applied":
+                    report.applied.append((pid, rev))
                 self._clean_decision(path, pid, rev, report)
             except CourierFileError as error:
                 self._report(current, "decisions", path.name, error.code, report)
@@ -415,8 +349,102 @@ class Courier:
         self._apply_failures = {
             name: failure
             for name, failure in self._apply_failures.items()
-            if name in present
+            if name in present or name.startswith(EXTERNAL_PREFIX)
         }
+
+    def _validate(self, verdict: Verdict) -> None:
+        """Loom's optional guard against a conflicting resynced decision."""
+        validate = getattr(self._decisions, "validate_verdict", None)
+        if validate is None:
+            return
+        try:
+            validate(verdict)
+        except CourierFileError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "courier recovery failed: %s reason=%s (%s, %s)",
+                type(exc).__name__,
+                failure_reason(exc),
+                verdict.package_id,
+                verdict.revision,
+            )
+            raise CourierFileError("store_failed") from None
+
+    def _apply_checked(self, name: str, verdict: Verdict) -> str:
+        """Apply one validated verdict through the shared decision journal.
+
+        Returns ``already`` when this revision was applied before, ``applied``
+        after a confirmed application; otherwise raises a ``CourierFileError``
+        code (stale_rev, apply_backoff, apply_stopped, ...). File scans and the
+        phone HTTP API both come through here, so one revision is applied once.
+        """
+        pid, rev = verdict.package_id, verdict.revision
+        if _ask(self._decisions.is_applied, pid, rev):
+            return "already"
+        latest = _ask(self._revisions.latest_rev, pid)
+        if latest is None:
+            raise CourierFileError("unknown_package")
+        if rev < latest:
+            raise CourierFileError("stale_rev")
+        if rev > latest:
+            raise CourierFileError("unknown_rev")
+        if self._can_apply is not None and not self._can_apply():
+            raise CourierFileError("apply_waiting")
+        digest = hashlib.sha256(verdict.model_dump_json().encode()).hexdigest()
+        failure = self._apply_failures.get(name)
+        if failure is not None and failure.verdict_digest != digest:
+            self._apply_failures.pop(name)
+            failure = None
+        if failure is not None:
+            if failure.attempts >= self._retry.max_attempts:
+                if self._on_apply_stopped is not None:
+                    self._on_apply_stopped(verdict)
+                raise CourierFileError("apply_stopped")
+            if self._clock() < failure.next_attempt:
+                raise CourierFileError("apply_backoff")
+        try:
+            self._decisions.apply(verdict)
+            if not _ask(self._decisions.is_applied, pid, rev):
+                raise CourierFileError("apply_unconfirmed")
+        except Exception as exc:
+            logger.warning(
+                "courier apply failed: %s reason=%s (%s, %s)",
+                type(exc).__name__,
+                failure_reason(exc),
+                pid,
+                rev,
+            )
+            self._record_apply_failure(name, digest, exc)
+            stopped = self._apply_failures[name].attempts >= self._retry.max_attempts
+            if stopped and self._on_apply_stopped is not None:
+                self._on_apply_stopped(verdict)
+            code = (
+                "apply_stopped"
+                if stopped
+                else exc.code
+                if isinstance(exc, CourierFileError)
+                else "apply_failed"
+            )
+            raise CourierFileError(code) from None
+        self._apply_failures.pop(name, None)
+        return "applied"
+
+    def forget_external_failures(self) -> None:
+        """Retry stopped external verdicts, as a fresh process would."""
+        self._apply_failures = {
+            name: failure
+            for name, failure in self._apply_failures.items()
+            if not name.startswith(EXTERNAL_PREFIX)
+        }
+
+    def apply_external(self, key: str, verdict: Verdict) -> str:
+        """Apply a verdict that arrived over another transport (phone HTTP API).
+
+        ``key`` identifies the journal operation for retry/backoff bookkeeping.
+        """
+        self._validate(verdict)
+        return self._apply_checked(EXTERNAL_PREFIX + key, verdict)
 
     def _record_apply_failure(
         self, name: str, verdict_digest: str, exc: Exception

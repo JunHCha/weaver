@@ -150,8 +150,33 @@ def build_runtime(
     # Calendar commands: derived from Fabric, run by the phone, results come
     # back as 실행 Threads. Not LLM-gated; it only reads and writes local files.
     outbox = ActionOutbox(config.state_root / "action-outbox.sqlite3")
-    actions = ActionJob(fabric, outbox, ActionCourier(config.sync_root, outbox, fabric))
+    action_courier = ActionCourier(
+        config.sync_root,
+        outbox,
+        fabric,
+        # While HTTP owns dispatch, no Action file is offered to a second executor.
+        publish_files=lambda: config.mobile.transport_for("action") == "files",
+    )
+    actions = ActionJob(fabric, outbox, action_courier)
     maintenance.append(MaintenanceTask("actions", interval, actions.run))
+
+    if config.mobile.bind is not None:
+        # Phone HTTP API operations are journaled by `weaver mobile serve` and
+        # finished here, through the same decision/action journals as files.
+        from weaver.mobile.applier import MobileApplier
+        from weaver.mobile.reviews import ReviewService
+        from weaver.mobile.store import MobileStore
+        from weaver.mobile.transport import MobileRuntime
+
+        mobile_store = MobileStore(config.state_root)
+        mobile = MobileRuntime(
+            config,
+            mobile_store,
+            MobileApplier(mobile_store, courier, action_courier),
+            ReviewService(review.state, mobile_store),
+            action_courier,
+        )
+        maintenance.append(MaintenanceTask("mobile", interval, mobile.run))
 
     return Runtime(
         state_root=config.state_root,

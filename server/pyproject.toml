@@ -9,6 +9,8 @@ dependencies = [
     "anthropic>=0.125,<1",
     "pydantic>=2,<3",
     "typer>=0.12,<1",
+    "cryptography>=43,<48",
+    "segno>=1.6,<2",
 ]
 
 [project.optional-dependencies]

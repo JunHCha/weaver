@@ -48,7 +48,9 @@ class ActionCourier:
         fabric: Fabric,
         *,
         clock: Callable[[], float] = time.time,
+        publish_files: Callable[[], bool] = lambda: True,
     ) -> None:
+        self.publish_files = publish_files
         self.root = root
         self.outbox = outbox
         self.fabric = fabric
@@ -86,7 +88,15 @@ class ActionCourier:
     # ---- server to phone -------------------------------------------------------------
 
     def publish(self) -> list[str]:
-        """Write offered Actions and remove the files of finished ones."""
+        """Write offered Actions and remove the files of finished ones.
+
+        While another transport owns dispatch (``publish_files`` is false) the
+        folder is emptied instead, so only one executor is ever offered an
+        Action; switching back writes them again from the outbox.
+        """
+        if not self.publish_files():
+            self.withdraw()
+            return []
         self.actions.mkdir(parents=True, exist_ok=True)
         offered = self.outbox.dispatchable(self.clock())
         wanted: dict[str, bytes] = {}
@@ -113,6 +123,20 @@ class ActionCourier:
                 path.unlink(missing_ok=True)
         return written
 
+    def withdraw(self) -> None:
+        if not self.actions.is_dir():
+            return
+        for path in self.actions.iterdir():
+            if _NAME.fullmatch(path.name) and path.is_file() and not path.is_symlink():
+                path.unlink(missing_ok=True)
+
+    def dispatchable(self) -> list[Action]:
+        """Actions the executor may run now, in ``seq`` order, as sent over HTTP."""
+        return [
+            to_wire(record, external_id)
+            for record, external_id in self.outbox.dispatchable(self.clock())
+        ]
+
     # ---- phone to server -------------------------------------------------------------
 
     def ingest(self) -> dict[str, str]:
@@ -134,7 +158,7 @@ class ActionCourier:
                 result = load_versioned(path, ActionResult, version=2)
                 if result.action_id != match.group(1):
                     raise CourierFileError("id_mismatch")
-                self._apply(result)
+                self.apply_result(result)
             except CourierFileError as error:
                 problems[name] = error.code
                 logger.warning("action result %s: %s", name, error.code)
@@ -147,7 +171,8 @@ class ActionCourier:
             path.unlink(missing_ok=True)
         return problems
 
-    def _apply(self, result: ActionResult) -> None:
+    def apply_result(self, result: ActionResult) -> None:
+        """Idempotent: replaying the same report, from any transport, is a no-op."""
         record = self.outbox.get(result.action_id)
         if record is None:
             raise CourierFileError("unknown_action")
