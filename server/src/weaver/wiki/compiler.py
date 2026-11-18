@@ -37,9 +37,16 @@ from weaver.loom.tagging import (
     tag_snapshot,
 )
 from weaver.schema import TagCorrection, Thread, ThreadDraft
+from weaver.wiki.document import HUMAN_KEYS, Hunk, hunks, sections, text_hash
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
+from weaver.wiki.selection import (
+    EvidenceIndex,
+    SectionAssignments,
+    assignment_map,
+    section_map,
+)
 from weaver.wiki.store import HumanEdit, HumanEditPending, WikiStore, normalize_path
 
 logger = logging.getLogger(__name__)
@@ -138,13 +145,21 @@ class EditChange(BaseModel):
     correction: TagCorrection | None = None
 
 
+class HunkVerdict(BaseModel):
+    id: int
+    classification: Literal["fact", "structure", "expression"]
+    changes: list[EditChange] = Field(default_factory=list)
+    section_threads: SectionAssignments = Field(default_factory=list)
+
+
 class EditResult(BaseModel):
     """Semantic changes; an empty list means formatting or typo only."""
 
     new_entries: list[NewEntry] = Field(
         default_factory=list, max_length=MAX_NEW_ENTRIES
     )
-    changes: list[EditChange]
+    changes: list[EditChange] = Field(default_factory=list)
+    hunks: list[HunkVerdict] = Field(default_factory=list)
 
 
 class Compiler:
@@ -168,6 +183,7 @@ class Compiler:
                 "CREATE TABLE IF NOT EXISTS edits (rev TEXT PRIMARY KEY, drafts TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_failures (rev TEXT PRIMARY KEY, attempts INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_entries (rev TEXT PRIMARY KEY, entries TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS edit_hunks (rev TEXT NOT NULL, hunk INTEGER NOT NULL, path TEXT NOT NULL, classification TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(rev, hunk));"
                 "CREATE TABLE IF NOT EXISTS compiled_pages "
                 "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, hash TEXT NOT NULL);"
             )
@@ -219,26 +235,171 @@ class Compiler:
                 field_dictionary = self.context.snapshot()
                 dictionary = tag_snapshot(field_dictionary)
                 threads = self.fabric.entries(ThreadQuery())
-                result = self.llm.generate_json(
-                    "wiki.human_edit",
-                    HUMAN_EDIT_PROMPT,
-                    json.dumps(
-                        {
-                            **tag_context(field_dictionary, edit.diff, threads),
-                            "diff": edit.diff,
-                            "threads": [
-                                {
-                                    "id": t.thread_id,
-                                    "content": t.content,
-                                    "tags": t.tags,
-                                }
-                                for t in threads
-                            ],
-                        },
-                        ensure_ascii=False,
-                    ),
-                    EditResult,
+                changes = (
+                    hunks(edit.body_before, edit.body_after)
+                    if edit.body_before is not None and edit.body_after is not None
+                    else [Hunk(0, "__legacy__", "", edit.diff, "content")]
                 )
+                for key in sorted(
+                    set(edit.frontmatter_before) | set(edit.frontmatter_after)
+                ):
+                    if edit.frontmatter_before.get(key) != edit.frontmatter_after.get(
+                        key
+                    ):
+                        changes.append(
+                            Hunk(
+                                len(changes),
+                                "frontmatter:" + key,
+                                json.dumps(
+                                    edit.frontmatter_before.get(key), ensure_ascii=False
+                                ),
+                                json.dumps(
+                                    edit.frontmatter_after.get(key), ensure_ascii=False
+                                ),
+                                "frontmatter" if key in HUMAN_KEYS else "metadata",
+                            )
+                        )
+                content = [h for h in changes if h.classification == "content"]
+                result = EditResult()
+                meta = self.store.metadata(edit.path)
+                if content:
+                    index = EvidenceIndex(self.state_path, threads)
+                    known_ids = meta.get("thread_ids", [])
+                    ids = (
+                        set(str(key) for key in known_ids)
+                        if isinstance(known_ids, list)
+                        else set()
+                    )
+                    state_tag = meta.get("state_tag") or edit.frontmatter_before.get(
+                        "state_tag"
+                    )
+                    ids.update(
+                        index.related(
+                            [state_tag] if isinstance(state_tag, str) else [],
+                            [],
+                            " ".join(h.after for h in content),
+                        )
+                    )
+                    related = sorted(
+                        (t for t in threads if t.thread_id in ids),
+                        key=lambda t: t.seq,
+                        reverse=True,
+                    )[:64]
+                    result = self.llm.generate_json(
+                        "wiki.human_edit",
+                        HUMAN_EDIT_PROMPT,
+                        json.dumps(
+                            {
+                                **tag_context(
+                                    field_dictionary,
+                                    " ".join(h.after for h in content),
+                                    related,
+                                ),
+                                "hunks": [h.payload() for h in content],
+                                "threads": [
+                                    {
+                                        "id": t.thread_id,
+                                        "content": t.content,
+                                        "tags": t.tags,
+                                    }
+                                    for t in related
+                                ],
+                            },
+                            ensure_ascii=False,
+                        ),
+                        EditResult,
+                    )
+                if edit.body_before is not None and result.changes:
+                    raise SchemaMismatch()
+                verdicts = {v.id: v for v in result.hunks}
+                if (result.hunks or content and edit.body_before is not None) and (
+                    len(verdicts) != len(result.hunks)
+                    or set(verdicts) != {h.id for h in content}
+                ):
+                    raise SchemaMismatch()
+                meaningful = list(result.changes)
+                for h in changes:
+                    verdict = verdicts.get(h.id)
+                    kind = (
+                        verdict.classification
+                        if verdict
+                        else (
+                            "fact"
+                            if h.classification == "content" and result.changes
+                            else "expression"
+                            if h.classification == "content"
+                            else h.classification
+                        )
+                    )
+                    if verdict and kind == "fact":
+                        meaningful.extend(verdict.changes)
+                    if verdict and kind == "structure" and edit.body_after is not None:
+                        try:
+                            assigned = assignment_map(verdict.section_threads)
+                        except ValueError:
+                            raise SchemaMismatch() from None
+                        if any(
+                            not set(ids).issubset({t.thread_id for t in threads})
+                            for ids in assigned.values()
+                        ):
+                            raise SchemaMismatch()
+                        page_ids = meta.get("thread_ids", [])
+                        page_threads = [
+                            t
+                            for t in threads
+                            if isinstance(page_ids, list)
+                            and t.thread_id in page_ids
+                            or t.thread_id
+                            in {key for values in assigned.values() for key in values}
+                        ]
+                        prior_mapping = meta.get("sections", {})
+                        prior_assignments: dict[str, list[str]] = {}
+                        if isinstance(prior_mapping, dict):
+                            for key, data in prior_mapping.items():
+                                if isinstance(data, dict):
+                                    assigned_ids = data.get("thread_ids")
+                                    if isinstance(assigned_ids, list):
+                                        prior_assignments[key] = [
+                                            str(value) for value in assigned_ids
+                                        ]
+                        mapping = section_map(
+                            edit.body_after, page_threads, prior_assignments | assigned
+                        )
+                        self.store.write_metadata(
+                            edit.path, {"sections": json.loads(json.dumps(mapping))}
+                        )
+                    db.execute(
+                        "INSERT OR IGNORE INTO edit_hunks VALUES (?, ?, ?, ?, ?)",
+                        (
+                            edit.new_rev,
+                            h.id,
+                            edit.path,
+                            kind,
+                            json.dumps(h.payload(), ensure_ascii=False),
+                        ),
+                    )
+                if edit.body_after is not None:
+                    protected = meta.get("human_spans", [])
+                    spans = list(protected) if isinstance(protected, list) else []
+                    for h in content + [
+                        h for h in changes if h.classification == "expression"
+                    ]:
+                        spans = [
+                            span
+                            for span in spans
+                            if not isinstance(span, dict)
+                            or span.get("section") != h.section
+                            or not isinstance(span.get("text"), str)
+                            or str(span["text"]) not in h.before
+                        ]
+                        if h.after.strip() and (
+                            h.id not in verdicts
+                            or verdicts[h.id].classification != "structure"
+                        ):
+                            spans.append({"section": h.section, "text": h.after})
+                    if spans:
+                        self.store.write_metadata(edit.path, {"human_spans": spans})
+                result.changes = meaningful
                 now = datetime.now(UTC)
                 # Stable ID and cached drafts ensure append retries are byte-identical.
                 alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -278,7 +439,9 @@ class Compiler:
                         )
                     )
 
-                state_tag = edit.frontmatter_after.get("state_tag")
+                state_tag = meta.get("state_tag") or edit.frontmatter_before.get(
+                    "state_tag"
+                )
                 additions, names = proposals(field_dictionary, result.new_entries)
                 for change in result.changes:
                     tags = (
@@ -363,6 +526,57 @@ class Compiler:
                 drop_conflicting_aliases=True,
             )
         self.fabric.append([ThreadDraft.model_validate(d) for d in json.loads(payload)])
+        if edit.body_before is not None and edit.path.startswith("pages/"):
+            try:
+                props, body, base = self.store.read(edit.path)
+                # Only restore this acknowledged version, never a newer edit.
+                if self.store.is_tracked_version(edit.path, base):
+                    trusted = self.store.metadata(edit.path)
+                    before_parts = {
+                        part.key: part.text for part in sections(edit.body_before)
+                    }
+                    body = "".join(
+                        before_parts.get(part.key, "")
+                        if part.key == "## 근거"
+                        else part.text
+                        for part in sections(body)
+                    )
+                    bad = any(
+                        key not in HUMAN_KEYS and key != "weaver" for key in props
+                    ) or props.get("weaver") != trusted.get("id")
+                    if bad or body != edit.body_after:
+                        self.store.write(
+                            edit.path,
+                            trusted
+                            | {
+                                key: value
+                                for key, value in props.items()
+                                if key in HUMAN_KEYS
+                            },
+                            body,
+                            base,
+                            metadata="restore private wiki fields",
+                        )
+            except FileNotFoundError:
+                pass
+        if edit.path.startswith("pages/"):
+            try:
+                _, current_body, digest = self.store.read(edit.path)
+                if self.store.is_tracked_version(edit.path, digest):
+                    current_mapping = self.store.metadata(edit.path).get("sections", {})
+                    if isinstance(current_mapping, dict):
+                        for part in sections(current_body):
+                            data = current_mapping.get(part.key)
+                            if isinstance(data, dict):
+                                data.update(
+                                    hash=text_hash(part.text),
+                                    search_text=part.text[:1000],
+                                )
+                        self.store.write_metadata(
+                            edit.path, {"hash": digest, "sections": current_mapping}
+                        )
+            except FileNotFoundError:
+                pass
         self.store.acknowledge(edit)
         if self.on_progress is not None:
             self.on_progress()
@@ -480,6 +694,7 @@ class Compiler:
         if directory.exists():
             for page_path in directory.glob("*.md"):
                 props, body, _ = self.store.read(f"pages/{page_path.name}")
+                props = self.store.metadata(f"pages/{page_path.name}") | props
                 role = props.get("page_role")
                 kind = {
                     "operation": "area",

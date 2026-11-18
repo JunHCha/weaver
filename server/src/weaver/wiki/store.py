@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
+from weaver.wiki.document import HUMAN_KEYS, NOTICE, readable_links, with_memo
 from weaver.wiki.links import rewrite_links
 
 HASH_KEY = "weaver_content_sha256"
@@ -139,6 +140,8 @@ class HumanEdit:
     frontmatter_after: dict[str, JsonValue]
     detected_at: float | None = None
     settled_at: float | None = None
+    body_before: str | None = None
+    body_after: str | None = None
 
 
 @dataclass(frozen=True)
@@ -483,6 +486,78 @@ class WikiStore:
                 path, ready_at=target.stat().st_mtime + self.settle_seconds
             )
 
+    def render(
+        self,
+        path: str,
+        frontmatter: dict[str, JsonValue],
+        body: str,
+        *,
+        readonly: bool = False,
+    ) -> tuple[bytes, dict[str, JsonValue]]:
+        """Preview exactly the bytes a write would publish, without mutations."""
+        path = normalize_path(path)
+        try:
+            _, previous, _ = self.read(path)
+        except FileNotFoundError:
+            previous = ""
+        if path.startswith("pages/"):
+            key = _hash(path.encode())[:24]
+            private = {
+                k: v
+                for k, v in frontmatter.items()
+                if k not in HUMAN_KEYS and k not in ("weaver", HASH_KEY)
+            }
+            # Metadata never comes from a person's altered connection key.
+            props = {
+                k: v
+                for k, v in frontmatter.items()
+                if k in HUMAN_KEYS and v not in (None, "", [], {})
+            }
+            props["weaver"] = key
+            body = with_memo(readable_links(body), previous)
+            # Pages have no embedded hash; the committed baseline is authoritative.
+            data = (
+                "---\n"
+                + "\n".join(
+                    f"{k}: {json.dumps(v, ensure_ascii=False)}"
+                    for k, v in props.items()
+                )
+                + "\n---\n"
+                + body
+            ).encode()
+        elif readonly and (
+            path.startswith("Digest/")
+            or path in ("열린 요청.md", "다가오는 마감.md", "사람별 연락.md")
+        ):
+            private = {
+                key: value
+                for key, value in frontmatter.items()
+                if key not in HUMAN_KEYS and key not in ("weaver", HASH_KEY)
+            }
+            props = {
+                key: value
+                for key, value in frontmatter.items()
+                if key in HUMAN_KEYS and value not in (None, "", [], {})
+            }
+            if not body.startswith(NOTICE):
+                body = NOTICE + body
+            body = readable_links(body)
+            header = (
+                "---\n"
+                + "\n".join(
+                    f"{key}: {json.dumps(value, ensure_ascii=False)}"
+                    for key, value in props.items()
+                )
+                + "\n---\n"
+                if props
+                else ""
+            )
+            data = (header + body.rstrip("\n") + "\n").encode()
+        else:
+            private = {}
+            data = _render(frontmatter, body)
+        return data, private
+
     def write(
         self,
         path: str,
@@ -496,7 +571,7 @@ class WikiStore:
         """Write and commit a page if its hash and quiet period permit it."""
         path = normalize_path(path)
         self.check_write(path, base_hash)
-        data = _render(frontmatter, body)
+        data, private = self.render(path, frontmatter, body, readonly=readonly)
         self._replace(path, data, base_hash)
         rev = self._commit(path, data, "weaver", metadata)
         with self._db() as db:
@@ -504,7 +579,41 @@ class WikiStore:
                 "INSERT OR REPLACE INTO pages VALUES (?, ?, ?, ?, NULL, NULL, ?)",
                 (path, data, rev, int(readonly), None),
             )
+        if (
+            path.startswith("pages/")
+            or readonly
+            and (
+                path.startswith("Digest/")
+                or path in ("열린 요청.md", "다가오는 마감.md", "사람별 연락.md")
+            )
+        ):
+            self.write_metadata(path, private | {"hash": _hash(data)})
         return _hash(data)
+
+    def metadata(self, path: str) -> dict[str, JsonValue]:
+        """Read private page metadata from the bare Git repository only."""
+        key = _hash(normalize_path(path).encode())[:24]
+        try:
+            raw = self._git("show", f"HEAD:meta/{key}.json")
+        except subprocess.CalledProcessError:
+            return {}
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError("invalid wiki metadata")
+        return value
+
+    def write_metadata(self, path: str, values: dict[str, JsonValue]) -> None:
+        """Commit a private metadata document without creating a vault file."""
+        key = _hash(normalize_path(path).encode())[:24]
+        current = self.metadata(path)
+        updated = current | values | {"id": key, "path": normalize_path(path)}
+        if updated != current:
+            self._commit(
+                f"meta/{key}.json",
+                json.dumps(updated, ensure_ascii=False, sort_keys=True).encode(),
+                "weaver",
+                "wiki metadata",
+            )
 
     def repair_links(self, replacements: Mapping[str, str]) -> int:
         """Repair committed pages only; pending human edits are never absorbed."""
@@ -665,7 +774,20 @@ class WikiStore:
                         )
                         diff = self._git("diff", base_rev, new_rev, "--", path)
                         edit = HumanEdit(
-                            path, base_rev, new_rev, diff, before, after, since, now
+                            path,
+                            base_rev,
+                            new_rev,
+                            diff,
+                            before,
+                            after,
+                            since,
+                            now,
+                            baseline.decode("utf-8").split("\n---\n", 1)[-1]
+                            if baseline.startswith(b"---\n")
+                            else baseline.decode("utf-8"),
+                            data.decode("utf-8").split("\n---\n", 1)[-1]
+                            if data.startswith(b"---\n")
+                            else data.decode("utf-8"),
                         )
                         db.execute(
                             "UPDATE pages SET content=?, rev=?, candidate=NULL, since=NULL, mtime=? WHERE path=?",

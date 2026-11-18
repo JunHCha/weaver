@@ -286,6 +286,7 @@ class DigestBuilder:
                     body,
                     target.base,
                     metadata="digest update",
+                    readonly=True,
                 )
             except HumanEditPending as error:
                 self.pending = True

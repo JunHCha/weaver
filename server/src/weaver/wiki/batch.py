@@ -1,4 +1,4 @@
-"""Compile a complete bounded Fabric snapshot into a coherent work wiki."""
+"""Compile bounded evidence into selected, protected Wiki sections."""
 
 import json
 import logging
@@ -18,14 +18,25 @@ from weaver.llm.errors import SchemaMismatch
 from weaver.schema import Thread
 from weaver.wiki.compiler import Compiler
 from weaver.wiki.digest import DigestBuilder, DigestEntry
+from weaver.wiki.document import MEMO, sections, without_memo
 from weaver.wiki.generation import fingerprint
-from weaver.wiki.links import summary_path
+from weaver.wiki.links import link_label, summary_path
 from weaver.wiki.promotion import (
     PROJECT_THREAD_PREFIX,
     ProjectLifecycle,
     PromotionShape,
 )
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION, WORK_VAULT_RULES
+from weaver.wiki.selection import (
+    MAX_NEW_THREADS,
+    MAX_RELATED_THREADS,
+    MAX_SOURCE_CHARS,
+    EvidenceIndex,
+    SectionAssignments,
+    affected,
+    assignment_map,
+    section_map,
+)
 from weaver.wiki.snapshot import canonical_threads
 from weaver.wiki.store import HumanEditPending
 
@@ -48,17 +59,16 @@ def _strip_managed_evidence(body: str) -> str:
     removed, and only when no other section follows; anything a person wrote
     after the list stays in the body.
     """
-    index = body.rfind(_EVIDENCE_HEADING)
-    if index < 0:
+    parts = sections(body)
+    evidence = next((part for part in parts if part.key == "## 근거"), None)
+    if evidence is None:
         return body
-    rest = body[index + len(_EVIDENCE_HEADING) :].splitlines(keepends=True)
-    if any(line.startswith("## ") for line in rest):
+    # Only a generated trailing list is removable. An intervening ordinary
+    # section remains a validation error rather than silently losing content.
+    tail = parts[parts.index(evidence) + 1 :]
+    if any(part.key != MEMO for part in tail):
         return body
-    while rest and rest[0].startswith("- "):
-        rest.pop(0)
-    kept = "".join(rest).strip()
-    head = body[:index].rstrip() + "\n"
-    return head + "\n" + kept + "\n" if kept else head
+    return "".join(part.text for part in parts if part is not evidence)
 
 
 def _current_states(threads: list[Thread], active: list[Thread]) -> dict[str, object]:
@@ -71,7 +81,11 @@ def _current_states(threads: list[Thread], active: list[Thread]) -> dict[str, ob
                 for k, v in state.fields.items()
             },
             "assignees": sorted(state.assignees),
-            "open_requests": [t.thread_id for t in state.open_requests],
+            "open_requests": [
+                t.thread_id
+                for t in state.open_requests
+                if t.thread_id in {item.thread_id for item in active}
+            ],
         }
     return states
 
@@ -86,6 +100,7 @@ class WikiPage(BaseModel):
     state_tag: str | None
     aliases: list[str]
     body: str = Field(min_length=1, max_length=24000)
+    section_threads: SectionAssignments = Field(default_factory=list)
 
 
 class ExcludedThread(BaseModel):
@@ -133,20 +148,37 @@ class WikiValidationError(ValueError):
 
 
 class BatchCompiler(Compiler):
-    """One corpus-level LLM call; validate the whole batch before writing pages."""
+    """One bounded LLM call; validate every section before writing pages."""
 
     digest: DigestBuilder | None = None
     timezone: ZoneInfo = ZoneInfo("UTC")
 
-    def _existing_pages(self) -> dict[str, tuple[dict[str, JsonValue], str, str]]:
+    def _existing_pages(
+        self, scope: dict[str, set[str]] | None = None
+    ) -> dict[str, tuple[dict[str, JsonValue], str, str]]:
         pages = {}
         for path in sorted((self.store.root / "pages").glob("*.md")):
             relative = _nfc(path.relative_to(self.store.root).as_posix())
+            if scope is not None and relative not in scope:
+                continue
             props, body, digest = self.store.read(relative)
             if not self.store.is_tracked_version(relative, digest):
                 raise HumanEditPending(relative)
             pages[relative] = (props, body, digest)
         return pages
+
+    def _protected_spans(
+        self, path: str, scope: dict[str, set[str]] | None
+    ) -> list[JsonValue]:
+        spans = self.store.metadata(path).get("human_spans", [])
+        if not isinstance(spans, list):
+            return []
+        return [
+            span
+            for span in spans
+            if isinstance(span, dict)
+            and (scope is None or span.get("section") in scope.get(path, set()))
+        ]
 
     def _tables(self) -> None:
         with closing(sqlite3.connect(self.state_path)) as db, db:
@@ -171,17 +203,28 @@ class BatchCompiler(Compiler):
         now = datetime.fromtimestamp(self.store.clock(), UTC)
         lifecycle.refresh(now)
         threads = canonical_threads(self.fabric.entries(ThreadQuery()))
-        high = max(
+        bookmark = self.bookmark()
+        new = sorted(
             (
-                t.seq
+                t
                 for t in threads
-                if not t.thread_id.startswith(PROJECT_THREAD_PREFIX)
+                if t.seq > bookmark
+                and not t.thread_id.startswith(PROJECT_THREAD_PREFIX)
             ),
+            key=lambda t: t.seq,
+        )[:MAX_NEW_THREADS]
+        high = max(
+            (t.seq for t in new if not t.thread_id.startswith(PROJECT_THREAD_PREFIX)),
             default=0,
         )
         if high <= self.bookmark():
             self._sync_pages()
             return
+        threads = [
+            t
+            for t in threads
+            if t.seq <= high or t.thread_id.startswith(PROJECT_THREAD_PREFIX)
+        ]
         retracted = {t.retracts for t in threads if t.retracts}
         active = [
             t
@@ -190,12 +233,49 @@ class BatchCompiler(Compiler):
             and not t.retracts
             and t.kind not in ("태그정정", "거절", "실행")
         ]
+        all_threads = threads
+        index = EvidenceIndex(self.state_path, active)
+        scope: dict[str, set[str]] | None = None
+        if bookmark:
+            scope = {}
+            for page_path in sorted((self.store.root / "pages").glob("*.md")):
+                path = _nfc(page_path.relative_to(self.store.root).as_posix())
+                meta = self.store.metadata(path)
+                chosen = affected(meta, new, index)
+                if chosen:
+                    scope[path] = chosen
+        existing = self._existing_pages(scope)
+        selected_ids = {t.thread_id for t in new}
+        for path, chosen in (scope or {}).items():
+            mapping = self.store.metadata(path).get("sections", {})
+            if isinstance(mapping, dict):
+                for key in chosen:
+                    data = mapping.get(key, {})
+                    if isinstance(data, dict):
+                        ids = data.get("thread_ids", [])
+                        if isinstance(ids, list):
+                            selected_ids.update(str(key) for key in ids)
+        # A bounded initial window; subsequent requests carry just affected facts.
+        active = sorted(
+            (t for t in active if t.thread_id in selected_ids and t.seq <= high),
+            key=lambda t: t.seq,
+            reverse=True,
+        )[:MAX_RELATED_THREADS]
+        active.sort(key=lambda t: t.seq)
         if not active:
-            # There is no new knowledge to publish, but existing pages may now
-            # contain withdrawn claims: do not silently mark them up to date.
-            raise ValueError("wiki snapshot has no active evidence")
-        existing = self._existing_pages()
+            # Retractions still need their original evidence as context.
+            targets = {
+                t.retracts or (t.correction.target if t.correction else None)
+                for t in new
+            }
+            active = [t for t in all_threads if t.thread_id in targets]
+        if not active:
+            with closing(sqlite3.connect(self.state_path)) as db, db:
+                db.execute("UPDATE bookmark SET seq=?", (high,))
+            return
         sources = {}
+        source_count = len({t.source_id for t in active})
+        source_budget = min(MAX_SOURCE_CHARS, 32000 // max(1, source_count))
         for source_id in sorted({t.source_id for t in active}):
             try:
                 summary = self.summary(source_id)
@@ -215,12 +295,27 @@ class BatchCompiler(Compiler):
                 "source_id": source_id,
                 "title": summary.title,
                 "path": path,
-                "body": summary.body,
+                "body": summary.body[:source_budget],
             }
         stable_threads = lifecycle.stable_threads(threads)
         digest_targets = self.digest.plan(stable_threads, high) if self.digest else []
+        bounded_digests = [target.payload() for target in digest_targets]
+        for payload_target, target in zip(bounded_digests, digest_targets, strict=True):
+            # Period payloads can contain many old facts; evidence and the current
+            # bounded change set suffice for incremental digest updates.
+            payload_target["inputs"] = {
+                "threads": [
+                    t.model_dump(mode="json")
+                    for t in active
+                    if t.source_id in target.evidence
+                ]
+            }
         corpus = {
             "rules_version": RULES_VERSION,
+            "changes": [t.model_dump(mode="json") for t in new],
+            "withdrawn_ids": sorted(
+                key for key in retracted if key and key in selected_ids
+            ),
             "dictionary": [
                 {
                     "name": e.name,
@@ -229,6 +324,8 @@ class BatchCompiler(Compiler):
                     "promoted": e.promoted,
                 }
                 for e in self.context.snapshot().entries
+                if e.name in {tag for t in active for tag in t.tags}
+                or e.name in {t.counterpart for t in active}
             ],
             "threads": [t.model_dump(mode="json") for t in active],
             "sources": list(sources.values()),
@@ -292,14 +389,29 @@ class BatchCompiler(Compiler):
             for path, (_, _, digest) in existing.items():
                 self.store.check_write(path, digest)
             payload = corpus | {
-                "digest_targets": [target.payload() for target in digest_targets],
+                "digest_targets": bounded_digests,
+                "section_scope": {
+                    path: sorted(keys) for path, keys in (scope or {}).items()
+                },
                 "existing_pages": [
                     # The evidence section is written by code; the model must
                     # not see it, or it echoes it back as page content.
                     {
                         "path": path,
-                        "body": _strip_managed_evidence(body),
+                        "body": (
+                            "# " + path[6:-3] + "\n\n"
+                            if scope is not None and "__intro__" not in scope[path]
+                            else ""
+                        )
+                        + "".join(
+                            section.text
+                            for section in sections(
+                                _strip_managed_evidence(without_memo(body))
+                            )
+                            if scope is None or section.key in scope[path]
+                        ),
                         "properties": props,
+                        "protected_human_text": self._protected_spans(path, scope),
                     }
                     for path, (props, body, _) in existing.items()
                 ],
@@ -311,7 +423,7 @@ class BatchCompiler(Compiler):
                     json.dumps(payload, ensure_ascii=False),
                     WikiBatch,
                 )
-                self._validate(result, active, sources, existing)
+                self._validate(result, active, sources, existing, scope)
             except (ValueError, SchemaMismatch) as error:
                 reason = (
                     "schema_mismatch"
@@ -353,19 +465,54 @@ class BatchCompiler(Compiler):
                         datetime.now(UTC).isoformat(),
                     ),
                 )
-        self._validate(result, active, sources, existing)
+        self._validate(result, active, sources, existing, scope)
         by_id = {t.thread_id: t for t in active}
         for page in result.pages:
             path = f"pages/{page.title}.md"
             try:
-                props, _, base = self.store.read(path)
+                props, previous_body, base = self.store.read(path)
+                props = self.store.metadata(path) | props
                 if not self.store.is_tracked_version(path, base):
                     raise HumanEditPending(path)
             except FileNotFoundError:
-                props, base = {}, None
+                props, previous_body, base = {}, "", None
             if base is not None and completed.get(path) == base:
                 continue
             selected = [by_id[key] for key in page.thread_ids]
+            old_meta = self.store.metadata(path)
+            if scope is not None and path in existing:
+                replacements = {
+                    section.key: section.text
+                    for section in sections(page.body)
+                    if section.key in scope[path]
+                }
+                if set(replacements) != scope[path]:
+                    raise WikiValidationError(
+                        "wiki partial result must include selected sections"
+                    )
+                page.body = "".join(
+                    replacements.get(section.key, section.text)
+                    for section in sections(_strip_managed_evidence(previous_body))
+                )
+                old_ids = old_meta.get("thread_ids", [])
+                if isinstance(old_ids, list):
+                    page.thread_ids = list(
+                        dict.fromkeys(
+                            [*(str(key) for key in old_ids), *page.thread_ids]
+                        )
+                    )
+                all_by_id = {t.thread_id: t for t in all_threads}
+                selected = [
+                    all_by_id[key] for key in page.thread_ids if key in all_by_id
+                ]
+            elif (
+                scope is not None
+                and (self.store.root / path).exists()
+                and path not in existing
+            ):
+                raise WikiValidationError(
+                    "wiki partial result touches an unselected page"
+                )
             page_state = project(page.state_tag, threads) if page.state_tag else None
             for field in ("deadline", "schedule", "status"):
                 props[field] = (
@@ -388,19 +535,53 @@ class BatchCompiler(Compiler):
                     "thread_ids": list[JsonValue](dict.fromkeys(page.thread_ids)),
                 }
             )
+            evidence_sources = dict(sources)
+            for source_id in sorted({t.source_id for t in selected} - sources.keys()):
+                try:
+                    summary = self.summary(source_id)
+                except (ValueError, LookupError, FileNotFoundError):
+                    continue
+                evidence_sources[source_id] = {
+                    "title": summary.title,
+                    "path": summary_path(summary.title, source_id),
+                }
             evidence = []
             for source_id in sorted(
-                {t.source_id for t in selected if t.source_id in sources}
+                {t.source_id for t in selected if t.source_id in evidence_sources}
             ):
-                source_path = str(sources[source_id]["path"])
-                evidence.append(f"- [[{source_path.removesuffix('.md')}]]")
-            human = sorted(t.seq for t in selected if t.source_id not in sources)
+                source_path = str(evidence_sources[source_id]["path"])
+                evidence.append(
+                    f"- [[{source_path.removesuffix('.md')}|{link_label(evidence_sources[source_id]['title'])}]]"
+                )
+            human = sorted(
+                t.seq for t in selected if t.source_id not in evidence_sources
+            )
             if human:
                 evidence.append(
                     "- Fabric 사람 기록: " + ", ".join(f"#{seq}" for seq in human)
                 )
             body = page.body.rstrip() + "\n\n## 근거\n" + "\n".join(evidence) + "\n"
             written = self.store.write(path, props, body, base)
+            new_mapping = section_map(
+                self.store.read(path)[1], selected, assignment_map(page.section_threads)
+            )
+            if scope is not None and path in existing:
+                old_mapping = old_meta.get("sections", {})
+                if isinstance(old_mapping, dict):
+                    new_mapping = old_mapping | {
+                        key: value
+                        for key, value in new_mapping.items()
+                        if key in scope[path]
+                    }
+            self.store.write_metadata(
+                path,
+                {
+                    "sections": json.loads(json.dumps(new_mapping)),
+                    "source_ids": list[JsonValue](
+                        sorted({t.source_id for t in selected})
+                    ),
+                },
+            )
             with closing(sqlite3.connect(self.state_path)) as db, db:
                 db.execute(
                     "INSERT OR REPLACE INTO compiled_pages VALUES (?, ?, ?)",
@@ -424,6 +605,7 @@ class BatchCompiler(Compiler):
         active: list[Thread],
         sources: dict[str, dict[str, str]],
         existing: dict[str, tuple[dict[str, JsonValue], str, str]],
+        scope: dict[str, set[str]] | None = None,
     ) -> None:
         by_id = {t.thread_id: t for t in active}
         titles = set()
@@ -441,11 +623,50 @@ class BatchCompiler(Compiler):
                 raise WikiValidationError("invalid or duplicate wiki page title")
             titles.add(page.title.casefold())
         page_paths = {f"pages/{p.title}" for p in result.pages}
+        known_paths = {
+            _nfc(p.relative_to(self.store.root).as_posix()).removesuffix(".md")
+            for p in (self.store.root / "pages").glob("*.md")
+        }
+        if scope is not None:
+            for page in result.pages:
+                path = f"pages/{page.title}.md"
+                if path.removesuffix(".md") in known_paths and path not in existing:
+                    raise WikiValidationError(
+                        "wiki partial result touches an unselected page"
+                    )
+                if path in existing:
+                    keys = {s.key for s in sections(page.body)} - {"__intro__"}
+                    if not keys.issubset(scope[path]) or not scope[path].issubset(
+                        {s.key for s in sections(page.body)}
+                    ):
+                        raise WikiValidationError(
+                            "wiki partial result must include selected sections"
+                        )
         if not set(existing).issubset({p + ".md" for p in page_paths}):
             raise WikiValidationError("wiki batch would discard an existing page")
         covered = set()
         for page in result.pages:
+            if any(part.key == MEMO for part in sections(page.body)):
+                raise WikiValidationError("wiki model must not write personal notes")
+            path = f"pages/{page.title}.md"
+            private = self.store.metadata(path)
+            spans = private.get("human_spans", [])
+            if isinstance(spans, list):
+                for span in spans:
+                    if isinstance(span, dict) and isinstance(span.get("text"), str):
+                        if (
+                            scope is None
+                            or span.get("section") in scope.get(path, set())
+                        ) and str(span["text"]).strip() not in page.body:
+                            raise WikiValidationError(
+                                "wiki partial result lost human wording"
+                            )
             ids = set(page.thread_ids)
+            for key, assigned in assignment_map(page.section_threads).items():
+                if key not in {s.key for s in sections(page.body)} or not set(
+                    assigned
+                ).issubset(ids):
+                    raise WikiValidationError("invalid wiki section evidence")
             if not ids.issubset(by_id):
                 raise WikiValidationError("unknown wiki evidence thread")
             if page.state_tag and not any(
@@ -462,11 +683,15 @@ class BatchCompiler(Compiler):
                 raise WikiValidationError(
                     "wiki page must not duplicate managed metadata"
                 )
-            allowed = page_paths | {
-                str(sources[by_id[key].source_id]["path"]).removesuffix(".md")
-                for key in ids
-                if by_id[key].source_id in sources
-            }
+            allowed = (
+                page_paths
+                | known_paths
+                | {
+                    str(sources[by_id[key].source_id]["path"]).removesuffix(".md")
+                    for key in ids
+                    if by_id[key].source_id in sources
+                }
+            )
             for link in re.findall(r"\[\[([^\]\n]+)\]\]", page.body):
                 if "#" in link.split("|", 1)[0]:
                     raise WikiValidationError(
@@ -514,13 +739,17 @@ class BatchCompiler(Compiler):
             ("organization", "조직"),
         ]:
             pages = [
-                p
-                for p in result.pages
-                if p.role == role and f"pages/{p.title}.md" in published
+                (path[6:-3], self.store.metadata(path))
+                for path in sorted(published)
+                if path.startswith("pages/")
+                and self.store.metadata(path).get("page_role") == role
             ]
             if pages:
                 lines.extend([f"## {label}", ""])
-                lines.extend(f"- [[pages/{p.title}]] — {p.summary}" for p in pages)
+                lines.extend(
+                    f"- [[pages/{title}]] — {meta.get('summary', title)}"
+                    for title, meta in pages
+                )
                 lines.append("")
         sections: list[tuple[str, list[str]]] = [
             (
@@ -548,7 +777,7 @@ class BatchCompiler(Compiler):
             f"- 생성 시각: {row[2]}",
             f"- Fabric 책갈피: seq {row[1]}",
             f"- 운영 규칙: {RULES_VERSION}",
-            f"- 페이지: {len(result.pages)}개",
+            f"- 페이지: {sum(path.startswith('pages/') for path in published)}개",
             "",
             "## 별도 페이지에 반영하지 않은 기록",
             "",

@@ -33,3 +33,26 @@ def fixture_response[T: BaseModel](schema: type[T], data: object) -> T:
             if "업무 운영" not in row["tags"]:
                 row["tags"].append("업무 운영")
     return schema.model_validate(payload)
+
+
+def edit_response(schema, user, data):
+    """Upgrade old synthetic edit fixtures to the per-hunk verdict contract."""
+    import json
+
+    result = fixture_response(schema, data)
+    hunks = json.loads(user).get("hunks", [])
+    changes = result.changes
+    return schema.model_validate(
+        result.model_dump()
+        | {
+            "changes": [],
+            "hunks": [
+                {
+                    "id": h["id"],
+                    "classification": "fact" if changes and i == 0 else "expression",
+                    "changes": [c.model_dump() for c in changes] if i == 0 else [],
+                }
+                for i, h in enumerate(hunks)
+            ],
+        }
+    )

@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from server.tests.fake_responses import fixture_response
+from server.tests.fake_responses import edit_response
 
 from weaver.context import ContextDictionary
 from weaver.fabric import FabricStore, ThreadQuery
@@ -20,8 +20,9 @@ class Client:
 
     def generate_json(self, task, system, user, schema):
         if task == "wiki.human_edit":
-            return fixture_response(
+            return edit_response(
                 EditResult,
+                user,
                 {
                     "new_entries": [{"name": "점검", "kind": "topic", "aliases": []}],
                     "changes": []
@@ -91,8 +92,9 @@ def test_wait_record_publish_and_restart_preserve_reverse_history(tmp_path):
     clock, store, fabric, client, compiler, journal, publisher = setup(tmp_path)
     page = store.root / "pages/운영.md"
     page.write_text(
-        page.read_text().replace('"2026-11-16"', '"2026-11-19"')
-        + "\n현장 확인 후 진행\n"
+        page.read_text()
+        .replace('"2026-11-16"', '"2026-11-19"')
+        .replace("## 내 메모", "현장 확인 후 진행\n\n## 내 메모")
     )
     compiler.run()
     publisher.publish()
@@ -179,7 +181,9 @@ def test_formatting_only_edit_is_not_shown_as_a_fabric_transition(tmp_path):
 def test_failed_append_is_not_advertised_as_a_fabric_commit(tmp_path, monkeypatch):
     clock, store, fabric, client, compiler, journal, publisher = setup(tmp_path)
     page = store.root / "pages/운영.md"
-    page.write_text(page.read_text() + "\n현장 확인 후 진행\n")
+    page.write_text(
+        page.read_text().replace("## 내 메모", "현장 확인 후 진행\n\n## 내 메모")
+    )
     compiler.run()
     publisher.publish()
     clock[0] += 11
@@ -208,7 +212,9 @@ def test_observation_failure_never_rolls_back_commit_and_is_recovered(
 ):
     clock, store, fabric, client, compiler, journal, publisher = setup(tmp_path)
     page = store.root / "pages/운영.md"
-    page.write_text(page.read_text() + "\n현장 확인 후 진행\n")
+    page.write_text(
+        page.read_text().replace("## 내 메모", "현장 확인 후 진행\n\n## 내 메모")
+    )
     compiler.run()
     clock[0] += 11
     client.fail = False

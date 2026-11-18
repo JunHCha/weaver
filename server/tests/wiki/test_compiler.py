@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 import pytest
-from server.tests.fake_responses import fixture_response
+from server.tests.fake_responses import edit_response, fixture_response
 
 from weaver.context import ContextDictionary, Page
 from weaver.fabric.store import FabricStore, ThreadQuery
@@ -21,7 +21,7 @@ class FakeLLM:
         return "본문 " + user
 
     def generate_json(self, task, system, user, schema):
-        return EditResult(changes=[])
+        return edit_response(schema, user, {"changes": []})
 
 
 def draft():
@@ -108,7 +108,7 @@ def test_compile_and_bookmark_failure(tmp_path):
     compiler.run()
     props, body, _ = store.read("pages/홍길동.md")
     assert props["status"] == "진행"
-    assert props["kind"] == "person"
+    assert store.metadata("pages/홍길동.md")["kind"] == "person"
     assert "본문" in body and "summaries/" in body
     assert compiler.bookmark() == 1
     assert len(fabric.entries(ThreadQuery())) == 1
@@ -307,13 +307,12 @@ def test_frontmatter_follows_projected_fields_and_context(tmp_path):
     props, _, _ = store.read("pages/홍길동.md")
     assert {
         key: props[key]
-        for key in ("deadline", "schedule", "assignees", "status", "kind", "aliases")
+        for key in ("deadline", "schedule", "assignees", "status", "aliases")
     } == {
         "deadline": "2025-01-02",
         "schedule": {"start": "2025-01-02T15:00:00Z", "end": None, "timezone": "UTC"},
         "assignees": ["김철수"],
         "status": "완료",
-        "kind": "person",
         "aliases": ["별명"],
     }
 
@@ -531,7 +530,7 @@ def test_wiki_prompt_is_specific_and_counterpart_is_a_tag(tmp_path):
 
     assert "\n" in HUMAN_EDIT_PROMPT
     assert HUMAN_EDIT_PROMPT.startswith(WIKI_EDIT_RULES + "\n")
-    assert HUMAN_EDIT_PROMPT.endswith("\n" + WIKI_EDIT_OUTPUT_RULES)
+    assert WIKI_EDIT_OUTPUT_RULES in HUMAN_EDIT_PROMPT
     for forbidden in ("contact_name", "기록 주인", "검토 답", "corrections", "#149"):
         assert forbidden not in HUMAN_EDIT_PROMPT
     assert "태그 정정에는 영역이 필요 없다" in HUMAN_EDIT_PROMPT

@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from server.tests.fake_responses import edit_response
 
 from weaver.context import ContextDictionary
 from weaver.fabric import FabricStore
 from weaver.runtime.wiki import WikiJob
 from weaver.schema import ThreadDraft
-from weaver.wiki.compiler import Compiler, EditResult, Summary
+from weaver.wiki.compiler import Compiler, Summary
 from weaver.wiki.store import HumanEditPending, WikiStore
 
 
@@ -30,7 +31,7 @@ class Llm:
 
     def generate_json(self, task, system, user, schema):
         if task == "wiki.human_edit":
-            return EditResult(changes=[])
+            return edit_response(schema, user, {"changes": []})
         self.calls.append((task, user))
         self.hook()
         return schema.model_validate(
@@ -299,8 +300,8 @@ def test_decomposed_summary_links_and_page_names_across_consumers(tmp_path):
     job.run()
     link = f"summaries/{title} {item.source_id}"
     assert job.source_link(item.source_id) == link
-    assert f"[[{link}]]" in store.read("pages/계정잠금.md")[1]
-    assert f"[[{link}]]" in store.read("Digest/2025/01/2025-01-01.md")[1]
+    assert f"[[{link}|{title}]]" in store.read("pages/계정잠금.md")[1]
+    assert f"[[{link}|{title}]]" in store.read("Digest/2025/01/2025-01-01.md")[1]
 
     # Force the spelling returned by directory enumeration on both platforms.
     for target in list(store.root.rglob("*.md")):

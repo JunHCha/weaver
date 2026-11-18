@@ -67,6 +67,64 @@ def _load(
         raise typer.Exit(code=EX_CONFIG) from None
 
 
+@cli.command("wiki-migrate")
+def wiki_migrate(
+    config: ConfigOption = None,
+    preview: Annotated[
+        Path | None, typer.Option("--preview", help="Write a reviewable JSON preview")
+    ] = None,
+    apply: Annotated[
+        Path | None, typer.Option("--apply", help="Apply this reviewed preview")
+    ] = None,
+    backup: Annotated[
+        Path | None,
+        typer.Option("--backup", help="New directory outside vault and state"),
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm the reviewed migration")
+    ] = False,
+) -> None:
+    """Separate Wiki metadata; applying requires a preview, backup and confirmation."""
+    import json
+
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.wiki.migration import WikiMigration
+    from weaver.wiki.store import WikiStore
+
+    if (preview is None) == (apply is None):
+        raise typer.BadParameter("choose exactly one of --preview or --apply")
+    if apply is not None and (backup is None or not yes):
+        raise typer.BadParameter(
+            "--apply requires --backup and --yes after reviewing the preview"
+        )
+    settings = _load(config)
+    store = WikiStore(
+        settings.wiki.vault_root or settings.vault_root,
+        settings.state_root,
+        wiki_root=settings.wiki.folder,
+        settle_seconds=settings.wiki.settle_seconds,
+    )
+    fabric_path = settings.state_root / "fabric.sqlite3"
+    threads = (
+        FabricStore.open_readonly(fabric_path).entries(ThreadQuery())
+        if fabric_path.exists()
+        else []
+    )
+    migration = WikiMigration(store, threads)
+    if preview is not None:
+        if preview.resolve().is_relative_to(store.vault.resolve()):
+            raise typer.BadParameter(
+                "preview contains private metadata; save it outside the vault"
+            )
+        plan = migration.preview()
+        preview.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+        typer.echo(f"Preview saved: {preview}")
+    else:
+        assert apply is not None and backup is not None
+        count = migration.apply(json.loads(apply.read_text()), backup, confirmed=yes)
+        typer.echo(f"Migrated {count} files; backup: {backup}")
+
+
 @cli.command()
 def run(
     config: ConfigOption = None,
