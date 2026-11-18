@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 
 from weaver.schema import Thread
 from weaver.wiki.generation import GenerationCache, fingerprint
-from weaver.wiki.links import wikilink
+from weaver.wiki.links import link_label, wikilink
 from weaver.wiki.prompts import BATCH_PROMPT, RULES_VERSION
 from weaver.wiki.store import HumanEditPending, WikiStore, normalize_path
 
@@ -97,6 +97,7 @@ class DigestBuilder:
         timezone: ZoneInfo,
         source_link: Callable[[str], str | None],
         deferred: Callable[[HumanEditPending], None] | None = None,
+        source_label: Callable[[str], str | None] | None = None,
     ) -> None:
         self.wiki, self.timezone, self.state_path = wiki, timezone, state_path
         self.deferred = deferred
@@ -104,7 +105,12 @@ class DigestBuilder:
 
         def normalized_link(source_id: str) -> str | None:
             target = source_link(source_id)
-            return normalize_path(target) if target is not None else None
+            if target is None:
+                return None
+            label = source_label(source_id) if source_label else None
+            return normalize_path(target) + (
+                "|" + link_label(label) if label is not None else ""
+            )
 
         self.source_link = normalized_link
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +292,7 @@ class DigestBuilder:
                     body,
                     target.base,
                     metadata="digest update",
+                    readonly=True,
                 )
             except HumanEditPending as error:
                 self.pending = True

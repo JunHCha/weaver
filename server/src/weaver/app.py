@@ -67,6 +67,122 @@ def _load(
         raise typer.Exit(code=EX_CONFIG) from None
 
 
+@cli.command("wiki-measure")
+def wiki_measure(
+    config: ConfigOption = None,
+    after_seq: Annotated[
+        int | None,
+        typer.Option(
+            "--after-seq",
+            min=0,
+            help="Replay from a sequence instead of the saved bookmark",
+        ),
+    ] = None,
+) -> None:
+    """Report full/partial prompt estimates without models or state changes."""
+    import json
+
+    from weaver.context import ContextDictionary
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.schema import EventSummary
+    from weaver.wiki.measurement import bookmark, measure
+    from weaver.wiki.store import WikiStore
+
+    settings = _load(config)
+    store = WikiStore.open_readonly(
+        settings.wiki.vault_root or settings.vault_root,
+        settings.state_root,
+        wiki_root=settings.wiki.folder,
+    )
+    context = ContextDictionary.open_readonly(settings.state_root / "context.sqlite3")
+    fabric = FabricStore.open_readonly(settings.state_root / "fabric.sqlite3")
+    summaries: dict[str, EventSummary] = {}
+    for path in sorted((settings.archive_root / "summaries").glob("*/*.json")):
+        summary = EventSummary.model_validate_json(path.read_bytes())
+        previous = summaries.get(summary.source_id)
+        if previous is None or summary.created_at > previous.created_at:
+            summaries[summary.source_id] = summary
+    result = measure(
+        store,
+        fabric.entries(ThreadQuery()),
+        context.snapshot(),
+        after_seq=after_seq
+        if after_seq is not None
+        else bookmark(settings.state_root / "wiki-compiler.sqlite3"),
+        sources={key: value.body for key, value in summaries.items()},
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@cli.command("wiki-migrate")
+def wiki_migrate(
+    config: ConfigOption = None,
+    preview: Annotated[
+        Path | None, typer.Option("--preview", help="Write a reviewable JSON preview")
+    ] = None,
+    apply: Annotated[
+        Path | None, typer.Option("--apply", help="Apply this reviewed preview")
+    ] = None,
+    backup: Annotated[
+        Path | None,
+        typer.Option("--backup", help="New directory outside vault and state"),
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm the reviewed migration")
+    ] = False,
+) -> None:
+    """Separate Wiki metadata; applying requires a preview, backup and confirmation."""
+    import json
+
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.wiki.migration import WikiMigration
+    from weaver.wiki.store import WikiStore
+
+    if (preview is None) == (apply is None):
+        raise typer.BadParameter("choose exactly one of --preview or --apply")
+    if apply is not None and (backup is None or not yes):
+        raise typer.BadParameter(
+            "--apply requires --backup and --yes after reviewing the preview"
+        )
+    settings = _load(config)
+    store = WikiStore(
+        settings.wiki.vault_root or settings.vault_root,
+        settings.state_root,
+        wiki_root=settings.wiki.folder,
+        settle_seconds=settings.wiki.settle_seconds,
+    )
+    fabric_path = settings.state_root / "fabric.sqlite3"
+    threads = (
+        FabricStore.open_readonly(fabric_path).entries(ThreadQuery())
+        if fabric_path.exists()
+        else []
+    )
+    from weaver.context import ContextDictionary
+
+    context_path = settings.state_root / "context.sqlite3"
+    dictionary = (
+        ContextDictionary.open_readonly(context_path).snapshot()
+        if context_path.exists()
+        else None
+    )
+    migration = WikiMigration(store, threads, dictionary)
+    if preview is not None:
+        if preview.resolve().is_relative_to(store.vault.resolve()):
+            raise typer.BadParameter(
+                "preview contains private metadata; save it outside the vault"
+            )
+        plan = migration.preview()
+        preview.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+        typer.echo(f"Preview saved: {preview}")
+    else:
+        assert apply is not None and backup is not None
+        count = migration.apply(json.loads(apply.read_text()), backup, confirmed=yes)
+        typer.echo(f"Migrated {count} files; backup: {backup}")
+        typer.echo(
+            json.dumps(migration.last_report.get("skipped", []), ensure_ascii=False)
+        )
+
+
 @cli.command()
 def run(
     config: ConfigOption = None,

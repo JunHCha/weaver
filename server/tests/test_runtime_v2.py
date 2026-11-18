@@ -3,7 +3,7 @@
 import threading
 from pathlib import Path
 
-from server.tests.fake_responses import fixture_response
+from server.tests.fake_responses import edit_response, fixture_response
 
 from weaver.config import load_config
 from weaver.courier import Courier
@@ -344,8 +344,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
                     },
                 )
             if task == "wiki.human_edit":
-                return fixture_response(
+                return edit_response(
                     schema,
+                    user,
                     {"changes": [{"content": "사람의 수정", "tags": ["홍길동"]}]},
                 )
             return super().generate_json(task, system, user, schema)
@@ -407,7 +408,7 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
     assert copy.stem in (root / "열린 요청.md").read_text()
     assert list((root / "Digest").rglob("*.md"))
     page = root / "pages/홍길동.md"
-    page.write_text(page.read_text() + "\n사람의 수정\n")
+    page.write_text(page.read_text().replace("위키 본문", "위키 본문\n사람의 수정"))
     job.run()
     assert len(fabric.entries(ThreadQuery())) == 1
     assert "사람의 수정" in page.read_text()

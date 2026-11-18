@@ -70,7 +70,9 @@ def test_late_arrival_regenerates_changed_periods_and_skips_empty(tmp_path):
     targets = plan(fabric, builder)
     assert len(targets) == 3
     builder.apply(targets, entries(targets), 1)
-    assert f"[[Events/{SOURCE}]]" in wiki.read("Digest/2025/01/2025-01-10.md")[1]
+    assert (
+        f"[[Events/{SOURCE}|{SOURCE}]]" in wiki.read("Digest/2025/01/2025-01-10.md")[1]
+    )
     assert plan(fabric, builder) == []
     fabric.append([draft("late", datetime(2025, 1, 9, tzinfo=UTC))])
     targets = plan(fabric, builder)

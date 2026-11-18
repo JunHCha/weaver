@@ -66,14 +66,18 @@ class WikiEditPublisher:
         if state.edit is None:
             return None
         with sqlite3.connect(self.compiler.state_path) as db:
-            row = db.execute(
-                "SELECT drafts FROM edits WHERE rev=?", (state.edit.new_rev,)
-            ).fetchone()
-        return (
-            [ThreadDraft.model_validate(item) for item in json.loads(row[0])]
-            if row
-            else None
-        )
+            rows = db.execute(
+                "SELECT rev, drafts FROM edits WHERE rev IN (?, ?)",
+                (state.edit.new_rev, state.edit.new_rev + ":code"),
+            ).fetchall()
+        if not any(rev == state.edit.new_rev for rev, _ in rows):
+            return None
+        drafts = [
+            ThreadDraft.model_validate(item)
+            for _, raw in rows
+            for item in json.loads(raw)
+        ]
+        return list({draft.thread_id: draft for draft in drafts}.values())
 
     @observation
     def publish(self) -> None:

@@ -149,7 +149,7 @@ def test_source_links_are_normalized(tmp_path):
         now=datetime(2026, 11, 10, 12, tzinfo=UTC),
         source_link=lambda _: unicodedata.normalize("NFD", "summaries/한글"),
     )
-    assert "[[summaries/한글]]" in pages["열린 요청.md"]
+    assert "[[summaries/한글|한글]]" in pages["열린 요청.md"]
 
 
 def execution(key, executes, at):

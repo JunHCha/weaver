@@ -16,7 +16,10 @@ def test_summary_filename_is_safe_for_obsidian_and_unicode():
     assert path == f"summaries/2026-11-12 -홍길동 -팀--회의- - 통화 {SOURCE}.md"
     assert not any(char in path for char in "#^|[]\\")
     assert unicodedata.is_normalized("NFC", path)
-    assert wikilink(path.removesuffix(".md")).endswith(SOURCE + "]]")
+    assert (
+        wikilink(path.removesuffix(".md"))
+        == f"[[{path.removesuffix('.md')}|2026-11-12 -홍길동 -팀--회의- - 통화]]"
+    )
     assert wikilink(None) == ""
 
 
@@ -35,8 +38,8 @@ def test_repair_only_committed_files_preserves_readonly_and_human_edits(tmp_path
     target = store.root / "pages/편집중.md"
     target.write_text(target.read_text() + "사람 수정")
     assert store.repair_links({"old": "new"}) == 2
-    assert "[[new]]" in store.read("pages/주제.md")[1]
-    assert "[[old]]" in target.read_text()
+    assert "[[new|old]]" in store.read("pages/주제.md")[1]
+    assert "[[old|old]]" in target.read_text()
     readonly = store.root / "조회.md"
     readonly.write_text("변경")
     store.restore_readonly()
@@ -118,7 +121,7 @@ def test_runtime_repairs_existing_hash_links_without_llm(tmp_path, actor):
     target = job.source_link(SOURCE)
     assert target is not None and "#" not in target
     assert (store.root / (target + ".md")).read_text().endswith("승인된 요약\n")
-    assert f"[[{target}]]" in store.read("pages/홍길동.md")[1]
+    assert f"[[{target}|2026-11-12 #홍길동 call]]" in store.read("pages/홍길동.md")[1]
     assert not (store.root / (old + ".md")).exists()
     assert not (store.root / renamed).exists()
     assert job.source_link("src_missing") is None

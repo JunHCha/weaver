@@ -12,9 +12,24 @@ def summary_path(title: str, source_id: str) -> str:
     return f"summaries/{safe} {source_id}.md"
 
 
-def wikilink(target: str | None) -> str:
+def link_label(title: str) -> str:
+    """A display label must not close or split the enclosing wikilink."""
+    return re.sub(r"[\[\]|\r\n]", " ", title).strip()
+
+
+def wikilink(target: str | None, label: str | None = None) -> str:
     """Missing source notes must not become phantom Obsidian pages."""
-    return f"[[{unicodedata.normalize('NFC', target)}]]" if target else ""
+    if not target:
+        return ""
+    target = unicodedata.normalize("NFC", target)
+    if label is not None:
+        return f"[[{target}|{link_label(label)}]]"
+    if target.startswith("summaries/") and "|" not in target:
+        label = re.sub(
+            r" src_[A-Za-z0-9]+$", "", target.rsplit("/", 1)[-1].removesuffix(".md")
+        )
+        return f"[[{target}|{link_label(label)}]]"
+    return f"[[{target}]]"
 
 
 def rewrite_links(body: str, replacements: Mapping[str, str]) -> str:

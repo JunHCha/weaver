@@ -5,6 +5,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 import pytest
+from server.tests.fake_responses import edit_response
 
 from weaver.context import ContextDictionary
 from weaver.fabric import FabricStore, ThreadQuery
@@ -42,9 +43,11 @@ class Llm:
         self.calls.append((task, json.loads(user)))
         payload = json.loads(user)
         if task == "wiki.human_edit":
-            return schema.model_validate({"changes": []})
+            return edit_response(schema, user, {"changes": []})
         pages = []
         for title, ids in [("네트워크 운영", ["one"]), ("업무 도구", ["two"])]:
+            if not set(ids).issubset({t["thread_id"] for t in payload["threads"]}):
+                continue
             previous = next(
                 (
                     p["body"]
@@ -200,7 +203,12 @@ def test_human_typo_after_partial_write_invalidates_cached_batch(tmp_path, monke
     page = store.root / "pages/네트워크 운영.md"
     props, body, base = store.read("pages/네트워크 운영.md")
     # A settled formatting-only edit may change the base without appending a Thread.
-    store.write("pages/네트워크 운영.md", props, body + "사람 표현 유지\n", base)
+    store.write(
+        "pages/네트워크 운영.md",
+        props,
+        body.replace("서술형 본문.", "서술형 본문.\n사람 표현 유지"),
+        base,
+    )
     monkeypatch.setattr(store, "write", original_write)
     compiler.run()
     assert len(llm.calls) == 2
@@ -330,7 +338,7 @@ def test_missing_digest_reappears_with_next_batch(tmp_path):
     assert len(llm.calls) == 2
 
 
-def test_digest_edit_pending_does_not_block_pages(tmp_path):
+def test_readonly_digest_edit_is_restored_without_blocking_pages(tmp_path):
     import os
     import time
 
@@ -352,8 +360,8 @@ def test_digest_edit_pending_does_not_block_pages(tmp_path):
     llm.transform = include_new
     job.run()
     assert job.compiler.bookmark() == 3
-    assert "사람 수정" in digest.read_text()
-    assert "digest" in job._waiting
+    assert "사람 수정" not in digest.read_text()
+    # Restoration resets mtime, so the refreshed digest may wait for quiet time.
     assert path not in {t["path"] for t in llm.calls[-1][1]["digest_targets"]}
 
 

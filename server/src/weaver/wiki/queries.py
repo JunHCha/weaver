@@ -23,8 +23,15 @@ def _text(value: str) -> str:
     )
 
 
-def _link(thread: Thread, source_link: Callable[[str], str | None]) -> str:
-    return wikilink(source_link(thread.source_id))
+def _link(
+    thread: Thread,
+    source_link: Callable[[str], str | None],
+    source_label: Callable[[str], str | None] | None = None,
+) -> str:
+    return wikilink(
+        source_link(thread.source_id),
+        source_label(thread.source_id) if source_label else None,
+    )
 
 
 def _date(value: object, now: datetime) -> date | None:
@@ -50,6 +57,7 @@ def render_pages(
     now: datetime,
     inactive_days: int = 30,
     source_link: Callable[[str], str | None] = lambda source_id: source_id,
+    source_label: Callable[[str], str | None] | None = None,
 ) -> dict[str, str]:
     """Render pages from one snapshot; calendar boundaries use ``now``'s timezone.
 
@@ -79,7 +87,7 @@ def render_pages(
                 and t.thread_id not in resolved
             ):
                 requests.append(
-                    f"- {t.occurred_at.astimezone(now.tzinfo).date()}: {_text(t.content or '')} — {_link(t, source_link)}"
+                    f"- {t.occurred_at.astimezone(now.tzinfo).date()}: {_text(t.content or '')} — {_link(t, source_link, source_label)}"
                 )
         requests.append("")
     tags = sorted({tag for t in active for tag in t.tags})
@@ -126,7 +134,7 @@ def render_pages(
             if lower <= day < lower + timedelta(days=7):
                 marker = f" — {moves}회 미뤄짐" if moves >= 2 else ""
                 deadlines.append(
-                    f"- {day} {_text(tag)} ({'마감' if field == 'deadline' else '일정'}): {_text(source.content or '')} — {_link(source, source_link)}{marker}"
+                    f"- {day} {_text(tag)} ({'마감' if field == 'deadline' else '일정'}): {_text(source.content or '')} — {_link(source, source_link, source_label)}{marker}"
                 )
         deadlines.append("")
     contacts = ["# 사람별 연락", ""]
@@ -163,14 +171,22 @@ def write_pages(
     now: datetime,
     inactive_days: int = 30,
     source_link: Callable[[str], str | None] = lambda source_id: source_id,
+    source_label: Callable[[str], str | None] | None = None,
 ) -> None:
     """Write generated pages through WikiStore and register them as read-only."""
     for path, body in render_pages(
-        fabric, context, now=now, inactive_days=inactive_days, source_link=source_link
+        fabric,
+        context,
+        now=now,
+        inactive_days=inactive_days,
+        source_link=source_link,
+        source_label=source_label,
     ).items():
         try:
             _, previous, base_hash = store.read(path)
-            if previous == body and store.is_tracked_version(path, base_hash):
+            if store.render(path, {}, body, readonly=True)[0] == store._path(
+                path
+            ).read_bytes() and store.is_tracked_version(path, base_hash):
                 continue
         except FileNotFoundError:
             base_hash = None
