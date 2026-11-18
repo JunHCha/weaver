@@ -4,8 +4,10 @@
 
 `WikiStore.scan` discovers and registers only files with the `.md` suffix.
 Other files, including binary attachments and text/JSON files, are silently
-ignored and cannot become human edit candidates. On startup, existing non-`.md`
-rows are removed from `pages` only; files and git history are left untouched.
+ignored and cannot become human edit candidates. The suffix is case-sensitive:
+`.MD` files are ignored too. On startup, existing non-`.md` rows (including `.MD`)
+are removed from `pages`, `pending` and `human_edits`; files and git history are
+left untouched, and previously confirmed non-Markdown edits are never delivered.
 Missing Markdown files keep their existing rows and detection behavior.
 
 ## Project lifecycle

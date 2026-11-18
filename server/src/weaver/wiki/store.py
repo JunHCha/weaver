@@ -310,6 +310,9 @@ class WikiStore:
                 "SELECT rev, payload FROM pending"
             ).fetchall():
                 edit = json.loads(payload)
+                if Path(edit["path"]).suffix != ".md":
+                    db.execute("DELETE FROM pending WHERE rev=?", (rev,))
+                    continue
                 edit["path"] = normalize_path(edit["path"])
                 db.execute(
                     "UPDATE pending SET payload=? WHERE rev=?",
@@ -320,6 +323,9 @@ class WikiStore:
                 "SELECT rev, payload FROM human_edits"
             ).fetchall():
                 edit = json.loads(payload)
+                if Path(edit["path"]).suffix != ".md":
+                    db.execute("DELETE FROM human_edits WHERE rev=?", (rev,))
+                    continue
                 edit["path"] = normalize_path(edit["path"])
                 db.execute(
                     "UPDATE human_edits SET payload=? WHERE rev=?",
