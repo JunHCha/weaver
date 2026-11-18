@@ -30,6 +30,7 @@ from weaver.fabric.store import SchemaVersionError as FabricSchemaError
 from weaver.schema import PipelineItem, Thread
 
 from .editing import canonical_threads, editing_router
+from .presentation import presentation
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +39,6 @@ class PresentedThread(Thread):
     """Read-only presentation metadata; never persisted in Fabric."""
 
     presentation: Literal["fact", "history"]
-
-
-def presentation(thread: Thread) -> Literal["fact", "history"]:
-    return (
-        "history"
-        if (
-            thread.kind in ("태그정정", "실행", "거절")
-            or thread.retracts is not None
-            or thread.thread_id.startswith("wiki-field:")
-            or (
-                thread.thread_id.startswith("wiki:")
-                and thread.field is not None
-                and thread.content == f"{thread.field} 변경"
-            )
-        )
-        else "fact"
-    )
 
 
 Stage = Literal["spinner", "loom"]

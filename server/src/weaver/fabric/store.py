@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -150,6 +150,52 @@ class FabricStore:
 
     def append(self, threads: list[ThreadDraft]) -> list[Thread]:
         """Append all drafts atomically; identical retries return original seqs."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = self._append_in(db, threads)
+            db.commit()
+            return result
+
+    def web_edit(
+        self, build: Callable[[list[Thread], set[str]], list[ThreadDraft]]
+    ) -> list[Thread]:
+        """Build against current effective rows and append under one write lock.
+
+        Provenance lives beside the immutable payload, without changing the shared
+        Thread schema. Older or non-web corrections are deliberately unmarked.
+        """
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='web_tag_corrections'"
+            ).fetchone()
+            marked = (
+                {
+                    row[0]
+                    for row in db.execute("SELECT thread_id FROM web_tag_corrections")
+                }
+                if exists
+                else set()
+            )
+            drafts = build(
+                self._entries_in(db, ThreadQuery(include_executions=True)), marked
+            )
+            result = self._append_in(db, drafts)
+            if drafts:
+                db.execute(
+                    "CREATE TABLE IF NOT EXISTS web_tag_corrections (thread_id TEXT PRIMARY KEY)"
+                )
+            if drafts:
+                db.executemany(
+                    "INSERT OR IGNORE INTO web_tag_corrections VALUES (?)",
+                    [(row.thread_id,) for row in result if row.correction is not None],
+                )
+            db.commit()
+            return result
+
+    def _append_in(
+        self, db: sqlite3.Connection, threads: list[ThreadDraft]
+    ) -> list[Thread]:
         batch: dict[str, tuple[ThreadDraft, str]] = {}
         for supplied in threads:
             item = ThreadDraft.model_validate(supplied.model_dump(mode="python"))
@@ -157,25 +203,22 @@ class FabricStore:
             if item.thread_id in batch and batch[item.thread_id][1] != payload:
                 raise ThreadConflict(item.thread_id)
             batch[item.thread_id] = (item, payload)
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._validate_references(db, batch)
-            result: dict[str, Thread] = {}
-            for key, (item, payload) in batch.items():
-                row = db.execute(
-                    "SELECT seq, payload FROM threads WHERE thread_id=?", (key,)
-                ).fetchone()
-                if row is not None:
-                    if _canonical(ThreadDraft.model_validate_json(row[1])) != payload:
-                        raise ThreadConflict(key)
-                    seq = row[0]
-                else:
-                    seq = db.execute(
-                        "INSERT INTO threads(thread_id, payload) VALUES (?, ?)",
-                        (key, payload),
-                    ).lastrowid
-                result[key] = Thread.model_validate({**item.model_dump(), "seq": seq})
-            db.commit()
+        self._validate_references(db, batch)
+        result: dict[str, Thread] = {}
+        for key, (item, payload) in batch.items():
+            row = db.execute(
+                "SELECT seq, payload FROM threads WHERE thread_id=?", (key,)
+            ).fetchone()
+            if row is not None:
+                if _canonical(ThreadDraft.model_validate_json(row[1])) != payload:
+                    raise ThreadConflict(key)
+                seq = row[0]
+            else:
+                seq = db.execute(
+                    "INSERT INTO threads(thread_id, payload) VALUES (?, ?)",
+                    (key, payload),
+                ).lastrowid
+            result[key] = Thread.model_validate({**item.model_dump(), "seq": seq})
         return [result[t.thread_id] for t in threads]
 
     @staticmethod
@@ -233,7 +276,11 @@ class FabricStore:
         """Read immutable facts in occurrence, recording, sequence order."""
         query = ThreadQuery.model_validate(query.model_dump())
         with self._connect() as db:
-            rows = db.execute("SELECT seq, payload FROM threads").fetchall()
+            return self._entries_in(db, query)
+
+    @staticmethod
+    def _entries_in(db: sqlite3.Connection, query: ThreadQuery) -> list[Thread]:
+        rows = db.execute("SELECT seq, payload FROM threads").fetchall()
         result = [
             Thread.model_validate({**json.loads(payload), "seq": seq})
             for seq, payload in rows

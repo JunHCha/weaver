@@ -16,10 +16,12 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.config import ServerConfig
-from weaver.context import ContextDictionary, DictionarySnapshot
+from weaver.context import ContextDictionary, DictionarySnapshot, EntryAlreadyExists
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.runtime.loop import AlreadyRunning, InstanceLock
 from weaver.schema import TagCorrection, Thread, ThreadDraft
+
+from .presentation import presentation
 
 MAX_BODY_BYTES = 65536
 TagKind = Literal["project", "area", "person", "organization", "topic"]
@@ -52,6 +54,10 @@ class EditRoute(APIRoute):
                 request = Request(request.scope, receive)
                 try:
                     return await handler(request)
+                except EntryAlreadyExists as error:
+                    raise HTTPException(
+                        422, f"이미 등록된 항목: {error.name}"
+                    ) from None
                 except ValueError:
                     raise HTTPException(
                         422,
@@ -72,6 +78,15 @@ class TagEdit(Input):
     kinds: dict[Name, TagKind] = Field(default_factory=dict, max_length=100)
 
 
+class BatchTagEdit(TagEdit):
+    thread_ids: list[Name] = Field(min_length=1, max_length=500)
+
+
+class DismissPair(Input):
+    a: Name
+    b: Name
+
+
 class EntryEdit(Input):
     entry: Name
     name: Name | None = None
@@ -86,6 +101,7 @@ class AliasEdit(Input):
 class MergeEdit(Input):
     entry: Name
     target: Name
+    kind: TagKind | None = None
 
 
 @contextmanager
@@ -250,119 +266,184 @@ def editing_router(config: ServerConfig) -> APIRouter:
             for e in dictionary.entries
         ]
 
-    @router.post("/api/threads/{thread_id}/tags", dependencies=writes)
-    def edit_tags(thread_id: str, edit: TagEdit) -> Thread:
-        path = config.state_root / "fabric.sqlite3"
-        rows = (
-            FabricStore.open_readonly(path).entries(
-                ThreadQuery(include_executions=True)
-            )
-            if path.is_file()
-            else []
-        )
-        target = next((t for t in rows if t.thread_id == thread_id), None)
-        if target is None:
-            raise HTTPException(404, "Thread를 찾을 수 없습니다.")
-        if target.kind == "실행":
-            raise HTTPException(422, "실행 기록의 태그는 편집할 수 없습니다.")
+    def apply_tags(ids: list[str], edit: TagEdit) -> dict[str, object]:
+        skipped: list[dict[str, str]] = []
         if any(not name.strip() for name in edit.add + edit.remove):
             raise HTTPException(422, "태그 이름은 비어 있을 수 없습니다.")
-        snapshot = dictionary_snapshot(config)
 
-        def resolved_name(name: str) -> str:
-            entry = snapshot.resolve(name)
-            return entry.name if entry else unicodedata.normalize("NFC", name)
+        def build(rows: list[Thread], marked: set[str]) -> list[ThreadDraft]:
+            by_id = {row.thread_id: row for row in rows}
+            targets = []
+            for id_ in dict.fromkeys(ids):
+                target = by_id.get(id_)
+                if target is None:
+                    raise HTTPException(404, f"Thread를 찾을 수 없습니다: {id_}")
+                if presentation(target) == "history":
+                    raise HTTPException(
+                        422, f"이력 Thread의 태그는 편집할 수 없습니다: {id_}"
+                    )
+                targets.append(target)
+            snapshot = dictionary_snapshot(config)
 
-        if set(map(resolved_name, edit.add)).intersection(
-            map(resolved_name, edit.remove)
-        ):
-            raise HTTPException(422, "같은 태그를 동시에 추가하고 삭제할 수 없습니다.")
-        effective = set(map(resolved_name, target.tags))
-        add_names = list(
-            dict.fromkeys(
-                name for name in edit.add if resolved_name(name) not in effective
-            )
+            def resolve(name: str) -> str:
+                entry = snapshot.resolve(name)
+                return entry.name if entry else unicodedata.normalize("NFC", name)
+
+            if set(map(resolve, edit.add)) & set(map(resolve, edit.remove)):
+                raise HTTPException(
+                    422, "같은 태그를 동시에 추가하고 삭제할 수 없습니다."
+                )
+            needed = {
+                name
+                for name in edit.add
+                if any(
+                    resolve(name) not in {resolve(tag) for tag in target.tags}
+                    for target in targets
+                )
+            }
+            for name in edit.add:
+                existing = snapshot.resolve(name)
+                if name in edit.kinds and existing:
+                    raise HTTPException(
+                        422,
+                        f"이미 등록된 항목: {existing.name} ({existing.kind}) — 사전을 새로 불러오세요.",
+                    )
+                if name in needed and existing is None and name not in edit.kinds:
+                    raise HTTPException(422, f"새 태그에는 종류가 필요합니다: {name}")
+            missing = [name for name in needed if snapshot.resolve(name) is None]
+            if missing:
+                with writable_dictionary(config) as dictionary:
+                    for name in missing:
+                        dictionary.add_entry(
+                            name, edit.kinds[name], human_edited=True, require_new=True
+                        )
+            snapshot = dictionary_snapshot(config)
+            drafts = []
+            for target in targets:
+                effective = {resolve(tag) for tag in target.tags}
+                additions = list(
+                    dict.fromkeys(
+                        resolve(name)
+                        for name in edit.add
+                        if resolve(name) not in effective
+                    )
+                )
+                removing = set(map(resolve, edit.remove)) & effective
+                removals = [name for name in target.tags if resolve(name) in removing]
+                if not additions and not removals:
+                    skipped.append(
+                        {
+                            "thread_id": target.thread_id,
+                            "reason": "이미 같은 태그 상태입니다.",
+                        }
+                    )
+                    continue
+                now = datetime.now(UTC)
+                drafts.append(
+                    ThreadDraft(
+                        thread_id="thr_" + uuid4().hex,
+                        kind="태그정정",
+                        content="웹에서 태그 정정",
+                        occurred_at=now,
+                        recorded_at=now,
+                        tags=[],
+                        field=None,
+                        value=None,
+                        source_id=target.source_id,
+                        actor="human",
+                        direction=None,
+                        resolves=None,
+                        retracts=None,
+                        correction=TagCorrection(
+                            target=target.thread_id, add=additions, remove=removals
+                        ),
+                    )
+                )
+            return drafts
+
+        corrections = FabricStore.from_config(config).web_edit(build)
+        return {
+            "corrections": corrections,
+            "changed": len(corrections),
+            "skipped": len(skipped),
+            "skipped_threads": skipped,
+        }
+
+    @router.post("/api/threads/tags/batch", dependencies=writes)
+    def batch_tags(edit: BatchTagEdit) -> dict[str, object]:
+        return apply_tags(edit.thread_ids, edit)
+
+    @router.post("/api/threads/{thread_id}/tags", dependencies=writes)
+    def edit_tags(thread_id: str, edit: TagEdit) -> Thread:
+        result = apply_tags([thread_id], edit)
+        corrections = result["corrections"]
+        assert isinstance(corrections, list)
+        if corrections:
+            correction = corrections[0]
+            assert isinstance(correction, Thread)
+            return correction
+        rows = FabricStore.from_config(config).entries(
+            ThreadQuery(include_executions=True)
         )
-        remove_names = {resolved_name(name) for name in edit.remove} & effective
-        if not add_names and not remove_names:
-            return target.model_copy(
-                update={"tags": list(dict.fromkeys(map(resolved_name, target.tags)))}
-            )
-        for name in add_names:
-            if snapshot.resolve(name) is None and name not in edit.kinds:
-                raise HTTPException(422, "새 태그에는 종류가 필요합니다.")
-        with writable_dictionary(config) as dictionary:
-            additions = [
-                (
-                    snapshot.resolve(name)
-                    or dictionary.add_entry(name, edit.kinds[name], human_edited=True)
-                ).name
-                for name in add_names
-            ]
-        removals = [name for name in target.tags if resolved_name(name) in remove_names]
-        now = datetime.now(UTC)
-        draft = ThreadDraft(
-            thread_id="thr_" + uuid4().hex,
-            kind="태그정정",
-            content="웹에서 태그 정정",
-            occurred_at=now,
-            recorded_at=now,
-            tags=[],
-            field=None,
-            value=None,
-            source_id=target.source_id,
-            actor="human",
-            direction=None,
-            resolves=None,
-            retracts=None,
-            correction=TagCorrection(
-                target=thread_id,
-                add=additions,
-                remove=removals,
-            ),
-        )
-        return FabricStore(path).append([draft])[0]
+        return canonical_threads(
+            config, [next(t for t in rows if t.thread_id == thread_id)]
+        )[0]
 
-    @router.post("/api/threads/{thread_id}/tags/undo", dependencies=writes)
+    @router.post("/api/corrections/{thread_id}/undo", dependencies=writes)
     def undo_tags(thread_id: str) -> Thread:
-        path = config.state_root / "fabric.sqlite3"
-        rows = (
-            FabricStore.open_readonly(path).entries(
-                ThreadQuery(include_executions=True)
-            )
+        previous: Thread | None = None
+
+        def build(rows: list[Thread], marked: set[str]) -> list[ThreadDraft]:
+            nonlocal previous
+            target = next((t for t in rows if t.thread_id == thread_id), None)
+            if target is None:
+                raise HTTPException(404, "태그 정정을 찾을 수 없습니다.")
+            if thread_id not in marked:
+                raise HTTPException(
+                    422, "웹 태그 편집기로 만든 정정만 되돌릴 수 있습니다."
+                )
+            previous = next((t for t in rows if t.retracts == thread_id), None)
+            if previous:
+                return []
+            now = datetime.now(UTC)
+            return [
+                ThreadDraft(
+                    thread_id="thr_" + uuid4().hex,
+                    kind="기록",
+                    content="웹 태그 정정 되돌리기",
+                    occurred_at=now,
+                    recorded_at=now,
+                    tags=[],
+                    field=None,
+                    value=None,
+                    source_id=target.source_id,
+                    actor="human",
+                    direction=None,
+                    resolves=None,
+                    retracts=thread_id,
+                    correction=None,
+                )
+            ]
+
+        result = FabricStore.from_config(config).web_edit(build)
+        if previous:
+            return previous
+        return result[0]
+
+    @router.get("/api/dictionary/dismissed")
+    def dismissed() -> list[tuple[str, str]]:
+        path = config.state_root / "context.sqlite3"
+        return (
+            ContextDictionary.open_readonly(path).dismissed_pairs()
             if path.is_file()
             else []
         )
-        target = next((t for t in rows if t.thread_id == thread_id), None)
-        if target is None:
-            raise HTTPException(404, "태그 정정을 찾을 수 없습니다.")
-        if (
-            target.kind != "태그정정"
-            or target.correction is None
-            or target.actor != "human"
-        ):
-            raise HTTPException(422, "직접 편집한 태그 정정만 되돌릴 수 있습니다.")
-        previous = next((t for t in rows if t.retracts == thread_id), None)
-        if previous:
-            return previous
-        now = datetime.now(UTC)
-        draft = ThreadDraft(
-            thread_id="thr_" + uuid4().hex,
-            kind="기록",
-            content="웹 태그 정정 되돌리기",
-            occurred_at=now,
-            recorded_at=now,
-            tags=[],
-            field=None,
-            value=None,
-            source_id=target.source_id,
-            actor="human",
-            direction=None,
-            resolves=None,
-            retracts=thread_id,
-            correction=None,
-        )
-        return FabricStore(path).append([draft])[0]
+
+    @router.post("/api/dictionary/dismissed", dependencies=writes)
+    def dismiss(edit: DismissPair) -> dict[str, bool]:
+        with writable_dictionary(config) as dictionary:
+            dictionary.dismiss_pair(edit.a, edit.b)
+        return {"dismissed": True}
 
     @router.patch("/api/dictionary", dependencies=writes)
     def edit_entry(edit: EntryEdit) -> dict[str, str]:
@@ -392,6 +473,14 @@ def editing_router(config: ServerConfig) -> APIRouter:
     @router.post("/api/dictionary/merge", dependencies=writes)
     def merge(edit: MergeEdit) -> dict[str, str]:
         with writable_dictionary(config) as dictionary:
-            return {"name": dictionary.merge(edit.entry, edit.target).name}
+            snapshot = dictionary.snapshot()
+            source, target = snapshot.resolve(edit.entry), snapshot.resolve(edit.target)
+            if source and target and source.kind != target.kind and edit.kind is None:
+                raise HTTPException(
+                    422, "종류가 다른 항목은 합친 뒤의 종류를 직접 선택하세요."
+                )
+            return {
+                "name": dictionary.merge(edit.entry, edit.target, kind=edit.kind).name
+            }
 
     return router

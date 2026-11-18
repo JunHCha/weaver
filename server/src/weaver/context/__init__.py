@@ -198,6 +198,12 @@ def _decode_edit(payload: str) -> _Edit:
 logger = logging.getLogger(__name__)
 
 
+class EntryAlreadyExists(ValueError):
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"dictionary name or alias collision: {name}")
+
+
 class ContextDictionary:
     """SQLite dictionary; read/modify/write operations share a write transaction."""
 
@@ -468,7 +474,7 @@ class ContextDictionary:
             if (
                 _key(edit.name) in other_labels and not prior_name
             ) or new_aliases & other_labels:
-                raise ValueError("dictionary name or alias collision")
+                raise EntryAlreadyExists(other.name)
         hidden_keys = {_key(edit.name), *map(_key, hidden)}
         for (stored_key,) in db.execute("SELECT name FROM edited").fetchall():
             if _key(stored_key) in hidden_keys:
@@ -509,12 +515,15 @@ class ContextDictionary:
         *,
         human_edited: bool = True,
         drop_conflicting_aliases: bool = False,
+        require_new: bool = False,
     ) -> ContextEntry:
         """Idempotent creation; automatic approval can discard racing alias conflicts."""
         _validate(name, kind)
         with self._writing() as (db, snapshot, _):
             existing = snapshot.resolve(name)
             if existing:
+                if require_new:
+                    raise EntryAlreadyExists(existing.name)
                 if drop_conflicting_aliases and _key(existing.name) != _key(name):
                     logger.warning("skipped conflicting dictionary proposal")
                 return existing
@@ -565,7 +574,7 @@ class ContextDictionary:
             entry = self._require(snapshot, name)
             target = snapshot.resolve(new_name)
             if target and target.name != entry.name:
-                raise ValueError("dictionary name or alias collision")
+                raise EntryAlreadyExists(target.name)
             if not human_edited and (entry.source != "learn" or entry.human_edited):
                 raise ValueError("automatic rename requires an unedited learned entry")
             edit = self._edit_for(entry, edits)
@@ -622,7 +631,7 @@ class ContextDictionary:
                 owner = snapshot.resolve(alias)
                 if owner:
                     if owner.name != entry.name:
-                        raise ValueError("dictionary name or alias collision")
+                        raise EntryAlreadyExists(owner.name)
                     return entry
                 if _key(alias) in {_key(a) for a in edit.removed}:
                     return entry
@@ -659,7 +668,9 @@ class ContextDictionary:
             )
             return self._save(db, snapshot, edit)
 
-    def merge(self, source: str, target: str) -> ContextEntry:
+    def merge(
+        self, source: str, target: str, *, kind: Kind | None = None
+    ) -> ContextEntry:
         with self._writing() as (db, snapshot, edits):
             a, b = self._require(snapshot, source), self._require(snapshot, target)
             if a.name == b.name:
@@ -673,7 +684,7 @@ class ContextDictionary:
                         set(edit.automatic_aliases) | set(source_edit.automatic_aliases)
                     )
                 ),
-                kind=b.kind,
+                kind=kind or b.kind,
                 added=tuple(
                     sorted(set((*edit.added, *source_edit.added, a.name)) - {b.name})
                 ),
@@ -681,6 +692,26 @@ class ContextDictionary:
                 human_edited=True,
             )
             return self._save(db, snapshot, edit, (a.name,))
+
+    def dismissed_pairs(self) -> list[tuple[str, str]]:
+        with self._connect() as db:
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='dismissed_tag_pairs'"
+            ).fetchone()
+            return (
+                list(db.execute("SELECT a, b FROM dismissed_tag_pairs"))
+                if exists
+                else []
+            )
+
+    def dismiss_pair(self, a: str, b: str) -> None:
+        pair = sorted((_key(a), _key(b)))
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS dismissed_tag_pairs (a TEXT NOT NULL, b TEXT NOT NULL, PRIMARY KEY(a,b))"
+            )
+            db.execute("INSERT OR IGNORE INTO dismissed_tag_pairs VALUES (?,?)", pair)
 
     def learn(self, observed: str, canonical: str, kind: Kind) -> None:
         observed, canonical = _nfc(observed), _nfc(canonical)

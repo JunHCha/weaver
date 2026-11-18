@@ -11,7 +11,7 @@ original loopback authority in `X-Forwarded-Host`; remote authorities are reject
 and the token is still required. There is no cross-origin access allowance.
 
 - `POST /api/threads/{id}/tags`: `{add: string[], remove: string[], kinds?:
-  Record<string, "project" | "person" | "organization" | "topic">}`. Unknown
+  Record<string, "project" | "area" | "person" | "organization" | "topic">}`. Unknown
   additions require a `kinds[name]`; aliases resolve to canonical names. The
   response is the single appended human 태그정정 Thread, using its target's source.
   Only additions/removals that change the effective tags are appended. Empty or
@@ -25,7 +25,8 @@ and the token is still required. There is no cross-origin access allowance.
   422 before writing. Unknown entries return 404 before opening a writable store.
 - `POST /api/dictionary/aliases`: `{entry: string, alias: string}`.
 - `DELETE /api/dictionary/aliases`: `{entry: string, alias: string}` JSON body.
-- `POST /api/dictionary/merge`: `{entry: string, target: string}`; retains the target kind.
+- `POST /api/dictionary/merge`: `{entry: string, target: string, kind?: kind}`;
+  different kinds require an explicit resulting `kind`, otherwise 422.
 
 All entry names are JSON fields, including names containing `/`. Write bodies
 are capped at 64 KiB before JSON parsing, including streamed bodies (413 when
@@ -38,11 +39,11 @@ resident-daemon lock. When the dictionary is v1, the web writer must acquire
 `state_root/weaver.lock` and hold it through initialization/migration. If a daemon
 holds that lock, writes refuse the upgrade with 503 and a message asking to stop
 the daemon first; GETs and no-op edits remain read-only. This prevents upgrading
-state behind a running v1 daemon. The ContextDictionary public API is unchanged.
+state behind a running v1 daemon. Web provenance and dismissed pairs use additive tables without changing shared Thread schemas.
 Dictionary registration precedes append, so a failed append may leave a valid,
-unused human dictionary entry; retry reuses it. Database lock errors return 503
-with `Retry-After: 1`; dictionary edit ValueErrors return fixed 422 messages,
-never exception text. That translation applies only to write handlers in the edit
+unused human dictionary entry; reload the dictionary and retry using the existing name. Database lock errors return 503
+with `Retry-After: 1`; known name/alias collisions return 422 naming the conflicting canonical entry;
+other dictionary ValueErrors return a fixed 422 message without exception text. That translation applies only to write handlers in the edit
 router; unrelated failures remain 500 and SQLite/schema failures remain 503.
 Thread lookup errors return 404 and missing token or invalid origin returns 403.
 
@@ -94,24 +95,45 @@ Other groupings retain the underlying business facts.
 
 ### Direct and bulk tag editing
 
-Card and log chips expose remove and add controls. The shared dictionary supplies
-canonical names and aliases; an unknown name requires a kind before saving. Log
-checkboxes scope bulk add/remove to visible selected Threads, with one existing
-`POST /api/threads/{id}/tags` request and correction per changed Thread. No-op
-edits create no correction. Partial successes remain undoable if a later request
-fails; refresh reconciles every completed write.
+Card/log chips expose kind text, colors and archived-project labels. Accessible
+listbox autocomplete supports canonical names, aliases and Korean IME. The
+popup tracks scroll/resize, flips/clamps against the viewport, and returns focus
+to the add button. An unknown name requires a kind and a fresh dictionary read;
+if it appeared meanwhile, the UI names the existing entry instead of discarding
+the selected kind. Entry and alias resolution use Maps shared by the screen.
+During writes, polling is paused and pending poll responses are discarded.
 
-A successful tag edit offers undo for five seconds, including after its row has
-left the active filter. `POST /api/threads/{correction_id}/tags/undo` accepts an
-empty JSON body, requires the existing loopback/Origin/CSRF authorization, and
-appends a human retraction of a human tag correction. Missing IDs return 404;
-other Thread kinds return 422. Repeating undo returns the existing retraction.
-Undo leaves later corrections intact rather than writing an inverse delta.
+`POST /api/threads/tags/batch` accepts `{thread_ids, add, remove, kinds?}` with at
+most 500 IDs. It validates every target before appending all changed corrections
+in a single `BEGIN IMMEDIATE` transaction against the current effective rows.
+Any invalid/missing/history target rejects the entire batch. Response fields are
+`corrections`, `changed`, `skipped`, and `skipped_threads: [{thread_id, reason}]`.
+No-op targets are skipped; the UI lists their reasons and explicitly reports
+when nothing changed. Unknown raw tag names can be removed without registering
+them. The client fetches one session token for the batch request.
+
+Every target classified as `presentation=history` is read-only in the UI and
+rejected by single/batch edits with 422. Select-all excludes history. Business
+originals retain their existing presentation classification even when retracted.
+
+`POST /api/corrections/{id}/undo` appends a retraction only for corrections marked
+in the Fabric DB's `web_tag_corrections` table by the web tag editor. Content text
+and actor alone cannot authorize undo; pre-existing/unmarked corrections are
+excluded. Check-and-append runs inside one write transaction so concurrent retries
+return the same retraction. The UI offers undo for five seconds, in both its toast
+and the edited row, and focuses the toast if the row has disappeared. There is
+**no server time limit**. Undoing an older correction leaves all later corrections
+in place; it does not apply an inverse tag delta. Dictionary entries remain after
+undo, including zero-use entries. The UI shows their usage count and “사용 없음”.
 
 Dictionary reads include `last_used_at` (ISO timestamp or null), the latest
-occurrence among active business Threads using the effective canonical tag, next
-to `usage_count`. Suggestions compare normalized spacing, one-character edit
-distance for names at least two characters long, and alias overlap. The more
-used entry is the suggested target. Both “합치기” and “별칭으로 넣기” use the
-atomic merge operation: an existing source entry must be consolidated before its
-name can become a target alias; the target kind and all aliases are preserved.
+occurrence among active business Threads using the effective canonical tag.
+The UI includes its year. Suggestions normalize labels once, bucket candidate
+names/aliases and group connected pairs. Only same-kind pairs are considered:
+spacing and alias overlap at any length; one-character edits only when both names
+have at least four characters and neither kind is person nor organization.
+`GET/POST /api/dictionary/dismissed` reads/persists dismissed name pairs in the
+context DB, so dismissed pairs stay suppressed after reload/restart. Merge has
+one action and a confirmation dialog stating the remaining name, source alias
+and resulting kind; manual cross-kind merges require a direct kind choice.
+All new writes retain loopback, Origin and CSRF authorization and body limits.
