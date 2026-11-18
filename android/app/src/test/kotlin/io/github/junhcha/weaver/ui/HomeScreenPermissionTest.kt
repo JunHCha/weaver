@@ -7,6 +7,7 @@ import android.content.Intent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -37,11 +38,27 @@ class HomeScreenPermissionTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         Feature.entries.forEach { assertTrue("$it must start denied", !it.isGranted(context)) }
 
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithTag("now-screen").assertExists()
         compose.onNodeWithText("수집·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("권한 없음").assertCountEquals(Feature.entries.size)
         compose.onAllNodesWithText("권한 요청").assertCountEquals(Feature.entries.size)
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun settingsOffersCalendarChoiceWithoutAnyReviewDocument() {
+        compose.onNodeWithText("수집·설정").performClick()
+        compose.onNodeWithText("캘린더 선택 / 권한 요청").performScrollTo().assertExists()
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun statusStripOpensTheMapAndBackReturnsToNow() {
+        compose.onNodeWithTag("status-strip").performClick()
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithText("‹ 지금").performClick()
+        compose.onNodeWithTag("now-screen").assertExists()
     }
 
     @Test
@@ -52,7 +69,7 @@ class HomeScreenPermissionTest {
         shadowOf(app).grantPermissions(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
         compose.activityRule.scenario.recreate()
 
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithTag("now-screen").assertExists()
         compose.onNodeWithText("수집·설정").performClick()
         compose.onNodeWithText("Weaver").assertExists()
         compose.onAllNodesWithText("허용됨").assertCountEquals(2)
@@ -79,7 +96,7 @@ class HomeScreenPermissionTest {
         }
         val tapIntent = shadowOf(shadowOf(manager).allNotifications.single().contentIntent).savedIntent
         assertEquals(ShepherdRuntime.OPEN_PENDING, tapIntent.action)
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithTag("now-screen").assertExists()
         val originalIntent = compose.activity.intent
         try {
             // Deliver the actual notification intent to the existing activity's callback.
@@ -106,6 +123,45 @@ class HomeScreenPermissionTest {
             // ActivityScenario tracks the launch intent when closing the Robolectric activity.
             compose.runOnUiThread { compose.activity.intent = originalIntent }
         }
+    }
+
+    private fun back() {
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun tabsSystemBackAndRecreateRestore() {
+        compose.onNodeWithTag("now-screen").assertExists()
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("subject-list").assertExists()
+        compose.onNodeWithText("이서준").performClick()
+        compose.onNodeWithTag("timeline-screen").assertExists()
+        // System back: timeline -> list -> 지금.
+        back()
+        compose.onNodeWithTag("subject-list").assertExists()
+        back()
+        compose.onNodeWithTag("now-screen").assertExists()
+
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithText("이서준").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("timeline-screen").assertExists()
+        back()
+        back()
+        compose.onNodeWithTag("now-screen").assertExists()
+
+        compose.onNodeWithTag("tab-WIKI").performClick()
+        compose.onNodeWithText("네트워크").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("wiki-viewer").assertExists()
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun debugBuildShowsTheExampleBadge() {
+        compose.onNodeWithTag("example-badge").assertExists()
     }
 
     @Test

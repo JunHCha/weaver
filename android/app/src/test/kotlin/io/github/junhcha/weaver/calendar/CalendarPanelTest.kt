@@ -39,4 +39,35 @@ class CalendarPanelTest {
         assertEquals("포기 · 5회 시도했지만 실패했습니다",
             actionStatus(pending.copy(phase = ActionPhase.FAILED, attempts = 5, error = "provider_error"), true))
     }
+
+    private fun putAction() {
+        val file = java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(compose.activity), "calendar/registrations.json")
+        CalendarJournal(file).put(pending)
+    }
+
+    @Test fun settingsShowsTheCalendarPanelOnceEvenWithAnAction() {
+        putAction()
+        compose.activity.setContent { io.github.junhcha.weaver.ui.WeaverTheme { io.github.junhcha.weaver.ui.ToolsScreen() } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("등록 · 회의").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("승인 일정 · 자동 반영").assertCountEquals(1)
+        compose.onAllNodesWithText("캘린더 선택 / 권한 요청").assertCountEquals(1)
+        compose.onAllNodesWithText("등록 · 회의").assertCountEquals(1)
+    }
+
+    @Test fun reviewSlotAddsNoSecondPanelInsideSettingsButStillShowsOutside() {
+        putAction()
+        compose.activity.setContent {
+            androidx.compose.foundation.layout.Column {
+                androidx.compose.runtime.CompositionLocalProvider(io.github.junhcha.weaver.ui.LocalCalendarHostedBySettings provides true) {
+                    io.github.junhcha.weaver.ui.ReviewCalendarSlot()
+                }
+            }
+        }
+        compose.waitForIdle()
+        Thread.sleep(300)
+        compose.onAllNodesWithText("승인 일정 · 자동 반영").assertCountEquals(0)
+        compose.activity.setContent { io.github.junhcha.weaver.ui.ReviewCalendarSlot() }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("승인 일정 · 자동 반영").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("승인 일정 · 자동 반영").assertCountEquals(1)
+    }
 }

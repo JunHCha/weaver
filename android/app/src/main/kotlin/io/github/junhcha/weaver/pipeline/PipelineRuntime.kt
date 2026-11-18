@@ -63,6 +63,10 @@ data class MapItem(
     val stopped: Boolean
         get() = status == "apply_stopped"
 
+    /** In flight: neither waiting for the user, stopped, nor finished. The map and the 지금 status strip share this. */
+    val processing: Boolean
+        get() = !needsReview && !stopped && status != "done" && status != "rejected"
+
     val stateLabel: String
         get() {
             server?.wikiEdit?.let { edit ->

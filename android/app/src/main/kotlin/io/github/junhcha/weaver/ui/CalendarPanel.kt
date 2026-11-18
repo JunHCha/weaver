@@ -19,12 +19,22 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** True inside settings, where the settings screen already shows the calendar panel. */
+internal val LocalCalendarHostedBySettings = compositionLocalOf { false }
+
+/** The review document's calendar panel, unless the surrounding screen already shows one. */
+@Composable
+internal fun ReviewCalendarSlot() {
+    if (!LocalCalendarHostedBySettings.current) CalendarPanel()
+}
+
 /**
  * Calendar changes approved on the PC run on their own. The user only chooses the target calendar once and
- * watches the state here; until a calendar is chosen the actions wait.
+ * watches the state here; until a calendar is chosen the actions wait. [alwaysShow] keeps the picker visible in
+ * settings even when no review document has produced a calendar action yet.
  */
 @Composable
-fun CalendarPanel() {
+fun CalendarPanel(alwaysShow: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var actions by remember { mutableStateOf<List<ActionState>>(emptyList()) }
@@ -50,7 +60,7 @@ fun CalendarPanel() {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (Feature.CALENDAR.isGranted(context)) load() else message = "캘린더 권한이 필요합니다"
     }
-    if (actions.isNotEmpty()) Column {
+    if (alwaysShow || actions.isNotEmpty()) Column {
         Text("승인 일정 · 자동 반영")
         Text("승인된 일정의 등록, 수정, 철회는 선택한 캘린더에 자동으로 반영됩니다. " +
             "선택한 계정의 설정에 따라 외부 서비스로 동기화될 수 있습니다. 참석자 초대는 보내지 않습니다.")

@@ -153,6 +153,7 @@ class ReviewPanelTest {
         val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
         model.refresh()
         compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
+        compose.onNodeWithTag("status-strip").performClick()
         compose.onNodeWithContentDescription("You 노드").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
@@ -162,6 +163,48 @@ class ReviewPanelTest {
         compose.onNodeWithText("✓ $choice").assertExists()
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("✓ $choice").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun inboxNotificationOpensTheMapYouNodeAndBackReturnsToNowWithoutReplay() {
+        val (_, p) = prepare()
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
+        model.refresh()
+        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
+        compose.onNodeWithTag("now-screen").assertExists()
+
+        // Open settings first: the notification must close it and land on the map.
+        compose.onNodeWithText("수집·설정").performClick()
+        compose.onNodeWithText("‹ 지금").assertExists()
+        val intent = Intent(InboxRuntime.OPEN_INBOX)
+        val original = compose.activity.intent
+        try {
+            compose.runOnUiThread {
+                io.github.junhcha.weaver.MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java)
+                    .apply { isAccessible = true }.invoke(compose.activity, intent)
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("내 데이터 흐름").assertExists()
+            compose.onNodeWithTag("now-screen").assertDoesNotExist()
+            // The You node's panel opens the review document.
+            compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
+            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithText(p.questions.single().question).fetchSemanticsNodes().isNotEmpty() }
+
+            // Back all the way out lands on 지금, and recreation does not replay the notification.
+            var guard = 0
+            while (compose.onAllNodesWithTag("now-screen").fetchSemanticsNodes().isEmpty() && guard++ < 6) {
+                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                compose.waitForIdle()
+            }
+            compose.onNodeWithTag("now-screen").assertExists()
+            // The activity dropped its one-shot flags and the intent action, so nothing can replay the tap.
+            val flag = io.github.junhcha.weaver.MainActivity::class.java.getDeclaredField("showInbox")
+                .apply { isAccessible = true }.get(compose.activity) as androidx.compose.runtime.State<*>
+            assertFalse(flag.value as Boolean)
+            assertEquals(null, compose.activity.intent.action)
+        } finally {
+            compose.runOnUiThread { compose.activity.intent = original }
+        }
     }
 
     @Test fun missingPackageShowsReadErrorAndKeepsApprovalDisabled() {
