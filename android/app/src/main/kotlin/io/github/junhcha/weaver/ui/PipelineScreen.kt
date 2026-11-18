@@ -47,13 +47,21 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.phone.PhoneReadModel
+import io.github.junhcha.weaver.phone.SyntheticPhoneReadModel
+import io.github.junhcha.weaver.phone.statusCounts
 import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
+import java.time.Instant
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 @Composable
-fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
+fun HomeScreen(
+    showPendingCalls: Boolean = false,
+    showInbox: Boolean = false,
+    readModel: PhoneReadModel = remember { SyntheticPhoneReadModel() },
+) {
     val activity = LocalActivity.current as ComponentActivity
     val model = remember(activity) {
         ViewModelProvider(
@@ -72,11 +80,12 @@ fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var tools by rememberSaveable { mutableStateOf(false) }
+    var map by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var replay by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(showPendingCalls, showInbox) {
         if (showPendingCalls) tools = true
-        if (showInbox) selected = MapNode.USER.name
+        if (showInbox) { map = true; selected = MapNode.USER.name }
     }
     val changes by InboxRuntime.changes.collectAsState()
     LaunchedEffect(changes) { model.refresh() }
@@ -86,22 +95,40 @@ fun HomeScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
     }
     WeaverTheme {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            if (tools) {
-                BackHandler { tools = false }
-                Column(Modifier.safeDrawingPadding()) {
-                    TextButton(onClick = { tools = false }) { Text("‹ 데이터 흐름") }
-                    ToolsScreen(showPendingCalls, showInbox)
+            when {
+                tools -> {
+                    BackHandler { tools = false }
+                    Column(Modifier.safeDrawingPadding()) {
+                        TextButton(onClick = { tools = false }) { Text(if (map) "‹ 데이터 흐름" else "‹ 지금") }
+                        ToolsScreen(showPendingCalls, showInbox)
+                    }
                 }
-            } else {
-                PipelineContent(
-                    state,
-                    selected?.let(MapNode::valueOf),
-                    { selected = it?.name },
-                    replay,
-                    { replay++ },
-                    { tools = true },
-                    model::claimAnimation,
-                )
+                map -> {
+                    BackHandler { map = false; selected = null }
+                    Column(Modifier.safeDrawingPadding()) {
+                        TextButton(onClick = { map = false; selected = null }) { Text("‹ 지금") }
+                        Box(Modifier.weight(1f)) {
+                            PipelineContent(
+                                state,
+                                selected?.let(MapNode::valueOf),
+                                { selected = it?.name },
+                                replay,
+                                { replay++ },
+                                { tools = true },
+                                model::claimAnimation,
+                            )
+                        }
+                    }
+                }
+                else -> Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    PhoneShell(
+                        readModel,
+                        statusCounts(state.items.map { it.status }),
+                        { Instant.now() },
+                        { map = true },
+                        { tools = true },
+                    )
+                }
             }
         }
     }

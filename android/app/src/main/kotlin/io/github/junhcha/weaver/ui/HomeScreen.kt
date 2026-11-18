@@ -65,6 +65,7 @@ fun ToolsScreen(showPendingCalls: Boolean = false, showInbox: Boolean = false) {
                 ShepherdPanel(showPendingCalls)
                 if (!showInbox) InboxPanel()
                 CourierPanel()
+                CalendarPanel(alwaysShow = true)
                 Feature.entries.forEach { feature ->
                     FeatureCard(
                         feature = feature,
