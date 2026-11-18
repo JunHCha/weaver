@@ -8,14 +8,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.schema.*
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-
-private fun editTime(value: String): String =
-    OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
-
 @Composable
 internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: String, onError: (String) -> Unit) {
     val edit = checkNotNull(item.wikiEdit)
@@ -27,7 +19,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
             Text(sourceTitle(item.title), style = MaterialTheme.typography.titleMedium)
-            Text(edit.path, style = MaterialTheme.typography.bodySmall)
+            Text(displayName(edit.path), style = MaterialTheme.typography.bodySmall)
             Text(when (edit.state) {
                 "settling" -> if (edit.readyAt == null) "수정 내용 확인 중" else "수정 감지 · 편집 안정 대기"
                 "recorded" -> "Fabric 반영 · Wiki 갱신 중"
@@ -54,10 +46,10 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
                         Text(change.after ?: "값 삭제", style = MaterialTheme.typography.bodySmall)
                     }
                     HorizontalDivider()
-                    edit.detectedAt?.let { Text("Wiki 수정 감지 · ${editTime(it)}", style = MaterialTheme.typography.bodySmall) }
-                    edit.readyAt?.let { Text("편집 안정 대기 · ${editTime(it)} 이후 반영 가능", style = MaterialTheme.typography.bodySmall) }
-                    item.stageTimes[Stage.APPLY]?.let { Text("Fabric 반영 · ${editTime(it)}", style = MaterialTheme.typography.bodySmall) }
-                    item.stageTimes[Stage.UPDATE_WIKI]?.let { Text("Wiki 갱신 · ${editTime(it)}", style = MaterialTheme.typography.bodySmall) }
+                    edit.detectedAt?.let { Text("Wiki 수정 감지 · ${mapTime(it)}", style = MaterialTheme.typography.bodySmall) }
+                    edit.readyAt?.let { Text("편집 안정 대기 · ${mapTime(it)} 이후 반영 가능", style = MaterialTheme.typography.bodySmall) }
+                    item.stageTimes[Stage.APPLY]?.let { Text("Fabric 반영 · ${mapTime(it)}", style = MaterialTheme.typography.bodySmall) }
+                    item.stageTimes[Stage.UPDATE_WIKI]?.let { Text("Wiki 갱신 · ${mapTime(it)}", style = MaterialTheme.typography.bodySmall) }
                     if (edit.state == "published") Text(if (arrived) "폰 도착 확인" else "폰에 오는 중 · 최신 파일 일치 확인 대기", style = MaterialTheme.typography.bodySmall)
                 }
                 1 -> {

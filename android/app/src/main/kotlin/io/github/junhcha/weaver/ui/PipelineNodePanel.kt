@@ -16,6 +16,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
@@ -234,7 +238,11 @@ internal fun NodePanel(
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                            item.server?.let { ThreadRows(it) }
+                            item.server?.let {
+                                val cardTime = it.stageTimes[Stage.APPLY] ?: it.updatedAt
+                                Text("반영 ${mapTime(cardTime)}", style = MaterialTheme.typography.labelSmall)
+                                ThreadRows(it, cardTime)
+                            }
                         }
                     }
                 }
@@ -270,13 +278,19 @@ internal fun PageLink(
                 }
                 .onFailure { onError("Obsidian을 열지 못했어요. 폰의 앱과 vault 이름을 확인해 주세요.") }
         },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (arrived) "폰 도착 확인 · Obsidian에서 열기" else "폰에 오는 중" },
+        contentPadding = PaddingValues(vertical = 8.dp),
+        shape = RectangleShape,
+        colors = ButtonDefaults.textButtonColors(contentColor = WeaverTokens.ink, disabledContentColor = WeaverTokens.ink),
     ) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                wikiPageTitle(page.path) + if (arrived) " ↗" else " · 폰에 오는 중",
+                wikiPageTitle(page.path),
                 style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
+            Text(if (arrived) "Obsidian에서 열기 ↗" else "폰에 오는 중", style = MaterialTheme.typography.labelSmall)
             Text(
                 "${mapTime(page.updatedAt)} · ${wikiPageKind(page.path)}",
                 style = MaterialTheme.typography.labelSmall,
