@@ -49,7 +49,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("tag editing", () => {
   it("autocompletes aliases and requires a kind only for a new name", async () => {
     vi.spyOn(editing, "dictionary").mockResolvedValue([entry]);
-    const save = vi.spyOn(editing, "tags").mockResolvedValue();
+    const save = vi.spyOn(editing, "tags").mockResolvedValue(thread);
     const onSaved = vi.fn();
     render(<TagEditor thread={{ ...thread, tags: [] }} onSaved={onSaved} />);
     const input = screen.getByLabelText("추가할 태그");
@@ -345,9 +345,10 @@ it("uses one history toggle for corrections and retractions", () => {
   ).toEqual(["one", "meta", "undo-meta"]);
 });
 
-
 it("shows an archived project's state in the dictionary", async () => {
-  vi.spyOn(editing, "dictionary").mockResolvedValue([{ ...entry, archived: true }]);
+  vi.spyOn(editing, "dictionary").mockResolvedValue([
+    { ...entry, archived: true },
+  ]);
   render(<DictionaryScreen />);
   expect(await screen.findByText("프로젝트 · 보관")).toBeVisible();
   expect(screen.getByRole("button", { name: "알파 편집" })).toBeEnabled();

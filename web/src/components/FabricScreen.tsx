@@ -1,3 +1,4 @@
+import { TagEditingProvider } from "./TagEditing";
 import { useKeyboardNavigation } from "../hooks/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FabricData, Thread } from "../lib/api";
@@ -84,7 +85,7 @@ function RefreshAge({ at }: { at: number | null }) {
     </span>
   );
 }
-export function FabricScreen({
+function FabricContent({
   data,
   refreshedAt = null,
   onSaved,
@@ -328,5 +329,13 @@ export function FabricScreen({
         />
       </div>
     </section>
+  );
+}
+
+export function FabricScreen(props: Parameters<typeof FabricContent>[0]) {
+  return (
+    <TagEditingProvider onSaved={props.onSaved}>
+      <FabricContent {...props} />
+    </TagEditingProvider>
   );
 }

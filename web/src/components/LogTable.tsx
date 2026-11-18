@@ -1,4 +1,6 @@
-import { useMemo, type CSSProperties } from "react";
+import { TagEditor } from "./TagEditor";
+import { useTagEditing } from "./TagEditing";
+import { useMemo, useState, type CSSProperties } from "react";
 import type { Thread } from "../lib/api";
 import {
   stateSummary,
@@ -40,6 +42,12 @@ export function LogTable({
   selected: string | null;
   onPick: (id: string) => void;
 }) {
+  const editing = useTagEditing();
+  const [checked, setChecked] = useState<string[]>([]);
+  const checkedIds = new Set(checked);
+  const selectedRows = rows.filter(
+    (row) => checkedIds.has(row.thread_id) && row.kind !== "실행",
+  );
   const grouped = group !== "none",
     targeted = group === "project" || group === "area";
   const sections = useMemo(() => distribute(rows, groups), [rows, groups]);
@@ -53,6 +61,42 @@ export function LogTable({
   const state = view.relation;
   return (
     <div className="scroller" id="scr">
+      {editing && (
+        <section className="bulk-tags" aria-label="태그 일괄 편집">
+          <label>
+            <input
+              type="checkbox"
+              aria-label="모든 Thread 선택"
+              checked={
+                rows.some((t) => t.kind !== "실행") &&
+                rows
+                  .filter((t) => t.kind !== "실행")
+                  .every((t) => checkedIds.has(t.thread_id))
+              }
+              onChange={(e) =>
+                setChecked(
+                  e.target.checked
+                    ? rows
+                        .filter((t) => t.kind !== "실행")
+                        .map((t) => t.thread_id)
+                    : [],
+                )
+              }
+            />{" "}
+            전체 선택
+          </label>
+          <span>{selectedRows.length}개 선택</span>
+          {selectedRows.length > 0 && (
+            <TagEditor
+              key={selectedRows.map((t) => t.thread_id).join("|")}
+              thread={selectedRows[0]}
+              threads={selectedRows}
+              bulk
+            />
+          )}
+        </section>
+      )}
+
       {!targeted && changes.length > 0 && (
         <section className="unassigned-history" aria-label="값 변경 이력">
           <b>값 변경 이력</b>
@@ -62,7 +106,7 @@ export function LogTable({
       <div
         className="ltable"
         id="lt"
-        style={{ "--gw": "36px" } as CSSProperties}
+        style={{ "--gw": editing ? "58px" : "36px" } as CSSProperties}
       >
         <div className="lrow lhead">
           {[
@@ -141,7 +185,26 @@ export function LogTable({
                         }
                       }}
                     >
-                      <div />
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        {editing && t.kind !== "실행" && (
+                          <input
+                            type="checkbox"
+                            className="thread-check"
+                            aria-label={`${t.thread_id} Thread 선택`}
+                            checked={checkedIds.has(t.thread_id)}
+                            onChange={(e) =>
+                              setChecked((old) =>
+                                e.target.checked
+                                  ? [...old, t.thread_id]
+                                  : old.filter((id) => id !== t.thread_id),
+                              )
+                            }
+                          />
+                        )}
+                      </div>
                       <div className="mut">{mdhm(t.occurred_at)}</div>
                       <div>
                         {history && <span className="history-type">이력</span>}{" "}
@@ -175,7 +238,11 @@ export function LogTable({
                         )}
                       </div>
                       <div className="mut">
-                        <Tags thread={t} knownTags={view.knownTags} />
+                        {editing && t.kind !== "실행" ? (
+                          <TagEditor thread={t} compact />
+                        ) : (
+                          <Tags thread={t} knownTags={view.knownTags} />
+                        )}
                       </div>
                       <div>{actorLabel[t.actor]}</div>
                       <div className="mut">
@@ -191,7 +258,7 @@ export function LogTable({
                 })}
                 <svg
                   className="lsvg"
-                  width={36}
+                  width={editing ? 58 : 36}
                   height={height}
                   aria-hidden="true"
                 >

@@ -116,17 +116,18 @@ export interface DictionaryEntry {
   aliases: string[];
   human_edited: boolean;
   usage_count: number;
+  last_used_at?: string | null;
 }
 export interface TagEdit {
   add: string[];
   remove: string[];
   kinds?: Record<string, TagKind>;
 }
-async function write(
+async function write<T = void>(
   path: string,
   method: string,
   body: unknown,
-): Promise<void> {
+): Promise<T> {
   const session = await get<{ token: string }>("/session");
   const response = await fetch("/api" + path, {
     method,
@@ -148,12 +149,15 @@ async function write(
           : "저장하지 못했습니다. 다시 시도하세요.",
     );
   }
+  return response.json() as Promise<T>;
 }
 export const editing = {
   dictionary: (signal?: AbortSignal) =>
     get<DictionaryEntry[]>("/dictionary", signal),
   tags: (id: string, edit: TagEdit) =>
-    write(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
+    write<Thread>(`/threads/${encodeURIComponent(id)}/tags`, "POST", edit),
+  undoTags: (id: string) =>
+    write(`/threads/${encodeURIComponent(id)}/tags/undo`, "POST", {}),
   entry: (name: string, edit: { name?: string; kind?: TagKind }) =>
     write("/dictionary", "PATCH", { entry: name, ...edit }),
   alias: (name: string, alias: string, remove = false) =>

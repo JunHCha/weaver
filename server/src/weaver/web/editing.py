@@ -218,6 +218,7 @@ def editing_router(config: ServerConfig) -> APIRouter:
         )
         retracted = {t.retracts for t in rows if t.retracts}
         counts: dict[str, int] = {}
+        latest: dict[str, datetime] = {}
         for thread in rows:
             if (
                 thread.thread_id in retracted
@@ -230,6 +231,9 @@ def editing_router(config: ServerConfig) -> APIRouter:
             }
             for name in names:
                 counts[name] = counts.get(name, 0) + 1
+                latest[name] = max(
+                    latest.get(name, thread.occurred_at), thread.occurred_at
+                )
         return [
             {
                 "name": e.name,
@@ -239,6 +243,9 @@ def editing_router(config: ServerConfig) -> APIRouter:
                 "archived": e.archived,
                 "promoted": e.promoted,
                 "usage_count": counts.get(e.name, 0),
+                "last_used_at": latest[e.name].isoformat()
+                if e.name in latest
+                else None,
             }
             for e in dictionary.entries
         ]
@@ -313,6 +320,47 @@ def editing_router(config: ServerConfig) -> APIRouter:
                 add=additions,
                 remove=removals,
             ),
+        )
+        return FabricStore(path).append([draft])[0]
+
+    @router.post("/api/threads/{thread_id}/tags/undo", dependencies=writes)
+    def undo_tags(thread_id: str) -> Thread:
+        path = config.state_root / "fabric.sqlite3"
+        rows = (
+            FabricStore.open_readonly(path).entries(
+                ThreadQuery(include_executions=True)
+            )
+            if path.is_file()
+            else []
+        )
+        target = next((t for t in rows if t.thread_id == thread_id), None)
+        if target is None:
+            raise HTTPException(404, "태그 정정을 찾을 수 없습니다.")
+        if (
+            target.kind != "태그정정"
+            or target.correction is None
+            or target.actor != "human"
+        ):
+            raise HTTPException(422, "직접 편집한 태그 정정만 되돌릴 수 있습니다.")
+        previous = next((t for t in rows if t.retracts == thread_id), None)
+        if previous:
+            return previous
+        now = datetime.now(UTC)
+        draft = ThreadDraft(
+            thread_id="thr_" + uuid4().hex,
+            kind="기록",
+            content="웹 태그 정정 되돌리기",
+            occurred_at=now,
+            recorded_at=now,
+            tags=[],
+            field=None,
+            value=None,
+            source_id=target.source_id,
+            actor="human",
+            direction=None,
+            resolves=None,
+            retracts=thread_id,
+            correction=None,
         )
         return FabricStore(path).append([draft])[0]
 

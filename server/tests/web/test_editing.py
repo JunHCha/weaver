@@ -594,3 +594,68 @@ def test_archived_projects_remain_readable_with_lifecycle_flags(state):
     assert entry["archived"] and entry["promoted"] and entry["usage_count"] == 1
     assert client.get("/api/threads").json()[0]["tags"] == ["Alpha", "old"]
     assert (config.state_root / "context.sqlite3").read_bytes() == before
+
+
+def test_undo_tag_correction_appends_retraction_and_preserves_later_edits(state):
+    config, client, headers = state
+    first = client.post(
+        "/api/threads/record/tags",
+        headers=headers,
+        json={"add": ["Beta"], "remove": ["old"]},
+    ).json()
+    later = client.post(
+        "/api/threads/record/tags",
+        headers=headers,
+        json={"add": ["New"], "kinds": {"New": "area"}},
+    ).json()
+    endpoint = f"/api/threads/{first['thread_id']}/tags/undo"
+    assert client.post(endpoint, json={}).status_code == 403
+    assert (
+        client.post(
+            endpoint, headers={**headers, "Origin": "http://evil.example"}, json={}
+        ).status_code
+        == 403
+    )
+    response = client.post(endpoint, headers=headers, json={})
+    assert response.status_code == 200
+    undo = response.json()
+    assert undo["retracts"] == first["thread_id"]
+    assert undo["actor"] == "human"
+    assert client.post(endpoint, headers=headers, json={}).json() == undo
+    rows = FabricStore.from_config(config).entries(ThreadQuery())
+    assert len(rows) == 4
+    assert rows[0].tags == ["Alpha", "old", "New"]
+    assert rows[2].thread_id == later["thread_id"]
+
+
+@pytest.mark.parametrize("target,status", [("missing", 404), ("record", 422)])
+def test_undo_rejects_non_corrections(state, target, status):
+    _, client, headers = state
+    assert (
+        client.post(
+            f"/api/threads/{target}/tags/undo", headers=headers, json={}
+        ).status_code
+        == status
+    )
+
+
+def test_dictionary_last_used_tracks_effective_active_threads(state):
+    config, client, headers = state
+    from datetime import UTC, datetime
+
+    recent = datetime(2026, 11, 18, tzinfo=UTC)
+    FabricStore.from_config(config).append(
+        [
+            draft("recent", tags=["A"], occurred_at=recent),
+            draft("retired", tags=["Beta"], occurred_at=recent),
+            draft("retired-undo", tags=[], retracts="retired"),
+        ]
+    )
+    entries = {entry["name"]: entry for entry in client.get("/api/dictionary").json()}
+    assert entries["Alpha"]["usage_count"] == 2
+    assert entries["Alpha"]["last_used_at"] == recent.isoformat()
+    assert entries["Beta"]["last_used_at"] is None
+    client.post("/api/threads/recent/tags", headers=headers, json={"remove": ["A"]})
+    entries = {entry["name"]: entry for entry in client.get("/api/dictionary").json()}
+    assert entries["Alpha"]["usage_count"] == 1
+    assert entries["Alpha"]["last_used_at"] == draft("record").occurred_at.isoformat()

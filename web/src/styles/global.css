@@ -1416,3 +1416,23 @@ button:disabled { cursor: default; opacity: .5; }
 .lane-h { flex-wrap: wrap; }
 .lane-summary { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
 .lane-summary span { font-size: 12px; }
+
+.tag-editor.compact { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; position: relative; }
+.tag-editor.compact .editable-tags { gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.tag-editor.compact .tg, .tag-plus { flex-shrink: 0; }
+.tag-editor.compact form { flex-basis: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--line); }
+.tag-editor .tg[data-kind=person] { color: var(--c-sch); }
+.tag-editor .tg[data-kind=organization] { color: var(--c-dec); }
+.tag-editor .tg[data-kind=area] { color: var(--c-rec); }
+.tag-editor .tg[data-kind=project] { color: var(--indigo); }
+.tag-editor .tg[data-kind=topic] { color: var(--c-req); }
+.tag-editor .tg button { color: inherit; }
+.tag-plus { padding: 0 5px; }
+.tag-undo { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg); border: 1px solid var(--line); padding: 12px 20px; z-index: 100; box-shadow: 0 4px 20px #0002; }
+.bulk-tags { display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+.bulk-tags .tag-editor { width: auto; }
+.merge-suggestion { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tag-popup { display: flex; flex-wrap: wrap; width: 300px; gap: 8px; z-index: 110; padding: 12px; background: var(--bg); border: 1px solid var(--line); box-shadow: 0 4px 20px #0002; }
+
+.lrow .thread-check { margin-left: 28px; }
+.ltable:has(.thread-check) .lrow { grid-template-columns: var(--gw) 100px 84px minmax(240px, 1fr) 160px 56px 200px 76px 66px 48px; }

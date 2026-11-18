@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { tagSuggestions } from "../lib/tagSuggestions";
+import { mdhm } from "../lib/presentation";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { editing, type DictionaryEntry, type TagKind } from "../lib/api";
 import { tagKinds } from "../lib/fabric";
 function EntryRow({
@@ -45,13 +54,18 @@ function EntryRow({
       >
         <span className="dictionary-name">{entry.name}</span>
         <span className="dictionary-kind" data-kind={entry.kind}>
-          {tagKinds[entry.kind]}{entry.archived ? " · 보관" : ""}
+          {tagKinds[entry.kind]}
+          {entry.archived ? " · 보관" : ""}
         </span>
         <span className="dictionary-alias-summary mut">
           {entry.aliases.join(" · ") || "별칭 없음"}
         </span>
         <span className="dictionary-usage mut">
-          Thread {entry.usage_count}개
+          <span>Thread {entry.usage_count}개</span>
+          <br />
+          <span>
+            최근 {entry.last_used_at ? mdhm(entry.last_used_at) : "사용 없음"}
+          </span>
         </span>
       </button>
       {expanded && (
@@ -227,6 +241,7 @@ export function DictionaryScreen({ onSaved }: { onSaved?: () => void }) {
       setBusy(false);
     }
   };
+  const suggestions = useMemo(() => tagSuggestions(entries || []), [entries]);
   const filtered = entries?.filter((e) =>
     [e.name, ...e.aliases].some((name) =>
       name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
@@ -270,6 +285,51 @@ export function DictionaryScreen({ onSaved }: { onSaved?: () => void }) {
       )}
       {busy && <span role="status">저장 중…</span>}
       <div className="scroller dictionary-list">
+        {entries &&
+          suggestions
+            .filter(({ source, target }) =>
+              [
+                source.name,
+                target.name,
+                ...source.aliases,
+                ...target.aliases,
+              ].some((name) =>
+                name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+              ),
+            )
+            .map(({ source, target, reason }) => (
+              <section
+                className="merge-suggestion"
+                aria-label={`${source.name} ${target.name} 합치기 제안`}
+                key={source.name + "|" + target.name}
+              >
+                <b>합칠까요?</b> {source.name} → {target.name}{" "}
+                <span className="mut">{reason}</span>
+                <button
+                  className="chipbtn"
+                  disabled={busy}
+                  onClick={() =>
+                    void edit(() => editing.merge(source.name, target.name))
+                  }
+                >
+                  합치기
+                </button>
+                <button
+                  className="chipbtn"
+                  disabled={busy}
+                  onClick={() =>
+                    void edit(() => editing.merge(source.name, target.name))
+                  }
+                >
+                  별칭으로 넣기
+                </button>
+                <small className="mut">
+                  {target.name}의 종류를 유지하고 {source.name}을 별칭으로
+                  남깁니다.
+                </small>
+              </section>
+            ))}
+
         {entries === null ? (
           <p role="status">불러오는 중…</p>
         ) : !entries.length ? (

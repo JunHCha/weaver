@@ -1,3 +1,5 @@
+import { TagEditor } from "./TagEditor";
+import { useTagEditing } from "./TagEditing";
 import { memo, type RefCallback } from "react";
 import type { Thread } from "../lib/api";
 import { dateLabel, kindClass, kindStyle } from "../lib/presentation";
@@ -37,6 +39,7 @@ export const ThreadCard = memo(function ThreadCard({
   onHover,
   onPick,
 }: CardProps) {
+  const editing = useTagEditing();
   const state = view.relation,
     field = view.fields.get(t.thread_id),
     hollow = kindClass[t.kind] === "hol",
@@ -107,9 +110,13 @@ export const ThreadCard = memo(function ThreadCard({
         )}
       </div>
       <div className="cfoot">
-        <span className="tags">
-          <Tags thread={t} knownTags={view.knownTags} />
-        </span>
+        <div className="tags">
+          {editing && !ghost && t.kind !== "실행" ? (
+            <TagEditor thread={t} compact />
+          ) : (
+            <Tags thread={t} knownTags={view.knownTags} />
+          )}
+        </div>
         <References thread={t} byId={view.byId} />
       </div>
     </article>

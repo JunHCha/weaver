@@ -91,3 +91,27 @@ organization counterparts.
 readable and editable in the dictionary and in historical Threads. Project
 grouping hides their lanes by default; “보관 프로젝트 표시” reveals them.
 Other groupings retain the underlying business facts.
+
+### Direct and bulk tag editing
+
+Card and log chips expose remove and add controls. The shared dictionary supplies
+canonical names and aliases; an unknown name requires a kind before saving. Log
+checkboxes scope bulk add/remove to visible selected Threads, with one existing
+`POST /api/threads/{id}/tags` request and correction per changed Thread. No-op
+edits create no correction. Partial successes remain undoable if a later request
+fails; refresh reconciles every completed write.
+
+A successful tag edit offers undo for five seconds, including after its row has
+left the active filter. `POST /api/threads/{correction_id}/tags/undo` accepts an
+empty JSON body, requires the existing loopback/Origin/CSRF authorization, and
+appends a human retraction of a human tag correction. Missing IDs return 404;
+other Thread kinds return 422. Repeating undo returns the existing retraction.
+Undo leaves later corrections intact rather than writing an inverse delta.
+
+Dictionary reads include `last_used_at` (ISO timestamp or null), the latest
+occurrence among active business Threads using the effective canonical tag, next
+to `usage_count`. Suggestions compare normalized spacing, one-character edit
+distance for names at least two characters long, and alias overlap. The more
+used entry is the suggested target. Both “합치기” and “별칭으로 넣기” use the
+atomic merge operation: an existing source entry must be consolidated before its
+name can become a target alias; the target kind and all aliases are preserved.
