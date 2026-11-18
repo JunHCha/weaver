@@ -1,4 +1,14 @@
-# Wiki project lifecycle
+# Wiki
+
+## Human edit detection
+
+`WikiStore.scan` discovers and registers only files with the `.md` suffix.
+Other files, including binary attachments and text/JSON files, are silently
+ignored and cannot become human edit candidates. On startup, existing non-`.md`
+rows are removed from `pages` only; files and git history are left untouched.
+Missing Markdown files keep their existing rows and detection behavior.
+
+## Project lifecycle
 
 `BatchCompiler` requests `promotions` alongside pages and digests in its existing
 single `wiki.compile_batch` call. Each item names the project, area, goal, end

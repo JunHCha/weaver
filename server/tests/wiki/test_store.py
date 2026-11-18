@@ -94,6 +94,65 @@ def test_new_human_page_and_ignored_paths(tmp_path: Path) -> None:
         WikiStore(tmp_path / "vault", tmp_path / "other", wiki_root="../escape")
 
 
+@pytest.mark.parametrize("suffix", [".png", ".apk", ".txt", ".json", ".csv", ".MD"])
+def test_scan_silently_ignores_non_markdown(
+    tmp_path: Path, caplog, suffix: str
+) -> None:
+    now = 10000.0
+    store = WikiStore(tmp_path / "vault", tmp_path / "state", clock=lambda: now)
+    folder = store.root / "attachments.md"
+    folder.mkdir()
+    path = folder / f"attachment{suffix}"
+    data = b"\x89PNG\xff" if suffix in (".png", ".apk") else b'{"synthetic": true}'
+    path.write_bytes(data)
+    os.utime(path, (now, now))
+    head = store._git("rev-parse", "HEAD")
+
+    assert store.scan(now) == []
+    assert store.scan(now + 1801) == []
+    with store._db() as db:
+        assert db.execute("SELECT path FROM pages").fetchall() == []
+        assert db.execute("SELECT * FROM human_edits").fetchall() == []
+    assert store._git("rev-parse", "HEAD") == head
+    assert path.read_bytes() == data
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("readonly", [False, True])
+def test_startup_removes_legacy_non_markdown_rows_only(tmp_path: Path, readonly: bool):
+    store = WikiStore(tmp_path / "vault", tmp_path / "state")
+    store.write("kept.md", {}, "synthetic markdown", None)
+    (store.root / "kept.md").unlink()
+    head = store._git("rev-parse", "HEAD")
+    for name in ("image.png", "app.apk", "notes.txt", "data.json", "missing.txt"):
+        if name != "missing.txt":
+            (store.root / name).write_bytes(b"synthetic attachment")
+        # Include a historical git entry to prove migration never removes it.
+        head = store._commit(name, b"synthetic attachment", "human", "legacy file")
+        with store._db() as db:
+            db.execute(
+                "INSERT INTO pages VALUES (?, ?, ?, ?, 'candidate', 100, 100)",
+                (name, b"", head, int(readonly)),
+            )
+    with store._db() as db:
+        markdown_row = db.execute("SELECT * FROM pages WHERE path='kept.md'").fetchone()
+    tree = store._git("ls-tree", "-r", "HEAD")
+
+    for _ in range(2):
+        store = WikiStore(tmp_path / "vault", tmp_path / "state")
+        with store._db() as db:
+            assert db.execute("SELECT * FROM pages").fetchall() == [markdown_row]
+        store.restore_readonly()
+        assert store.scan(10000) == []
+        assert store.scan(11801) == []
+        assert store._git("rev-parse", "HEAD") == head
+        assert store._git("ls-tree", "-r", "HEAD") == tree
+        for name in ("image.png", "app.apk", "notes.txt", "data.json"):
+            assert (store.root / name).read_bytes() == b"synthetic attachment"
+        assert not (store.root / "missing.txt").exists()
+        assert not (store.root / "kept.md").exists()
+
+
 @pytest.mark.parametrize("digest", ["0b" + "a" * 62, "0e" + "1" * 62, "1" * 64])
 def test_internal_hash_remains_text_even_when_it_looks_numeric(tmp_path, digest):
     store = WikiStore(tmp_path / "vault", tmp_path / "state", settle_seconds=0)

@@ -296,6 +296,9 @@ class WikiStore:
             for (path,) in db.execute(
                 "SELECT path FROM pages ORDER BY path"
             ).fetchall():
+                if Path(path).suffix != ".md":
+                    db.execute("DELETE FROM pages WHERE path=?", (path,))
+                    continue
                 canonical = normalize_path(path)
                 if path != canonical:
                     db.execute(
@@ -577,6 +580,8 @@ class WikiStore:
                     if not name.startswith(".") and not (base / name).is_symlink()
                 ]
                 for name in files:
+                    if Path(name).suffix != ".md":
+                        continue
                     path = normalize_path(
                         (base / name).relative_to(self.root).as_posix()
                     )

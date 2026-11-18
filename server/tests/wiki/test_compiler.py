@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime
 
 import pytest
@@ -38,6 +39,40 @@ def draft():
         retracts=None,
         correction=None,
     )
+
+
+def test_non_markdown_attachments_never_call_llm_or_create_threads(tmp_path):
+    now = [10000.0]
+    store = WikiStore(tmp_path / "vault", tmp_path / "wiki", clock=lambda: now[0])
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+
+    class NoCalls(FakeLLM):
+        def generate_text(self, task, system, user):
+            pytest.fail(f"unexpected LLM call: {task}")
+
+        def generate_json(self, task, system, user, schema):
+            pytest.fail(f"unexpected LLM call: {task}")
+
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        NoCalls(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("합성 요약", "본문"),
+    )
+    for suffix in ("png", "apk", "txt", "json"):
+        path = store.root / f"attachment.{suffix}"
+        path.write_bytes(b"\xff" if suffix in ("png", "apk") else b"synthetic text")
+        os.utime(path, (now[0], now[0]))
+    compiler.run()
+    now[0] += 1801
+    compiler.run()
+    assert fabric.entries(ThreadQuery()) == []
+    assert store.edit_states() == []
+    with store._db() as db:
+        assert db.execute("SELECT path FROM pages").fetchall() == []
 
 
 def test_compile_and_bookmark_failure(tmp_path):
