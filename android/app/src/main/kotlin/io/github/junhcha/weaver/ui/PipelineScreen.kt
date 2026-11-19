@@ -53,6 +53,8 @@ import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
 import java.time.Instant
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -97,6 +99,10 @@ fun HomeScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    // Follow the existing state-based destinations; save each origin while review replaces it.
+    val destinations = rememberSaveableStateHolder()
+    var review by rememberSaveable { mutableStateOf<String?>(null) }
+    var submitted by rememberSaveable { mutableStateOf(false) }
     var tools by rememberSaveable { mutableStateOf(false) }
     var map by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -119,9 +125,28 @@ fun HomeScreen(
         model.refresh()
         onPauseOrDispose {}
     }
+    // The queued verdict survives recreation; restart only the bounded refresh wait after rotation.
+    LaunchedEffect(review, submitted) {
+        val id = review
+        if (id != null && submitted) {
+            model.refresh()
+            withTimeoutOrNull(3_000) {
+                model.state.first { current ->
+                    current.error != null || (current.loaded && current.items.none { it.packageId == id && it.needsReview })
+                }
+            }
+            review = null
+            submitted = false
+        }
+    }
     WeaverTheme {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             when {
+                review != null -> ReviewScreen(
+                    checkNotNull(review),
+                    onBack = { review = null; submitted = false },
+                    onSubmitted = { submitted = true },
+                )
                 tools -> {
                     val closeTools = { tools = false; pendingCalls = false }
                     BackHandler(onBack = closeTools)
@@ -132,7 +157,7 @@ fun HomeScreen(
                         ToolsScreen(pendingCalls)
                     }
                 }
-                map -> {
+                map -> destinations.SaveableStateProvider("map") {
                     BackHandler { map = false; selected = null }
                     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                         TextButton(onClick = { map = false; selected = null }, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("‹ 지금") }
@@ -145,19 +170,22 @@ fun HomeScreen(
                                 { replay++ },
                                 { tools = true },
                                 model::claimAnimation,
+                                onReview = { submitted = false; review = it },
                             )
                         }
                     }
                 }
-                else -> Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                    PhoneShell(
-                        readModel,
-                        state.items.statusCounts(),
-                        { Instant.now() },
-                        { map = true },
-                        { tools = true },
-                        tagHost = tagHost,
-                    )
+                else -> destinations.SaveableStateProvider("phone") {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        PhoneShell(
+                            readModel,
+                            state.items.statusCounts(),
+                            { Instant.now() },
+                            { map = true },
+                            { tools = true },
+                            tagHost = tagHost,
+                        )
+                    }
                 }
             }
         }
@@ -174,6 +202,7 @@ internal fun PipelineContent(
     onReplay: () -> Unit,
     onTools: () -> Unit,
     claimAnimation: (String) -> Boolean = { true },
+    onReview: (String) -> Unit = {},
 ) {
     var bubble by remember { mutableStateOf<MapItem?>(null) }
     var focusedItem by rememberSaveable { mutableStateOf<String?>(null) }
@@ -247,12 +276,18 @@ internal fun PipelineContent(
                             { onSelect(null) },
                             Modifier.width(340.dp).fillMaxHeight(),
                             focusedItemId = focusedItem,
+                            onReview = onReview,
                         )
                     }
                 }
             }
-            if (!wide && selected != null)
-                ModalBottomSheet(onDismissRequest = { onSelect(null) }) {
+            if (!wide && selected != null) {
+                // Keep the approval list at a stable height when its saved scroll is restored.
+                // A notification can switch the selected node while this dialog is open.
+                // Keep its expansion policy stable for this visit instead of recreating the SheetState.
+                val skipPartial = rememberSaveable { selected == MapNode.USER }
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartial)
+                ModalBottomSheet(onDismissRequest = { onSelect(null) }, sheetState = sheetState) {
                     panelState.SaveableStateProvider(selected.name) {
                         NodePanel(
                             selected,
@@ -260,9 +295,11 @@ internal fun PipelineContent(
                             { onSelect(null) },
                             Modifier.fillMaxWidth().fillMaxHeight(.84f),
                             focusedItemId = focusedItem,
+                            onReview = onReview,
                         )
                     }
                 }
+            }
         }
     }
     if (selected != null) BackHandler { onSelect(null) }
