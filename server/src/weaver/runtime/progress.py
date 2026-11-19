@@ -33,6 +33,14 @@ from weaver.wiki.store import WikiStore
 logger = logging.getLogger(__name__)
 
 
+def package_title(package: ReviewPackage, fallback: str) -> str:
+    """Legacy packages have no title; use their first nonblank draft line."""
+    return package.title.strip() or next(
+        (line.strip() for line in package.draft_body.splitlines() if line.strip()),
+        fallback,
+    )
+
+
 def observation[**P](operation: Callable[P, None]) -> Callable[P, None]:
     """Sidecar failures must not turn a committed approval into an apply failure."""
 
@@ -159,10 +167,8 @@ class PipelineJournal:
         if not item.capture_hosts or set(item.capture_hosts) == {"unknown"}:
             payload.pop("capture_hosts", None)
         if item.wiki_edit is None:
-            # Existing strict v2 clients continue to read capture observations.
+            # Omit the Wiki-only extension for ordinary capture observations.
             payload.pop("wiki_edit", None)
-            for thread in payload["threads"]:
-                thread.pop("content", None)
         data = json.dumps(payload, ensure_ascii=False).encode()
         if final.is_symlink() or not final.is_file() or final.read_bytes() != data:
             write_bytes_atomic(final, data)
@@ -222,7 +228,7 @@ class PipelinePublisher:
             package.source_id,
             package_id=package.package_id,
             package_revision=package.revision,
-            title=package.title or old.title,
+            title=package_title(package, old.title),
             location="user",
             status="review",
             stage_times=old.stage_times | package.stage_times,
@@ -286,7 +292,7 @@ class PipelinePublisher:
         values: dict[str, Any] = {
             "package_id": package.package_id,
             "package_revision": package.revision,
-            "title": package.title or current.title,
+            "title": package_title(package, current.title),
             "stage_times": current.stage_times | package.stage_times,
         }
         if review is not None and review[0] == "APPLIED":
@@ -306,7 +312,9 @@ class PipelinePublisher:
                 location="fabric",
                 status="rejected" if verdict.action == "reject" else "done",
                 threads=[
-                    PipelineThread(thread_id=t.thread_id, kind=t.kind)
+                    PipelineThread(
+                        thread_id=t.thread_id, kind=t.kind, content=t.content or ""
+                    )
                     for t in threads
                     if t.kind != "실행"
                 ],
