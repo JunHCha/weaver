@@ -48,6 +48,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.phone.LinkTarget
+import io.github.junhcha.weaver.phone.PhoneSnapshot
 import io.github.junhcha.weaver.phone.PhoneReadModel
 import io.github.junhcha.weaver.pipeline.*
 import io.github.junhcha.weaver.schema.*
@@ -106,6 +108,26 @@ fun HomeScreen(
     var tools by rememberSaveable { mutableStateOf(false) }
     var map by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var mapSubject by rememberSaveable { mutableStateOf<String?>(null) }
+    var mapSubjectKind by rememberSaveable { mutableStateOf<String?>(null) }
+    val mapDirectory by produceState<PhoneSnapshot?>(null, readModel, map) {
+        if (map) {
+            value = try { readModel.snapshot() } catch (_: Exception) {
+                currentCoroutineContext().ensureActive()
+                null
+            }
+        }
+    }
+    val subjectTarget: (String, String?) -> LinkTarget = { name, kind -> fabricSubjectTarget(mapDirectory, name, kind) }
+    val openMapSubject: (LinkTarget) -> Unit = { target ->
+        val name = when (target) { is LinkTarget.Person -> target.name; is LinkTarget.Area -> target.name; else -> null }
+        if (name != null) {
+            destinations.removeState("map-subject")
+            mapSubject = name
+            mapSubjectKind = if (target is LinkTarget.Area) "area" else "person"
+            map = false // Keep the selected node, focused item and panel scroll in the saved map destination.
+        }
+    }
     var replay by rememberSaveable { mutableIntStateOf(0) }
     var pendingCalls by rememberSaveable { mutableStateOf(false) }
     // Set during composition, before entering child screens that might fail.
@@ -116,7 +138,7 @@ fun HomeScreen(
     // back navigation never replays them. An inbox tap leaves settings and lands on the map's You node.
     LaunchedEffect(showPendingCalls, showInbox) {
         if (showPendingCalls) { tools = true; pendingCalls = true }
-        if (showInbox) { tools = false; map = true; selected = MapNode.USER.name }
+        if (showInbox) { tools = false; mapSubject = null; mapSubjectKind = null; map = true; selected = MapNode.USER.name }
         if (showPendingCalls || showInbox) onNotificationHandled()
     }
     val changes by InboxRuntime.changes.collectAsState()
@@ -171,20 +193,30 @@ fun HomeScreen(
                                 { tools = true },
                                 model::claimAnimation,
                                 onReview = { submitted = false; review = it },
+                                subjectTarget = subjectTarget,
+                                onOpenSubject = openMapSubject,
                             )
                         }
                     }
                 }
-                else -> destinations.SaveableStateProvider("phone") {
-                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                        PhoneShell(
-                            readModel,
-                            state.items.statusCounts(),
-                            { Instant.now() },
-                            { map = true },
-                            { tools = true },
-                            tagHost = tagHost,
-                        )
+                else -> destinations.SaveableStateProvider(if (mapSubject == null) "phone" else "map-subject") {
+                    val returnToMap: (() -> Unit)? = if (mapSubject != null) ({ mapSubject = null; mapSubjectKind = null; map = true }) else null
+                    if (returnToMap != null) BackHandler(onBack = returnToMap)
+                    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        if (returnToMap != null) TextButton(onClick = returnToMap, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("‹ Fabric 지도") }
+                        Box(Modifier.weight(1f)) {
+                            PhoneShell(
+                                readModel,
+                                state.items.statusCounts(),
+                                { Instant.now() },
+                                { mapSubject = null; mapSubjectKind = null; map = true },
+                                { tools = true },
+                                tagHost = tagHost,
+                                initialTab = if (mapSubject == null) PhoneTab.NOW else if (mapSubjectKind == "area") PhoneTab.AREAS else PhoneTab.PEOPLE,
+                                initialSubject = mapSubject,
+                                onSubjectBack = returnToMap,
+                            )
+                        }
                     }
                 }
             }
@@ -203,6 +235,8 @@ internal fun PipelineContent(
     onTools: () -> Unit,
     claimAnimation: (String) -> Boolean = { true },
     onReview: (String) -> Unit = {},
+    subjectTarget: (String, String?) -> LinkTarget = { _, _ -> LinkTarget.None },
+    onOpenSubject: (LinkTarget) -> Unit = {},
 ) {
     var bubble by remember { mutableStateOf<MapItem?>(null) }
     var focusedItem by rememberSaveable { mutableStateOf<String?>(null) }
@@ -277,6 +311,8 @@ internal fun PipelineContent(
                             Modifier.width(340.dp).fillMaxHeight(),
                             focusedItemId = focusedItem,
                             onReview = onReview,
+                            subjectTarget = subjectTarget,
+                            onOpenSubject = onOpenSubject,
                         )
                     }
                 }
@@ -296,6 +332,8 @@ internal fun PipelineContent(
                             Modifier.fillMaxWidth().fillMaxHeight(.84f),
                             focusedItemId = focusedItem,
                             onReview = onReview,
+                            subjectTarget = subjectTarget,
+                            onOpenSubject = onOpenSubject,
                         )
                     }
                 }
