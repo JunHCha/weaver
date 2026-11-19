@@ -41,6 +41,26 @@
         "rejected"
     ],
     "/$defs/PipelineStatus/type": "string",
+    "/$defs/PipelineTag/additionalProperties": false,
+    "/$defs/PipelineTag/properties/kind/anyOf": [
+        {
+            "enum": [
+                "person",
+                "organization",
+                "project",
+                "area",
+                "topic"
+            ],
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/PipelineTag/required": [
+        "name"
+    ],
+    "/$defs/PipelineTag/type": "object",
     "/$defs/PipelineThread/additionalProperties": false,
     "/$defs/PipelineThread/properties/content/type": "string",
     "/$defs/PipelineThread/properties/kind/enum": [
@@ -252,6 +272,14 @@
             "type": "null"
         }
     ],
+    "/properties/counterpart/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
     "/properties/digest/anyOf": [
         {
             "$ref": "#/$defs/PipelinePage"
@@ -278,6 +306,7 @@
         }
     ],
     "/properties/pages/type": "array",
+    "/properties/related_tags/type": "array",
     "/properties/schema_version/const": 2,
     "/properties/schema_version/type": "integer",
     "/properties/source_type/anyOf": [
@@ -293,6 +322,7 @@
         "$ref": "#/$defs/Timestamp"
     },
     "/properties/stage_times/type": "object",
+    "/properties/summary/type": "string",
     "/properties/threads/type": "array",
     "/properties/wiki_edit/anyOf": [
         {

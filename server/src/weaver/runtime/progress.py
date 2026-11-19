@@ -10,13 +10,14 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from weaver.archive import ArchiveStore
+from weaver.context import ContextDictionary, DictionarySnapshot
 from weaver.courier.atomic import write_bytes_atomic
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.loom.summary_review import Prepared
@@ -24,9 +25,11 @@ from weaver.loom.summary_state import SummaryState
 from weaver.schema import (
     PipelineItem,
     PipelinePage,
+    PipelineTag,
     PipelineThread,
     ReviewPackage,
     Source,
+    ThreadDraft,
     Verdict,
 )
 from weaver.wiki.store import WikiStore
@@ -38,8 +41,18 @@ def package_title(package: ReviewPackage, fallback: str) -> str:
     """Derive a bounded, readable legacy title from the current draft revision."""
     if package.title.strip():
         return package.title.strip()
+    title = body_line(package.draft_body)
+    return (
+        (title if len(title) <= 80 else title[:79].rstrip() + "…")
+        if title
+        else fallback
+    )
+
+
+def body_line(body: str) -> str:
+    """Use existing text, without generating new facts or retaining Markdown metadata."""
     at_start, in_frontmatter = True, False
-    for line in package.draft_body.splitlines():
+    for line in body.splitlines():
         if at_start:
             if not line.strip():
                 continue
@@ -53,8 +66,24 @@ def package_title(package: ReviewPackage, fallback: str) -> str:
             continue
         title = re.sub(r"^[\s#>*-]+", "", line).strip()
         if title:
-            return title if len(title) <= 80 else title[:79].rstrip() + "…"
-    return fallback
+            return title
+    return ""
+
+
+def card_tags(
+    threads: Sequence[ThreadDraft], dictionary: DictionarySnapshot | None
+) -> list[PipelineTag]:
+    tags: dict[str, PipelineTag] = {}
+    for thread in threads:
+        if thread.kind == "실행":
+            continue
+        for label in thread.tags:
+            entry = dictionary.resolve(label) if dictionary is not None else None
+            name = entry.name if entry else label
+            tags.setdefault(
+                name, PipelineTag(name=name, kind=entry.kind if entry else None)
+            )
+    return list(tags.values())
 
 
 def observation[**P](operation: Callable[P, None]) -> Callable[P, None]:
@@ -206,6 +235,8 @@ class PipelinePublisher:
         state: SummaryState,
         fabric: Fabric,
         proposals: Path,
+        *,
+        context: ContextDictionary | None = None,
     ) -> None:
         self.journal, self.archive, self.state, self.fabric, self.proposals = (
             journal,
@@ -214,6 +245,7 @@ class PipelinePublisher:
             fabric,
             proposals,
         )
+        self.context = context
         self.wiki: WikiStore | None = None
         self.vault: Path | None = None
 
@@ -245,6 +277,9 @@ class PipelinePublisher:
             package_id=package.package_id,
             package_revision=package.revision,
             title=package_title(package, old.title),
+            summary=body_line(package.draft_body),
+            counterpart=self.state.contact_name(package.package_id, package.source_id)
+            or source.hints.counterpart,
             location="user",
             status="review",
             stage_times=old.stage_times | package.stage_times,
@@ -309,6 +344,12 @@ class PipelinePublisher:
             "package_id": package.package_id,
             "package_revision": package.revision,
             "title": package_title(package, current.title),
+            "summary": body_line(package.draft_body),
+            "counterpart": self.state.contact_name(
+                package.package_id, package.source_id
+            )
+            or source.hints.counterpart,
+            "related_tags": [],
             "stage_times": current.stage_times | package.stage_times,
         }
         if review is not None and review[0] == "APPLIED":
@@ -327,6 +368,16 @@ class PipelinePublisher:
             values.update(
                 location="fabric",
                 status="rejected" if verdict.action == "reject" else "done",
+                summary=""
+                if verdict.action == "reject"
+                else body_line(
+                    (prepared.summary.body if prepared.summary is not None else "")
+                    or next((t.content for t in threads if t.content), "")
+                    or package.draft_body
+                ),
+                related_tags=card_tags(
+                    threads, self.context.snapshot() if self.context else None
+                ),
                 threads=[
                     PipelineThread(
                         thread_id=t.thread_id, kind=t.kind, content=t.content or ""
