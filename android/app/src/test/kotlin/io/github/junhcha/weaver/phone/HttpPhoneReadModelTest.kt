@@ -2,6 +2,7 @@ package io.github.junhcha.weaver.phone
 
 import io.github.junhcha.weaver.transport.ContractFixtures
 import io.github.junhcha.weaver.transport.FakeMobileServer
+import io.github.junhcha.weaver.transport.Fx
 import io.github.junhcha.weaver.transport.HttpsMobileApi
 import java.time.Instant
 import java.time.LocalDate
@@ -21,7 +22,7 @@ class HttpPhoneReadModelTest {
     private val server = FakeMobileServer()
     @After fun stop() { server.close(); assertEquals(emptyList<String>(), server.mismatches.toList()) }
 
-    private val pages = arrayOf("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
+    private val pages = Fx.threadPages.toTypedArray()
     private fun serveReads() { server.serve(*pages, "read.tags", "wiki.list") }
 
     private fun model(cache: java.io.File = tmp.newFile("snapshot.json").also { it.delete() }, live: Boolean = true,
@@ -31,7 +32,7 @@ class HttpPhoneReadModelTest {
     @Test fun readsThreadsTagsAndWikiAsTheServerComputedThem() = runBlocking {
         serveReads()
         val snapshot = model().snapshot()
-        assertEquals(10, snapshot.threads.size)
+        assertEquals(Fx.threadCount, snapshot.threads.size)
         assertEquals(listOf("GET /mobile/v1/read/threads", "GET /mobile/v1/read/threads", "GET /mobile/v1/read/threads",
             "GET /mobile/v1/read/tags", "GET /mobile/v1/read/wiki/pages"), server.requests)
         val t1 = snapshot.threads.first { it.id == "t1" }
@@ -80,12 +81,12 @@ class HttpPhoneReadModelTest {
         serveReads()
         val cache = tmp.newFile("snapshot.json").also { it.delete() }
         val online = model(cache)
-        assertEquals(10, online.snapshot().threads.size)
+        assertEquals(Fx.threadCount, online.snapshot().threads.size)
         assertNull(online.offlineSince)
         server.offline = true
         val offline = model(cache)
         val snapshot = offline.snapshot()
-        assertEquals("the cached copy is shown", 10, snapshot.threads.size)
+        assertEquals("the cached copy is shown", Fx.threadCount, snapshot.threads.size)
         assertEquals(2, snapshot.wikiPages.size)
         assertNotNull(offline.offlineSince)
     }
@@ -94,10 +95,10 @@ class HttpPhoneReadModelTest {
         serveReads()
         val cache = tmp.newFile("snapshot.json").also { it.delete() }
         model(cache).snapshot()
-        server.reset(*pages); server.serve(pages[0]) // the second page (cursor c4) is no longer served: 404
+        server.reset(*pages); server.serve(pages[0]) // the second page (the cursor after the first page) is no longer served: 404
         val partial = model(cache)
         val snapshot = partial.snapshot()
-        assertEquals("the last complete copy stays", 10, snapshot.threads.size)
+        assertEquals("the last complete copy stays", Fx.threadCount, snapshot.threads.size)
         assertNotNull(partial.offlineSince)
     }
 
@@ -110,7 +111,7 @@ class HttpPhoneReadModelTest {
         server.serve(pages[1], pages[2], "read.tags", "wiki.list")
         var problem: String? = "unset"
         val snapshot = model(onProblem = { problem = it }).snapshot()
-        assertEquals(9, snapshot.threads.size)
+        assertEquals(Fx.threadCount - 1, snapshot.threads.size)
         assertEquals("unknown_thread_kind:1", problem)
     }
 

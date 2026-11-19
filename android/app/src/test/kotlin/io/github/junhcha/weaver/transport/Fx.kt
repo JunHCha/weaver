@@ -32,4 +32,9 @@ object Fx {
     val conflictingResultText: String get() = ContractFixtures["actions.result_conflict"].requestBody.toString()
 
     fun json(name: String) = ContractFixtures[name].responseBody!!.jsonObject
+
+    /** The thread pages of the fixture chain, in order (each page's cursor is the previous page's `next_cursor`). */
+    val threadPages: List<String> = listOf("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
+    /** How many threads the whole chain holds, derived from the fixture so regenerating it never breaks the tests. */
+    val threadCount: Int get() = threadPages.sumOf { (json(it)["items"] as JsonArray).size }
 }

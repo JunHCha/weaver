@@ -169,8 +169,8 @@ class FakeMobileServer(
         val cases = scripted[key] ?: return fixtureError(x, "errors.not_found")
         val paged = cases.any { it.query.containsKey("cursor") }
         val case = if (paged) {
-            // Pages are answered by cursor; a cursor no case names yet gets the next scripted page (the fixtures' page chain
-            // is c4 -> c8 while the last page is recorded for c10), and a cursor past the last case is unknown: 404.
+            // Pages are answered by their recorded cursor (the fixtures form one chain); a cursor no case names gets the
+            // next scripted page, and one past the last case is unknown: 404.
             val exact = cases.indexOfFirst { it.query["cursor"] == query["cursor"] }
             val index = if (exact >= 0) exact else (lastPage[key] ?: -1) + 1
             if (index >= cases.size) return fixtureError(x, "errors.not_found")

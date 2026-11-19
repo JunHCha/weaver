@@ -299,12 +299,12 @@ class TransportIntegrationTest {
             items[0] = JsonObject(items[0].jsonObject.toMutableMap().also { it["kind"] = JsonPrimitive("미지") })
             JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
         }
-        server.serve("read.threads_next_page", "read.threads_last_page", "read.tags", "wiki.list")
+        server.serve(*Fx.threadPages.drop(1).toTypedArray(), "read.tags", "wiki.list")
         val snapshot = PhoneReadModels.forContext(context, debug = false).snapshot()
-        assertEquals(9, snapshot.threads.size)
+        assertEquals(Fx.threadCount - 1, snapshot.threads.size)
         assertEquals("unknown_thread_kind:1", TransportRuntime.settings(context).lastError)
-        server.reset("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
-        server.serve("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
+        server.reset(*Fx.threadPages.toTypedArray())
+        server.serve(*Fx.threadPages.toTypedArray())
         PhoneReadModels.forContext(context, debug = false).snapshot()
         assertNull("a clean read clears the note", TransportRuntime.settings(context).lastError)
     }
