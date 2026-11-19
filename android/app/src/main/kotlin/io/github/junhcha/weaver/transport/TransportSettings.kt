@@ -114,7 +114,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         val edit = prefs.edit().putString(URL, pairing.baseUrl).putString(SERVER_ID, pairing.serverId)
             .putString(DEVICE_ID, pairing.deviceId).putString(CA_SHA, pairing.caSha256)
             .putString(CA_DER, Base64.encodeToString(pairing.caDer, Base64.NO_WRAP)).putString(TOKEN, sealed)
-            .remove(NEEDS_REPAIR).remove(LAST_ERROR)
+            .remove(NEEDS_REPAIR).remove(LAST_ERROR).remove(READ_ERROR)
         // A different server starts with Syncthing routes until it announces its own.
         if (prefs.getString(SERVER_ID, null) != pairing.serverId) {
             TransportFeature.entries.forEach { edit.remove(routeKey(it)) }
@@ -126,7 +126,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     /** Forgets the server. Every feature falls back to Syncthing; queued items stay and move there (see TransportRuntime). */
     fun unpair() {
         val edit = prefs.edit().remove(URL).remove(SERVER_ID).remove(DEVICE_ID).remove(CA_SHA).remove(CA_DER).remove(TOKEN)
-            .remove(NEEDS_REPAIR).remove(LAST_ERROR)
+            .remove(NEEDS_REPAIR).remove(LAST_ERROR).remove(READ_ERROR)
         TransportFeature.entries.forEach { edit.remove(routeKey(it)) }
         ServerFeature.entries.forEach { edit.remove(featureKey(it)) }
         edit.commit()
@@ -169,10 +169,15 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         get() = prefs.getLong(LAST_SYNC, 0L)
         set(value) { prefs.edit().putLong(LAST_SYNC, value).apply() }
 
-    /** Stable code of the last failed run, or null after a success. Never a message or a path. */
+    /** Last read problem (prefixed `read:`), otherwise the last exchange error. Never a message or a path. */
     var lastError: String?
-        get() = prefs.getString(LAST_ERROR, null)
+        get() = lastReadError?.let { "read:$it" } ?: prefs.getString(LAST_ERROR, null)
         set(value) { prefs.edit().putString(LAST_ERROR, value).apply() }
+
+    /** Read failures survive successful Courier exchanges; only a successful read clears them. */
+    var lastReadError: String?
+        get() = prefs.getString(READ_ERROR, null)
+        set(value) { prefs.edit().putString(READ_ERROR, value).apply() }
 
     private fun routeKey(feature: TransportFeature) = "route.${feature.wire}"
     private fun featureKey(feature: ServerFeature) = "feature.${feature.wire}"
@@ -186,6 +191,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         private const val SERVER_ID = "server_id"
         private const val NEEDS_REPAIR = "needs_repair"
         private const val LAST_SYNC = "last_sync_at"
+        private const val READ_ERROR = "read_error"
         private const val LAST_ERROR = "last_error"
 
         fun of(context: Context): TransportSettings = TransportSettings(

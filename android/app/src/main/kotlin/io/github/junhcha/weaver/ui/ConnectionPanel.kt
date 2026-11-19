@@ -58,6 +58,11 @@ data class ConnectionUi(
 internal fun ConnectionUi.statusText(): String = when {
     !paired -> "연결 안 됨"
     needsRepair -> "재페어링 필요 · 서버가 이 폰의 토큰을 거절했어요"
+    lastError?.startsWith("read:") == true -> {
+        val code = lastError.removePrefix("read:")
+        val skipped = code.split(',').sumOf { it.substringAfter(':', "").toIntOrNull() ?: 0 }
+        "읽기 오류 · $code" + if (skipped > 0) " · ${skipped}개 건너뜀" else ""
+    }
     lastError == "unreachable" -> "연결 대기 · Mac이나 VPN에 닿지 않아요"
     lastError == "pin_mismatch" -> "인증서를 검증할 수 없어요 · 다시 페어링하세요"
     lastError == "peer_unverified" -> "서버가 이 폰을 허용하지 않아요 · Tailscale ACL을 확인하세요"

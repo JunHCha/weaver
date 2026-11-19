@@ -302,10 +302,47 @@ class TransportIntegrationTest {
         server.serve(*Fx.threadPages.drop(1).toTypedArray(), "read.tags", "wiki.list")
         val snapshot = PhoneReadModels.forContext(context, debug = false).snapshot()
         assertEquals(Fx.threadCount - 1, snapshot.threads.size)
-        assertEquals("unknown_thread_kind:1", TransportRuntime.settings(context).lastError)
+        assertEquals("read:unknown_thread_kind:1", TransportRuntime.settings(context).lastError)
         server.reset(*Fx.threadPages.toTypedArray())
         server.serve(*Fx.threadPages.toTypedArray())
         PhoneReadModels.forContext(context, debug = false).snapshot()
         assertNull("a clean read clears the note", TransportRuntime.settings(context).lastError)
+    }
+
+    @Test fun readsFromTheUiMoveBlockingNetworkAndWikiRequestsOffTheMainThread() = runBlocking {
+        pairFollowing()
+        server.serve(*Fx.threadPages.toTypedArray(), "read.tags", "wiki.list", "wiki.page")
+        val client = HttpsMobileApi(FakeMobileServer.pairing(server))
+        val guarded = object : MobileApi by client {
+            private fun requireWorker() {
+                if (Thread.currentThread() == android.os.Looper.getMainLooper().thread) {
+                    throw android.os.NetworkOnMainThreadException()
+                }
+            }
+            override fun threads(cursor: String?, limit: Int): Page { requireWorker(); return client.threads(cursor, limit) }
+            override fun tags(): List<kotlinx.serialization.json.JsonElement> { requireWorker(); return client.tags() }
+            override fun wikiPages(cursor: String?, limit: Int): Page { requireWorker(); return client.wikiPages(cursor, limit) }
+            override fun wikiPage(id: String, etag: String?): Versioned? { requireWorker(); return client.wikiPage(id, etag) }
+        }
+        assertEquals(android.os.Looper.getMainLooper().thread, Thread.currentThread())
+        val model = io.github.junhcha.weaver.phone.HttpPhoneReadModel({ guarded }, tmp.newFile("read-cache"))
+        val snapshot = model.snapshot()
+        assertEquals(Fx.threadCount, snapshot.threads.size)
+        assertEquals(2, snapshot.wikiPages.size)
+        assertTrue(model.wikiBody(snapshot.wikiPages.first { it.title == "방화벽 교체" })!!.contains("노후 장비"))
+    }
+
+    @Test fun successfulCourierExchangeCannotClearAReadFailure() = runBlocking {
+        pairFollowing()
+        server.serve(*Fx.threadPages.toTypedArray(), "read.tags", "wiki.list")
+        server.failWith("/read/tags", "errors.scope_denied")
+        PhoneReadModels.forContext(context, debug = false).snapshot()
+        val settings = TransportRuntime.settings(context)
+        assertEquals("read:scope_denied", settings.lastError)
+        TransportRuntime.finished(context, ExchangeSummary())
+        assertEquals("read:scope_denied", settings.lastError)
+        server.clearFailures()
+        PhoneReadModels.forContext(context, debug = false).snapshot()
+        assertNull(settings.lastError)
     }
 }

@@ -560,6 +560,98 @@ def wiki(tmp: Path) -> Recorder:
     return r
 
 
+def read_shapes(tmp: Path) -> Recorder:
+    """Synthetic complex values and Unicode; never copied from a user vault."""
+    import unicodedata
+
+    from weaver.context import ContextDictionary
+
+    from .helpers import thread
+
+    h = Harness(tmp, clock=lambda: NOW)
+    headers = h.pair("read")
+    area = unicodedata.normalize("NFD", "테스트 영역")
+    dictionary = ContextDictionary(h.config.state_root)
+    dictionary.add_entry(area, "area")
+    dictionary.add_entry("보관 프로젝트", "project")
+    dictionary.set_project_lifecycle("보관 프로젝트", archived=True)
+    schedule = {
+        "start": "2026-11-12T15:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    h.fabric.append(
+        [
+            thread(
+                "shape_schedule",
+                kind="일정",
+                field="schedule",
+                value=schedule,
+                tags=[area, "보관 프로젝트"],
+                content="합성 본문 " * 512,
+            ),
+            thread(
+                "shape_null",
+                kind="요청",
+                direction="받음",
+                content="합성 요청",
+                counterpart=None,
+                tags=[area],
+            ),
+            thread(
+                "shape_correction",
+                kind="태그정정",
+                content="합성 정정",
+                correction={"target": "shape_null", "add": [area], "remove": []},
+            ),
+            thread("shape_rejection", kind="거절", content=None),
+            thread(
+                "shape_execution",
+                kind="실행",
+                executes="shape_schedule",
+                content="합성 실행",
+                actor="system",
+                value={
+                    "action_id": "act_" + "a" * 32,
+                    "action": "calendar.register",
+                    "outcome": "completed",
+                    "external_id": "synthetic:1",
+                    "error": None,
+                },
+            ),
+        ]
+    )
+    store = WikiStore(
+        h.config.vault_root, h.config.state_root, wiki_root=h.config.wiki.folder
+    )
+    store.write(
+        "pages/합성 문서.md",
+        {
+            "kind": "project",
+            "area": area,
+            "status": "진행 중",
+            "deadline": None,
+            "assignees": ["가상 담당자"],
+            "schedule": schedule,
+            "next": None,
+        },
+        "합성 Wiki 본문\n" * 512,
+        None,
+    )
+    r = Recorder(
+        h,
+        "read_shapes",
+        "Synthetic nested values, nulls, long text, NFD and history kinds.",
+    )
+    r.call("threads", "GET", f"{BASE}/read/threads", headers=headers)
+    r.call("tags", "GET", f"{BASE}/read/tags", headers=headers)
+    r.call("dictionary", "GET", f"{BASE}/read/dictionary", headers=headers)
+    listing = r.call("wiki", "GET", f"{BASE}/read/wiki/pages", headers=headers)
+    page_id = listing.json()["items"][0]["id"]
+    r.call("wiki_body", "GET", f"{BASE}/read/wiki/pages/{page_id}", headers=headers)
+    return r
+
+
 def edits(tmp: Path) -> Recorder:
     h = Harness(tmp, clock=lambda: NOW)
     seed_edits(h)
@@ -702,6 +794,7 @@ GROUPS = [
     read,
     wiki,
     edits,
+    read_shapes,
 ]
 
 

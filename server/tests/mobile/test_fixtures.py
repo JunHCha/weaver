@@ -121,3 +121,30 @@ def test_thread_pages_form_one_cursor_chain(generated):
     seqs = [t["seq"] for c in chain for t in c["response"]["body"]["items"]]
     assert seqs == list(range(1, len(seqs) + 1))  # contiguous, no gap or repeat
     assert len({c["request"]["query"]["limit"] for c in chain}) == 1
+
+
+def test_complex_read_shapes_are_generated_by_the_server(generated):
+    import unicodedata
+
+    cases = {
+        c["name"]: c["response"]["body"] for c in generated["read_shapes"]["cases"]
+    }
+    threads = cases["threads"]["items"]
+    assert {t["kind"] for t in threads} == {"일정", "요청", "태그정정", "거절", "실행"}
+    schedule = next(t for t in threads if t["kind"] == "일정")
+    assert schedule["effective_schedule"]["start"] == "2026-11-12T06:00:00Z"
+    assert schedule["effective_schedule"]["end"] is None
+    assert len(schedule["content"]) > 2000
+    assert next(t for t in threads if t["kind"] == "거절")["content"] is None
+    front = cases["wiki"]["items"][0]["frontmatter"]
+    assert front["schedule"] == {
+        "start": "2026-11-12T15:00:00+09:00",
+        "end": None,
+        "timezone": "Asia/Seoul",
+    }
+    assert front["assignees"] == ["가상 담당자"]
+    assert "deadline" not in front
+    assert unicodedata.is_normalized("NFD", front["area"])
+    assert any(t["kind"] == "area" for t in cases["tags"]["items"])
+    assert any(e["archived"] for e in cases["dictionary"]["items"])
+    assert len(cases["wiki_body"]["body"]) > 2000

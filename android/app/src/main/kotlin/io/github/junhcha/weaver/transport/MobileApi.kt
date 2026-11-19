@@ -25,7 +25,10 @@ class ApiException(val status: Int, val code: String, val retryable: Boolean, va
     IOException("api_$status")
 
 /** The server could not be reached (VPN off, Mac asleep, DNS, timeout) or answered an unreadable body. */
-class UnreachableException(cause: Throwable? = null) : IOException("unreachable", cause)
+open class UnreachableException(cause: Throwable? = null) : IOException("unreachable", cause)
+
+/** The server responded, but its JSON did not match the transport envelope. */
+class InvalidResponseException : UnreachableException()
 
 /** The certificate did not match the fingerprint from pairing. Never retried, never downgraded to plain HTTP. */
 class PinMismatchException : IOException("pin_mismatch")
@@ -195,14 +198,14 @@ class HttpsMobileApi(
     }
 
     private fun obj(reply: Reply): JsonObject = try { json.parseToJsonElement(reply.body.decodeToString()).jsonObject }
-    catch (_: Exception) { throw UnreachableException() }
+    catch (_: Exception) { throw InvalidResponseException() }
 
     private fun items(reply: Reply): List<JsonElement> =
-        (obj(reply)["items"] as? JsonArray)?.toList() ?: throw UnreachableException()
+        (obj(reply)["items"] as? JsonArray)?.toList() ?: throw InvalidResponseException()
 
     private fun page(reply: Reply): Page {
         val root = obj(reply)
-        return Page((root["items"] as? JsonArray)?.toList() ?: throw UnreachableException(),
+        return Page((root["items"] as? JsonArray)?.toList() ?: throw InvalidResponseException(),
             (root["next_cursor"] as? JsonPrimitive)?.contentOrNull)
     }
 
