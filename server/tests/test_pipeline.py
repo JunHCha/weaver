@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 import pytest
 from server.tests.fake_responses import fixture_response
 
-from weaver.runtime.progress import PipelineJournal
-from weaver.schema import PipelineItem, Source, ThreadDraft
+from weaver.runtime.progress import PipelineJournal, package_title
+from weaver.schema import PipelineItem, ReviewPackage, Source, ThreadDraft
 
 
 def source():
@@ -378,10 +378,52 @@ def test_capture_card_legacy_title_and_thread_content_reach_phone_file(
     expected_content = "" if action == "reject" else llm.thread_content
     assert [t.content for t in item.threads] == [expected_content]
     assert json.loads(path.read_text())["threads"][0]["content"] == expected_content
+    # APPLIED reconciliation must not change the title, content, or revision.
+    journaled = progress.journal.get(package.source_id)
+    progress._reconcile(progress.archive.get(package.source_id))
+    assert progress.journal.get(package.source_id) == journaled
+    assert PipelineItem.model_validate_json(path.read_bytes()) == item
     path.unlink()
     restarted = build_runtime(config, plugins=Plugins(client=llm))
     restarted.publisher.progress.publish()
     assert PipelineItem.model_validate_json(path.read_bytes()) == item
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("# 제품팀 회의\n본문", "제품팀 회의"),
+        ("  > - ** 검색 시안\n본문", "검색 시안"),
+        ("\n---\ntitle: 비공개 메타\ntags: [검색]\n---\n## 회의 요약", "회의 요약"),
+        ("---\ntitle: 메타\n---\n > - * # \n\n# 유효한 내용", "유효한 내용"),
+        ("가" * 80, "가" * 80),
+        ("가" * 81, "가" * 79 + "…"),
+        ("  \n\t\n", "수확한 데이터"),
+        ("# > - *\n\t", "수확한 데이터"),
+        ("---\ntitle: 메타\n---\n", "수확한 데이터"),
+        ("---\ntitle: 닫히지 않은 메타", "수확한 데이터"),
+    ],
+)
+def test_legacy_package_title_skips_metadata_and_formats_readable_excerpt(
+    body, expected
+):
+    package = ReviewPackage(
+        schema_version=2,
+        package_id="legacy-package",
+        source_id=source().source_id,
+        revision=1,
+        draft_body=body if body.strip() else "기존 본문",
+        questions=[],
+        stage="검토",
+        stage_times={},
+    )
+    if not body.strip():
+        # The contract rejects blank drafts; the title helper also handles an
+        # unvalidated in-memory legacy value defensively without relaxing it.
+        with pytest.raises(ValueError):
+            ReviewPackage.model_validate(package.model_dump() | {"draft_body": body})
+        package = package.model_copy(update={"draft_body": body})
+    assert package_title(package, "수확한 데이터") == expected
 
 
 def test_observation_write_failure_does_not_repeat_paid_summary(tmp_path, monkeypatch):

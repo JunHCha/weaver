@@ -159,9 +159,10 @@ Git revisions, observed/ready timestamps, state (`settling`, `recorded`,
 `published`, `unchanged`) and changes (`field`, nullable string `before`/`after`).
 Only Wiki/Fabric locations and history are valid, history starts at Wiki, and
 stage_times is limited to the existing wire keys `반영` and `wiki갱신`.
-No capture or review milestones are synthesized. Thread summaries can include
-optional `content`; old capture projections omit it and `wiki_edit` to preserve
-strict v2 readers. See `examples/PipelineItem-wiki-edit.json`.
+No capture or review milestones are synthesized. Both capture and Wiki edit
+projections publish Thread `content`; older files may omit it, in which case
+readers use the existing empty-string default. Capture projections still omit
+the Wiki-only `wiki_edit` extension. See `examples/PipelineItem-wiki-edit.json`.
 
 `Thread` and `ThreadDraft` include optional `counterpart` (one nonempty canonical
 person/organization name or null), defaulting to null for older payloads. It is

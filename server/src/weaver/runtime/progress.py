@@ -8,6 +8,7 @@ Missing historic stage times remain missing rather than being invented.
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -34,11 +35,26 @@ logger = logging.getLogger(__name__)
 
 
 def package_title(package: ReviewPackage, fallback: str) -> str:
-    """Legacy packages have no title; use their first nonblank draft line."""
-    return package.title.strip() or next(
-        (line.strip() for line in package.draft_body.splitlines() if line.strip()),
-        fallback,
-    )
+    """Derive a bounded, readable legacy title from the current draft revision."""
+    if package.title.strip():
+        return package.title.strip()
+    at_start, in_frontmatter = True, False
+    for line in package.draft_body.splitlines():
+        if at_start:
+            if not line.strip():
+                continue
+            at_start = False
+            if line.strip() == "---":
+                in_frontmatter = True
+                continue
+        if in_frontmatter:
+            if line.strip() == "---":
+                in_frontmatter = False
+            continue
+        title = re.sub(r"^[\s#>*-]+", "", line).strip()
+        if title:
+            return title if len(title) <= 80 else title[:79].rstrip() + "…"
+    return fallback
 
 
 def observation[**P](operation: Callable[P, None]) -> Callable[P, None]:
