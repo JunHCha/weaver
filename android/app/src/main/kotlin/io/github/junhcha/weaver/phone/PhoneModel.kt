@@ -36,7 +36,7 @@ data class PhoneTag(val name: String, val kind: TagKind?)
 /**
  * Read-only view of a Fabric Thread. Mirrors web `Thread`: [presentation] is the server's explicit fact/history split,
  * the relation fields ([retracts], [resolves], [updates], [executes], [correctionTarget]) point at the target thread.
- * [deadline] is a calendar date (Asia/Seoul) and [scheduleAt] an instant; both are display values, not wire format.
+ * [deadline] is a calendar date in the server timezone and [scheduleAt] an instant; both are display values, not wire format.
  */
 data class PhoneThread(
     val id: String,
@@ -101,8 +101,8 @@ data class PhoneSnapshot(
 )
 
 /**
- * Everything the phone screens read. Read-only by design: writes (completing a request, adding a line) are out of
- * scope. The real implementation (Tailscale phone-only API, ADR-040 stage 2) plugs into this interface later.
+ * Everything the phone screens read. Request handling is exposed separately through [nowController], gated by
+ * server capability and the paired token's edit scope. General free-form fact creation is outside this interface.
  */
 interface PhoneReadModel {
     /** True for made-up data; the UI then shows a persistent "예시 데이터" badge. */
@@ -110,6 +110,8 @@ interface PhoneReadModel {
 
     /** Non-null when the last [snapshot] came from the on-disk copy because the server could not be reached. */
     val offlineSince: java.time.Instant? get() = null
+
+    val nowController: NowController? get() = null
 
     suspend fun snapshot(): PhoneSnapshot
 
@@ -132,6 +134,9 @@ object PhoneReadModels {
     /** Re-decided on every read, so pairing or unpairing in settings takes effect without restarting the screen. */
     fun forContext(context: android.content.Context, debug: Boolean): PhoneReadModel = object : PhoneReadModel {
         @Volatile private var current: PhoneReadModel = forBuild(debug)
+        private val nowStore by lazy { NowStore(context.applicationContext) }
+        override var nowController: NowController? = null
+            private set
         override val isExample: Boolean get() = current.isExample
         override val offlineSince: java.time.Instant? get() = current.offlineSince
         override suspend fun wikiBody(page: WikiPage): String? = current.wikiBody(page)
@@ -144,7 +149,13 @@ object PhoneReadModels {
                 onProblem = { code -> settings.lastReadError = code },
                 onWikiProblem = { code -> settings.lastWikiError = code },
             )
-            return current.snapshot()
+            if (!settings.paired) nowController = null
+            else if (nowController?.server != settings.serverId) nowController = NowController(
+                settings.serverId!!, { io.github.junhcha.weaver.transport.TransportRuntime.api(app) }, nowStore,
+            )
+            val result = current.snapshot()
+            nowController?.refresh()
+            return result
         }
     }
 }
