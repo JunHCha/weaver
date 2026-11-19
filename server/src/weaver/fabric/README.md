@@ -23,3 +23,12 @@ a `seq` bookmark and read `ThreadQuery(after_seq=...)`.
   retraction itself, tag corrections and rejections contribute nothing.
 - A database written by an older schema version is rejected with
   `SchemaVersionError`; data is not migrated.
+
+`amends` is a human decision changing one request's deadline (ISO calendar date).
+It names an existing request fact; schedules continue to use `updates` exclusively.
+The amendment is history in read views. Effective request deadlines start from the original value and fold active amendments
+in append seq order, independent of occurrence/recording clock skew; a retraction restores the preceding value.
+`FabricStore.edit(build)` validates and appends against one serialized snapshot.
+A private `fabric_meta` epoch identifies this database generation for view bookmarks;
+read-only opens of legacy v2 files do not migrate them. The next writable open
+installs the epoch without changing immutable Thread payloads.

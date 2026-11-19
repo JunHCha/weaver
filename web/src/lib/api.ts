@@ -33,6 +33,8 @@ export interface Thread {
   resolves: string | null;
   retracts: string | null;
   updates: string | null;
+  amends?: string | null;
+  effective_deadline?: string | null;
   blocked_by: string | null;
   executes: string | null;
   correction: { target: string; add: string[]; remove: string[] } | null;

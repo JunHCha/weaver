@@ -67,6 +67,8 @@ data class PhoneThread(
     val open: Boolean? = null,
     val retracted: Boolean? = null,
     val mentions: List<String>? = null,
+    val amends: String? = null,
+    val revision: Long = seq,
 )
 
 /** A 태그정정 row: [target] gets [add] tags and loses [remove] tags (web `correction`). */

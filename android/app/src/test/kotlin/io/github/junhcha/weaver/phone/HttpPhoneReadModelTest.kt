@@ -51,6 +51,25 @@ class HttpPhoneReadModelTest {
         assertEquals("the list has no body; it is fetched when the page opens", "", page.body)
     }
 
+    @Test fun requestAmendmentAndRevisionArePreservedFromTheServer() = runBlocking {
+        server.serveDerived(pages[0]) { body ->
+            val root = body.jsonObject
+            val items = (root["items"] as JsonArray).toMutableList()
+            items[0] = JsonObject(items[0].jsonObject.toMutableMap().also {
+                it["amends"] = JsonPrimitive("request-target")
+                it["revision"] = JsonPrimitive(99)
+                it["presentation"] = JsonPrimitive("history")
+            })
+            JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
+        }
+        server.serve(pages[1], pages[2], "read.tags", "wiki.list")
+        val changed = model().snapshot().threads.first()
+        assertEquals("request-target", changed.amends)
+        assertEquals(99L, changed.revision)
+        assertEquals("request-target", changed.historyTarget())
+        assertTrue(changed.isHistory())
+    }
+
     @Test fun threadValuesAreNotRecomputedFromHistoryRows() = runBlocking {
         serveReads()
         val snapshot = model().snapshot()

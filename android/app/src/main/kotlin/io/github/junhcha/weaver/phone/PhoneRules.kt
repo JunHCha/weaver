@@ -16,11 +16,11 @@ private val legacyHistoryKinds = setOf(ThreadKind.EXECUTION, ThreadKind.TAG_CORR
 fun PhoneThread.isHistory(): Boolean = when (presentation) {
     Presentation.HISTORY -> true
     Presentation.FACT -> false
-    null -> kind in legacyHistoryKinds || retracts != null || id.startsWith("wiki-field:") ||
+    null -> kind in legacyHistoryKinds || amends != null || retracts != null || id.startsWith("wiki-field:") ||
         (id.startsWith("wiki:") && field != null && content == "$field 변경")
 }
 
-fun PhoneThread.historyTarget(): String? = correction?.target ?: retracts ?: executes ?: resolves ?: updates
+fun PhoneThread.historyTarget(): String? = correction?.target ?: retracts ?: executes ?: resolves ?: amends ?: updates
 
 /** Web `relations()`: any retraction retracts; a resolve counts only if its row is neither a retraction nor retracted. */
 private class Relations(threads: List<PhoneThread>) {
@@ -61,12 +61,12 @@ fun PhoneSnapshot.effective(): PhoneSnapshot {
     val relation = Relations(threads)
     val byId = threads.associateBy { it.id }
     val changes = threads.filter { it.isHistory() && it.retracts == null && it.id !in relation.retracted }
-        .sortedWith(compareBy<PhoneThread> { it.recordedAt }.thenBy { it.seq })
+        .sortedWith(compareBy<PhoneThread> { it.occurredAt }.thenBy { it.recordedAt }.thenBy { it.seq })
     val folded = threads.associateBy({ it.id }, { it }).toMutableMap()
     for (change in changes) {
         val root = rootTarget(change, byId).takeIf { !it.isHistory() } ?: continue
         var value = folded.getValue(root.id)
-        if (change.updates != null && change.field == "deadline") value = value.copy(deadline = change.deadline)
+        if ((change.amends != null || change.updates != null) && change.field == "deadline") value = value.copy(deadline = change.deadline)
         if (change.updates != null && change.field == "schedule") value = value.copy(scheduleAt = change.scheduleAt)
         change.correction?.let { fix -> value = value.copy(tags = (value.tags + fix.add).distinct() - fix.remove.toSet()) }
         folded[root.id] = value

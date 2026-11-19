@@ -1,0 +1,247 @@
+{
+  "contract_version": 1,
+  "group": "request_handling",
+  "description": "Human completion/deadline/undo with target revisions and client-ID replay.",
+  "cases": [
+    {
+      "name": "deadline",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/requests/deadline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "request-deadline-01",
+          "thread_id": "request-now",
+          "expected_revision": 1,
+          "content": "기한을 변경했습니다",
+          "deadline": "2026-12-01"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "request_edit",
+          "target_id": "deadline",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "edit_thread_id": "phone-request:op_00000000000000000000000000000001",
+            "thread_id": "request-now",
+            "revision": 2,
+            "changed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "deadline_replay",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/requests/deadline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "request-deadline-01",
+          "thread_id": "request-now",
+          "expected_revision": 1,
+          "content": "기한을 변경했습니다",
+          "deadline": "2026-12-01"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "idempotent-replay": "true"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "request_edit",
+          "target_id": "deadline",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "edit_thread_id": "phone-request:op_00000000000000000000000000000001",
+            "thread_id": "request-now",
+            "revision": 2,
+            "changed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "amendment",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/threads/phone-request:op_00000000000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "thread_id": "phone-request:op_00000000000000000000000000000001",
+          "kind": "결정",
+          "content": "기한을 변경했습니다",
+          "occurred_at": "2026-11-19T00:00:00Z",
+          "recorded_at": "2026-11-19T00:00:00Z",
+          "tags": [],
+          "counterpart": null,
+          "field": "deadline",
+          "value": "2026-12-01",
+          "source_id": "src_00000000000000000000000001",
+          "actor": "human",
+          "direction": null,
+          "resolves": null,
+          "retracts": null,
+          "correction": null,
+          "blocked_by": null,
+          "executes": null,
+          "updates": null,
+          "amends": "request-now",
+          "seq": 2,
+          "revision": 2,
+          "presentation": "history",
+          "open": false,
+          "retracted": false,
+          "effective_deadline": null,
+          "effective_schedule": null,
+          "mentions": [],
+          "source": "알 수 없음"
+        }
+      }
+    },
+    {
+      "name": "complete",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/requests/complete",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "request-complete-01",
+          "thread_id": "request-now",
+          "expected_revision": 2,
+          "content": "완료했습니다"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000002",
+          "state": "applied",
+          "kind": "request_edit",
+          "target_id": "complete",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "edit_thread_id": "phone-request:op_00000000000000000000000000000002",
+            "thread_id": "request-now",
+            "revision": 3,
+            "changed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "undo",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/requests/undo",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "request-undo-0001",
+          "edit_thread_id": "phone-request:op_00000000000000000000000000000002",
+          "expected_revision": 3
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000003",
+          "state": "applied",
+          "kind": "request_edit",
+          "target_id": "undo",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "edit_thread_id": "phone-request:op_00000000000000000000000000000003",
+            "thread_id": "request-now",
+            "revision": 4,
+            "changed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "now_since_seq",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/now",
+        "query": {
+          "after_seq": "0",
+          "fabric_epoch": "fab_00000000000000000000000000000001"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "head": 4,
+          "fabric_epoch": "fab_00000000000000000000000000000001",
+          "timezone": "Asia/Seoul",
+          "generated_at": "2026-11-11T23:00:00Z",
+          "today": "2026-11-12",
+          "overdue": [],
+          "due_today": [],
+          "recent": [
+            {
+              "thread": {
+                "thread_id": "request-now",
+                "kind": "요청",
+                "content": "request-now",
+                "occurred_at": "2026-11-07T06:00:00Z",
+                "recorded_at": "2026-11-07T06:00:00Z",
+                "tags": [],
+                "counterpart": null,
+                "field": "deadline",
+                "value": "2026-11-01",
+                "source_id": "src_00000000000000000000000002",
+                "actor": "human",
+                "direction": "받음",
+                "resolves": null,
+                "retracts": null,
+                "correction": null,
+                "blocked_by": null,
+                "executes": null,
+                "updates": null,
+                "amends": null,
+                "seq": 1,
+                "revision": 4,
+                "presentation": "fact",
+                "open": true,
+                "retracted": false,
+                "effective_deadline": "2026-12-01",
+                "effective_schedule": null,
+                "mentions": [],
+                "source": "알 수 없음"
+              },
+              "due_kind": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

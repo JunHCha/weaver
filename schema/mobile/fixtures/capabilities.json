@@ -43,6 +43,7 @@
             "read": true,
             "dictionary": true,
             "edits": true,
+            "thread_handling": true,
             "alerts": false,
             "pipeline": false
           },

@@ -218,6 +218,48 @@
     {
       "if": {
         "properties": {
+          "amends": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "amends"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "const": "human"
+          },
+          "executes": {
+            "type": "null"
+          },
+          "field": {
+            "const": "deadline"
+          },
+          "kind": {
+            "const": "결정"
+          },
+          "resolves": {
+            "type": "null"
+          },
+          "retracts": {
+            "type": "null"
+          },
+          "updates": {
+            "type": "null"
+          },
+          "value": {
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "kind": {
             "not": {
               "const": "결정"
@@ -244,6 +286,17 @@
       ],
       "title": "Actor",
       "type": "string"
+    },
+    "amends": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "blocked_by": {
       "anyOf": [

@@ -267,7 +267,16 @@ def test_now_endpoint_returns_the_same_shape(tmp_path):
     seed(h)
     headers = h.pair("read")
     body = h.client.get(f"{READ}/now", headers=headers).json()
-    assert set(body) == {"today", "overdue", "due_today", "recent"}
+    assert set(body) == {
+        "today",
+        "overdue",
+        "due_today",
+        "recent",
+        "head",
+        "timezone",
+        "fabric_epoch",
+        "generated_at",
+    }
     assert [e["thread"]["thread_id"] for e in body["overdue"]] == ["t1"]
 
 

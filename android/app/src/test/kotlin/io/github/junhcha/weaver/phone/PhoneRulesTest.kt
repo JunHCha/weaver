@@ -137,8 +137,8 @@ class PhoneRulesTest {
         val now = kst("2026-11-18", "09:00")
         val request = thread("req", ThreadKind.REQUEST, at = kst("2026-11-01", "10:00")).copy(deadline = LocalDate.parse("2026-11-10"))
         // Listed out of order on purpose: the later change (11/18) must win over the earlier one (11/25).
-        val later = history("u2", "2026-11-12") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-11-18")) }
-        val earlier = history("u1", "2026-11-11") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-11-25")) }
+        val later = history("u2", "2026-11-12") { copy(amends = "req", field = "deadline", deadline = LocalDate.parse("2026-11-18")) }
+        val earlier = history("u1", "2026-11-11") { copy(amends = "req", field = "deadline", deadline = LocalDate.parse("2026-11-25")) }
         val view = nowView(snap(request, later, earlier), now)
         assertTrue(view.overdue.isEmpty())
         assertEquals(listOf("req"), view.today.map { it.thread.id })
@@ -149,7 +149,7 @@ class PhoneRulesTest {
     @Test fun retractedDeadlineChangeIsSkipped() {
         val now = kst("2026-11-18", "09:00")
         val request = thread("req", ThreadKind.REQUEST, at = kst("2026-11-01", "10:00")).copy(deadline = LocalDate.parse("2026-11-10"))
-        val change = history("u1", "2026-11-11") { copy(updates = "req", field = "deadline", deadline = LocalDate.parse("2026-12-31")) }
+        val change = history("u1", "2026-11-11") { copy(amends = "req", field = "deadline", deadline = LocalDate.parse("2026-12-31")) }
         val retraction = history("r1", "2026-11-12") { copy(retracts = "u1") }
         val view = nowView(snap(request, change, retraction), now)
         assertEquals(listOf("req"), view.overdue.map { it.thread.id }) // original 11/10 stands

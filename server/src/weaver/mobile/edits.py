@@ -64,7 +64,11 @@ class EditService:
         payload = body.model_dump(mode="json", exclude={"client_id"})
         digest = content_hash(canonical({"op": name, "body": payload}))
         operation, created = self.store.enqueue(
-            "tag_edit" if kind == "tags" else "dictionary_edit",
+            "request_edit"
+            if kind == "requests"
+            else "tag_edit"
+            if kind == "tags"
+            else "dictionary_edit",
             device_id,
             client_id,
             digest,

@@ -152,3 +152,14 @@ it("bounds cyclic and deep history traversal without recursive stack growth", ()
   expect(adjacentHistory(cyclic)).toHaveLength(2);
   expect(createThreadView(cyclic, tags).targets.size).toBe(2);
 });
+
+
+it("attaches request deadline amendments to their original fact", () => {
+  const request = row("request", 1, {kind: "요청", direction: "받음", effective_deadline: "2027-01-01"});
+  const change = row("change", 2, {kind: "결정", amends: "request", value: "2027-01-01"});
+  expect(isHistory(change)).toBe(true);
+  expect(threadHistory(request, [request, change]).map(t => t.thread_id)).toEqual(["change"]);
+  const view = createThreadView([request, change], tags);
+  expect(view.fields.get("request")).toEqual(["마감", "1/1"]);
+  expect(view.changes).toEqual([]);
+});

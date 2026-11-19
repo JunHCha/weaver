@@ -8,7 +8,7 @@ fail closed. IDs use canonical uppercase Crockford ULIDs (first digit at most 7)
 
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal, Protocol, Self, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -327,6 +327,30 @@ class ThreadDraft(Contract):
                 ]
                 + [
                     {
+                        "if": {
+                            "properties": {"amends": {"type": "string"}},
+                            "required": ["amends"],
+                        },
+                        "then": {
+                            "properties": {
+                                "kind": {"const": "결정"},
+                                "actor": {"const": "human"},
+                                "field": {"const": "deadline"},
+                                "value": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": r"^\d{4}-\d{2}-\d{2}$",
+                                },
+                                "resolves": {"type": "null"},
+                                "retracts": {"type": "null"},
+                                "updates": {"type": "null"},
+                                "executes": {"type": "null"},
+                            }
+                        },
+                    }
+                ]
+                + [
+                    {
                         "if": {"properties": {"kind": {"not": {"const": "결정"}}}},
                         "then": {"properties": {"resolves": {"type": "null"}}},
                     }
@@ -353,6 +377,7 @@ class ThreadDraft(Contract):
     blocked_by: NonEmpty | None = None
     executes: NonEmpty | None = None
     updates: NonEmpty | None = None
+    amends: NonEmpty | None = None
 
     @field_validator("content", "counterpart")
     @classmethod
@@ -374,6 +399,17 @@ class ThreadDraft(Contract):
             raise ValueError("direction is required exactly for requests")
         if (self.correction is not None) != (self.kind == "태그정정"):
             raise ValueError("correction is required exactly for tag corrections")
+        if self.amends is not None:
+            if (
+                self.kind != "결정"
+                or self.actor != "human"
+                or self.field != "deadline"
+                or not isinstance(self.value, str)
+                or any((self.resolves, self.retracts, self.updates, self.executes))
+            ):
+                raise ValueError("amends requires a human deadline decision")
+            if date.fromisoformat(self.value).isoformat() != self.value:
+                raise ValueError("amends requires an ISO calendar date")
         if self.resolves is not None and self.kind != "결정":
             raise ValueError("only decisions can resolve requests")
         if (self.content is None) != (self.kind == "거절"):

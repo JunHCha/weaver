@@ -33,6 +33,7 @@ export const refs = [
   "resolves",
   "retracts",
   "updates",
+  "amends",
   "blocked_by",
   "executes",
 ] as const;
@@ -40,6 +41,7 @@ export const refLabels = {
   resolves: "해결한 요청",
   retracts: "철회한 Thread",
   updates: "변경한 일정",
+  amends: "기한을 변경한 요청",
   blocked_by: "선행 요청",
   executes: "실행 대상",
 };
@@ -63,6 +65,8 @@ export function objectValue(
     : null;
 }
 export function fieldText(t: Thread): [string, string] | null {
+  if (t.kind === "요청" && t.effective_deadline)
+    return ["마감", dayShort(t.effective_deadline)];
   if (!t.field || t.value === null) return null;
   const v = objectValue(t.value);
   if (t.field === "deadline" && typeof t.value === "string")
@@ -112,6 +116,7 @@ export const incomingRefLabels = {
   resolves: "이 요청을 해결함",
   retracts: "이 Thread를 철회함",
   updates: "이 일정을 변경함",
+  amends: "이 요청의 기한을 변경함",
   blocked_by: "이 요청을 기다림",
   executes: "이 Thread를 실행함",
 };

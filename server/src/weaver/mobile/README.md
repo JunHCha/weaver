@@ -243,3 +243,38 @@ Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alert
 폰은 프로세스의 기본 예외 핸들러에서 앱 내부 `noBackupFilesDir/crashes`에 최근 5건을 보관한 뒤 원래
 핸들러에 위임한다. 다음 프로세스 시작 때 페어링되어 있으면 네트워크 작업으로 전송하고 저장 확인 뒤 지운다.
 수집·설정의 진단 카드에서도 마지막 요약을 보고 다시 보낼 수 있다.
+
+### 지금의 요청 처리 (ADR-043)
+
+`features.thread_handling=true`인 서버는 `edit` scope로 다음을 지원한다.
+공통 `client_id`와 `expected_revision`(양의 정수)은 필수이며, revision은 전체
+head가 아닌 해당 요청의 업무 revision이다. 누락 대상 404, 요청 아닌 대상 422,
+철회·해결·revision 충돌 409를 반환한다. 실패한 키도 같은 거절을 재생한다.
+
+- `POST /edits/requests/complete`: `{client_id, thread_id, expected_revision, content}`.
+  사람이 확인한 문장을 human 결정 Thread의 `resolves`로 기록한다.
+- `POST /edits/requests/deadline`: 위 입력 + `deadline:"YYYY-MM-DD"`.
+  human 결정의 `field=deadline`, `amends=<요청 id>`를 기록한다. 같은 기한은 no-op이다.
+- `POST /edits/requests/undo`: `{client_id, edit_thread_id, expected_revision}`.
+  이 기기의 요청 처리로 만든 완료/기한 변경만 철회한다. 철회되지 않은 새 기한 변경이 뒤따랐으면 거절한다.
+  되돌리기 결정의 본문은 서버 템플릿이며, 직접 누른 행위 주체는 사람이므로 actor=human이다.
+- 응답은 기존 operation + `result:{edit_thread_id, thread_id, revision, changed}`.
+  no-op이면 edit_thread_id는 null이다. 응답 유실 시 같은 본문·키로 다시 POST한다.
+  결정적 ID와 operation.created_at을 사용해 Fabric append 직후 장애에도 중복하지 않는다.
+  검증과 append는 같은 Fabric 쓰기 트랜잭션이며, 결과 journal 커밋 실패 시 기존 행으로 복구한다.
+
+모든 MobileThread에 `revision`이 추가된다. 태그 정정·실행 결과는 업무 revision을
+올리지 않으며, 요청의 완료·기한 변경·그 철회는 올린다. `/read/now?after_seq=N&fabric_epoch=E`는
+날짜와 관계없이 N 이후의 사실과 N 이후 업무 revision이 바뀐 요청을 recent에
+표시한다. 해결·철회된 요청도 open/retracted 값과 함께 반환한다. overdue/due_today는 읽음 여부와 무관하며 섹션 간 중복은 제외한다.
+파라미터 생략 시 기존 어제 0시 recorded_at 창을 유지한다.
+응답에 `head`, `fabric_epoch`, `timezone`, `generated_at`이 추가된다.
+`after_seq` 지정 시 `fabric_epoch`는 필수이며 누락은 422 `fabric_epoch_required`,
+불일치는 head 범위보다 먼저 검사해 409 `epoch_mismatch`다. 처음에는 파라미터 없이
+조회해 세대를 얻고 그 세대와 seq=0으로 다시 조회한다. 같은 세대에서
+`after_seq > head`는 409 `checkpoint_out_of_range`다. 폰은 서버/Fabric 세대 변경 시
+책갈피를 0으로 초기화해 다시 조회한다. 응답 전체의 수신·파싱 완료 전에는 head를
+확인 처리하지 않는다. 사람의 확인 seq는 fetch cursor와 Action cursor와 별개다.
+
+미루기·숨김·사람의 확인 seq는 기기 로컬 보기 상태이며 서버나 Fabric에 쓰지 않는다.
+외부 할 일/리마인더 Action은 후속 범위다. 서버 계약은 Android UI보다 먼저 배포할 수 있다.

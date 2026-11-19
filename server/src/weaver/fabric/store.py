@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -109,6 +110,13 @@ class FabricStore:
                 db.execute("PRAGMA user_version=2")
             elif version != 2:
                 raise SchemaVersionError("unsupported Fabric database version")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS fabric_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO fabric_meta VALUES ('epoch', ?)",
+                ("fab_" + uuid.uuid4().hex,),
+            )
             db.commit()
         self.path.chmod(0o600)
 
@@ -153,6 +161,43 @@ class FabricStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             result = self._append_in(db, threads)
+            db.commit()
+            return result
+
+    def _epoch_in(self, db: sqlite3.Connection) -> str:
+        if not db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='fabric_meta'"
+        ).fetchone():
+            # Read old databases without migrating on a GET; their next writer
+            # installs a durable epoch, resetting old view bookmarks once.
+            info = self.path.stat()
+            return (
+                f"legacy-{info.st_dev}-{info.st_ino}-{getattr(info, 'st_birthtime', 0)}"
+            )
+        return str(
+            db.execute("SELECT value FROM fabric_meta WHERE key='epoch'").fetchone()[0]
+        )
+
+    def epoch(self) -> str:
+        """A durable generation ID, replaced together with the Fabric database."""
+        with self._connect() as db:
+            return self._epoch_in(db)
+
+    def read_snapshot(self) -> tuple[list[Thread], str]:
+        """Read the full log and its generation from one SQLite snapshot."""
+        with self._connect() as db:
+            db.execute("BEGIN")
+            return self._entries_in(
+                db, ThreadQuery(include_executions=True)
+            ), self._epoch_in(db)
+
+    def edit(self, build: Callable[[list[Thread]], list[ThreadDraft]]) -> list[Thread]:
+        """Validate against the entire log and append under the same write lock."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = self._append_in(
+                db, build(self._entries_in(db, ThreadQuery(include_executions=True)))
+            )
             db.commit()
             return result
 
@@ -235,6 +280,7 @@ class FabricStore:
                 ("correction", item.correction.target if item.correction else None),
                 ("executes", item.executes),
                 ("updates", item.updates),
+                ("amends", item.amends),
             ]
             for field, target_id in refs:
                 if target_id is None:
@@ -257,6 +303,10 @@ class FabricStore:
                     target.kind == "거절" or target.retracts is not None
                 ):
                     raise InvalidReference("retracts: invalid target")
+                if field == "amends" and (
+                    target.kind != "요청" or target.retracts is not None
+                ):
+                    raise InvalidReference("amends: target is not a request fact")
                 if field == "updates" and target.kind != "일정":
                     raise InvalidReference("updates: target is not a schedule")
                 if field == "executes" and target.kind in ("실행", "태그정정", "거절"):

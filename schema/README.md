@@ -172,3 +172,10 @@ keys, and the phone map does not need this field. The server validates
 dictionary ownership and kinds at extraction time; standalone
 JSON Schema validates only the scalar shape. Web-only `presentation` is derived
 and does not belong to the persisted Thread schema.
+
+`ThreadDraft.amends` / `Thread.amends` is optional (default null): a human
+`결정` with `field="deadline"` and an ISO date names the request whose deadline
+changed. It cannot combine with resolves/retracts/updates/executes. Store-level
+validation checks the request target and reference cycles. `updates` stays
+schedule-only. Read views classify amends as history and expose effective
+request deadlines without rewriting the original value.

@@ -20,7 +20,8 @@ from pydantic import BaseModel, JsonValue
 from weaver.archive import ArchiveStore, SourceNotFound
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, DictionarySnapshot
-from weaver.fabric import FabricStore, ThreadQuery
+from weaver.fabric import FabricStore
+from weaver.fabric.requests import request_values
 from weaver.fabric.state import InvalidSetOperation, project
 from weaver.schema import Thread
 from weaver.web.editing import canonical_threads, dictionary_entries
@@ -36,6 +37,7 @@ MAX_PAGE = 500
 
 
 class MobileThread(Thread):
+    revision: int
     presentation: Presentation
     open: bool
     retracted: bool
@@ -63,6 +65,10 @@ class NowEntry(BaseModel):
 
 
 class NowView(BaseModel):
+    head: int
+    fabric_epoch: str
+    timezone: str
+    generated_at: datetime
     today: str
     overdue: list[NowEntry]
     due_today: list[NowEntry]
@@ -95,6 +101,7 @@ def history_target(t: Thread) -> str | None:
         or t.retracts
         or t.executes
         or t.resolves
+        or t.amends
         or t.updates
     )
 
@@ -141,6 +148,7 @@ def decorate(
 ) -> list[MobileThread]:
     """Attach presentation, open state, effective values, mentions and source."""
     relation = Relations(rows)
+    request_deadlines, revisions = request_values(rows)
     by_id = {t.thread_id: t for t in rows}
     deadline: dict[str, str | None] = {}
     schedule: dict[str, dict[str, JsonValue] | None] = {}
@@ -160,7 +168,7 @@ def decorate(
             and t.field in ("deadline", "schedule")
             and t.value is not None
         ),
-        key=lambda t: (t.recorded_at, t.seq),
+        key=lambda t: (t.occurred_at, t.recorded_at, t.seq),
     )
     for change in changes:
         root = _root(change, by_id)
@@ -173,10 +181,13 @@ def decorate(
     return [
         MobileThread(
             **t.model_dump(),
+            revision=revisions.get(t.thread_id, t.seq),
             presentation=presentation(t),
             open=relation.is_open(t),
             retracted=t.thread_id in relation.retracted,
-            effective_deadline=deadline.get(t.thread_id),
+            effective_deadline=request_deadlines.get(
+                t.thread_id, deadline.get(t.thread_id)
+            ),
             effective_schedule=schedule.get(t.thread_id),
             mentions=[tag for tag in t.tags if tag in parties and tag != t.counterpart],
             source=source_of(t.source_id),
@@ -203,6 +214,7 @@ class Snapshot:
     dictionary: DictionarySnapshot | None
     kinds: dict[str, str | None]
     head: int
+    fabric_epoch: str
 
 
 _SOURCE_LABELS = {
@@ -237,8 +249,9 @@ class ReadModel:
                 try:
                     info = os.stat(self.config.state_root / (name + suffix))
                     key.append((info.st_mtime_ns, info.st_size))
+                    key.append((info.st_dev, info.st_ino))
                 except OSError:
-                    key.append((0, 0))
+                    key.extend(((0, 0), (0, 0)))
         return tuple(key)
 
     def _label(self, source_id: str) -> str:
@@ -270,12 +283,10 @@ class ReadModel:
             if cached is not None and cached.key == key:
                 return cached
             fabric = self.config.state_root / "fabric.sqlite3"
-            raw = (
-                FabricStore.open_readonly(fabric).entries(
-                    ThreadQuery(include_executions=True)
-                )
+            raw, fabric_epoch = (
+                FabricStore.open_readonly(fabric).read_snapshot()
                 if fabric.is_file()
-                else []
+                else ([], "empty")
             )
             rows = canonical_threads(self.config, raw)
             context = self.config.state_root / "context.sqlite3"
@@ -300,6 +311,7 @@ class ReadModel:
                 dictionary,
                 kinds,
                 max((t.seq for t in rows), default=0),
+                fabric_epoch,
             )
             self._snapshot_cache = snapshot
             return snapshot
@@ -388,14 +400,25 @@ class ReadModel:
 
     # ---- 지금 --------------------------------------------------------------------
 
-    def now(self, at: datetime | None = None) -> NowView:
+    def now(
+        self,
+        at: datetime | None = None,
+        after_seq: int | None = None,
+        fabric_epoch: str | None = None,
+    ) -> NowView:
         zone = self.config.time.zone
         moment = (at or self.clock()).astimezone(zone)
         today = moment.date()
+        snapshot = self.snapshot()
+        if after_seq is not None:
+            if fabric_epoch is None:
+                raise ApiError(422, "fabric_epoch_required")
+            if fabric_epoch != snapshot.fabric_epoch:
+                raise ApiError(409, "epoch_mismatch")
+            if after_seq < 0 or after_seq > snapshot.head:
+                raise ApiError(409, "checkpoint_out_of_range")
         facts = [
-            t
-            for t in self.snapshot().threads
-            if t.presentation == "fact" and not t.retracted
+            t for t in snapshot.threads if t.presentation == "fact" and not t.retracted
         ]
 
         def schedule_start(t: MobileThread) -> datetime | None:
@@ -442,16 +465,37 @@ class ReadModel:
             e.thread.thread_id for e in due_today
         }
         since = datetime.combine(today - timedelta(days=1), time.min, zone)
+        # Changed requests must also convey closure/withdrawal since the user's
+        # bookmark. Keep the normal due sections restricted to active facts.
+        recent_candidates = (
+            facts
+            if after_seq is None
+            else [
+                t
+                for t in snapshot.threads
+                if t.presentation == "fact"
+                and (not t.retracted or (t.kind == "요청" and t.revision > after_seq))
+            ]
+        )
         recent = sorted(
             (
                 t
-                for t in facts
-                if t.thread_id not in listed and t.recorded_at.astimezone(zone) >= since
+                for t in recent_candidates
+                if t.thread_id not in listed
+                and (
+                    (t.seq > after_seq or (t.kind == "요청" and t.revision > after_seq))
+                    if after_seq is not None
+                    else t.recorded_at.astimezone(zone) >= since
+                )
             ),
             key=lambda t: (t.recorded_at, t.seq),
             reverse=True,
         )
         return NowView(
+            head=snapshot.head,
+            fabric_epoch=snapshot.fabric_epoch,
+            timezone=str(zone),
+            generated_at=moment,
             today=today.isoformat(),
             overdue=[NowEntry(thread=t, due_kind="deadline") for t in overdue],
             due_today=due_today,
