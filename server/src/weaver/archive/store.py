@@ -230,6 +230,24 @@ class ArchiveStore:
             for manifest, receipt, host in rows
         ]
 
+    def stored_capture(self, capture_id: str) -> tuple[Manifest, Receipt] | None:
+        """The original manifest and receipt of a durably stored capture."""
+        with self._read() as conn:
+            row = conn.execute(
+                "SELECT manifest_json, receipt_json FROM captures WHERE capture_id = ?",
+                (capture_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Manifest.model_validate_json(row[0]), Receipt.model_validate_json(row[1])
+
+    def has_body(self, sha256: str) -> bool:
+        with self._read() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sources WHERE sha256 = ?", (sha256,)
+            ).fetchone()
+        return row is not None
+
     def source_for_capture(self, capture_id: str) -> str | None:
         with self._read() as conn:
             row = conn.execute(

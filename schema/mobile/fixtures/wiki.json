@@ -1,0 +1,116 @@
+{
+  "contract_version": 1,
+  "group": "wiki",
+  "description": "Wiki pages: the list has no body; open a page to get and cache it.",
+  "cases": [
+    {
+      "name": "list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/wiki/pages",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "ab279fb0c227d5feeb582f1f",
+              "title": "네트워크",
+              "kind": "area",
+              "area": null,
+              "updated_at": "2026-11-19T00:00:00Z",
+              "frontmatter": {},
+              "sha256": "d75dfcdad52310980ce7c330a507863f573d96699dcc83e0ea4f32476608f676"
+            },
+            {
+              "id": "1d310dd903852cdcf87ba071",
+              "title": "방화벽 교체",
+              "kind": "project",
+              "area": "네트워크",
+              "updated_at": "2026-11-19T00:00:00Z",
+              "frontmatter": {
+                "area": "네트워크",
+                "status": "진행 중",
+                "deadline": "2026-11-30",
+                "assignees": [
+                  "나"
+                ]
+              },
+              "sha256": "f85c2e500b2e4c35029bc296c4e1cad4b8f54a40f5b39db584a9b9449d60e57c"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "page",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/wiki/pages/1d310dd903852cdcf87ba071",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "etag": "\"f85c2e500b2e4c35029bc296c4e1cad4b8f54a40f5b39db584a9b9449d60e57c\""
+        },
+        "body": {
+          "id": "1d310dd903852cdcf87ba071",
+          "title": "방화벽 교체",
+          "kind": "project",
+          "area": "네트워크",
+          "updated_at": "2026-11-19T00:00:00Z",
+          "frontmatter": {
+            "area": "네트워크",
+            "status": "진행 중",
+            "deadline": "2026-11-30",
+            "assignees": [
+              "나"
+            ]
+          },
+          "sha256": "f85c2e500b2e4c35029bc296c4e1cad4b8f54a40f5b39db584a9b9449d60e57c",
+          "body": "노후 장비를 교체한다.\n\n## 진행\n- 룰 3건\n\n## 내 메모\n"
+        }
+      }
+    },
+    {
+      "name": "page_not_modified",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/wiki/pages/1d310dd903852cdcf87ba071",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "etag": "\"f85c2e500b2e4c35029bc296c4e1cad4b8f54a40f5b39db584a9b9449d60e57c\""
+        }
+      }
+    },
+    {
+      "name": "page_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/wiki/pages/missing",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "page_not_found",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

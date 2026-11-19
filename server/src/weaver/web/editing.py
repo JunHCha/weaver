@@ -28,6 +28,14 @@ TagKind = Literal["project", "area", "person", "organization", "topic"]
 Name = Annotated[str, Field(min_length=1, max_length=256)]
 
 
+class EditRejected(HTTPException):
+    """A refused edit with a stable code, shared by the web and mobile APIs."""
+
+    def __init__(self, status_code: int, code: str, detail: str) -> None:
+        super().__init__(status_code, detail)
+        self.code = code
+
+
 class EditRoute(APIRoute):
     """Bound write bodies before parsing and translate only edit validation failures."""
 
@@ -162,6 +170,211 @@ def canonical_threads(config: ServerConfig, rows: list[Thread]) -> list[Thread]:
     ]
 
 
+def apply_tags(
+    config: ServerConfig,
+    ids: list[str],
+    edit: TagEdit,
+    *,
+    new_id: Callable[[str], str] | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Correct tags of fact Threads; history Threads are rejected.
+
+    ``new_id`` (target thread ID to correction ID) and ``now`` make the written
+    corrections reproducible, so a mobile retry replays the same rows.
+    """
+    skipped: list[dict[str, str]] = []
+    if any(not name.strip() for name in edit.add + edit.remove):
+        raise EditRejected(422, "empty_tag", "태그 이름은 비어 있을 수 없습니다.")
+
+    def build(rows: list[Thread], marked: set[str]) -> list[ThreadDraft]:
+        by_id = {row.thread_id: row for row in rows}
+        targets = []
+        for id_ in dict.fromkeys(ids):
+            target = by_id.get(id_)
+            if target is None:
+                raise EditRejected(
+                    404, "thread_not_found", f"Thread를 찾을 수 없습니다: {id_}"
+                )
+            if presentation(target) == "history":
+                raise EditRejected(
+                    422,
+                    "history_thread_readonly",
+                    f"이력 Thread의 태그는 편집할 수 없습니다: {id_}",
+                )
+            targets.append(target)
+        snapshot = dictionary_snapshot(config)
+
+        def resolve(name: str) -> str:
+            entry = snapshot.resolve(name)
+            return entry.name if entry else unicodedata.normalize("NFC", name)
+
+        if set(map(resolve, edit.add)) & set(map(resolve, edit.remove)):
+            raise EditRejected(
+                422,
+                "tag_add_remove_conflict",
+                "같은 태그를 동시에 추가하고 삭제할 수 없습니다.",
+            )
+        needed = {
+            name
+            for name in edit.add
+            if any(
+                resolve(name) not in {resolve(tag) for tag in target.tags}
+                for target in targets
+            )
+        }
+        for name in edit.add:
+            existing = snapshot.resolve(name)
+            if name in edit.kinds and existing:
+                raise EditRejected(
+                    422,
+                    "entry_exists",
+                    f"이미 등록된 항목: {existing.name} ({existing.kind}) — 사전을 새로 불러오세요.",
+                )
+            if name in needed and existing is None and name not in edit.kinds:
+                raise EditRejected(
+                    422, "kind_required", f"새 태그에는 종류가 필요합니다: {name}"
+                )
+        missing = [name for name in needed if snapshot.resolve(name) is None]
+        if missing:
+            with writable_dictionary(config) as dictionary:
+                for name in missing:
+                    dictionary.add_entry(
+                        name, edit.kinds[name], human_edited=True, require_new=True
+                    )
+        snapshot = dictionary_snapshot(config)
+        drafts = []
+        for target in targets:
+            effective = {resolve(tag) for tag in target.tags}
+            additions = list(
+                dict.fromkeys(
+                    resolve(name) for name in edit.add if resolve(name) not in effective
+                )
+            )
+            removing = set(map(resolve, edit.remove)) & effective
+            removals = [name for name in target.tags if resolve(name) in removing]
+            if not additions and not removals:
+                skipped.append(
+                    {
+                        "thread_id": target.thread_id,
+                        "reason": "이미 같은 태그 상태입니다.",
+                    }
+                )
+                continue
+            stamp = now or datetime.now(UTC)
+            drafts.append(
+                ThreadDraft(
+                    thread_id=new_id(target.thread_id)
+                    if new_id
+                    else "thr_" + uuid4().hex,
+                    kind="태그정정",
+                    content="웹에서 태그 정정",
+                    occurred_at=stamp,
+                    recorded_at=stamp,
+                    tags=[],
+                    field=None,
+                    value=None,
+                    source_id=target.source_id,
+                    actor="human",
+                    direction=None,
+                    resolves=None,
+                    retracts=None,
+                    correction=TagCorrection(
+                        target=target.thread_id, add=additions, remove=removals
+                    ),
+                )
+            )
+        return drafts
+
+    corrections = FabricStore.from_config(config).web_edit(build)
+    return {
+        "corrections": corrections,
+        "changed": len(corrections),
+        "skipped": len(skipped),
+        "skipped_threads": skipped,
+    }
+
+
+def edit_entry(config: ServerConfig, edit: EntryEdit) -> dict[str, str]:
+    entry = dictionary_snapshot(config).resolve(edit.entry)
+    if entry is None:
+        raise EditRejected(404, "entry_not_found", "사전 항목을 찾을 수 없습니다.")
+    # Keep each request to one public, atomic dictionary transaction.
+    if (edit.name is None) == (edit.kind is None):
+        raise EditRejected(
+            422, "one_change_required", "이름 또는 종류 중 하나만 변경하세요."
+        )
+    with writable_dictionary(config) as dictionary:
+        if edit.name is not None:
+            entry = dictionary.rename(edit.entry, edit.name)
+        elif edit.kind is not None:
+            entry = dictionary.set_kind(edit.entry, edit.kind)
+    return {"name": entry.name}
+
+
+def add_alias(config: ServerConfig, edit: AliasEdit) -> dict[str, str]:
+    with writable_dictionary(config) as dictionary:
+        return {"name": dictionary.add_alias(edit.entry, edit.alias).name}
+
+
+def remove_alias(config: ServerConfig, edit: AliasEdit) -> dict[str, str]:
+    with writable_dictionary(config) as dictionary:
+        return {"name": dictionary.remove_alias(edit.entry, edit.alias).name}
+
+
+def merge(config: ServerConfig, edit: MergeEdit) -> dict[str, str]:
+    with writable_dictionary(config) as dictionary:
+        snapshot = dictionary.snapshot()
+        source, target = snapshot.resolve(edit.entry), snapshot.resolve(edit.target)
+        if source and target and source.kind != target.kind and edit.kind is None:
+            raise EditRejected(
+                422,
+                "kind_choice_required",
+                "종류가 다른 항목은 합친 뒤의 종류를 직접 선택하세요.",
+            )
+        return {"name": dictionary.merge(edit.entry, edit.target, kind=edit.kind).name}
+
+
+def dictionary_entries(config: ServerConfig) -> list[dict[str, object]]:
+    """Dictionary entries with usage counts, shared by the web and phone APIs."""
+    dictionary = dictionary_snapshot(config)
+    path = config.state_root / "fabric.sqlite3"
+    rows = (
+        FabricStore.open_readonly(path).entries(ThreadQuery(include_executions=True))
+        if path.is_file()
+        else []
+    )
+    retracted = {t.retracts for t in rows if t.retracts}
+    counts: dict[str, int] = {}
+    latest: dict[str, datetime] = {}
+    for thread in rows:
+        if (
+            thread.thread_id in retracted
+            or thread.retracts
+            or thread.kind in ("태그정정", "거절", "실행")
+        ):
+            continue
+        names = {
+            e.name if (e := dictionary.resolve(tag)) else tag for tag in thread.tags
+        }
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+            latest[name] = max(latest.get(name, thread.occurred_at), thread.occurred_at)
+    return [
+        {
+            "name": e.name,
+            "kind": e.kind,
+            "aliases": list(e.aliases),
+            "human_edited": e.human_edited,
+            "archived": e.archived,
+            "promoted": e.promoted,
+            "usage_count": counts.get(e.name, 0),
+            "last_used_at": latest[e.name].isoformat() if e.name in latest else None,
+        }
+        for e in dictionary.entries
+    ]
+
+
 def editing_router(config: ServerConfig) -> APIRouter:
     router = APIRouter(route_class=EditRoute)
     token = secrets.token_urlsafe(32)
@@ -223,159 +436,15 @@ def editing_router(config: ServerConfig) -> APIRouter:
 
     @router.get("/api/dictionary")
     def entries() -> list[dict[str, object]]:
-        dictionary = dictionary_snapshot(config)
-        path = config.state_root / "fabric.sqlite3"
-        rows = (
-            FabricStore.open_readonly(path).entries(
-                ThreadQuery(include_executions=True)
-            )
-            if path.is_file()
-            else []
-        )
-        retracted = {t.retracts for t in rows if t.retracts}
-        counts: dict[str, int] = {}
-        latest: dict[str, datetime] = {}
-        for thread in rows:
-            if (
-                thread.thread_id in retracted
-                or thread.retracts
-                or thread.kind in ("태그정정", "거절", "실행")
-            ):
-                continue
-            names = {
-                e.name if (e := dictionary.resolve(tag)) else tag for tag in thread.tags
-            }
-            for name in names:
-                counts[name] = counts.get(name, 0) + 1
-                latest[name] = max(
-                    latest.get(name, thread.occurred_at), thread.occurred_at
-                )
-        return [
-            {
-                "name": e.name,
-                "kind": e.kind,
-                "aliases": list(e.aliases),
-                "human_edited": e.human_edited,
-                "archived": e.archived,
-                "promoted": e.promoted,
-                "usage_count": counts.get(e.name, 0),
-                "last_used_at": latest[e.name].isoformat()
-                if e.name in latest
-                else None,
-            }
-            for e in dictionary.entries
-        ]
-
-    def apply_tags(ids: list[str], edit: TagEdit) -> dict[str, object]:
-        skipped: list[dict[str, str]] = []
-        if any(not name.strip() for name in edit.add + edit.remove):
-            raise HTTPException(422, "태그 이름은 비어 있을 수 없습니다.")
-
-        def build(rows: list[Thread], marked: set[str]) -> list[ThreadDraft]:
-            by_id = {row.thread_id: row for row in rows}
-            targets = []
-            for id_ in dict.fromkeys(ids):
-                target = by_id.get(id_)
-                if target is None:
-                    raise HTTPException(404, f"Thread를 찾을 수 없습니다: {id_}")
-                if presentation(target) == "history":
-                    raise HTTPException(
-                        422, f"이력 Thread의 태그는 편집할 수 없습니다: {id_}"
-                    )
-                targets.append(target)
-            snapshot = dictionary_snapshot(config)
-
-            def resolve(name: str) -> str:
-                entry = snapshot.resolve(name)
-                return entry.name if entry else unicodedata.normalize("NFC", name)
-
-            if set(map(resolve, edit.add)) & set(map(resolve, edit.remove)):
-                raise HTTPException(
-                    422, "같은 태그를 동시에 추가하고 삭제할 수 없습니다."
-                )
-            needed = {
-                name
-                for name in edit.add
-                if any(
-                    resolve(name) not in {resolve(tag) for tag in target.tags}
-                    for target in targets
-                )
-            }
-            for name in edit.add:
-                existing = snapshot.resolve(name)
-                if name in edit.kinds and existing:
-                    raise HTTPException(
-                        422,
-                        f"이미 등록된 항목: {existing.name} ({existing.kind}) — 사전을 새로 불러오세요.",
-                    )
-                if name in needed and existing is None and name not in edit.kinds:
-                    raise HTTPException(422, f"새 태그에는 종류가 필요합니다: {name}")
-            missing = [name for name in needed if snapshot.resolve(name) is None]
-            if missing:
-                with writable_dictionary(config) as dictionary:
-                    for name in missing:
-                        dictionary.add_entry(
-                            name, edit.kinds[name], human_edited=True, require_new=True
-                        )
-            snapshot = dictionary_snapshot(config)
-            drafts = []
-            for target in targets:
-                effective = {resolve(tag) for tag in target.tags}
-                additions = list(
-                    dict.fromkeys(
-                        resolve(name)
-                        for name in edit.add
-                        if resolve(name) not in effective
-                    )
-                )
-                removing = set(map(resolve, edit.remove)) & effective
-                removals = [name for name in target.tags if resolve(name) in removing]
-                if not additions and not removals:
-                    skipped.append(
-                        {
-                            "thread_id": target.thread_id,
-                            "reason": "이미 같은 태그 상태입니다.",
-                        }
-                    )
-                    continue
-                now = datetime.now(UTC)
-                drafts.append(
-                    ThreadDraft(
-                        thread_id="thr_" + uuid4().hex,
-                        kind="태그정정",
-                        content="웹에서 태그 정정",
-                        occurred_at=now,
-                        recorded_at=now,
-                        tags=[],
-                        field=None,
-                        value=None,
-                        source_id=target.source_id,
-                        actor="human",
-                        direction=None,
-                        resolves=None,
-                        retracts=None,
-                        correction=TagCorrection(
-                            target=target.thread_id, add=additions, remove=removals
-                        ),
-                    )
-                )
-            return drafts
-
-        corrections = FabricStore.from_config(config).web_edit(build)
-        return {
-            "corrections": corrections,
-            "changed": len(corrections),
-            "skipped": len(skipped),
-            "skipped_threads": skipped,
-        }
+        return dictionary_entries(config)
 
     @router.post("/api/threads/tags/batch", dependencies=writes)
     def batch_tags(edit: BatchTagEdit) -> dict[str, object]:
-        return apply_tags(edit.thread_ids, edit)
+        return apply_tags(config, edit.thread_ids, edit)
 
     @router.post("/api/threads/{thread_id}/tags", dependencies=writes)
     def edit_tags(thread_id: str, edit: TagEdit) -> Thread:
-        result = apply_tags([thread_id], edit)
+        result = apply_tags(config, [thread_id], edit)
         corrections = result["corrections"]
         assert isinstance(corrections, list)
         if corrections:
@@ -446,41 +515,19 @@ def editing_router(config: ServerConfig) -> APIRouter:
         return {"dismissed": True}
 
     @router.patch("/api/dictionary", dependencies=writes)
-    def edit_entry(edit: EntryEdit) -> dict[str, str]:
-        entry = dictionary_snapshot(config).resolve(edit.entry)
-        if entry is None:
-            raise HTTPException(404, "사전 항목을 찾을 수 없습니다.")
-        # Keep each request to one public, atomic dictionary transaction.
-        if (edit.name is None) == (edit.kind is None):
-            raise HTTPException(422, "이름 또는 종류 중 하나만 변경하세요.")
-        with writable_dictionary(config) as dictionary:
-            if edit.name is not None:
-                entry = dictionary.rename(edit.entry, edit.name)
-            elif edit.kind is not None:
-                entry = dictionary.set_kind(edit.entry, edit.kind)
-        return {"name": entry.name}
+    def patch_entry(edit: EntryEdit) -> dict[str, str]:
+        return edit_entry(config, edit)
 
     @router.post("/api/dictionary/aliases", dependencies=writes)
-    def add_alias(edit: AliasEdit) -> dict[str, str]:
-        with writable_dictionary(config) as dictionary:
-            return {"name": dictionary.add_alias(edit.entry, edit.alias).name}
+    def post_alias(edit: AliasEdit) -> dict[str, str]:
+        return add_alias(config, edit)
 
     @router.delete("/api/dictionary/aliases", dependencies=writes)
-    def remove_alias(edit: AliasEdit) -> dict[str, str]:
-        with writable_dictionary(config) as dictionary:
-            return {"name": dictionary.remove_alias(edit.entry, edit.alias).name}
+    def delete_alias(edit: AliasEdit) -> dict[str, str]:
+        return remove_alias(config, edit)
 
     @router.post("/api/dictionary/merge", dependencies=writes)
-    def merge(edit: MergeEdit) -> dict[str, str]:
-        with writable_dictionary(config) as dictionary:
-            snapshot = dictionary.snapshot()
-            source, target = snapshot.resolve(edit.entry), snapshot.resolve(edit.target)
-            if source and target and source.kind != target.kind and edit.kind is None:
-                raise HTTPException(
-                    422, "종류가 다른 항목은 합친 뒤의 종류를 직접 선택하세요."
-                )
-            return {
-                "name": dictionary.merge(edit.entry, edit.target, kind=edit.kind).name
-            }
+    def post_merge(edit: MergeEdit) -> dict[str, str]:
+        return merge(config, edit)
 
     return router

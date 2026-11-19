@@ -13,10 +13,13 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
+from weaver.mobile.cli import mobile_cli
+
 if TYPE_CHECKING:
     from weaver.config import ServerConfig
 
 cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+cli.add_typer(mobile_cli, name="mobile")
 
 ConfigOption = Annotated[
     str | None, typer.Option("--config", help="TOML file (overrides WEAVER_CONFIG)")

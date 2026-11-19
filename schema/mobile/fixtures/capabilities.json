@@ -1,0 +1,65 @@
+{
+  "contract_version": 1,
+  "group": "capabilities",
+  "description": "Server identity, transports per feature, limits and feature flags.",
+  "cases": [
+    {
+      "name": "capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "server_id": "srv_00000000000000000000000000000001",
+          "transport_version": 1,
+          "schema_versions": {
+            "manifest": 1,
+            "receipt": 1,
+            "review_package": 2,
+            "verdict": 2,
+            "action": 2,
+            "action_result": 2
+          },
+          "transports": {
+            "capture": "http",
+            "review": "files",
+            "action": "files"
+          },
+          "limits": {
+            "max_payload_bytes": 67108864,
+            "max_json_bytes": 1048576,
+            "max_feed_items": 100,
+            "max_feed_bytes": 4194304
+          },
+          "features": {
+            "capture": true,
+            "review": true,
+            "action": true,
+            "read": true,
+            "dictionary": true,
+            "edits": true,
+            "alerts": false,
+            "pipeline": false
+          },
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "device": {
+            "device_id": "dev_00000000000000000000000000000001",
+            "scopes": [
+              "capture",
+              "edit",
+              "read",
+              "review"
+            ],
+            "executor": false
+          }
+        }
+      },
+      "note": "transports is the single source of truth for which path each feature uses; features.alerts/pipeline=false means keep reading those folders through files."
+    }
+  ]
+}

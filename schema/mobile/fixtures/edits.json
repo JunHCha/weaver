@@ -1,0 +1,412 @@
+{
+  "contract_version": 1,
+  "group": "edits",
+  "description": "Tag and dictionary edits. client_id is the idempotency key.",
+  "cases": [
+    {
+      "name": "tags",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0001",
+          "thread_ids": [
+            "record"
+          ],
+          "add": [
+            "Beta"
+          ],
+          "remove": [
+            "Alpha"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "tag_edit",
+          "target_id": "tags",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "correction_ids": [
+              "thr_40e0d0602d0024a124753c6bd32d83ae"
+            ],
+            "changed": 1,
+            "skipped": 0,
+            "skipped_threads": []
+          }
+        }
+      }
+    },
+    {
+      "name": "tags_replay",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0001",
+          "thread_ids": [
+            "record"
+          ],
+          "add": [
+            "Beta"
+          ],
+          "remove": [
+            "Alpha"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "idempotent-replay": "true"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "tag_edit",
+          "target_id": "tags",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "correction_ids": [
+              "thr_40e0d0602d0024a124753c6bd32d83ae"
+            ],
+            "changed": 1,
+            "skipped": 0,
+            "skipped_threads": []
+          }
+        }
+      },
+      "note": "Same client_id and content: the original result, header Idempotent-Replay: true."
+    },
+    {
+      "name": "tags_client_id_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0001",
+          "thread_ids": [
+            "record"
+          ],
+          "add": [
+            "Gamma"
+          ],
+          "remove": [
+            "Alpha"
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "client_id_conflict",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "tags_history_thread",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0002",
+          "thread_ids": [
+            "fix"
+          ],
+          "add": [
+            "Alpha"
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "history_thread_readonly",
+          "retryable": false
+        }
+      },
+      "note": "History Threads are read-only; nothing is written."
+    },
+    {
+      "name": "tags_unknown_thread",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0003",
+          "thread_ids": [
+            "nope"
+          ],
+          "add": [
+            "Alpha"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "thread_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "tags_new_tag_needs_kind",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/tags",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-edit-0004",
+          "thread_ids": [
+            "record"
+          ],
+          "add": [
+            "Delta"
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "kind_required",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "dictionary_rename",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/rename",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0001",
+          "entry": "Alpha",
+          "name": "Alpha2"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000002",
+          "state": "applied",
+          "kind": "dictionary_edit",
+          "target_id": "rename",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "name": "Alpha2"
+          }
+        }
+      }
+    },
+    {
+      "name": "dictionary_kind",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/kind",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0002",
+          "entry": "Gamma",
+          "kind": "organization"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000003",
+          "state": "applied",
+          "kind": "dictionary_edit",
+          "target_id": "kind",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "name": "Gamma"
+          }
+        }
+      }
+    },
+    {
+      "name": "dictionary_alias_add",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/alias-add",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0003",
+          "entry": "Alpha2",
+          "alias": "AA"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000004",
+          "state": "applied",
+          "kind": "dictionary_edit",
+          "target_id": "alias-add",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "name": "Alpha2"
+          }
+        }
+      }
+    },
+    {
+      "name": "dictionary_alias_remove",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/alias-remove",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0004",
+          "entry": "Alpha2",
+          "alias": "AA"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000005",
+          "state": "applied",
+          "kind": "dictionary_edit",
+          "target_id": "alias-remove",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "name": "Alpha2"
+          }
+        }
+      }
+    },
+    {
+      "name": "dictionary_merge_kind_choice",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/merge",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0005",
+          "entry": "Gamma",
+          "target": "Beta"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "kind_choice_required",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "dictionary_merge",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/merge",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0006",
+          "entry": "Gamma",
+          "target": "Beta",
+          "kind": "person"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000006",
+          "state": "applied",
+          "kind": "dictionary_edit",
+          "target_id": "merge",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "name": "Beta"
+          }
+        }
+      }
+    },
+    {
+      "name": "dictionary_entry_not_found",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/rename",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0007",
+          "entry": "Nobody",
+          "name": "X"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "entry_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "dictionary_unknown_operation",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/dictionary/explode",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "client-dict-0008",
+          "entry": "a"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "not_found",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

@@ -839,6 +839,25 @@ class WikiStore:
                 continue
         return result
 
+    def baseline_pages(self) -> list[tuple[str, bytes, datetime]]:
+        """Last committed bytes of every page whose file still exists.
+
+        Unlike ``published_pages`` this keeps a page with an unsettled human
+        edit visible at its committed version, for read-only viewers.
+        """
+        with self._db() as db:
+            rows = db.execute("SELECT path, content FROM pages").fetchall()
+        result = []
+        for path, baseline in rows:
+            try:
+                target = self._path(path)
+                if target.is_file():
+                    modified = datetime.fromtimestamp(target.stat().st_mtime, UTC)
+                    result.append((path, baseline, modified))
+            except (ValueError, OSError):
+                continue
+        return result
+
     def scan(self, now: float) -> list[HumanEdit]:
         """Confirm stable human edits and return all unacknowledged edits."""
         for file in sorted((self.root / "pages").rglob("*.md")):
