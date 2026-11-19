@@ -3,10 +3,11 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
 from server.tests.fake_responses import fixture_response
 
-from weaver.runtime.progress import PipelineJournal
-from weaver.schema import PipelineItem, Source, ThreadDraft
+from weaver.runtime.progress import PipelineJournal, package_title
+from weaver.schema import PipelineItem, ReviewPackage, Source, ThreadDraft
 
 
 def source():
@@ -77,12 +78,14 @@ def runtime_capture(tmp_path, failure_limit=5):
     class FakeLlm:
         model = "fake"
         failing = True
+        summary_body = "가상 요약"
+        thread_content = "가상 기록"
 
         def generate_json(self, task, system, user, schema):
             if task == "loom.summary":
                 return fixture_response(
                     schema,
-                    {"script": "가상 메모", "body": "가상 요약", "questions": []},
+                    {"script": "가상 메모", "body": self.summary_body, "questions": []},
                 )
             if task == "loom.approve":
                 if self.failing:
@@ -90,13 +93,13 @@ def runtime_capture(tmp_path, failure_limit=5):
                 return fixture_response(
                     schema,
                     {
-                        "body": "가상 요약",
+                        "body": self.summary_body,
                         "new_entries": [{"name": "예시", "kind": "topic"}],
                         "corrections": [],
                         "threads": [
                             {
                                 "kind": "기록",
-                                "content": "가상 기록",
+                                "content": self.thread_content,
                                 "occurred_at": "2026-01-01T00:00:00Z",
                                 "tags": ["예시"],
                                 "field": None,
@@ -203,8 +206,9 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path, caplog):
     assert observed.location == "fabric" and observed.status == "done"
     capture_wire = json.loads(path.read_text())
     assert "wiki_edit" not in capture_wire
-    assert all("content" not in thread for thread in capture_wire["threads"])
+    assert capture_wire["threads"][0]["content"] == "가상 기록"
     assert observed.threads[0].kind == "기록"
+    assert observed.threads[0].content == "가상 기록"
     assert "반영" in observed.stage_times
     # An Action result is recorded in Fabric but never listed as a produced fact.
     from weaver.fabric import FabricStore
@@ -303,6 +307,123 @@ def test_output_path_contract_rejects_traversal_in_python_and_json_schema():
             pass
         else:
             raise AssertionError(path)
+
+
+@pytest.mark.parametrize("title", [None, "", "   ", "제품팀 주간 회의"])
+@pytest.mark.parametrize("action", ["approve", "reject"])
+def test_capture_card_legacy_title_and_thread_content_reach_phone_file(
+    tmp_path, title, action
+):
+    """Use the capture→review→Fabric path, including a pre-title package on disk."""
+    import threading
+
+    from weaver.fabric import ThreadQuery
+    from weaver.runtime.assemble import Plugins, build_runtime
+    from weaver.schema import ReviewPackage
+
+    runtime, config, llm = runtime_capture(tmp_path)
+    llm.summary_body = "\n  제품팀은 다음 주에 검색 시안을 검토한다.\n담당자는 민수다."
+    llm.thread_content = (
+        "민수와 검색 시안을 다음 주 화요일 검토하기로 했다.\n회의에서 합의했다."
+    )
+    runtime._tick(threading.Event())
+    package_path = next(config.courier.proposals.glob("*.json"))
+    raw = json.loads(package_path.read_text())
+    if title is None:
+        raw.pop("title", None)  # Older persisted packages omit the optional title.
+    else:
+        raw["title"] = title
+    progress = runtime.publisher.progress
+    with progress.state.connect() as db:
+        db.execute(
+            "UPDATE packages SET package=? WHERE id=? AND revision=?",
+            (json.dumps(raw), raw["package_id"], raw["revision"]),
+        )
+    package = ReviewPackage.model_validate(raw)
+    expected_title = (
+        title if title and title.strip() else "제품팀은 다음 주에 검색 시안을 검토한다."
+    )
+    # Exercise both immediate observation and restart reconciliation from the journal.
+    progress.journal.update(package.source_id, title="수확한 데이터")
+    progress.observe_package(package)
+    assert progress.journal.get(package.source_id).title == expected_title
+    progress.journal.update(package.source_id, title="수확한 데이터")
+    progress.publish()
+    path = config.courier.proposals / "pipeline" / f"{package.source_id}.json"
+    assert PipelineItem.model_validate_json(path.read_bytes()).title == expected_title
+    decision = config.courier.decisions / f"{package.package_id}.r1.json"
+    decision.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "package_id": package.package_id,
+                "revision": 1,
+                "action": action,
+                "answers": [],
+                "edited_body": None,
+                "feedback": None,
+            }
+        )
+    )
+    llm.failing = False
+    runtime._tick(threading.Event())
+    item = PipelineItem.model_validate_json(path.read_bytes())
+    assert item.location == "fabric"
+    assert item.status == ("rejected" if action == "reject" else "done")
+    assert item.title == expected_title
+    stored = progress.fabric.entries(ThreadQuery())
+    assert [(t.thread_id, t.kind, t.content) for t in item.threads] == [
+        (t.thread_id, t.kind, t.content or "") for t in stored if t.kind != "실행"
+    ]
+    expected_content = "" if action == "reject" else llm.thread_content
+    assert [t.content for t in item.threads] == [expected_content]
+    assert json.loads(path.read_text())["threads"][0]["content"] == expected_content
+    # APPLIED reconciliation must not change the title, content, or revision.
+    journaled = progress.journal.get(package.source_id)
+    progress._reconcile(progress.archive.get(package.source_id))
+    assert progress.journal.get(package.source_id) == journaled
+    assert PipelineItem.model_validate_json(path.read_bytes()) == item
+    path.unlink()
+    restarted = build_runtime(config, plugins=Plugins(client=llm))
+    restarted.publisher.progress.publish()
+    assert PipelineItem.model_validate_json(path.read_bytes()) == item
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("# 제품팀 회의\n본문", "제품팀 회의"),
+        ("  > - ** 검색 시안\n본문", "검색 시안"),
+        ("\n---\ntitle: 비공개 메타\ntags: [검색]\n---\n## 회의 요약", "회의 요약"),
+        ("---\ntitle: 메타\n---\n > - * # \n\n# 유효한 내용", "유효한 내용"),
+        ("가" * 80, "가" * 80),
+        ("가" * 81, "가" * 79 + "…"),
+        ("  \n\t\n", "수확한 데이터"),
+        ("# > - *\n\t", "수확한 데이터"),
+        ("---\ntitle: 메타\n---\n", "수확한 데이터"),
+        ("---\ntitle: 닫히지 않은 메타", "수확한 데이터"),
+    ],
+)
+def test_legacy_package_title_skips_metadata_and_formats_readable_excerpt(
+    body, expected
+):
+    package = ReviewPackage(
+        schema_version=2,
+        package_id="legacy-package",
+        source_id=source().source_id,
+        revision=1,
+        draft_body=body if body.strip() else "기존 본문",
+        questions=[],
+        stage="검토",
+        stage_times={},
+    )
+    if not body.strip():
+        # The contract rejects blank drafts; the title helper also handles an
+        # unvalidated in-memory legacy value defensively without relaxing it.
+        with pytest.raises(ValueError):
+            ReviewPackage.model_validate(package.model_dump() | {"draft_body": body})
+        package = package.model_copy(update={"draft_body": body})
+    assert package_title(package, "수확한 데이터") == expected
 
 
 def test_observation_write_failure_does_not_repeat_paid_summary(tmp_path, monkeypatch):
