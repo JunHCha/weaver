@@ -1,14 +1,20 @@
 package io.github.junhcha.weaver.phone
 
+import io.github.junhcha.weaver.transport.ApiException
+import io.github.junhcha.weaver.transport.InvalidResponseException
 import io.github.junhcha.weaver.transport.MobileApi
+import io.github.junhcha.weaver.transport.PinMismatchException
+import io.github.junhcha.weaver.transport.UnreachableException
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,64 +34,94 @@ class HttpPhoneReadModel(
     private val api: () -> MobileApi?,
     private val cache: File,
     private val now: () -> Instant = Instant::now,
-    /** Called after every read with a stable code when rows could not be understood (e.g. `unknown_thread_kind:2`), else null. */
+    /** Reports stable fetch/parse codes and skipped row counts; a clean snapshot reports null. */
     private val onProblem: (String?) -> Unit = {},
+    private val onWikiProblem: (String?) -> Unit = {},
 ) : PhoneReadModel {
     @Volatile override var offlineSince: Instant? = null
         private set
 
-    override suspend fun snapshot(): PhoneSnapshot {
-        val client = api()
-        val fresh = client?.let { runCatching { fetch(it) }.getOrNull() }
-        if (fresh != null) {
-            offlineSince = null
-            runCatching { write(fresh) }
-            return counted(fresh)
+    override suspend fun snapshot(): PhoneSnapshot = withContext(Dispatchers.IO) {
+        var failure: String? = null
+        try {
+            val client = api()
+            if (client != null) {
+                val fresh = fetch(client)
+                val snapshot = counted(fresh)
+                offlineSince = null
+                runCatching { write(fresh) }
+                return@withContext snapshot
+            }
+        } catch (error: CancellationException) { throw error
+        } catch (error: Exception) {
+            failure = problemCode(error)
+            onProblem(failure)
         }
         val cached = runCatching { json.parseToJsonElement(cache.readText()).jsonObject }.getOrNull()
         if (cached == null) {
             offlineSince = null
-            return PhoneSnapshot(emptyList(), emptyList(), emptyList())
+            if (failure == null && cache.exists()) onProblem("invalid_cache")
+            return@withContext PhoneSnapshot(emptyList(), emptyList(), emptyList())
         }
         offlineSince = Instant.ofEpochMilli(cache.lastModified())
-        return runCatching { counted(cached) }.getOrDefault(PhoneSnapshot(emptyList(), emptyList(), emptyList()))
+        try { counted(cached, report = failure == null) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) {
+            if (failure == null) onProblem("invalid_cache")
+            PhoneSnapshot(emptyList(), emptyList(), emptyList())
+        }
+    }
+
+    private fun problemCode(error: Exception): String = when (error) {
+        is ApiException -> error.code
+        is PinMismatchException -> "pin_mismatch"
+        is InvalidResponseException -> "invalid_read_response"
+        is UnreachableException -> "unreachable"
+        is java.io.IOException -> "unreachable"
+        else -> "invalid_read_response"
     }
 
     /**
      * Opens a page: its body is fetched with `If-None-Match` and cached next to the snapshot, so a page read once also opens
      * offline. A failed fetch falls back to the cached body; none cached means null (the viewer says so).
      */
-    override suspend fun wikiBody(page: WikiPage): String? {
+    override suspend fun wikiBody(page: WikiPage): String? = withContext(Dispatchers.IO) {
         val file = File(cache.parentFile, "${cache.nameWithoutExtension}-wiki/${page.id}.json")
         val cached = runCatching { json.parseToJsonElement(file.readText()).jsonObject }.getOrNull()
-        val client = api()
-        if (client != null) {
+        try {
+            val client = api() ?: return@withContext cached?.str("body")
             val etag = cached?.str("etag")?.takeIf { it.isNotEmpty() }
-            val result = runCatching { client.wikiPage(page.id, etag) }
-            if (result.isSuccess) {
-                val fresh = result.getOrNull() ?: return cached?.str("body") // 304: the cached copy is current
-                val body = runCatching { json.parseToJsonElement(fresh.body.decodeToString()).jsonObject.str("body") }.getOrNull()
-                if (body != null) {
-                    runCatching {
-                        file.parentFile?.mkdirs()
-                        file.writeText(buildJsonObject { put("etag", fresh.etag ?: ""); put("body", body) }.toString())
-                    }
-                    return body
-                }
+            val fresh = client.wikiPage(page.id, etag)
+            if (fresh == null) {
+                onWikiProblem(null)
+                return@withContext cached?.str("body") // 304: the cached copy is current
             }
-        }
-        return cached?.str("body")
+            val body = json.parseToJsonElement(fresh.body.decodeToString()).jsonObject.str("body")
+            if (body == null) {
+                onWikiProblem("invalid_wiki_body")
+            } else {
+                runCatching {
+                    file.parentFile?.mkdirs()
+                    file.writeText(buildJsonObject { put("etag", fresh.etag ?: ""); put("body", body) }.toString())
+                }
+                onWikiProblem(null)
+                return@withContext body
+            }
+        } catch (error: CancellationException) { throw error
+        } catch (error: Exception) { onWikiProblem(problemCode(error)) }
+        return@withContext cached?.str("body")
     }
 
-    private fun counted(root: JsonObject): PhoneSnapshot {
+    private fun counted(root: JsonObject, report: Boolean = true): PhoneSnapshot {
         val unknown = java.util.concurrent.atomic.AtomicInteger()
         val invalid = java.util.concurrent.atomic.AtomicInteger()
-        val snapshot = parse(root, unknown, invalid)
-        onProblem(when {
-            unknown.get() > 0 -> "unknown_thread_kind:${unknown.get()}"
-            invalid.get() > 0 -> "invalid_thread:${invalid.get()}"
-            else -> null
-        })
+        val invalidTags = java.util.concurrent.atomic.AtomicInteger()
+        val invalidPages = java.util.concurrent.atomic.AtomicInteger()
+        val snapshot = parse(root, unknown, invalid, invalidTags, invalidPages)
+        val codes = listOf("unknown_thread_kind" to unknown, "invalid_thread" to invalid,
+            "invalid_tag" to invalidTags, "invalid_wiki_page" to invalidPages)
+            .filter { it.second.get() > 0 }.joinToString(",") { "${it.first}:${it.second.get()}" }
+        if (report) onProblem(codes.takeIf { it.isNotEmpty() })
         return snapshot
     }
 
@@ -110,7 +146,6 @@ class HttpPhoneReadModel(
     }
 
     companion object {
-        private const val MAX_PAGES = 500
         private val json = Json { ignoreUnknownKeys = true }
 
         private class UnknownKind : IllegalArgumentException("unknown_kind")
@@ -118,15 +153,21 @@ class HttpPhoneReadModel(
         fun parse(
             root: JsonObject, unknown: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
             invalid: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
+            invalidTags: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
+            invalidPages: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(),
         ): PhoneSnapshot = PhoneSnapshot(
             // A row the phone cannot understand is skipped but counted, so the connection card can say so.
             threads = root["threads"]!!.jsonArray.mapNotNull {
                 try { thread(it.jsonObject) } catch (_: UnknownKind) { unknown.incrementAndGet(); null }
                 catch (_: Exception) { invalid.incrementAndGet(); null }
             },
-            tags = root["tags"]!!.jsonArray.mapNotNull { runCatching { tag(it.jsonObject) }.getOrNull() }
-                .filter { it.name.isNotBlank() },
-            wikiPages = root["wiki"]!!.jsonArray.mapNotNull { runCatching { page(it.jsonObject) }.getOrNull() },
+            tags = root["tags"]!!.jsonArray.mapNotNull {
+                try { tag(it.jsonObject).also { tag -> require(tag.name.isNotBlank()) } }
+                catch (_: Exception) { invalidTags.incrementAndGet(); null }
+            },
+            wikiPages = root["wiki"]!!.jsonArray.mapNotNull {
+                try { page(it.jsonObject) } catch (_: Exception) { invalidPages.incrementAndGet(); null }
+            },
         )
 
         private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull

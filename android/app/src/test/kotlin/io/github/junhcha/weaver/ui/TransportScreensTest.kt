@@ -228,4 +228,13 @@ class TransportScreensTest {
         compose.onNodeWithText("조직").performClick()
         assertEquals(listOf("alias- net", "kind ORGANIZATION"), host.dictionaryCalls)
     }
+    @Test fun readErrorsAndSkippedCountsAreVisible() {
+        val code = "unknown_thread_kind:1,invalid_thread:1,invalid_tag:2,invalid_wiki_page:1"
+        connection(ConnectionUi(true, lastError = "read:$code"))
+        compose.onNodeWithText("읽기 오류 · $code · 5개 건너뜀").assertIsDisplayed()
+        assertEquals("연결 대기 · Mac이나 VPN에 닿지 않아요", ConnectionUi(true, lastError = "read:unreachable").statusText())
+        assertEquals("연결 대기 · Mac이나 VPN에 닿지 않아요", ConnectionUi(true, lastError = "read:invalid_tag:2,unreachable").statusText())
+        assertEquals("읽기 오류 · 응답 형식이 올바르지 않아요", ConnectionUi(true, lastError = "read:invalid_read_response").statusText())
+    }
+
 }

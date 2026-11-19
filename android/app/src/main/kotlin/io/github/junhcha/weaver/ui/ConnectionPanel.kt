@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import io.github.junhcha.weaver.phone.SeoulZone
 import io.github.junhcha.weaver.transport.ApiException
+import io.github.junhcha.weaver.transport.InvalidResponseException
 import io.github.junhcha.weaver.transport.PairingException
 import io.github.junhcha.weaver.transport.PinMismatchException
 import io.github.junhcha.weaver.transport.QueueCounts
@@ -58,7 +59,16 @@ data class ConnectionUi(
 internal fun ConnectionUi.statusText(): String = when {
     !paired -> "연결 안 됨"
     needsRepair -> "재페어링 필요 · 서버가 이 폰의 토큰을 거절했어요"
-    lastError == "unreachable" -> "연결 대기 · Mac이나 VPN에 닿지 않아요"
+    lastError?.removePrefix("read:")?.split(',')?.contains("unreachable") == true -> "연결 대기 · Mac이나 VPN에 닿지 않아요"
+    lastError == "invalid_read_response" -> "읽기 오류 · 응답 형식이 올바르지 않아요"
+    lastError?.startsWith("read:") == true -> {
+        val code = lastError.removePrefix("read:")
+        val skipped = code.split(',').sumOf { it.substringAfter(':', "").toIntOrNull() ?: 0 }
+        val message = if (code.split(',').any { it == "invalid_read_response" || it == "invalid_wiki_body" }) {
+            "응답 형식이 올바르지 않아요" + if (skipped > 0) " ($code)" else ""
+        } else code
+        "읽기 오류 · $message" + if (skipped > 0) " · ${skipped}개 건너뜀" else ""
+    }
     lastError == "pin_mismatch" -> "인증서를 검증할 수 없어요 · 다시 페어링하세요"
     lastError == "peer_unverified" -> "서버가 이 폰을 허용하지 않아요 · Tailscale ACL을 확인하세요"
     lastError != null -> "오류 · $lastError"
@@ -136,6 +146,7 @@ fun ConnectionContent(
 internal fun pairingErrorText(error: Throwable): String = when (error) {
     is PairingException -> error.message ?: "페어링 코드를 읽을 수 없어요"
     is PinMismatchException -> "서버 인증서가 코드의 CA로 검증되지 않아요"
+    is InvalidResponseException -> "서버 응답 형식이 올바르지 않아요"
     is UnreachableException -> "서버에 연결하지 못했어요. Tailscale이 켜져 있는지 확인하세요"
     is ApiException ->
         if (error.status == 401 || error.status == 403) "서버가 이 코드를 거절했어요. 새 코드를 만드세요"

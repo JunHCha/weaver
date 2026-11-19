@@ -94,6 +94,7 @@ object TransportRuntime {
             if (error.status == 401 || error.code == "node_mismatch") summary.needsRepair = true
             summary.fail(error.code, error.retryable)
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false)
+        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false)
         } catch (error: UnreachableException) { summary.unreachable = true; summary.fail("unreachable", true) }
         return summary
     }

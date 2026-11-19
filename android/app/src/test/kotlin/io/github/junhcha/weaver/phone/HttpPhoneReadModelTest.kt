@@ -26,8 +26,8 @@ class HttpPhoneReadModelTest {
     private fun serveReads() { server.serve(*pages, "read.tags", "wiki.list") }
 
     private fun model(cache: java.io.File = tmp.newFile("snapshot.json").also { it.delete() }, live: Boolean = true,
-                      onProblem: (String?) -> Unit = {}) =
-        HttpPhoneReadModel({ if (live) HttpsMobileApi(FakeMobileServer.pairing(server), connectTimeoutMs = 500, readTimeoutMs = 1000) else null }, cache, onProblem = onProblem)
+                      onProblem: (String?) -> Unit = {}, onWikiProblem: (String?) -> Unit = {}) =
+        HttpPhoneReadModel({ if (live) HttpsMobileApi(FakeMobileServer.pairing(server), connectTimeoutMs = 500, readTimeoutMs = 1000) else null }, cache, onProblem = onProblem, onWikiProblem = onWikiProblem)
 
     @Test fun readsThreadsTagsAndWikiAsTheServerComputedThem() = runBlocking {
         serveReads()
@@ -84,8 +84,10 @@ class HttpPhoneReadModelTest {
         assertEquals(Fx.threadCount, online.snapshot().threads.size)
         assertNull(online.offlineSince)
         server.offline = true
-        val offline = model(cache)
+        var problem: String? = null
+        val offline = model(cache, onProblem = { problem = it })
         val snapshot = offline.snapshot()
+        assertEquals("unreachable", problem)
         assertEquals("the cached copy is shown", Fx.threadCount, snapshot.threads.size)
         assertEquals(2, snapshot.wikiPages.size)
         assertNotNull(offline.offlineSince)
@@ -113,6 +115,110 @@ class HttpPhoneReadModelTest {
         val snapshot = model(onProblem = { problem = it }).snapshot()
         assertEquals(Fx.threadCount - 1, snapshot.threads.size)
         assertEquals("unknown_thread_kind:1", problem)
+    }
+
+
+    @Test fun syntheticComplexShapesSurviveHttpParsing() = runBlocking {
+        server.serve("read_shapes.threads", "read_shapes.tags", "read_shapes.wiki", "read_shapes.wiki_body")
+        var problem: String? = "unset"
+        val model = model(onProblem = { problem = it })
+        val snapshot = model.snapshot()
+        assertNull(problem)
+        assertEquals(5, snapshot.threads.size)
+        assertEquals(setOf(ThreadKind.SCHEDULE, ThreadKind.REQUEST, ThreadKind.TAG_CORRECTION,
+            ThreadKind.REJECTION, ThreadKind.EXECUTION), snapshot.threads.map { it.kind }.toSet())
+        val schedule = snapshot.threads.first { it.kind == ThreadKind.SCHEDULE }
+        assertEquals(Instant.parse("2026-11-12T06:00:00Z"), schedule.scheduleAt)
+        assertTrue(schedule.content.length > 2000)
+        assertTrue(snapshot.tags.any { it.kind == TagKind.AREA })
+        val page = snapshot.wikiPages.single()
+        assertEquals(listOf("가상 담당자"), page.frontmatter.assignees)
+        assertNull(page.frontmatter.deadline)
+        assertNull(page.frontmatter.next)
+        assertTrue(java.text.Normalizer.isNormalized(page.area!!, java.text.Normalizer.Form.NFD))
+        assertTrue(model.wikiBody(page)!!.length > 2000)
+    }
+
+    @Test fun everySkippedItemIsCountedAcrossAllReadLists() = runBlocking {
+        server.serveDerived(pages[0]) { body ->
+            val root = mutateFirstKind(body, "미지").jsonObject
+            val items = (root["items"] as JsonArray).toMutableList()
+            items[1] = JsonObject(items[1].jsonObject.toMutableMap().also { it.remove("recorded_at") })
+            JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
+        }
+        server.serve(pages[1], pages[2])
+        for (name in listOf("read.tags", "wiki.list")) server.serveDerived(name) { body ->
+            val root = body.jsonObject
+            val items = (root["items"] as JsonArray).toMutableList()
+            items[0] = kotlinx.serialization.json.JsonNull
+            JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
+        }
+        var problem: String? = null
+        val snapshot = model(onProblem = { problem = it }).snapshot()
+        assertEquals(Fx.threadCount - 2, snapshot.threads.size)
+        assertEquals((Fx.json("read.tags")["items"] as JsonArray).size - 1, snapshot.tags.size)
+        assertEquals(1, snapshot.wikiPages.size)
+        assertEquals("unknown_thread_kind:1,invalid_thread:1,invalid_tag:1,invalid_wiki_page:1", problem)
+    }
+
+    @Test fun failedReadWithOrWithoutCacheReportsTheCauseAndRecoveryClearsIt() = runBlocking {
+        serveReads()
+        val cache = tmp.newFile("saved-read.json").also { it.delete() }
+        var problem: String? = null
+        val model = model(cache, onProblem = { problem = it })
+        model.snapshot()
+        server.failWith("/read/tags", "errors.scope_denied")
+        assertEquals(Fx.threadCount, model.snapshot().threads.size)
+        assertNotNull(model.offlineSince)
+        assertEquals("scope_denied", problem)
+        assertTrue(model(onProblem = { problem = it }).snapshot().isEmpty)
+        assertEquals("scope_denied", problem)
+        server.clearFailures()
+        assertEquals(Fx.threadCount, model.snapshot().threads.size)
+        assertNull(problem)
+        assertNull(model.offlineSince)
+    }
+
+    @Test fun cancellationIsPropagatedWithoutReplacingTheCache() = runBlocking {
+        val client = HttpsMobileApi(FakeMobileServer.pairing(server))
+        val cancelled = object : io.github.junhcha.weaver.transport.MobileApi by client {
+            override fun threads(cursor: String?, limit: Int): io.github.junhcha.weaver.transport.Page {
+                throw kotlinx.coroutines.CancellationException("cancelled")
+            }
+        }
+        var problem: String? = null
+        val cache = tmp.newFile("cancelled.json").also { it.delete() }
+        val model = HttpPhoneReadModel({ cancelled }, cache, onProblem = { problem = it })
+        try { model.snapshot(); fail("cancellation must escape") }
+        catch (_: kotlinx.coroutines.CancellationException) { }
+        assertFalse(cache.exists())
+        assertNull(problem)
+    }
+
+
+    @Test fun malformedEnvelopeReportsAParseCodeWithoutReplacingTheCache() = runBlocking {
+        serveReads()
+        val cache = tmp.newFile("valid-read.json").also { it.delete() }
+        var problem: String? = null
+        val model = model(cache, onProblem = { problem = it })
+        model.snapshot()
+        val bytes = cache.readBytes()
+        server.reset(*pages)
+        server.serveDerived(pages[0]) { JsonObject(mapOf("items" to kotlinx.serialization.json.JsonNull)) }
+        assertEquals(Fx.threadCount, model.snapshot().threads.size)
+        assertEquals("invalid_read_response", problem)
+        assertArrayEquals(bytes, cache.readBytes())
+    }
+
+    @Test fun wikiFetchErrorsAreReportedWhileTheLastBodyStaysReadable() = runBlocking {
+        serveReads(); server.serve("wiki.page")
+        var problem: String? = null
+        val model = model(onWikiProblem = { problem = it })
+        val page = model.snapshot().wikiPages.first { it.title == "방화벽 교체" }
+        val body = model.wikiBody(page)
+        server.failWith("/read/wiki/pages/${page.id}", "errors.scope_denied")
+        assertEquals(body, model.wikiBody(page))
+        assertEquals("scope_denied", problem)
     }
 
     private fun mutateFirstKind(body: kotlinx.serialization.json.JsonElement, kind: String): kotlinx.serialization.json.JsonElement {
