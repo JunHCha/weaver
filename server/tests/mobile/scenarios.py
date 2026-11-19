@@ -473,7 +473,7 @@ def read(tmp: Path) -> Recorder:
         params={"limit": 4},
         note="Lists are {items, next_cursor}; next_cursor is null on the last page.",
     )
-    r.call(
+    middle = r.call(
         "threads_next_page",
         "GET",
         f"{BASE}/read/threads",
@@ -485,7 +485,8 @@ def read(tmp: Path) -> Recorder:
         "GET",
         f"{BASE}/read/threads",
         headers=headers,
-        params={"cursor": "c10"},
+        params={"limit": 4, "cursor": middle.json()["next_cursor"]},
+        note="One chain: each next_cursor is the cursor of the following request.",
     )
     r.call(
         "threads_invalid_cursor",

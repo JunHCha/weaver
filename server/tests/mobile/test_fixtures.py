@@ -102,3 +102,22 @@ def test_operation_cases_use_the_decided_shape(generated):
                 assert "status" not in body
                 states.add(body["state"])
     assert states == {"queued", "applied"}
+
+
+def test_thread_pages_form_one_cursor_chain(generated):
+    cases = {c["name"]: c for c in generated["read"]["cases"]}
+    chain = [
+        cases[n]
+        for n in ("threads_first_page", "threads_next_page", "threads_last_page")
+    ]
+    assert "cursor" not in chain[0]["request"].get("query", {})
+    for page, following in zip(chain, chain[1:], strict=False):
+        assert page["response"]["body"]["next_cursor"] is not None
+        assert (
+            following["request"]["query"]["cursor"]
+            == page["response"]["body"]["next_cursor"]
+        )
+    assert chain[-1]["response"]["body"]["next_cursor"] is None
+    seqs = [t["seq"] for c in chain for t in c["response"]["body"]["items"]]
+    assert seqs == list(range(1, len(seqs) + 1))  # contiguous, no gap or repeat
+    assert len({c["request"]["query"]["limit"] for c in chain}) == 1

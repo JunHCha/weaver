@@ -36,6 +36,8 @@ uv run --project server pytest server/tests/mobile            # 이후에는 비
   `cursor`는 불투명 문자열이다. 한 번에 주는 목록(`reviews`, `actions`, `tags`, `timeline`, `dictionary`,
   `wiki/pages`)은 항상 `next_cursor: null`이다. **예외: 변경 피드**(`/changes`)는 재개 지점이 필요하므로
   `next_cursor`가 항상 있다(아래).
+- **선택 필드**: 값이 없는 선택 필드는 생략할 수도 `null`로 보낼 수도 있고, 둘은 같은 뜻이다(예: Manifest의
+  `capture_host`). 폰은 두 형태를 모두 받아들여야 하고, 보낼 때도 어느 쪽이든 서버가 같게 처리한다.
 - **오류**: 본문은 `{code, retryable, operation_id?, ...}`뿐이다. 원문·예외 메시지·경로는 없다.
   응답은 `Cache-Control: no-store`.
 - **인증**: 모든 요청에 `Authorization: Bearer <token>`. 필요한 scope는 아래 표.
