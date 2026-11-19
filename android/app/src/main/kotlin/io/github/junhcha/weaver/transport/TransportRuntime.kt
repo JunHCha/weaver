@@ -214,5 +214,16 @@ object TransportRuntime {
 
 /** Same pass as the Courier worker, but with the HTTP exchange talking to the server; runs only with a network. */
 class TransportWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result = CourierWorker.run(applicationContext, network = true)
+    override fun doWork(): Result {
+        var crashRetry = false
+        try { io.github.junhcha.weaver.diagnostics.CrashDiagnostics.send(applicationContext) }
+        catch (error: ApiException) {
+            if (error.status == 401 || error.code == "node_mismatch") TransportRuntime.settings(applicationContext).needsRepair = true
+            crashRetry = error.retryable
+        } catch (_: PinMismatchException) { TransportRuntime.settings(applicationContext).needsRepair = true
+        } catch (_: InvalidResponseException) { /* keep for manual retry */
+        } catch (_: Exception) { crashRetry = true }
+        val courier = CourierWorker.run(applicationContext, network = true)
+        return if (crashRetry && courier == Result.success()) Result.retry() else courier
+    }
 }

@@ -78,6 +78,7 @@ object Paging {
  * server's own confirmation (Receipt, operation `applied`).
  */
 interface MobileApi {
+    fun postCrash(body: ByteArray, clientId: String)
     fun capabilities(): JsonObject
     /** 200/201 once the server staged the payload for [captureId]; [file] is streamed, never held in memory. */
     fun putPayload(captureId: String, file: File, sha256: String)
@@ -263,6 +264,12 @@ class HttpsMobileApi(
         val reply = call("GET", "/read/wiki/pages/$id", if (etag != null) mapOf("If-None-Match" to etag) else emptyMap(), limit = MAX_DOCUMENT)
         if (reply.status == 304) return null
         return Versioned(reply.body, reply.headers["etag"])
+    }
+
+    override fun postCrash(body: ByteArray, clientId: String) {
+        val response = obj(call("POST", "/diagnostics/crashes", mapOf("Content-Type" to "application/json"), body))
+        if ((response["client_id"] as? JsonPrimitive)?.content != clientId ||
+            (response["state"] as? JsonPrimitive)?.content != "stored") throw InvalidResponseException()
     }
 
     override fun edit(path: String, body: JsonObject): JsonObject =

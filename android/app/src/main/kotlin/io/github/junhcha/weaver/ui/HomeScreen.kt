@@ -67,6 +67,7 @@ fun ToolsScreen(showPendingCalls: Boolean = false) {
                 // Settings owns the one calendar panel; a review opened here must not draw a second one.
                 CompositionLocalProvider(LocalCalendarHostedBySettings provides true) { InboxPanel() }
                 ConnectionPanel()
+                DiagnosticsPanel()
                 CourierPanel()
                 CalendarPanel(alwaysShow = true)
                 if (io.github.junhcha.weaver.BuildConfig.DEBUG) DebugCallBriefEntry()
@@ -124,4 +125,41 @@ private fun DebugCallBriefEntry() {
         },
         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
     ) { Text("통화 브리핑 시험") }
+}
+
+
+@Composable
+private fun DiagnosticsPanel() {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    var summary by remember { mutableStateOf("충돌 기록을 읽는 중") }
+    var busy by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        summary = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            io.github.junhcha.weaver.diagnostics.CrashDiagnostics.store(context).lastSummary()
+                ?: "저장된 충돌 기록이 없어요"
+        }
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("진단", style = MaterialTheme.typography.titleMedium)
+            Text(summary)
+            OutlinedButton(enabled = !busy, onClick = {
+                busy = true
+                scope.launch {
+                    summary = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        try {
+                            if (!io.github.junhcha.weaver.transport.TransportRuntime.settings(context).paired) "서버 페어링이 필요해요"
+                            else {
+                                io.github.junhcha.weaver.diagnostics.CrashDiagnostics.send(context)
+                                if (io.github.junhcha.weaver.diagnostics.CrashDiagnostics.store(context).pending().isEmpty()) "충돌 기록을 보냈어요"
+                                else "다시 페어링한 뒤 보내 주세요"
+                            }
+                        } catch (_: Exception) { "보내지 못했어요. 기록은 보관 중이에요" }
+                    }
+                    busy = false
+                }
+            }) { Text("다시 보내기") }
+        }
+    }
 }

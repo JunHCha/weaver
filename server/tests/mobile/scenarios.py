@@ -783,6 +783,37 @@ def edits(tmp: Path) -> Recorder:
     return r
 
 
+def crashes(tmp: Path) -> Recorder:
+    from .test_crashes import PATH, REPORT
+
+    h = Harness(tmp)
+    headers = h.pair("read")
+    r = Recorder(
+        h,
+        "crashes",
+        "Message-free crash diagnostics: authenticated, no scope required, 64 KiB maximum.",
+    )
+    r.call(
+        "stored",
+        "POST",
+        PATH,
+        headers=auth(headers, **{"Content-Type": "application/json"}),
+        json_body=REPORT,
+    )
+    r.call("replay", "POST", PATH, headers=headers, json_body=REPORT)
+    r.call(
+        "conflict", "POST", PATH, headers=headers, json_body={**REPORT, "app_build": 2}
+    )
+    r.call(
+        "invalid",
+        "POST",
+        PATH,
+        headers=headers,
+        json_body={**REPORT, "message": "synthetic private message"},
+    )
+    return r
+
+
 GROUPS = [
     capabilities,
     errors,
@@ -795,6 +826,7 @@ GROUPS = [
     wiki,
     edits,
     read_shapes,
+    crashes,
 ]
 
 

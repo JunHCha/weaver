@@ -71,6 +71,9 @@ fun PhoneShell(
     val onEdited: () -> Unit = { edits++ }
     val current = remember(resumes, snapshot) { now() }
     var tab by rememberSaveable { mutableStateOf(initialTab) }
+    io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen =
+        io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen.copy(last_tab = tab.name)
+
     var person by rememberSaveable { mutableStateOf<String?>(null) }
     var area by rememberSaveable { mutableStateOf<String?>(null) }
     var page by rememberSaveable { mutableStateOf<String?>(null) }

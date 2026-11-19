@@ -222,3 +222,24 @@ node(+로그인 사용자) 결합, scope 분리다.
 
 Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alerts/pipeline=false`). 검토 패키지 파일
 (`proposals/`) 게시는 설정과 무관하게 계속된다.
+
+
+### 충돌 진단 (인증된 모든 기기, scope 제한 없음)
+
+`POST /diagnostics/crashes`는 UTF-8 JSON **64 KiB**까지 받는다(선언 길이와 스트림 모두 제한).
+`client_id`는 8~64자 `[A-Za-z0-9_-]` 멱등 키다. 최초 저장은 201, 같은 내용의 재전송은 200이며
+둘 다 `{client_id, state:"stored"}`를 돌려준다. 같은 키의 다른 내용은 409 `client_id_conflict`,
+형식 오류·알 수 없는 필드(예: `message`)는 422 `invalid_crash`, 초과는 413 `too_large`다.
+공유 예시는 `schema/mobile/fixtures/crashes.json`에 있다.
+
+본문은 `client_id`, `occurred_at`(시간대 필수), `app_version`, `app_build`, `thread`,
+`exceptions:[{exception_class, frames:[{class_name, method_name, file_name|null, line_number}]}]`,
+`screen:{last_tab:NOW|PEOPLE|AREAS|WIKI, map_open, selected_node|null, settings_open}`다.
+예외와 원인·suppressed 예외는 순서대로 담으며 순환 참조는 한 번만 기록한다. 메시지·원문·지역 변수는
+보내지 않고 모든 스택 프레임(앱 패키지 포함)을 구조화해서 보낸다. 파일 이름은 소스 파일 이름이며 경로가 아니다.
+
+서버는 `state/mobile/crashes/<client_id>.json`에 `{device_id, report}`를 0600으로 원자 저장한다.
+로그에는 충돌 ID만 남긴다. `weaver mobile crashes [client_id] --config ...`로 목록 또는 전체 기록을 조회한다.
+폰은 프로세스의 기본 예외 핸들러에서 앱 내부 `noBackupFilesDir/crashes`에 최근 5건을 보관한 뒤 원래
+핸들러에 위임한다. 다음 프로세스 시작 때 페어링되어 있으면 네트워크 작업으로 전송하고 저장 확인 뒤 지운다.
+수집·설정의 진단 카드에서도 마지막 요약을 보고 다시 보낼 수 있다.
