@@ -1,0 +1,181 @@
+{
+  "contract_version": 1,
+  "group": "crashes",
+  "description": "Message-free crash diagnostics: authenticated, no scope required, 64 KiB maximum.",
+  "cases": [
+    {
+      "name": "stored",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/diagnostics/crashes",
+        "headers": {
+          "authorization": "Bearer <token>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "occurred_at": "2026-11-19T00:00:00Z",
+          "app_version": "0.1.0-debug",
+          "app_build": 1,
+          "thread": "main",
+          "exceptions": [
+            {
+              "exception_class": "java.lang.IllegalStateException",
+              "frames": [
+                {
+                  "class_name": "io.github.junhcha.weaver.ui.Map",
+                  "method_name": "open",
+                  "file_name": "Map.kt",
+                  "line_number": 42
+                }
+              ]
+            }
+          ],
+          "screen": {
+            "last_tab": "NOW",
+            "map_open": true,
+            "selected_node": "USER",
+            "settings_open": false
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "state": "stored"
+        }
+      }
+    },
+    {
+      "name": "replay",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/diagnostics/crashes",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "occurred_at": "2026-11-19T00:00:00Z",
+          "app_version": "0.1.0-debug",
+          "app_build": 1,
+          "thread": "main",
+          "exceptions": [
+            {
+              "exception_class": "java.lang.IllegalStateException",
+              "frames": [
+                {
+                  "class_name": "io.github.junhcha.weaver.ui.Map",
+                  "method_name": "open",
+                  "file_name": "Map.kt",
+                  "line_number": 42
+                }
+              ]
+            }
+          ],
+          "screen": {
+            "last_tab": "NOW",
+            "map_open": true,
+            "selected_node": "USER",
+            "settings_open": false
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "state": "stored"
+        }
+      }
+    },
+    {
+      "name": "conflict",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/diagnostics/crashes",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "occurred_at": "2026-11-19T00:00:00Z",
+          "app_version": "0.1.0-debug",
+          "app_build": 2,
+          "thread": "main",
+          "exceptions": [
+            {
+              "exception_class": "java.lang.IllegalStateException",
+              "frames": [
+                {
+                  "class_name": "io.github.junhcha.weaver.ui.Map",
+                  "method_name": "open",
+                  "file_name": "Map.kt",
+                  "line_number": 42
+                }
+              ]
+            }
+          ],
+          "screen": {
+            "last_tab": "NOW",
+            "map_open": true,
+            "selected_node": "USER",
+            "settings_open": false
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "client_id_conflict",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "invalid",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/diagnostics/crashes",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "crash_synthetic_0001",
+          "occurred_at": "2026-11-19T00:00:00Z",
+          "app_version": "0.1.0-debug",
+          "app_build": 1,
+          "thread": "main",
+          "exceptions": [
+            {
+              "exception_class": "java.lang.IllegalStateException",
+              "frames": [
+                {
+                  "class_name": "io.github.junhcha.weaver.ui.Map",
+                  "method_name": "open",
+                  "file_name": "Map.kt",
+                  "line_number": 42
+                }
+              ]
+            }
+          ],
+          "screen": {
+            "last_tab": "NOW",
+            "map_open": true,
+            "selected_node": "USER",
+            "settings_open": false
+          },
+          "message": "synthetic private message"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_crash",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

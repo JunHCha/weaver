@@ -102,6 +102,10 @@ fun HomeScreen(
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var replay by rememberSaveable { mutableIntStateOf(0) }
     var pendingCalls by rememberSaveable { mutableStateOf(false) }
+    // Set during composition, before entering child screens that might fail.
+    io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen =
+        io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen.copy(map_open = map, selected_node = selected, settings_open = tools)
+
     // Notification taps are one-shot: apply them, then tell the activity to drop its flags so recreation or
     // back navigation never replays them. An inbox tap leaves settings and lands on the map's You node.
     LaunchedEffect(showPendingCalls, showInbox) {

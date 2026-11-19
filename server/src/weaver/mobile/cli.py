@@ -245,3 +245,31 @@ def reconcile(config: ConfigOption = None) -> None:
     reviews = ReviewService(SummaryState(settings.state_root), store)
     changed = reconcile_transports(settings.mobile, store, reviews, actions, settings)
     typer.echo("republished: " + (", ".join(changed) if changed else "nothing"))
+
+
+@mobile_cli.command()
+def crashes(
+    client_id: Annotated[
+        str | None, typer.Argument(help="Show one crash in full")
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List crash diagnostics, or show one message-free report as JSON."""
+    from weaver.mobile.crashes import CrashStore
+    from weaver.mobile.errors import ApiError
+
+    store = CrashStore(_settings(config, need_bind=False).state_root)
+    try:
+        records = [store.get(client_id)] if client_id else store.records()
+    except ApiError:
+        typer.echo("Error: crash_not_found", err=True)
+        raise typer.Exit(1) from None
+    for record in records:
+        if client_id:
+            typer.echo(json.dumps(record, ensure_ascii=False, indent=2))
+        else:
+            report = record["report"]
+            assert isinstance(report, dict)
+            typer.echo(
+                f"{report['client_id']}\t{report['occurred_at']}\t{record['device_id']}"
+            )

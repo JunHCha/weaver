@@ -27,6 +27,7 @@ from weaver.schema import ActionResult
 
 from .auth import PREFIX, AuthMiddleware, Principal
 from .captures import CaptureService
+from .crashes import CrashStore
 from .edits import (
     EditService,
     MobileAliasEdit,
@@ -269,6 +270,13 @@ def create_app(
                 },
             }
         )
+
+    @router.post("/diagnostics/crashes")
+    async def crash(request: Request, who: Anyone) -> JSONResponse:
+        status, body = CrashStore(config.state_root).submit(
+            await _body(request, 64 * 1024), who.device.device_id
+        )
+        return json_response(body, status)
 
     # ---- captures --------------------------------------------------------------
 
