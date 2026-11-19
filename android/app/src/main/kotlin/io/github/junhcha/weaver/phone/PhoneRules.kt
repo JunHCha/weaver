@@ -24,12 +24,13 @@ fun PhoneThread.historyTarget(): String? = correction?.target ?: retracts ?: exe
 
 /** Web `relations()`: any retraction retracts; a resolve counts only if its row is neither a retraction nor retracted. */
 private class Relations(threads: List<PhoneThread>) {
-    val retracted: Set<String> = threads.mapNotNull { it.retracts }.toSet()
+    val retracted: Set<String> = threads.mapNotNull { it.retracts }.toSet() +
+        threads.filter { it.retracted == true }.map { it.id }
     val resolved: Set<String> = threads.mapNotNull { t ->
         t.resolves.takeIf { t.retracts == null && t.id !in retracted }
     }.toSet()
 
-    fun isOpen(t: PhoneThread) = t.kind == ThreadKind.REQUEST && t.id !in retracted && t.id !in resolved
+    fun isOpen(t: PhoneThread) = t.open ?: (t.kind == ThreadKind.REQUEST && t.id !in retracted && t.id !in resolved)
 }
 
 private fun PhoneSnapshot.partyNames(): Set<String> =
@@ -55,6 +56,8 @@ private fun rootTarget(row: PhoneThread, byId: Map<String, PhoneThread>): PhoneT
  * [PhoneThread.deadline], [PhoneThread.scheduleAt] and [PhoneThread.tags] replaced on the facts they change.
  */
 fun PhoneSnapshot.effective(): PhoneSnapshot {
+    // The server already folded the history rows in (effective_deadline/_schedule, corrected tags): never apply them twice.
+    if (threads.any { it.open != null }) return this
     val relation = Relations(threads)
     val byId = threads.associateBy { it.id }
     val changes = threads.filter { it.isHistory() && it.retracts == null && it.id !in relation.retracted }
@@ -126,7 +129,8 @@ data class TimelineRow(val thread: PhoneThread, val membership: Membership, val 
  * organizations can be mention-only.
  */
 fun mentionOnly(thread: PhoneThread, subject: String, parties: Set<String>): Boolean =
-    subject in parties && thread.counterpart != subject && subject in thread.tags
+    subject in parties && thread.counterpart != subject &&
+        (thread.mentions?.let { subject in it } ?: (subject in thread.tags))
 
 /**
  * One person/organization/area as a single newest-first column. People default to threads where they are the

@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         )
         showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
         showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
-        val readModel = PhoneReadModels.forBuild(BuildConfig.DEBUG)
+        val readModel = PhoneReadModels.forContext(this, BuildConfig.DEBUG)
         setContent { HomeScreen(readModel, showPending.value, showInbox.value, ::consumeNotification) }
     }
 }

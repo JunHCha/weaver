@@ -12,7 +12,7 @@ import java.util.UUID
 enum class ReviewStatus(val label: String) {
     PENDING("전송 대기"), ERROR("전송 오류 · 재시도 가능"), CONFLICT("충돌 · 기존 파일을 덮어쓰지 않았습니다"),
     STALE("새 revision 도착 또는 문서 없음 · 최신 문서를 다시 확인하세요"), SENT("전송됨(PC 반영 대기)"),
-    INFERRED("파일 사라짐 · PC 반영 추정"),
+    INFERRED("파일 사라짐 · PC 반영 추정"), APPLIED("PC 적용 완료"),
 }
 
 @Serializable
@@ -82,11 +82,24 @@ class ReviewStore(private val directory: File) {
         } else save(ReviewRecord(verdict, folder.identity, ReviewStatus.PENDING))
     }
 
+    /** Records a final delivery result the transport learned (HTTP operation applied, 412 stale, 409 conflict). */
+    fun mark(id: String, revision: Long, status: ReviewStatus) {
+        val f = file(id, revision)
+        if (!f.exists()) return
+        val record = json.decodeFromString<ReviewRecord>(f.readText())
+        if (record.status != ReviewStatus.APPLIED) save(record.copy(status = status, published = record.published || status == ReviewStatus.APPLIED))
+    }
+
+    /** Moves not-yet-published records to another transport identity (a route switch must not strand them). */
+    fun retarget(from: String, to: String) {
+        records().filter { it.tree == from && !it.published }.forEach { save(it.copy(tree = to)) }
+    }
+
     /** Publish queued verdicts and classify delivery; false means a retry is useful. */
     fun synchronize(folder: CourierFolder): Boolean {
         var success = true
         for (record in records().filter { it.tree == folder.identity }) {
-            if (record.status in setOf(ReviewStatus.STALE, ReviewStatus.CONFLICT, ReviewStatus.INFERRED)) continue
+            if (record.status in setOf(ReviewStatus.STALE, ReviewStatus.CONFLICT, ReviewStatus.INFERRED, ReviewStatus.APPLIED)) continue
             val v = record.verdict
             val name = "${v.packageId}.r${v.revision}.json"
             val status = try {

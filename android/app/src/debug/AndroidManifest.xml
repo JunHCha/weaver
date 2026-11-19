@@ -8,12 +8,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <application>
         <activity android:name=".callbrief.CallBriefSetupActivity" android:exported="true"
-            android:label="Weaver 통화 시험 · 머지 금지">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:label="Weaver 통화 시험 · 머지 금지" />
+        <!-- Not a launcher: opened from the "통화 브리핑 시험" entry in 수집·설정, or with
+             adb shell am start -n io.github.junhcha.weaver.debug/io.github.junhcha.weaver.callbrief.CallBriefSetupActivity -->
         <activity android:name=".callbrief.CallBriefActivity" android:exported="false"
             android:resizeableActivity="true" android:taskAffinity="io.github.junhcha.weaver.debug.callbrief"
             android:excludeFromRecents="true" />

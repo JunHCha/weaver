@@ -67,6 +67,7 @@ internal fun WikiViewer(
     page: WikiPage,
     onBack: () -> Unit,
     onLink: (LinkTarget) -> Unit,
+    loading: Boolean = false,
 ) {
     Column(Modifier.fillMaxSize().testTag("wiki-viewer")) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -80,6 +81,7 @@ internal fun WikiViewer(
             Text(page.title, style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
             Muted(listOfNotNull(page.kind.label, page.area?.let { "영역: $it" }, "갱신 ${page.updated.shortDate()}").joinToString(" · "))
             Frontmatter(snapshot, page, onLink)
+            if (loading) Muted("본문을 불러오는 중이에요")
             val blocks = remember(page.body) { parseWikiBody(page.body) }
             blocks.forEach { WikiBlock(snapshot, it, onLink) }
         }

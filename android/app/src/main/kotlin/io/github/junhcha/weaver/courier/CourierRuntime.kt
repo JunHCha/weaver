@@ -16,6 +16,8 @@ import androidx.work.*
 import io.github.junhcha.weaver.MainActivity
 import io.github.junhcha.weaver.R
 import io.github.junhcha.weaver.schema.*
+import io.github.junhcha.weaver.transport.MissingFolder
+import io.github.junhcha.weaver.transport.TransportRuntime
 import java.io.File
 import java.io.FileOutputStream
 import java.math.BigInteger
@@ -104,22 +106,36 @@ object CourierRuntime {
         }
     }
 
+    /** True when some feature has somewhere to go: a selected Syncthing folder or an HTTP route. */
+    fun active(context: Context): Boolean = tree(context) != null || TransportRuntime.settings(context).paired
+
+    /** The Syncthing side of the routed folder; a missing or lost folder stands in as [MissingFolder]. */
+    fun files(context: Context): CourierFolder {
+        if (tree(context) == null || stopped(context)) return MissingFolder
+        return try { folder(context) } catch (_: Exception) { stop(context); MissingFolder }
+    }
+
+    /** What every Courier reader and writer uses: each directory lives where its feature's route says. */
+    fun routed(context: Context): CourierFolder = TransportRuntime.routed(context, files(context))
+
     fun schedule(context: Context) {
-        if (tree(context) == null) return
+        if (!active(context)) return
         val work = WorkManager.getInstance(context)
         work.enqueueUniquePeriodicWork("courier-periodic", ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<CourierWorker>(15, TimeUnit.MINUTES)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        TransportRuntime.schedule(context)
         kick(context)
     }
     fun kick(context: Context) {
-        if (tree(context) == null) return
+        if (!active(context)) return
         // Each trigger gets an independent root: an earlier retry must not block fresh data
         // or a restored folder grant. The runtime lock and durable capture state make overlap safe.
         WorkManager.getInstance(context).enqueue(
             OneTimeWorkRequestBuilder<CourierWorker>()
                 .addTag("courier-immediate")
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        TransportRuntime.kick(context)
     }
 
     /** Snapshot first; assign ID and persist mapping before making anything visible to Syncthing. */
@@ -195,27 +211,46 @@ object CourierRuntime {
 }
 
 class CourierWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result = synchronized(CourierRuntime.lock) {
-        val context = applicationContext
-        if (CourierRuntime.tree(context) == null || CourierRuntime.stopped(context)) return@synchronized Result.success()
-        val folder = try { CourierRuntime.folder(context) } catch (_: Exception) {
-            CourierRuntime.stop(context)
-            return@synchronized Result.success()
-        }
-        CourierDatabase(context).use { db ->
-            try {
-                if (synchronize(context, folder, db)) Result.success() else Result.retry()
-            } catch (_: SecurityException) {
-                CourierRuntime.stop(context); Result.success()
-            } catch (error: Exception) {
-                db.diagnostic("courier", "scan", CourierClient.errorCode(error))
-                io.github.junhcha.weaver.widget.WidgetUpdates.scanFinished(context, false)
-                Result.retry()
+    /** No network constraint: Syncthing work and spooling for HTTP features never need a connection. */
+    override fun doWork(): Result = run(applicationContext, network = false)
+
+    companion object {
+        /** One locked pass. With [network] the HTTP exchange talks to the server; otherwise it only spools locally. */
+        internal fun run(context: Context, network: Boolean): Result = synchronized(CourierRuntime.lock) {
+            if (!CourierRuntime.active(context)) return@synchronized Result.success()
+            val settings = TransportRuntime.settings(context)
+            // The server decides the routes: read them first (when the network is allowed), then move any unsent items a
+            // switch left behind, then run the pass.
+            val refresh = if (network) TransportRuntime.refresh(context) else null
+            if (CourierRuntime.stopped(context) && !settings.anyHttp) return@synchronized Result.success()
+            TransportRuntime.migrateOrphans(context, CourierRuntime.files(context))
+            val folder = CourierRuntime.routed(context)
+            val exchange = if (network) TransportRuntime.exchange(context) else null
+            CourierDatabase(context).use { db ->
+                try {
+                    val ok = synchronize(context, folder, db, exchange)
+                    val summary = exchange?.summary?.also { merge(it, refresh) } ?: refresh
+                    if (summary != null) TransportRuntime.finished(context, summary)
+                    if (ok && summary?.retry != true) Result.success() else Result.retry()
+                } catch (_: SecurityException) {
+                    CourierRuntime.stop(context); Result.success()
+                } catch (error: Exception) {
+                    db.diagnostic("courier", "scan", CourierClient.errorCode(error))
+                    io.github.junhcha.weaver.widget.WidgetUpdates.scanFinished(context, false)
+                    Result.retry()
+                }
             }
         }
-    }
-    companion object {
-        internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase): Boolean {
+
+        private fun merge(into: io.github.junhcha.weaver.transport.ExchangeSummary, other: io.github.junhcha.weaver.transport.ExchangeSummary?) {
+            if (other == null) return
+            into.retry = into.retry || other.retry; into.unreachable = into.unreachable || other.unreachable
+            into.needsRepair = into.needsRepair || other.needsRepair; into.errorCode = into.errorCode ?: other.errorCode
+        }
+
+        internal fun synchronize(context: Context, folder: CourierFolder, db: CourierDatabase,
+                                 exchange: io.github.junhcha.weaver.transport.HttpExchange? = null): Boolean {
+            exchange?.pull()
             val client = CourierClient(folder, db, CourierRuntime.AUTO_CLEANUP)
             // One listing feeds both capture publication and the review/alert inbox. A listing
             // failure throws before either runs, so it is never read as "every file was deleted".
@@ -252,6 +287,12 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             } catch (error: SecurityException) { throw error
             } catch (error: Exception) {
                 db.diagnostic("decisions", "review", CourierClient.errorCode(error)); successful = false
+            }
+            if (exchange != null) {
+                exchange.push()
+                io.github.junhcha.weaver.review.ReviewRuntime.applyOutcomes(context)
+                // Receipts the push just wrote flip the capture state now instead of at the next run.
+                if (!client.synchronize(client.scan())) successful = false
             }
             try {
                 if (!io.github.junhcha.weaver.shepherd.PendingCalls.reconcile(context)) successful = false

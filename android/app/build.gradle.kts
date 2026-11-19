@@ -96,6 +96,10 @@ android {
                 val schemaDir = rootProject.layout.projectDirectory.dir("../schema")
                 test.inputs.dir(schemaDir).withPropertyName("weaverSchema")
                 test.systemProperty("weaver.schemaDir", schemaDir.asFile.absolutePath)
+                // Contract fixtures shared with the server tests (generated there, byte-identical copies in schema/mobile).
+                val mobileFixtures = rootProject.layout.projectDirectory.dir("../schema/mobile/fixtures")
+                test.inputs.dir(mobileFixtures).withPropertyName("weaverMobileFixtures")
+                test.systemProperty("weaver.mobileFixtureDir", mobileFixtures.asFile.absolutePath)
                 val resDir = layout.projectDirectory.dir("src/main/res")
                 test.inputs.dir(resDir).withPropertyName("weaverRes")
                 test.systemProperty("weaver.resDir", resDir.asFile.absolutePath)
@@ -139,6 +143,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.kotlinx.serialization.json)
+    // QR pairing without a camera permission: Google's code scanner runs in Play services.
+    implementation(libs.play.services.code.scanner)
+    // The scanner pulls an old Fragment; ActivityResult (used across the app) needs >= 1.3.
+    implementation(libs.androidx.fragment)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 

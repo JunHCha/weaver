@@ -53,6 +53,7 @@ fun PhoneShell(
     onOpenMap: () -> Unit,
     onOpenSettings: () -> Unit,
     initialTab: PhoneTab = PhoneTab.NOW,
+    tagHost: TagEditHost? = null,
 ) {
     // Every resume re-reads the snapshot and recomputes "now" so day groups never go stale.
     var resumes by rememberSaveable { mutableIntStateOf(0) }
@@ -61,7 +62,13 @@ fun PhoneShell(
         if (first[0]) first[0] = false else resumes++
         onPauseOrDispose { }
     }
-    val snapshot by produceState<PhoneSnapshot?>(null, readModel, resumes) { value = readModel.snapshot() }
+    var edits by rememberSaveable { mutableIntStateOf(0) }
+    var offlineSince by remember { mutableStateOf<Instant?>(null) }
+    val snapshot by produceState<PhoneSnapshot?>(null, readModel, resumes, edits) {
+        value = readModel.snapshot()
+        offlineSince = readModel.offlineSince
+    }
+    val onEdited: () -> Unit = { edits++ }
     val current = remember(resumes, snapshot) { now() }
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     var person by rememberSaveable { mutableStateOf<String?>(null) }
@@ -87,20 +94,27 @@ fun PhoneShell(
     }
     Column(Modifier.fillMaxSize()) {
         if (readModel.isExample) ExampleBadge()
+        offlineSince?.let { OfflineBanner(it) }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 PhoneTab.NOW -> NowScreen(
                     data?.let { nowView(it, current) }, counts, current, connected = !noData, onOpenMap, onOpenSettings,
                 )
                 PhoneTab.PEOPLE -> if (data == null) Loading() else person?.let { name ->
-                    TimelineScreen(data, name) { person = null }
+                    TimelineScreen(data, name, { person = null }, tagHost, onEdited)
                 } ?: SubjectList("사람", peopleEntries(data), emptyText ?: "아직 없어요") { person = it }
                 PhoneTab.AREAS -> if (data == null) Loading() else area?.let { name ->
-                    TimelineScreen(data, name) { area = null }
+                    TimelineScreen(data, name, { area = null }, tagHost, onEdited)
                 } ?: SubjectList("영역", areaEntries(data), emptyText ?: "아직 없어요") { area = it }
                 PhoneTab.WIKI -> if (data == null) Loading() else {
                     val open = page?.let { id -> data.wikiPages.firstOrNull { it.id == id } }
-                    if (open != null) WikiViewer(data, open, { page = null }, ::open)
+                    if (open != null) {
+                        // The list carries no bodies: fetch (or read the cached) body when the page is opened.
+                        val body by produceState<String?>(open.body.takeIf { it.isNotEmpty() }, open.id, open.sha256) {
+                            value = readModel.wikiBody(open) ?: value
+                        }
+                        WikiViewer(data, open.copy(body = body.orEmpty()), { page = null }, ::open, loading = body == null)
+                    }
                     else WikiList(data.wikiPages, emptyText ?: "아직 페이지가 없어요") { page = it }
                 }
             }
@@ -115,6 +129,19 @@ fun PhoneShell(
             }
             tab = selected
         }
+    }
+}
+
+/** Shown while the screens use the last copy from the server because it cannot be reached right now. */
+@Composable
+private fun OfflineBanner(since: Instant) {
+    val at = since.atZone(io.github.junhcha.weaver.phone.SeoulZone)
+    Box(
+        Modifier.fillMaxWidth().background(WeaverTokens.line).padding(vertical = 4.dp).testTag("offline-banner"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("오프라인 · ${at.monthValue}/${at.dayOfMonth} ${"%02d:%02d".format(at.hour, at.minute)} 기준 사본",
+            style = MaterialTheme.typography.labelMedium, color = WeaverTokens.ink)
     }
 }
 

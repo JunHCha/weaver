@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -69,6 +70,11 @@ fun HomeScreen(
         )[PipelineViewModel::class.java]
     }
     val state by model.state.collectAsState()
+    val appContext = LocalContext.current.applicationContext
+    // Tag edits go to the paired server; without a pairing the timeline stays read-only.
+    val tagHost = remember(appContext, readModel, state) {
+        io.github.junhcha.weaver.transport.TransportRuntime.api(appContext)?.let { ApiTagEditHost(io.github.junhcha.weaver.phone.TagEditor(it)) }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, activity) {
         val observer = LifecycleEventObserver { _, event ->
@@ -133,6 +139,7 @@ fun HomeScreen(
                         { Instant.now() },
                         { map = true },
                         { tools = true },
+                        tagHost = tagHost,
                     )
                 }
             }

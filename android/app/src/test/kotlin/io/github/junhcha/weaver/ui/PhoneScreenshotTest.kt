@@ -6,6 +6,12 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.phone.StatusCounts
 import io.github.junhcha.weaver.phone.SyntheticPhoneReadModel
 import java.io.File
@@ -65,6 +71,70 @@ class PhoneScreenshotTest {
         compose.waitForIdle(); shoot("3a-wiki-list")
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.waitForIdle(); shoot("3b-wiki-viewer")
+    }
+
+    /** Pairing, connection status and the tag edit sheet (content drawn over the timeline like the bottom sheet). */
+    @Test fun transportScreens() {
+        assumeTrue(System.getenv("WEAVER_SCREENSHOT_DIR") != null)
+        val synthetic = kotlinx.coroutines.runBlocking { SyntheticPhoneReadModel(Clock.fixed(now, ZoneId.of("UTC"))).snapshot() }
+        val syncedAt = now.minusSeconds(14 * 60).toEpochMilli()
+        val shown = androidx.compose.runtime.mutableStateOf(0)
+        compose.activity.setContent {
+            WeaverTheme {
+                androidx.compose.material3.Surface {
+                    androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(16.dp)) {
+                        when (shown.value) {
+                            0 -> ConnectionContent(ConnectionUi(), false, null, {}, {}, {}, {})
+                            1 -> ConnectionContent(
+                                ConnectionUi(true, "https://100.106.199.83:8787", false, syncedAt, null,
+                                    io.github.junhcha.weaver.transport.QueueCounts(2, 1, 0, 0),
+                                    mapOf(
+                                        io.github.junhcha.weaver.transport.TransportFeature.CAPTURE to io.github.junhcha.weaver.transport.TransportRoute.HTTP,
+                                        io.github.junhcha.weaver.transport.TransportFeature.VERDICT to io.github.junhcha.weaver.transport.TransportRoute.HTTP,
+                                        io.github.junhcha.weaver.transport.TransportFeature.ACTION_RESULT to io.github.junhcha.weaver.transport.TransportRoute.FILES,
+                                    )),
+                                false, null, {}, {}, {}, {})
+                            2 -> ConnectionContent(
+                                ConnectionUi(true, "https://100.106.199.83:8787", false, syncedAt, "unreachable",
+                                    io.github.junhcha.weaver.transport.QueueCounts(3, 1, 1, 0)),
+                                false, null, {}, {}, {}, {})
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle(); shoot("5a-pairing")
+        shown.value = 1; compose.waitForIdle(); shoot("5b-connection-status")
+        shown.value = 2; compose.waitForIdle(); shoot("5c-connection-waiting")
+
+        val fact = synthetic.threads.first { it.id == "t-12" }
+        val other = synthetic.threads.first { it.id == "t-10" }
+        val single = androidx.compose.runtime.mutableStateOf(true)
+        compose.activity.setContent {
+            WeaverTheme {
+                androidx.compose.material3.Surface {
+                    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                        TimelineScreen(synthetic, "이서준", {}, RecordingTagHost())
+                        androidx.compose.material3.Surface(
+                            Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                            shadowElevation = 12.dp, color = WeaverTokens.surface,
+                        ) {
+                            androidx.compose.foundation.layout.Column(Modifier.padding(top = 16.dp)) {
+                                TagEditContent(
+                                    if (single.value) listOf(fact) else listOf(fact, other), synthetic.tags,
+                                    listOf(io.github.junhcha.weaver.phone.DictionaryEntry("방화벽 장비 교체", io.github.junhcha.weaver.phone.TagKind.PROJECT, listOf("fw"), 3)),
+                                    false, null, {}, { _, _, _ -> },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("tag-search").performTextInput("방화")
+        compose.waitForIdle(); shoot("6a-tag-edit-sheet")
     }
 
     @Test fun releaseEmptyState() {
