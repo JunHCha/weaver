@@ -9,6 +9,7 @@ export function isHistory(t: Thread): boolean {
     (t.presentation === undefined &&
       (["실행", "태그정정", "거절"].includes(t.kind) ||
         !!t.retracts ||
+        !!t.amends ||
         t.thread_id.startsWith("wiki-field:") ||
         (t.thread_id.startsWith("wiki:") &&
           !!t.field &&
@@ -17,7 +18,7 @@ export function isHistory(t: Thread): boolean {
 }
 export function historyTarget(t: Thread): string | null {
   return (
-    t.correction?.target || t.retracts || t.executes || t.resolves || t.updates
+    t.correction?.target || t.retracts || t.executes || t.resolves || t.amends || t.updates
   );
 }
 export function isValueHistory(t: Thread): boolean {
@@ -215,7 +216,7 @@ export function createThreadView(snapshot: Thread[], tags: Tag[]): ThreadView {
         label: `${fieldLabel[t.field]} ${oldText || "없음"} → ${fieldText(after)?.[1] || "없음"}${relation.retracted.has(t.thread_id) ? " · 철회됨" : ""}`,
       });
     }
-    if (relation.retracted.has(t.thread_id)) continue;
+    if (relation.retracted.has(t.thread_id) || (t.amends && relation.retracted.has(t.amends))) continue;
     for (const name of targetTags) {
       const state = states.get(name) || new Map<string, Thread>();
       if (t.field === "assignees") {

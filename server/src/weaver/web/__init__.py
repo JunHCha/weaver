@@ -25,6 +25,7 @@ from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
 from weaver.context import SchemaVersionError as ContextSchemaError
 from weaver.fabric import FabricStore, ThreadQuery
+from weaver.fabric.requests import request_values
 from weaver.fabric.state import project
 from weaver.fabric.store import SchemaVersionError as FabricSchemaError
 from weaver.schema import PipelineItem, Thread
@@ -39,6 +40,7 @@ class PresentedThread(Thread):
     """Read-only presentation metadata; never persisted in Fabric."""
 
     presentation: Literal["fact", "history"]
+    effective_deadline: str | None = None
 
 
 Stage = Literal["spinner", "loom"]
@@ -274,9 +276,15 @@ def create_app(config: ServerConfig, static_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/threads")
     def threads(include_executions: bool = False) -> list[PresentedThread]:
+        rows = canonical_threads(config, snapshot(include_executions))
+        deadlines, _ = request_values(rows)
         return [
-            PresentedThread(**thread.model_dump(), presentation=presentation(thread))
-            for thread in canonical_threads(config, snapshot(include_executions))
+            PresentedThread(
+                **thread.model_dump(),
+                presentation=presentation(thread),
+                effective_deadline=deadlines.get(thread.thread_id),
+            )
+            for thread in rows
         ]
 
     @app.get("/api/tags")

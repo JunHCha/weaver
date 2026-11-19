@@ -24,6 +24,7 @@ ASSERT_HEADERS = (
 SEND_HEADERS = ("if-match", "x-content-sha256", "content-type")
 FIXED_TIME = "2026-11-19T00:00:00Z"
 PLACEHOLDERS = [
+    (re.compile(r"\bfab_[0-9a-f]{32}\b"), lambda n: f"fab_{n:032x}"),
     (re.compile(r"\bop_[0-9a-f]{32}\b"), lambda n: f"op_{n:032x}"),
     (re.compile(r"\bdev_[0-9a-f]{32}\b"), lambda n: f"dev_{n:032x}"),
     (re.compile(r"\bsrv_[0-9a-f]{32}\b"), lambda n: f"srv_{n:032x}"),
@@ -112,6 +113,9 @@ def stabilize(value: Any) -> Any:
         out = {k: stabilize(v) for k, v in value.items()}
         if "operation_id" in out and "updated_at" in out:
             out["updated_at"] = FIXED_TIME
+        if "thread_id" in out and str(out["thread_id"]).startswith("phone-request:"):
+            out["occurred_at"] = FIXED_TIME
+            out["recorded_at"] = FIXED_TIME
         if "received_at" in out:
             out["received_at"] = FIXED_TIME
         if "frontmatter" in out and "updated_at" in out:

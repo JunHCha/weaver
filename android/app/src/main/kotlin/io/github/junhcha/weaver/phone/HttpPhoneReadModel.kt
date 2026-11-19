@@ -213,6 +213,7 @@ class HttpPhoneReadModel(
                 scheduleAt = schedule?.str("start")?.let { runCatching { Instant.parse(it) }.getOrNull() },
                 field = field,
                 presentation = when (o.str("presentation")) { "fact" -> Presentation.FACT; "history" -> Presentation.HISTORY; else -> null },
+                amends = o.str("amends"), revision = (o["revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: o.str("seq")!!.toLong(),
                 resolves = o.str("resolves"), retracts = o.str("retracts"), updates = o.str("updates"),
                 executes = o.str("executes"), correction = correction,
                 open = (o["open"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(),

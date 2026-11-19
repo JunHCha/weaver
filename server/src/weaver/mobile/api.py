@@ -38,6 +38,7 @@ from .edits import (
 from .errors import ApiError
 from .feed import FeedProducer
 from .read import ReadModel
+from .requests import DeadlineEdit, RequestEdit, RequestEditService, UndoEdit
 from .reviews import ReviewEntry, ReviewService, etag
 from .store import MobileStore, Operation, canonical, content_hash
 from .whois import Whois
@@ -143,6 +144,7 @@ def create_app(
         staging_days=mobile.staging_days,
     )
     read = ReadModel(config, archive, clock)
+    request_edits = RequestEditService(config, store)
     edits = EditService(config, store)
     feed = FeedProducer(
         store,
@@ -259,6 +261,7 @@ def create_app(
                     "read": True,
                     "dictionary": True,
                     "edits": True,
+                    "thread_handling": True,
                     "alerts": False,  # not served over HTTP yet: keep reading files
                     "pipeline": False,
                 },
@@ -471,8 +474,10 @@ def create_app(
     # ---- read model ------------------------------------------------------------
 
     @router.get("/read/now")
-    def read_now(_who: ReadScope) -> JSONResponse:
-        return json_response(read.now())
+    def read_now(
+        _who: ReadScope, after_seq: Annotated[int | None, Query(ge=0)] = None
+    ) -> JSONResponse:
+        return json_response(read.now(after_seq=after_seq))
 
     @router.get("/read/threads")
     def read_threads(
@@ -555,6 +560,31 @@ def create_app(
             return model.model_validate_json(raw)
         except ValidationError:
             raise ApiError(422, "invalid_request") from None
+
+    @router.post("/edits/requests/complete")
+    async def complete_request(request: Request, who: EditScope) -> JSONResponse:
+        edit = await parse(request, RequestEdit)
+        return edit_response(
+            *await _in_thread(
+                request_edits.apply, who.device.device_id, "complete", edit
+            )
+        )
+
+    @router.post("/edits/requests/deadline")
+    async def change_deadline(request: Request, who: EditScope) -> JSONResponse:
+        edit = await parse(request, DeadlineEdit)
+        return edit_response(
+            *await _in_thread(
+                request_edits.apply, who.device.device_id, "deadline", edit
+            )
+        )
+
+    @router.post("/edits/requests/undo")
+    async def undo_request_edit(request: Request, who: EditScope) -> JSONResponse:
+        edit = await parse(request, UndoEdit)
+        return edit_response(
+            *await _in_thread(request_edits.apply, who.device.device_id, "undo", edit)
+        )
 
     @router.post("/edits/tags")
     async def edit_tags(request: Request, who: EditScope) -> JSONResponse:

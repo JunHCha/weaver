@@ -6,6 +6,8 @@ from pydantic import JsonValue
 
 from weaver.schema import Thread
 
+from .requests import request_values
+
 
 class InvalidSetOperation(ValueError):
     """An assignees operation was malformed."""
@@ -33,12 +35,14 @@ class TagState:
 def project(tag: str, threads: list[Thread]) -> TagState:
     """Project a complete occurrence-ordered snapshot with effective tags."""
     state = TagState(tag)
+    deadlines, _ = request_values(threads)
     retracted = {t.retracts for t in threads if t.retracts is not None}
     active = [
         t
         for t in threads
         if t.thread_id not in retracted
         and t.retracts is None
+        and t.amends not in retracted
         and t.kind not in ("태그정정", "거절", "실행")
     ]
     resolved = {t.resolves for t in active if t.resolves is not None}
@@ -46,7 +50,13 @@ def project(tag: str, threads: list[Thread]) -> TagState:
         if tag not in t.tags:
             continue
         if t.kind == "요청" and t.thread_id not in resolved:
-            state.open_requests.append(t)
+            state.open_requests.append(
+                t.model_copy(
+                    update={"field": "deadline", "value": deadlines[t.thread_id]}
+                )
+                if deadlines[t.thread_id] is not None
+                else t
+            )
         if t.field == "assignees":
             value = t.value
             if value is None:

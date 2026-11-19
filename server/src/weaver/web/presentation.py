@@ -11,6 +11,7 @@ def presentation(thread: Thread) -> Literal["fact", "history"]:
         if (
             thread.kind in ("태그정정", "실행", "거절")
             or thread.retracts is not None
+            or thread.amends is not None
             or thread.thread_id.startswith("wiki-field:")
             or (
                 thread.thread_id.startswith("wiki:")

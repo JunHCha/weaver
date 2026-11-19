@@ -814,7 +814,87 @@ def crashes(tmp: Path) -> Recorder:
     return r
 
 
+def request_handling(tmp: Path) -> Recorder:
+    from .helpers import thread
+
+    h = Harness(tmp, clock=lambda: NOW)
+    h.fabric.append(
+        [
+            thread(
+                "request-now",
+                kind="요청",
+                direction="받음",
+                field="deadline",
+                value="2026-11-01",
+            )
+        ]
+    )
+    headers = h.pair("read", "edit")
+    r = Recorder(
+        h,
+        "request_handling",
+        "Human completion/deadline/undo with target revisions and client-ID replay.",
+    )
+    body = {
+        "client_id": "request-deadline-01",
+        "thread_id": "request-now",
+        "expected_revision": 1,
+        "content": "기한을 변경했습니다",
+        "deadline": "2026-12-01",
+    }
+    changed = r.call(
+        "deadline",
+        "POST",
+        f"{BASE}/edits/requests/deadline",
+        headers=headers,
+        json_body=body,
+    )
+    r.call(
+        "deadline_replay",
+        "POST",
+        f"{BASE}/edits/requests/deadline",
+        headers=headers,
+        json_body=body,
+    )
+    revision = changed.json()["result"]["revision"]
+    change_id = changed.json()["result"]["edit_thread_id"]
+    r.call("amendment", "GET", f"{BASE}/read/threads/{change_id}", headers=headers)
+    completed = r.call(
+        "complete",
+        "POST",
+        f"{BASE}/edits/requests/complete",
+        headers=headers,
+        json_body={
+            "client_id": "request-complete-01",
+            "thread_id": "request-now",
+            "expected_revision": revision,
+            "content": "완료했습니다",
+        },
+    )
+    result = completed.json()["result"]
+    r.call(
+        "undo",
+        "POST",
+        f"{BASE}/edits/requests/undo",
+        headers=headers,
+        json_body={
+            "client_id": "request-undo-0001",
+            "edit_thread_id": result["edit_thread_id"],
+            "expected_revision": result["revision"],
+        },
+    )
+    r.call(
+        "now_since_seq",
+        "GET",
+        f"{BASE}/read/now",
+        headers=headers,
+        params={"after_seq": 0},
+    )
+    return r
+
+
 GROUPS = [
+    request_handling,
     capabilities,
     errors,
     captures,

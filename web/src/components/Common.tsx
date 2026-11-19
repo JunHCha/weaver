@@ -18,6 +18,7 @@ export function Icon({
     out: "M3 9L9 3M4.5 3H9V7.5",
     resolves: "M2 6.5L5 9.5L10 3",
     retracts: "M4 3L2 5L4 7M2 5H7A2.6 2.6 0 0 1 7 10.2H5",
+    amends: "M2 6h8M6 2v8",
     updates: "M10 6A4 4 0 1 1 8.6 2.9M10 2V4.6H7.4",
     blocked_by: "M3 5.5h6V10H3zM4.5 5.5V4a1.5 1.5 0 0 1 3 0v1.5",
     executes: "M6.6 1.5L3 6.6H6L5.4 10.5L9 5.4H6z",
