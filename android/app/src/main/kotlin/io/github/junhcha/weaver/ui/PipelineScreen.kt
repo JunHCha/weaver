@@ -54,6 +54,10 @@ import io.github.junhcha.weaver.schema.*
 import java.time.Instant
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 @Composable
 fun HomeScreen(
@@ -72,8 +76,17 @@ fun HomeScreen(
     val state by model.state.collectAsState()
     val appContext = LocalContext.current.applicationContext
     // Tag edits go to the paired server; without a pairing the timeline stays read-only.
-    val tagHost = remember(appContext, readModel, state) {
-        io.github.junhcha.weaver.transport.TransportRuntime.api(appContext)?.let { ApiTagEditHost(io.github.junhcha.weaver.phone.TagEditor(it)) }
+    val tagHost by produceState<TagEditHost?>(null, appContext, readModel, state) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                io.github.junhcha.weaver.transport.TransportRuntime.api(appContext)?.let {
+                    ApiTagEditHost(io.github.junhcha.weaver.phone.TagEditor(it))
+                }
+            } catch (_: Exception) {
+                currentCoroutineContext().ensureActive()
+                null
+            }
+        }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, activity) {
@@ -108,7 +121,7 @@ fun HomeScreen(
                 tools -> {
                     val closeTools = { tools = false; pendingCalls = false }
                     BackHandler(onBack = closeTools)
-                    Column(Modifier.safeDrawingPadding()) {
+                    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                         TextButton(onClick = closeTools, Modifier.defaultMinSize(minHeight = 48.dp)) {
                             Text(if (map) "‹ 데이터 흐름" else "‹ 지금")
                         }
@@ -117,7 +130,7 @@ fun HomeScreen(
                 }
                 map -> {
                     BackHandler { map = false; selected = null }
-                    Column(Modifier.safeDrawingPadding()) {
+                    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                         TextButton(onClick = { map = false; selected = null }, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("‹ 지금") }
                         Box(Modifier.weight(1f)) {
                             PipelineContent(
@@ -161,7 +174,8 @@ internal fun PipelineContent(
     var bubble by remember { mutableStateOf<MapItem?>(null) }
     var focusedItem by rememberSaveable { mutableStateOf<String?>(null) }
     val panelState = rememberSaveableStateHolder()
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    // HomeScreen owns window insets; this content consumes its bounded remaining height.
+    Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -182,7 +196,7 @@ internal fun PipelineContent(
         state.error?.let {
             Text(it, Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error)
         }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val wide = maxWidth >= 840.dp && maxWidth > maxHeight
             Row(Modifier.fillMaxSize()) {
                 Column(
