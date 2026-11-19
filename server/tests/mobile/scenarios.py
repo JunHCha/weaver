@@ -888,7 +888,7 @@ def request_handling(tmp: Path) -> Recorder:
         "GET",
         f"{BASE}/read/now",
         headers=headers,
-        params={"after_seq": 0},
+        params={"after_seq": 0, "fabric_epoch": h.fabric.epoch()},
     )
     return r
 

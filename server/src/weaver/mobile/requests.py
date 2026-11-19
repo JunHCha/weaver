@@ -124,8 +124,12 @@ class RequestEditService(EditService):
                         raise EditRejected(
                             409, "edit_already_undone", "edit_already_undone"
                         )
+                    retracted = {t.retracts for t in raw if t.retracts}
                     if original.amends and any(
-                        t.amends == target_id and t.seq > original.seq for t in raw
+                        t.amends == target_id
+                        and t.seq > original.seq
+                        and t.thread_id not in retracted
+                        for t in raw
                     ):
                         raise EditRejected(
                             409, "newer_deadline_change", "newer_deadline_change"
@@ -149,6 +153,8 @@ class RequestEditService(EditService):
                             "changed": False,
                         }
                         return []
+                # Undo is explicitly initiated by the person: actor stays human,
+                # while its description is a server template, not user-written text.
                 draft = ThreadDraft(
                     thread_id=new_id,
                     kind="결정",

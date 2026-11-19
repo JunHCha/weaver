@@ -188,7 +188,8 @@
         "method": "GET",
         "path": "/mobile/v1/read/now",
         "query": {
-          "after_seq": "0"
+          "after_seq": "0",
+          "fabric_epoch": "fab_00000000000000000000000000000001"
         },
         "headers": {
           "authorization": "Bearer <token>"

@@ -475,9 +475,11 @@ def create_app(
 
     @router.get("/read/now")
     def read_now(
-        _who: ReadScope, after_seq: Annotated[int | None, Query(ge=0)] = None
+        _who: ReadScope,
+        after_seq: Annotated[int | None, Query(ge=0)] = None,
+        fabric_epoch: str | None = None,
     ) -> JSONResponse:
-        return json_response(read.now(after_seq=after_seq))
+        return json_response(read.now(after_seq=after_seq, fabric_epoch=fabric_epoch))
 
     @router.get("/read/threads")
     def read_threads(

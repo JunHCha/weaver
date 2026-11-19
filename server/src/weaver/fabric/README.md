@@ -26,8 +26,8 @@ a `seq` bookmark and read `ThreadQuery(after_seq=...)`.
 
 `amends` is a human decision changing one request's deadline (ISO calendar date).
 It names an existing request fact; schedules continue to use `updates` exclusively.
-The amendment is history in read views. Effective deadlines fold active amendments
-in occurrence/recording/seq order; a retraction restores the preceding value.
+The amendment is history in read views. Effective request deadlines start from the original value and fold active amendments
+in append seq order, independent of occurrence/recording clock skew; a retraction restores the preceding value.
 `FabricStore.edit(build)` validates and appends against one serialized snapshot.
 A private `fabric_meta` epoch identifies this database generation for view bookmarks;
 read-only opens of legacy v2 files do not migrate them. The next writable open

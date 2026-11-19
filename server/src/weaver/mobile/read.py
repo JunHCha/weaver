@@ -400,13 +400,23 @@ class ReadModel:
 
     # ---- 지금 --------------------------------------------------------------------
 
-    def now(self, at: datetime | None = None, after_seq: int | None = None) -> NowView:
+    def now(
+        self,
+        at: datetime | None = None,
+        after_seq: int | None = None,
+        fabric_epoch: str | None = None,
+    ) -> NowView:
         zone = self.config.time.zone
         moment = (at or self.clock()).astimezone(zone)
         today = moment.date()
         snapshot = self.snapshot()
-        if after_seq is not None and (after_seq < 0 or after_seq > snapshot.head):
-            raise ApiError(409, "checkpoint_out_of_range")
+        if after_seq is not None:
+            if fabric_epoch is None:
+                raise ApiError(422, "fabric_epoch_required")
+            if fabric_epoch != snapshot.fabric_epoch:
+                raise ApiError(409, "epoch_mismatch")
+            if after_seq < 0 or after_seq > snapshot.head:
+                raise ApiError(409, "checkpoint_out_of_range")
         facts = [
             t for t in snapshot.threads if t.presentation == "fact" and not t.retracted
         ]
@@ -455,13 +465,25 @@ class ReadModel:
             e.thread.thread_id for e in due_today
         }
         since = datetime.combine(today - timedelta(days=1), time.min, zone)
+        # Changed requests must also convey closure/withdrawal since the user's
+        # bookmark. Keep the normal due sections restricted to active facts.
+        recent_candidates = (
+            facts
+            if after_seq is None
+            else [
+                t
+                for t in snapshot.threads
+                if t.presentation == "fact"
+                and (not t.retracted or (t.kind == "요청" and t.revision > after_seq))
+            ]
+        )
         recent = sorted(
             (
                 t
-                for t in facts
+                for t in recent_candidates
                 if t.thread_id not in listed
                 and (
-                    (t.seq > after_seq or (t.open and t.revision > after_seq))
+                    (t.seq > after_seq or (t.kind == "요청" and t.revision > after_seq))
                     if after_seq is not None
                     else t.recorded_at.astimezone(zone) >= since
                 )
