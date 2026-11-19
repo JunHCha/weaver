@@ -1,0 +1,19 @@
+{
+  "contract_version": 1,
+  "group": "pairing",
+  "description": "QR payload. The phone pins the CA (not the leaf) and checks the host against the URL's IP and the leaf SAN.",
+  "cases": [
+    {
+      "name": "qr_payload",
+      "payload": {
+        "v": 1,
+        "server_url": "https://127.0.0.1:8787",
+        "server_id": "srv_00000000000000000000000000000001",
+        "device_id": "dev_00000000000000000000000000000001",
+        "token": "wvr_0000000000000000000000000000000000000000001",
+        "ca_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "ca_der_b64": "<base64 of the CA certificate (DER)>"
+      }
+    }
+  ]
+}

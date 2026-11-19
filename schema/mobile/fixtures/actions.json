@@ -1,0 +1,262 @@
+{
+  "contract_version": 1,
+  "group": "actions",
+  "description": "Action dispatch to the single executor phone and ActionResult.",
+  "cases": [
+    {
+      "name": "list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "schema_version": 2,
+              "action_id": "act_33e7c09122402846bba400b277ee6339",
+              "kind": "calendar.register",
+              "thread_id": "s1",
+              "seq": 1,
+              "input_version": 1,
+              "payload": {
+                "start": "2026-12-01T01:00:00Z",
+                "end": null,
+                "timezone": "Asia/Seoul",
+                "title": "주간 회의"
+              },
+              "external_id": null
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "get_one",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions/act_33e7c09122402846bba400b277ee6339",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "schema_version": 2,
+          "action_id": "act_33e7c09122402846bba400b277ee6339",
+          "kind": "calendar.register",
+          "thread_id": "s1",
+          "seq": 1,
+          "input_version": 1,
+          "payload": {
+            "start": "2026-12-01T01:00:00Z",
+            "end": null,
+            "timezone": "Asia/Seoul",
+            "title": "주간 회의"
+          },
+          "external_id": null
+        }
+      }
+    },
+    {
+      "name": "get_unknown",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions/act_00000000000000000000000000000000",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "action_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "result_invalid",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/actions/act_33e7c09122402846bba400b277ee6339/result",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "x": 1
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_result",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "result_accepted",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/actions/act_33e7c09122402846bba400b277ee6339/result",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "schema_version": 2,
+          "action_id": "act_33e7c09122402846bba400b277ee6339",
+          "outcome": "completed",
+          "external_id": "content://calendar/events/7",
+          "attempts": 1,
+          "finished_at": "2026-11-07T15:45:00+09:00",
+          "error": null
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "location": "/mobile/v1/operations/op_00000000000000000000000000000001"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "action_result",
+          "target_id": "act_33e7c09122402846bba400b277ee6339",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      },
+      "note": "202; ActionResult is final once the operation is applied."
+    },
+    {
+      "name": "result_resent",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/actions/act_33e7c09122402846bba400b277ee6339/result",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "schema_version": 2,
+          "action_id": "act_33e7c09122402846bba400b277ee6339",
+          "outcome": "completed",
+          "external_id": "content://calendar/events/7",
+          "attempts": 1,
+          "finished_at": "2026-11-07T15:45:00+09:00",
+          "error": null
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "location": "/mobile/v1/operations/op_00000000000000000000000000000001"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "queued",
+          "kind": "action_result",
+          "target_id": "act_33e7c09122402846bba400b277ee6339",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "result_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/actions/act_33e7c09122402846bba400b277ee6339/result",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "schema_version": 2,
+          "action_id": "act_33e7c09122402846bba400b277ee6339",
+          "outcome": "failed",
+          "external_id": null,
+          "attempts": 1,
+          "finished_at": "2026-11-07T15:45:00+09:00",
+          "error": "provider_error"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "result_conflict",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "operation_applied",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/operations/op_00000000000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "action_result",
+          "target_id": "act_33e7c09122402846bba400b277ee6339",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "list_after_finish",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "result_unknown_action",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/actions/act_22222222222222222222222222222222/result",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "schema_version": 2,
+          "action_id": "act_22222222222222222222222222222222",
+          "outcome": "completed",
+          "external_id": "content://calendar/events/7",
+          "attempts": 1,
+          "finished_at": "2026-11-07T15:45:00+09:00",
+          "error": null
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "unknown_action",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

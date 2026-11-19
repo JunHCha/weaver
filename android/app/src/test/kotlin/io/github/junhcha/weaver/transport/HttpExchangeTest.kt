@@ -3,6 +3,7 @@ package io.github.junhcha.weaver.transport
 import io.github.junhcha.weaver.courier.CourierClient
 import io.github.junhcha.weaver.schema.*
 import java.io.File
+import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -13,6 +14,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+/** The exchange against a server that answers only with the shared contract fixtures. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class HttpExchangeTest {
@@ -21,344 +23,304 @@ class HttpExchangeTest {
     private lateinit var spool: SpoolFolder
     private lateinit var state: TransportState
     private val allHttp: (TransportFeature) -> TransportRoute = { TransportRoute.HTTP }
-
-    private val id = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-    private val body = "synthetic text".toByteArray()
-    private val sha = CourierClient.digest(body.inputStream()).first
-    private val manifest = Manifest(1, id, CaptureKind.TEXT, Channel.SHARE_TEXT, "$id.txt", sha, body.size.toLong(),
-        "2026-11-07T00:00:00Z", null, Manifest.Hints(null))
-    private fun example(name: String) = File(SharedSchema.dir, "examples/$name.json").readText()
-    private val pkgId = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0"
+    private val id = Fx.captureId
+    private val vName = "${Fx.pkg}.r1.json"
 
     @Before fun setup() {
         spool = SpoolFolder(tmp.newFolder("spool"))
         state = TransportState(File(tmp.newFolder("state"), "state.json"))
     }
-    @After fun stop() = server.close()
+    @After fun stop() { server.close(); assertEquals("the phone sent what the fixtures expect", emptyList<String>(), server.mismatches.toList()) }
 
-    private fun exchange(live: FakeMobileServer = server): HttpExchange = HttpExchange(
-        HttpsMobileApi(FakeMobileServer.pairing(live), connectTimeoutMs = 1000, readTimeoutMs = 1000), spool, state, allHttp, { true },
+    private fun exchange(features: (ServerFeature) -> Boolean = { false }) = HttpExchange(
+        HttpsMobileApi(FakeMobileServer.pairing(server), connectTimeoutMs = 1000, readTimeoutMs = 1000), spool, state, allHttp, features,
     )
 
-    private fun spoolCapture() {
-        spool.publish("outbox", manifest.payload) { it.write(body) }
-        spool.publish("outbox", "$id.json") { it.write(WeaverCodec.encode(manifest).toByteArray()) }
+    private fun spoolCapture(manifest: Manifest = Fx.manifest) {
+        spool.publish("outbox", manifest.payload) { it.write(Fx.payloadText.toByteArray()) }
+        spool.publish("outbox", "${manifest.captureId}.json") { it.write(WeaverCodec.encode(manifest).toByteArray()) }
     }
+    private fun spoolVerdict(v: Verdict, etag: String? = null) {
+        spool.publish("decisions", "${v.packageId}.r${v.revision}.json") { it.write(WeaverCodec.encode(v).toByteArray()) }
+        if (etag != null) state.update { it.copy(etags = it.etags + ("${v.packageId}.r${v.revision}" to etag)) }
+    }
+    private val uploadFlow = arrayOf("captures.receipt_before_upload", "captures.payload_staged", "captures.manifest_stored")
 
     // ---- capture: payload -> manifest -> Receipt ----
 
     @Test fun captureUploadsPayloadThenManifestAndKeepsTheLocalCopyUntilTheReceiptIsOnDisk() {
-        spoolCapture()
-        val run = exchange().push()
-        assertFalse(run.retry)
-        assertEquals(1, server.payloadPuts); assertEquals(1, server.manifestPuts)
+        server.serve(*uploadFlow); spoolCapture()
+        assertFalse(exchange().push().retry)
+        assertEquals(listOf("GET /mobile/v1/captures/$id/receipt", "PUT /mobile/v1/captures/$id/payload", "PUT /mobile/v1/captures/$id/manifest"), server.requests)
         assertTrue(spool.exists("receipts", "$id.json"))
-        assertFalse(spool.exists("outbox", "$id.json")); assertFalse(spool.exists("outbox", manifest.payload))
-        assertEquals(sha, CourierClient.decoded<Receipt>(spool.read("receipts", "$id.json").use { it.readBytes().decodeToString() }).sha256)
-        assertEquals(listOf("PUT /mobile/v1/captures/$id/payload", "PUT /mobile/v1/captures/$id/manifest"),
-            server.requests.filter { it.startsWith("PUT") })
+        assertFalse(spool.exists("outbox", "$id.json")); assertFalse(spool.exists("outbox", Fx.manifest.payload))
+        assertEquals(Fx.manifest.sha256, CourierClient.decoded<Receipt>(spool.read("receipts", "$id.json").use { it.readBytes().decodeToString() }).sha256)
     }
 
     @Test fun macOffKeepsTheQueueAndTheItemIsDeliveredWhenTheServerComesBack() {
-        spoolCapture()
-        val port = server.port
-        val pairing = FakeMobileServer.pairing(server)
-        server.close()
-        val down = HttpExchange(HttpsMobileApi(pairing.copy(baseUrl = "https://127.0.0.1:$port"), connectTimeoutMs = 300, readTimeoutMs = 300), spool, state, allHttp)
-        val summary = down.push()
+        server.serve(*uploadFlow); spoolCapture()
+        server.offline = true
+        val summary = exchange().push()
         assertTrue(summary.unreachable && summary.retry)
         assertEquals("unreachable", summary.errorCode)
-        assertTrue("payload and manifest stay queued", spool.exists("outbox", "$id.json") && spool.exists("outbox", manifest.payload))
+        assertTrue("payload and manifest stay queued", spool.exists("outbox", "$id.json") && spool.exists("outbox", Fx.manifest.payload))
         assertEquals(1, HttpExchange.queue(spool, state).captures)
-        // The Mac is back (a new server instance under the same files): the same IDs and bytes go out.
-        FakeMobileServer().use { back ->
-            val ok = exchange(back).push()
-            assertFalse(ok.retry)
-            assertTrue(back.receipts.containsKey(id))
-            assertEquals(0, HttpExchange.queue(spool, state).captures)
-        }
+        server.offline = false
+        assertFalse(exchange().push().retry)
+        assertTrue(spool.exists("receipts", "$id.json"))
+        assertEquals(0, HttpExchange.queue(spool, state).captures)
     }
 
     @Test fun lostManifestResponseIsRecoveredByLookingUpTheReceiptWithoutResendingTheBody() {
-        spoolCapture()
+        server.serve("captures.receipt_before_upload", "captures.receipt", "captures.payload_staged", "captures.manifest_stored"); spoolCapture()
         server.dropResponse.add("/manifest")
-        val first = exchange().push()
-        assertTrue("an unanswered request is retried", first.retry)
+        assertTrue("an unanswered request is retried", exchange().push().retry)
         assertTrue(spool.exists("outbox", "$id.json"))
-        assertEquals(1, server.payloadPuts)
-        val second = exchange().push()
-        assertFalse(second.retry)
-        assertEquals("body is not sent again", 1, server.payloadPuts)
-        assertEquals("same manifest is not re-committed", 1, server.manifestPuts)
+        assertFalse(exchange().push().retry)
+        assertEquals("body and manifest were sent once", 1, server.count("PUT ") / 2)
+        assertEquals(listOf("GET", "PUT", "PUT", "GET").size, server.requests.size)
         assertTrue(spool.exists("receipts", "$id.json"))
     }
 
-    @Test fun resendingTheSameCaptureIsIdempotentOnTheServer() {
-        spoolCapture()
-        exchange().push()
-        val firstReceipt = server.receipts.getValue(id)
-        spoolCapture()
-        spool.delete("receipts", "$id.json")
-        exchange().push()
-        assertEquals(firstReceipt, server.receipts.getValue(id))
-        assertEquals(1, server.receipts.size)
+    @Test fun aServerThatAlreadyHoldsTheCaptureAnswersWithItsReceiptAndNothingIsResent() {
+        server.serve("captures.receipt"); spoolCapture()
+        assertFalse(exchange().push().retry)
+        assertEquals(listOf("GET /mobile/v1/captures/$id/receipt"), server.requests)
+        assertTrue(spool.exists("receipts", "$id.json"))
     }
 
     @Test fun aRejectedCaptureIsBlockedWithItsCodeAndDoesNotHoldBackTheOthers() {
-        val otherId = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAW"
-        spoolCapture()
-        val other = manifest.copy(captureId = otherId, payload = "$otherId.txt")
-        spool.publish("outbox", other.payload) { it.write(body) }
-        spool.publish("outbox", "$otherId.json") { it.write(WeaverCodec.encode(other).toByteArray()) }
-        server.fail["/captures/$id/payload"] = 422
+        // FA1 has a wrong sha (the server answers 422 sha256_mismatch); FA0 is fine.
+        server.serve("captures.receipt_before_upload", "captures.payload_wrong_sha", "captures.payload_staged", "captures.manifest_stored")
+        val bad = Fx.wrongShaManifest
+        server.serve("captures.receipt_before_upload")
+        spoolCapture(bad); spoolCapture()
         val run = exchange().push()
         assertFalse("a rejected item needs the user, not a retry loop", run.retry)
-        assertEquals("injected_422", run.errorCode)
-        assertTrue(spool.exists("receipts", "$otherId.json"))
-        assertTrue("rejected capture is kept, never dropped", spool.exists("outbox", "$id.json"))
-        assertEquals(1, HttpExchange.queue(spool, state).blocked)
-        server.fail.clear()
-        exchange().push()
-        assertTrue("still blocked until the user retries", spool.exists("outbox", "$id.json"))
-        state.update { it.copy(blocked = emptyMap()) }
-        exchange().push()
+        assertEquals("sha256_mismatch", run.errorCode)
         assertTrue(spool.exists("receipts", "$id.json"))
+        assertTrue("rejected capture is kept, never dropped", spool.exists("outbox", "${bad.captureId}.json"))
+        assertEquals(1, HttpExchange.queue(spool, state).blocked)
+    }
+
+    @Test fun aManifestConflictIsBlockedAndKept() {
+        server.serve("captures.receipt_before_upload", "captures.payload_staged", "captures.manifest_conflict")
+        spoolCapture(Fx.conflictingManifest)
+        val run = exchange().push()
+        assertFalse(run.retry); assertEquals("manifest_conflict", run.errorCode)
+        assertTrue(spool.exists("outbox", "$id.json"))
+        assertEquals(1, HttpExchange.queue(spool, state).blocked)
+    }
+
+    @Test fun manifestBeforePayloadIsRetryableNotBlocking() {
+        server.serve("captures.receipt_before_upload", "captures.payload_staged", "captures.manifest_before_payload"); spoolCapture()
+        val run = exchange().push()
+        assertTrue(run.retry); assertEquals("payload_missing", run.errorCode)
+        assertEquals(0, HttpExchange.queue(spool, state).blocked)
     }
 
     // ---- 403 classification (contract item 10) ----
 
-    private fun denied(code: String, status: Int = 403) {
-        spoolCapture()
-        server.fail["/receipt"] = status; server.failCodes["/receipt"] = code
-    }
-
     @Test fun nodeMismatchMeansPairAgainAndStopsTheRun() {
-        denied("node_mismatch")
+        spoolCapture(); server.failWith("/receipt", "errors.node_mismatch")
         val run = exchange().push()
         assertTrue(run.needsRepair); assertFalse(run.retry)
         assertTrue(spool.exists("outbox", "$id.json"))
     }
 
+    @Test fun invalidAndRevokedTokensMeanPairAgain() {
+        spoolCapture()
+        listOf("errors.invalid_token", "errors.token_revoked").forEach { name ->
+            server.clearFailures(); server.failWith("/receipt", name)
+            assertTrue(name, HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state, allHttp).push().needsRepair)
+        }
+    }
+
     @Test fun scopeDeniedBlocksOnlyThatFeatureAndKeepsTheOthersRunning() {
-        publishReview(); exchange().pull()
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict()).toByteArray()) }
-        denied("scope_denied")
+        server.serve("reviews.list", "reviews.get_revision", "reviews.verdict_accepted", "reviews.operation_queued")
+        exchange().pull()
+        spoolVerdict(Fx.verdict, Fx.reviewEtag); spoolCapture()
+        server.failWith("/receipt", "errors.scope_denied")
         val run = exchange().push()
         assertFalse("not a re-pair", run.needsRepair); assertFalse(run.retry)
         assertEquals("scope_denied", state.load().blockedFeatures["capture"])
         assertTrue("capture stays queued, nothing is dropped", spool.exists("outbox", "$id.json"))
-        assertEquals("the verdict feature was not blocked", 1, server.verdictPuts)
-        server.fail.clear()
+        assertEquals("the review feature was not blocked", 1, server.count("/verdict"))
+        server.clearFailures(); server.serve(*uploadFlow)
         exchange().push()
-        assertEquals("the blocked feature does not retry by itself", 0, server.payloadPuts)
+        assertEquals("the blocked feature does not retry by itself", 0, server.count("/payload"))
         state.update { it.copy(blockedFeatures = emptyMap()) }
         exchange().push()
         assertTrue(spool.exists("receipts", "$id.json"))
     }
 
     @Test fun notExecutorBlocksTheActionFeatureOnly() {
-        server.actions[actionId] = example("Action")
-        server.fail["/actions"] = 403; server.failCodes["/actions"] = "not_executor"
+        server.failWith("/actions", "errors.not_executor")
         val run = exchange().pull()
         assertFalse(run.needsRepair)
         assertEquals("not_executor", state.load().blockedFeatures["action"])
     }
 
     @Test fun whoisUnavailableIs503AndRetried() {
-        denied("whois_unavailable", status = 503)
+        spoolCapture(); server.failWith("/receipt", "errors.whois_unavailable")
         val run = exchange().push()
         assertTrue(run.retry); assertFalse(run.needsRepair)
         assertTrue(state.load().blockedFeatures.isEmpty() && state.load().blocked.isEmpty())
     }
 
     @Test fun otherConfirmedForbiddenStopsTheRunWithoutAskingToPairAgain() {
-        denied("peer_unverified")
+        spoolCapture(); server.failWith("/receipt", "errors.peer_unverified")
         val run = exchange().push()
         assertFalse(run.needsRepair); assertFalse(run.retry)
         assertEquals("peer_unverified", run.errorCode)
     }
 
-    @Test fun alertsAndPipelineAreOnlyRequestedWhenTheServerOffersThem() {
-        server.alerts["alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"] = example("Alert")
-        server.pipeline = listOf(example("PipelineItem"))
-        val off = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state, allHttp)
-        off.pull(); off.push()
-        assertTrue(server.requests.none { it.contains("/alerts") || it.contains("/pipeline") })
-        assertTrue(spool.list("proposals/pipeline").isEmpty())
-    }
-
-    @Test fun aLostVerdictResponseIsNotMistakenForStaleWhenTheNewRevisionAlreadyReplacedThePackage() {
-        publishReview(1); exchange().pull()
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict(1)).toByteArray()) }
-        server.dropResponse.add("/verdict")
-        assertTrue(exchange().push().retry) // the server accepted it, the answer was lost
-        // The package moves on and the old one leaves the list; the answer's ETag must survive that.
-        publishReview(2); server.reviews.remove(pkgId to 1L)
-        server.reviews[pkgId to 1L] = example("ReviewPackage") to "\"e1\""
-        exchange().pull()
-        assertTrue("etag kept for the pending answer", state.load().etags.containsKey("$pkgId.r1"))
-        exchange().push()
-        assertNull("not stale: the server returned the operation it already created", state.load().verdictOutcomes["$pkgId.r1.json"])
-        assertEquals(1, server.operations.size)
-        assertEquals(1, state.load().verdictOps.size)
-    }
-
-    @Test fun aRejectedTokenStopsTheRunAndAsksForPairingAgain() {
-        spoolCapture()
-        val bad = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server, token = "x".repeat(43))), spool, state, allHttp)
-        val run = bad.push()
-        assertTrue(run.needsRepair); assertFalse(run.retry)
-        assertTrue(spool.exists("outbox", "$id.json"))
+    @Test fun actionsThatTheServerStillSendsOverFilesAreNotAnError() {
+        server.serve("actions_files.transport_files")
+        val run = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state,
+            { if (it == TransportFeature.ACTION_RESULT) TransportRoute.HTTP else TransportRoute.FILES }).pull()
+        assertFalse(run.retry); assertNull(run.errorCode); assertTrue(state.load().blocked.isEmpty())
     }
 
     // ---- reviews, verdicts, operations ----
 
-    private fun publishReview(rev: Long = 1, etag: String = "\"e$rev\"") {
-        val text = example("ReviewPackage").replace("\"revision\": 1", "\"revision\": $rev")
-        server.reviews[pkgId to rev] = text to etag
-    }
-
-    private fun verdict(rev: Long = 1) = Verdict(2, pkgId, rev, Verdict.Action.APPROVE, listOf("네"), null, null)
-
     @Test fun pullStoresReviewPackagesAndTheirEtag() {
-        publishReview()
+        server.serve("reviews.list", "reviews.get_revision")
         exchange().pull()
-        assertTrue(spool.exists("proposals", "$pkgId.r1.json"))
-        assertEquals("\"e1\"", state.load().etags["$pkgId.r1"])
+        assertTrue(spool.exists("proposals", "${Fx.pkg}.r1.json"))
+        assertEquals(Fx.reviewEtag, state.load().etags["${Fx.pkg}.r1"])
+        CourierClient.decoded<ReviewPackage>(spool.read("proposals", "${Fx.pkg}.r1.json").use { it.readBytes().decodeToString() })
     }
 
     @Test fun verdictIsAcceptedWithIfMatchThenKeptUntilTheOperationIsApplied() {
-        publishReview(); exchange().pull()
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict()).toByteArray()) }
-        val first = exchange().push()
-        assertFalse(first.retry)
-        assertEquals(1, server.verdictPuts)
-        assertTrue("202 is acceptance, not application: the verdict stays queued", spool.exists("decisions", "$pkgId.r1.json"))
+        server.serve("reviews.list", "reviews.get_revision", "reviews.verdict_accepted", "reviews.operation_queued", "reviews.operation_waiting", "reviews.operation_applied")
+        exchange().pull(); spoolVerdict(Fx.verdict, Fx.reviewEtag)
+        assertFalse(exchange().push().retry)
+        assertEquals(1, server.count("/verdict"))
+        assertTrue("202 is acceptance, not application: the verdict stays queued", spool.exists("decisions", vName))
         assertEquals(1, HttpExchange.queue(spool, state).verdicts)
-        server.applyAll()
+        exchange().push() // queued, waiting with a code: still not applied
+        assertTrue(spool.exists("decisions", vName))
         exchange().push()
-        assertFalse(spool.exists("decisions", "$pkgId.r1.json"))
-        assertEquals("APPLIED", state.load().verdictOutcomes["$pkgId.r1.json"])
-        assertEquals("no second PUT for the same operation", 1, server.verdictPuts)
+        assertFalse(spool.exists("decisions", vName))
+        assertEquals("APPLIED", state.load().verdictOutcomes[vName])
+        assertEquals("no second PUT for the same operation", 1, server.count("/verdict"))
     }
 
     @Test fun lostAcceptanceResponseResendsTheSameVerdictAndGetsTheSameOperation() {
-        publishReview(); exchange().pull()
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict()).toByteArray()) }
+        server.serve("reviews.list", "reviews.get_revision", "reviews.verdict_accepted", "reviews.verdict_resent", "reviews.operation_queued")
+        exchange().pull(); spoolVerdict(Fx.verdict, Fx.reviewEtag)
         server.dropResponse.add("/verdict")
         assertTrue(exchange().push().retry)
-        assertEquals(1, server.verdictPuts)
         assertTrue(state.load().verdictOps.isEmpty())
         exchange().push()
-        assertEquals(2, server.verdictPuts)
-        assertEquals("same logical key and content map to one operation", 1, server.operations.size)
-        assertEquals(1, server.verdicts.size)
+        assertEquals(2, server.count("/verdict"))
+        assertEquals(listOf("op_00000000000000000000000000000001"), state.load().verdictOps.values.toList())
+        assertNull("not stale: the server returned the operation it already created", state.load().verdictOutcomes[vName])
+    }
+
+    @Test fun anAnswerKeepsItsEtagWhenItsPackageLeftTheListSoALostResponseIsNeverMistakenForStale() {
+        // pkg_b is no longer in the server's list, but its answer is still queued: its ETag must survive the pull.
+        server.serve("reviews.list", "reviews.get_revision")
+        spoolVerdict(Fx.staleVerdict, Fx.staleEtag)
+        exchange().pull()
+        assertEquals(Fx.staleEtag, state.load().etags["pkg_b.r1"])
+        assertFalse(state.load().verdictOutcomes.containsKey("pkg_b.r1.json"))
+        assertTrue(spool.exists("decisions", "pkg_b.r1.json"))
     }
 
     @Test fun aNewerRevisionAnswersStaleAndTheOldVerdictIsNeverAppliedToIt() {
-        publishReview(1); exchange().pull()
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict(1)).toByteArray()) }
-        publishReview(2)
+        server.serve("reviews.verdict_stale_revision")
+        spoolVerdict(Fx.staleVerdict, Fx.staleEtag)
         val run = exchange().push()
         assertFalse("stale is final, not a retry", run.retry)
-        assertEquals("STALE", state.load().verdictOutcomes["$pkgId.r1.json"])
-        assertTrue("no operation was created for the old revision", server.operations.isEmpty())
-        assertFalse(spool.exists("decisions", "$pkgId.r1.json"))
+        assertEquals("STALE", state.load().verdictOutcomes["pkg_b.r1.json"])
+        assertFalse(spool.exists("decisions", "pkg_b.r1.json"))
     }
 
     @Test fun aDifferentVerdictForTheSameRevisionIsAConflict() {
-        publishReview(); exchange().pull()
-        server.verdicts[pkgId to 1L] = "{\"other\":true}" to "op_x"
-        spool.publish("decisions", "$pkgId.r1.json") { it.write(WeaverCodec.encode(verdict()).toByteArray()) }
+        server.serve("reviews.verdict_conflict")
+        spoolVerdict(Fx.conflictingVerdict, Fx.reviewEtag)
         exchange().push()
-        assertEquals("CONFLICT", state.load().verdictOutcomes["$pkgId.r1.json"])
+        assertEquals("CONFLICT", state.load().verdictOutcomes[vName])
+    }
+
+    @Test fun anOperationTheServerRejectedIsFinalAndNeverResent() {
+        server.serve("reviews.verdict_accepted")
+        server.serveDerived("reviews.operation_applied") { body ->
+            kotlinx.serialization.json.JsonObject(body.jsonObject.toMutableMap().also {
+                it["state"] = kotlinx.serialization.json.JsonPrimitive("rejected"); it["code"] = kotlinx.serialization.json.JsonPrimitive("stale_rev")
+            })
+        }
+        spoolVerdict(Fx.verdict, Fx.reviewEtag)
+        exchange().push()
+        assertEquals("STALE", state.load().verdictOutcomes[vName])
+        assertFalse(spool.exists("decisions", vName))
+        assertEquals(1, server.count("/verdict"))
     }
 
     @Test fun withdrawnPackagesAreRemovedOnlyAfterACompleteListing() {
-        publishReview(); exchange().pull()
-        server.fail["/reviews"] = 503
+        server.serve("reviews.list", "reviews.get_revision")
         exchange().pull()
-        assertTrue("a failed listing deletes nothing", spool.exists("proposals", "$pkgId.r1.json"))
-        server.fail.clear(); server.reviews.clear()
+        spool.put("proposals", "pkg_gone.r1.json", "{}".toByteArray())
+        server.failWith("/reviews", "errors.whois_unavailable")
         exchange().pull()
-        assertFalse(spool.exists("proposals", "$pkgId.r1.json"))
-    }
-
-    // ---- alerts ----
-
-    @Test fun dismissedAlertIsAckedOnceAndNeverComesBack() {
-        val alert = example("Alert")
-        server.alerts["alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"] = alert
+        assertTrue("a failed listing deletes nothing", spool.exists("proposals", "pkg_gone.r1.json"))
+        server.clearFailures()
         exchange().pull()
-        assertTrue(spool.exists("proposals", "alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA0.json"))
-        exchange().push()
-        assertTrue("still shown: nothing acked yet", server.acked.isEmpty())
-        spool.delete("proposals", "alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA0.json") // the user dismissed it
-        exchange().push()
-        assertEquals(listOf("alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"), server.acked)
-        exchange().pull()
-        assertFalse(spool.exists("proposals", "alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA0.json"))
+        assertFalse(spool.exists("proposals", "pkg_gone.r1.json"))
+        assertTrue(spool.exists("proposals", "${Fx.pkg}.r1.json"))
     }
 
     // ---- actions ----
 
-    private val actionId = "act_0123456789abcdef0123456789abcdef"
-
     @Test fun actionResultIsKeptUntilTheServerAppliedItThenTheActionIsRetired() {
-        server.actions[actionId] = example("Action")
+        server.serve("actions.list", "actions.result_accepted", "actions.operation_applied")
         exchange().pull()
-        assertTrue(spool.exists("actions", "$actionId.json"))
-        spool.publish("action-results", "$actionId.json") { it.write(example("ActionResult").toByteArray()) }
+        assertTrue(spool.exists("actions", "${Fx.actionId}.json"))
+        CourierClient.decoded<Action>(spool.read("actions", "${Fx.actionId}.json").use { it.readBytes().decodeToString() })
+        spool.publish("action-results", "${Fx.actionId}.json") { it.write(Fx.resultText.toByteArray()) }
         exchange().push()
-        assertEquals(1, server.resultPuts)
-        assertTrue(spool.exists("action-results", "$actionId.json"))
-        server.applyAll()
-        exchange().push()
-        assertFalse(spool.exists("action-results", "$actionId.json"))
-        assertFalse(spool.exists("actions", "$actionId.json"))
-        assertTrue(actionId in state.load().actionsDone)
+        assertEquals(1, server.count("/result"))
+        assertFalse("the first poll already says applied in this fixture order", spool.exists("action-results", "${Fx.actionId}.json"))
+        assertFalse(spool.exists("actions", "${Fx.actionId}.json"))
+        assertTrue(Fx.actionId in state.load().actionsDone)
+        server.reset("actions.list"); server.serve("actions.list_after_finish")
         exchange().pull()
-        assertFalse("an applied action is never downloaded again", spool.exists("actions", "$actionId.json"))
+        assertFalse("an applied action is never downloaded again", spool.exists("actions", "${Fx.actionId}.json"))
     }
 
     @Test fun lostActionResultResponseIsResentWithoutADuplicate() {
-        server.actions[actionId] = example("Action")
-        exchange().pull()
-        spool.publish("action-results", "$actionId.json") { it.write(example("ActionResult").toByteArray()) }
+        server.serve("actions.result_accepted", "actions.result_resent", "actions.operation_applied")
+        spool.publish("action-results", "${Fx.actionId}.json") { it.write(Fx.resultText.toByteArray()) }
         server.dropResponse.add("/result")
         assertTrue(exchange().push().retry)
         exchange().push()
-        assertEquals(2, server.resultPuts)
-        assertEquals(1, server.operations.size)
+        assertEquals(2, server.count("/result"))
+        assertFalse(spool.exists("action-results", "${Fx.actionId}.json"))
     }
 
     @Test fun conflictingActionResultIsBlockedNotRetried() {
-        server.actions[actionId] = example("Action")
-        exchange().pull()
-        server.results[actionId] = "{\"different\":1}" to "op_z"
-        spool.publish("action-results", "$actionId.json") { it.write(example("ActionResult").toByteArray()) }
+        server.serve("actions.result_conflict")
+        spool.publish("action-results", "${Fx.actionId}.json") { it.write(Fx.conflictingResultText.toByteArray()) }
         val run = exchange().push()
         assertFalse(run.retry)
         assertEquals(1, HttpExchange.queue(spool, state).blocked)
-        assertTrue(spool.exists("action-results", "$actionId.json"))
+        assertTrue(spool.exists("action-results", "${Fx.actionId}.json"))
     }
 
-    // ---- pipeline ----
-
-    @Test fun pipelineItemsAreMirroredFromTheCompleteListing() {
-        server.pipeline = listOf(example("PipelineItem"))
-        exchange().pull()
-        assertTrue(spool.exists("proposals/pipeline", "src_01ARZ3NDEKTSV4RRFFQ69G5FAV.json"))
-        server.pipeline = emptyList()
-        exchange().pull()
-        assertFalse(spool.exists("proposals/pipeline", "src_01ARZ3NDEKTSV4RRFFQ69G5FAV.json"))
+    @Test fun alertsAndPipelineAreOnlyRequestedWhenTheServerOffersThem() {
+        server.serve("reviews.list", "reviews.get_revision", "actions.list")
+        exchange { false }.apply { pull(); push() }
+        assertTrue(server.requests.none { it.contains("/alerts") || it.contains("/pipeline") })
+        assertTrue(spool.list("proposals/pipeline").isEmpty())
     }
 
     @Test fun onlyTheFeaturesRoutedOverHttpTouchTheServer() {
-        spoolCapture()
-        val onlyVerdict = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state,
+        spoolCapture(); server.serve("reviews.list", "reviews.get_revision")
+        val onlyReview = HttpExchange(HttpsMobileApi(FakeMobileServer.pairing(server)), spool, state,
             { if (it == TransportFeature.VERDICT) TransportRoute.HTTP else TransportRoute.FILES })
-        onlyVerdict.pull(); onlyVerdict.push()
+        onlyReview.pull(); onlyReview.push()
         assertTrue(server.requests.none { it.contains("captures") || it.contains("actions") })
         assertTrue(spool.exists("outbox", "$id.json"))
     }

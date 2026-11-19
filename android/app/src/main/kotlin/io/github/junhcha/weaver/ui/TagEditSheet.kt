@@ -72,12 +72,19 @@ class ApiTagEditHost(private val editor: TagEditor) : TagEditHost {
 /** User-facing text for a failed edit; never a server message, only what the fixed codes mean. */
 internal fun editErrorText(error: Throwable): String = when (error) {
     is UnreachableException -> "서버에 연결할 수 없어요. 연결 후 다시 시도해 주세요"
-    is ApiException -> when (error.status) {
-        401, 403 -> "서버가 이 폰을 거절했어요. 설정에서 다시 연결해 주세요"
-        404 -> "대상을 찾을 수 없어요"
-        409, 412 -> "그 사이 내용이 바뀌었어요. 새로 고친 뒤 다시 해 주세요"
-        422 -> "이 변경은 허용되지 않아요"
-        else -> "저장하지 못했어요 (${error.code})"
+    is ApiException -> when (error.code) {
+        "history_thread_readonly" -> "이력 Thread는 편집할 수 없어요"
+        "kind_required" -> "새 태그는 종류를 골라야 해요"
+        "kind_choice_required" -> "종류가 다른 항목을 합치려면 합친 뒤의 종류를 골라 주세요"
+        "thread_not_found", "entry_not_found" -> "대상을 찾을 수 없어요. 새로 고친 뒤 다시 해 주세요"
+        "client_id_conflict" -> "같은 요청이 다른 내용으로 이미 있어요. 다시 열어서 시도해 주세요"
+        "node_mismatch", "invalid_token", "token_revoked" -> "서버가 이 폰을 거절했어요. 설정에서 다시 연결해 주세요"
+        "scope_denied" -> "이 폰에는 편집 권한이 없어요"
+        else -> when (error.status) {
+            401, 403 -> "서버가 이 폰을 거절했어요 (${error.code})"
+            422 -> "이 변경은 허용되지 않아요 (${error.code})"
+            else -> "저장하지 못했어요 (${error.code})"
+        }
     }
     else -> "저장하지 못했어요"
 }

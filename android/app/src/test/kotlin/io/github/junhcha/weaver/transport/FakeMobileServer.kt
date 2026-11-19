@@ -12,64 +12,112 @@ import java.util.concurrent.Executors
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
+/** One recorded case of `schema/mobile/fixtures/<group>.json`: the request the phone must send and the exact response. */
+class FixtureCase(val key: String, raw: JsonObject) {
+    val method = (raw["request"]!!.jsonObject["method"] as JsonPrimitive).content
+    val path = (raw["request"]!!.jsonObject["path"] as JsonPrimitive).content
+    val query: Map<String, String> = (raw["request"]!!.jsonObject["query"] as? JsonObject)?.mapValues { (it.value as JsonPrimitive).content }.orEmpty()
+    val requestHeaders: Map<String, String> = (raw["request"]!!.jsonObject["headers"] as? JsonObject)
+        ?.mapValues { (it.value as JsonPrimitive).content }.orEmpty()
+    val requestBody: JsonElement? = raw["request"]!!.jsonObject["body"]
+    val requestText: String? = (raw["request"]!!.jsonObject["body_text"] as? JsonPrimitive)?.content
+    val status = (raw["response"]!!.jsonObject["status"] as JsonPrimitive).content.toInt()
+    val responseHeaders: Map<String, String> = (raw["response"]!!.jsonObject["headers"] as? JsonObject)
+        ?.mapValues { (it.value as JsonPrimitive).content }.orEmpty()
+    val responseBody: JsonElement? = raw["response"]!!.jsonObject["body"]
+}
+
+/** The contract fixtures the server tests generate and validate; byte-identical copies live under schema/mobile/fixtures. */
+object ContractFixtures {
+    private val dir = File(requireNotNull(System.getProperty("weaver.mobileFixtureDir")) { "weaver.mobileFixtureDir is not set" })
+    val cases: Map<String, FixtureCase> by lazy {
+        val json = Json { ignoreUnknownKeys = true }
+        dir.listFiles { f -> f.extension == "json" }!!.sortedBy { it.name }.flatMap { file ->
+            val root = json.parseToJsonElement(file.readText()).jsonObject
+            val group = (root["group"] as JsonPrimitive).content
+            (root["cases"] as kotlinx.serialization.json.JsonArray).mapNotNull { c ->
+                val o = c.jsonObject
+                if (o["request"] == null) null else "$group.${(o["name"] as JsonPrimitive).content}".let { it to FixtureCase(it, o) }
+            }
+        }.toMap()
+    }
+    operator fun get(name: String): FixtureCase = cases[name] ?: error("no fixture case $name")
+    fun raw(group: String): JsonObject = Json.parseToJsonElement(File(dir, "$group.json").readText()).jsonObject
+    /** The pairing QR payload the server prints, with the CA material of the test PKI filled in. */
+    fun pairingPayload(): JsonObject = (raw("pairing")["cases"] as kotlinx.serialization.json.JsonArray)[0].jsonObject["payload"]!!.jsonObject
+}
+
 /**
- * A local, in-memory stand-in for the server's `/mobile/v1` API (ADR-040 contract) behind a real TLS socket with a
- * freshly generated self-signed certificate. Synthetic data only. Faults are injected per request path:
- * [dropResponse] processes the request and then closes the connection without answering (a lost response),
- * [fail] answers a fixed status instead.
+ * A local TLS server that answers **only with fixture responses**: tests script which cases it serves
+ * (`serve("reviews.list", "reviews.get_revision")`), and every request is checked against the fixture's request (method,
+ * path, cursor, content headers, JSON/text body). A request that does not match any scripted case, or differs from the
+ * fixture's request, is answered 404/400 and recorded in [mismatches]. Faults are injected per request: [dropResponse] processes
+ * the request and then closes the connection without answering (a lost response), [failWith] answers a fixture error case,
+ * [offline] closes every connection (the Mac is off). Synthetic data only.
  */
 class FakeMobileServer(
-    val serverId: String = SERVER_ID,
-    val token: String = "t".repeat(43), leaf: String = "ip:127.0.0.1", val pki: TestPki = TestPki.default,
+    leaf: String = "ip:127.0.0.1", val pki: TestPki = TestPki.default,
 ) : AutoCloseable {
     private val json = Json { ignoreUnknownKeys = true }
     private val server: HttpsServer
     val port: Int get() = server.address.port
     val url: String get() = "https://127.0.0.1:$port"
+    var serverId: String = ((ContractFixtures["capabilities.capabilities"].responseBody as JsonObject)["server_id"] as JsonPrimitive).content
+    val token: String = (ContractFixtures.pairingPayload()["token"] as JsonPrimitive).content
 
-    // ---- state the tests read and set ----
-    val payloads = mutableMapOf<String, ByteArray>()
-    val receipts = mutableMapOf<String, String>()
-    var payloadPuts = 0
-    var manifestPuts = 0
-    val reviews = mutableMapOf<Pair<String, Long>, Pair<String, String>>() // (id, rev) -> (json, etag)
-    val verdicts = mutableMapOf<Pair<String, Long>, Pair<String, String>>() // (id, rev) -> (body, operation id)
-    val operations = mutableMapOf<String, String>() // id -> state
-    var verdictPuts = 0
-    val alerts = linkedMapOf<String, String>()
-    val acked = mutableListOf<String>()
-    val actions = linkedMapOf<String, String>()
-    val results = mutableMapOf<String, Pair<String, String>>()
-    var resultPuts = 0
-    var pipeline = listOf<String>()
-    var threads = listOf<String>()
-    var tags = listOf<String>()
-    var wiki = listOf<String>()
-    var dictionary = listOf<String>()
-    var pageSize = 2
-    val historyThreads = mutableSetOf<String>()
-    val writes = mutableListOf<Triple<String, String, String>>() // method, path, body (applied once per key)
-    val writeKeys = mutableListOf<String>()
-    private val replayed = mutableMapOf<String, String>()
-    /** Path suffixes whose response is lost after the request was fully processed (once each). */
+    private val scripted = linkedMapOf<String, MutableList<FixtureCase>>()
+    private val consumed = mutableMapOf<String, Int>()
+    private val lastPage = mutableMapOf<String, Int>()
+    private val failing = mutableMapOf<String, FixtureCase>()
+    /** Path suffixes whose response is lost once after the request was processed. */
     val dropResponse = mutableSetOf<String>()
-    val fail = mutableMapOf<String, Int>()
-    /** The Mac is off: connections are accepted and closed without an answer. */
     @Volatile var offline = false
-    val seenAuth = mutableListOf<String?>()
-    val requests = mutableListOf<String>()
-    private var nextOp = 0
-    var transports: Map<String, String> = emptyMap()
-    var features: Map<String, Boolean> = emptyMap()
-    /** Per path suffix: the fixed error code to answer with (default `injected_<status>`). */
-    val failCodes = mutableMapOf<String, String>()
-    var maxItemsPerResponse = Int.MAX_VALUE
+    /** Every request as `METHOD path` (without the query). */
+    val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
+    val bodies = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+    val mismatches = java.util.Collections.synchronizedList(mutableListOf<String>())
+    val seenAuth = java.util.Collections.synchronizedList(mutableListOf<String?>())
 
-    fun applyAll() { operations.keys.toList().forEach { operations[it] = "applied" } }
+    private fun route(case: FixtureCase) = "${case.method} ${case.path}"
+
+    /** Script cases ("group.name"); same method+path cases answer in order, the last one repeats. */
+    fun serve(vararg names: String) = names.forEach { n -> ContractFixtures[n].let { scripted.getOrPut(route(it)) { mutableListOf() }.add(it) } }
+    /** A fixture case whose response body is changed by [change] (e.g. one thread with an unknown kind); still derived, not invented. */
+    fun serveDerived(name: String, change: (JsonElement) -> JsonElement) {
+        val base = ContractFixtures[name]
+        val raw = JsonObject(mapOf(
+            "request" to JsonObject(mapOf("method" to JsonPrimitive(base.method), "path" to JsonPrimitive(base.path),
+                "query" to JsonObject(base.query.mapValues { JsonPrimitive(it.value) }),
+                "headers" to JsonObject(base.requestHeaders.mapValues { JsonPrimitive(it.value) }))),
+            "response" to JsonObject(mapOf("status" to JsonPrimitive(base.status), "headers" to JsonObject(base.responseHeaders.mapValues { JsonPrimitive(it.value) }),
+                "body" to change(base.responseBody!!)))))
+        val case = FixtureCase(name, raw)
+        scripted.getOrPut(route(case)) { mutableListOf() }.add(case)
+    }
+
+    /** Forget scripted answers of a route (for tests that re-script it). */
+    fun reset(vararg names: String) = names.forEach { n -> ContractFixtures[n].let { scripted.remove(route(it)); consumed.remove(route(it)); lastPage.remove(route(it)) } }
+    /** Answer every request whose path ends with [suffix] with the fixture error [name] (e.g. "errors.scope_denied"). */
+    fun failWith(suffix: String, name: String) { failing[suffix] = ContractFixtures[name] }
+    fun clearFailures() = failing.clear()
+    fun count(substring: String) = requests.count { it.contains(substring) }
+
+    /** `capabilities.capabilities` with the server's transports/features changed (the server config is what changes them). */
+    private var capabilityOverride: JsonObject? = null
+    fun capabilities(transports: Map<String, String>? = null, features: Map<String, Boolean>? = null, serverId: String? = null) {
+        val base = (capabilityOverride ?: ContractFixtures["capabilities.capabilities"].responseBody) as JsonObject
+        if (serverId != null) this.serverId = serverId
+        capabilityOverride = JsonObject(base.toMutableMap().also { m ->
+            if (serverId != null) m["server_id"] = JsonPrimitive(serverId)
+            if (transports != null) m["transports"] = JsonObject((base["transports"] as JsonObject).toMutableMap().also { t -> transports.forEach { (k, v) -> t[k] = JsonPrimitive(v) } })
+            if (features != null) m["features"] = JsonObject((base["features"] as JsonObject).toMutableMap().also { t -> features.forEach { (k, v) -> t[k] = JsonPrimitive(v) } })
+        })
+    }
 
     init {
         val store = pki.leaf(leaf)
@@ -84,159 +132,92 @@ class FakeMobileServer(
 
     override fun close() = server.stop(0)
 
-    // ---- request handling ----
-
-    private fun reply(x: HttpExchange, status: Int, body: String = "{}", headers: Map<String, String> = emptyMap()) {
-        val bytes = body.toByteArray()
-        x.responseHeaders.add("Content-Type", "application/json")
-        headers.forEach { (k, v) -> x.responseHeaders.add(k, v) }
-        x.sendResponseHeaders(status, if (bytes.isEmpty()) -1 else bytes.size.toLong())
-        if (bytes.isNotEmpty()) x.responseBody.use { it.write(bytes) } else x.close()
+    private fun queryOf(raw: String?): Map<String, String> = raw.orEmpty().split('&').filter { it.isNotEmpty() }.associate {
+        val (k, v) = (it.split('=', limit = 2) + "").take(2)
+        java.net.URLDecoder.decode(k, "UTF-8") to java.net.URLDecoder.decode(v, "UTF-8")
     }
 
-    private fun error(x: HttpExchange, status: Int, code: String) =
-        reply(x, status, """{"code":"$code","retryable":${status >= 500}}""")
+    private fun reply(x: HttpExchange, case: FixtureCase) {
+        val body = case.responseBody?.toString()?.toByteArray()
+        case.responseHeaders.forEach { (k, v) -> x.responseHeaders.add(k, v) }
+        if (body != null) x.responseHeaders.add("Content-Type", "application/json")
+        if (body == null) { x.sendResponseHeaders(case.status, -1); x.close() }
+        else { x.sendResponseHeaders(case.status, body.size.toLong()); x.responseBody.use { it.write(body) } }
+    }
+
+    private fun fixtureError(x: HttpExchange, name: String) = reply(x, ContractFixtures[name])
 
     private fun handle(x: HttpExchange) {
         if (offline) { x.close(); return }
-        val full = x.requestURI.path
-        val query = x.requestURI.rawQuery.orEmpty()
+        val path = x.requestURI.path
         val method = x.requestMethod
-        requests.add("$method $full")
-        val auth = x.requestHeaders.getFirst("Authorization")
-        seenAuth.add(auth)
+        val query = queryOf(x.requestURI.rawQuery)
         val body = x.requestBody.readBytes()
-        if (auth != "Bearer $token") return error(x, 401, "token_invalid")
-        if (!full.startsWith("/mobile/v1")) return error(x, 404, "not_found")
-        val path = full.removePrefix("/mobile/v1")
-        fail.entries.firstOrNull { path.endsWith(it.key) }?.let { return error(x, it.value, failCodes[it.key] ?: "injected_${it.value}") }
-        val drop = dropResponse.firstOrNull { path.endsWith(it) }
-        val respond: (Int, String, Map<String, String>) -> Unit = { status, text, headers ->
-            if (drop != null) { dropResponse.remove(drop); x.close() } else reply(x, status, text, headers)
+        requests.add("$method $path"); bodies.add("$method $path" to body.decodeToString())
+        val auth = x.requestHeaders.getFirst("Authorization"); seenAuth.add(auth)
+        if (auth != "Bearer $token") return fixtureError(x, "errors.invalid_token")
+        failing.entries.firstOrNull { path.endsWith(it.key) }?.let { return reply(x, it.value) }
+        if (method == "GET" && path == "/mobile/v1/capabilities") {
+            val base = ContractFixtures["capabilities.capabilities"]
+            val override = capabilityOverride
+            val answer = if (override == null) base else FixtureCase("capabilities.override", JsonObject(mapOf(
+                "request" to JsonObject(mapOf("method" to JsonPrimitive("GET"), "path" to JsonPrimitive(path))),
+                "response" to JsonObject(mapOf("status" to JsonPrimitive(200), "body" to override)))))
+            return respond(x, answer)
         }
-        route(x, method, path, query, body, respond)
-    }
-
-    private fun page(items: List<String>, query: String, respond: (Int, String, Map<String, String>) -> Unit) {
-        val start = Regex("cursor=([0-9]+)").find(query)?.groupValues?.get(1)?.toInt() ?: 0
-        val limit = Regex("limit=([0-9]+)").find(query)?.groupValues?.get(1)?.toInt() ?: Int.MAX_VALUE
-        val size = minOf(pageSize, limit, maxItemsPerResponse)
-        val slice = items.drop(start).take(size)
-        val body = """{"items":[${slice.joinToString(",")}],"next_cursor":${if (start + size < items.size) "\"${start + size}\"" else "null"}}"""
-        // The phone only accepts 4 MiB: answer with an oversized body so the client's own limit trips.
-        respond(200, body, emptyMap())
-    }
-
-    private fun route(x: HttpExchange, method: String, path: String, query: String, body: ByteArray, respond: (Int, String, Map<String, String>) -> Unit) {
-        val parts = path.trim('/').split('/')
-        val none = emptyMap<String, String>()
-        fun err(status: Int, code: String) = respond(status, """{"code":"$code","retryable":${status >= 500}}""", none)
-        when {
-            method == "GET" && path == "/capabilities" -> respond(200, """{"server_id":"$serverId","transport_version":1,"transports":{${
-                transports.entries.joinToString(",") { "\"${it.key}\":\"${it.value}\"" }}},"features":{${
-                features.entries.joinToString(",") { "\"${it.key}\":${it.value}" }}}}""", none)
-            parts[0] == "captures" && parts.size == 3 -> {
-                val id = parts[1]
-                when {
-                    method == "PUT" && parts[2] == "payload" -> {
-                        payloadPuts++
-                        val sha = MessageDigest.getInstance("SHA-256").digest(body).joinToString("") { "%02x".format(it) }
-                        if (sha != x.requestHeaders.getFirst("X-Content-SHA256")) return err(422, "hash_mismatch")
-                        val existing = payloads[id]
-                        if (existing != null && !existing.contentEquals(body)) return err(409, "capture_conflict")
-                        payloads[id] = body
-                        respond(if (existing == null) 201 else 200, "{}", none)
-                    }
-                    method == "PUT" && parts[2] == "manifest" -> {
-                        manifestPuts++
-                        val manifest = json.parseToJsonElement(body.decodeToString()).jsonObject
-                        val payload = payloads[id] ?: return err(409, "payload_missing")
-                        val sha = (manifest["sha256"] as JsonPrimitive).content
-                        val real = MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") { "%02x".format(it) }
-                        if (sha != real) return err(422, "hash_mismatch")
-                        val first = receipts[id] == null
-                        val receipt = receipts.getOrPut(id) {
-                            """{"schema_version":1,"capture_id":"$id","source_id":"src_01ARZ3NDEKTSV4RRFFQ69G5FAV","sha256":"$sha","received_at":"2026-11-19T00:00:00Z"}"""
-                        }
-                        respond(if (first) 201 else 200, receipt, none)
-                    }
-                    method == "GET" && parts[2] == "receipt" -> receipts[id]?.let { respond(200, it, none) } ?: err(404, "not_found")
-                    else -> err(404, "not_found")
-                }
-            }
-            method == "GET" && path == "/reviews" -> respond(200, """{"items":[${
-                reviews.keys.groupBy { it.first }.map { (id, keys) -> keys.maxBy { it.second } }
-                    .joinToString(",") { """{"package_id":"${it.first}","revision":${it.second}}""" }}]}""", none)
-            parts[0] == "reviews" && parts.size == 4 && method == "GET" -> {
-                val (doc, etag) = reviews[parts[1] to parts[3].toLong()] ?: return err(404, "not_found")
-                respond(200, doc, mapOf("ETag" to etag))
-            }
-            parts[0] == "reviews" && parts.size == 5 && method == "PUT" -> {
-                verdictPuts++
-                val key = parts[1] to parts[3].toLong()
-                val text0 = body.decodeToString()
-                // Same key and content: the first operation, even after the revision moved on or the verdict was applied.
-                verdicts[key]?.takeIf { it.first == text0 }?.let { return respond(202, """{"operation_id":"${it.second}"}""", none) }
-                val current = reviews[key]
-                val latest = reviews.keys.filter { it.first == key.first }.maxOfOrNull { it.second }
-                if (current == null || latest != key.second || x.requestHeaders.getFirst("If-Match") != current.second) {
-                    return respond(412, """{"code":"stale_revision","retryable":false,"current_revision":${latest ?: 0}}""", none)
-                }
-                val text = body.decodeToString()
-                val existing = verdicts[key]
-                if (existing != null && existing.first != text) return err(409, "verdict_conflict")
-                val op = existing?.second ?: "op_${++nextOp}".also { operations[it] = "queued" }
-                verdicts[key] = text to op
-                respond(202, """{"operation_id":"$op"}""", none)
-            }
-            parts[0] == "operations" && method == "GET" ->
-                operations[parts[1]]?.let { respond(200, """{"operation_id":"${parts[1]}","state":"$it"}""", none) } ?: err(404, "not_found")
-            method == "GET" && path == "/alerts" -> respond(200, """{"items":[${alerts.values.joinToString(",")}]}""", none)
-            parts[0] == "alerts" && parts.size == 3 && method == "PUT" -> { acked.add(parts[1]); alerts.remove(parts[1]); respond(200, "{}", none) }
-            method == "GET" && path == "/actions" -> respond(200, """{"items":[${actions.values.joinToString(",")}]}""", none)
-            parts[0] == "actions" && parts.size == 3 && method == "PUT" -> {
-                resultPuts++
-                val text = body.decodeToString()
-                val existing = results[parts[1]]
-                if (existing != null && existing.first != text) return err(409, "result_conflict")
-                val op = existing?.second ?: "op_${++nextOp}".also { operations[it] = "queued" }
-                results[parts[1]] = text to op
-                respond(202, """{"operation_id":"$op"}""", none)
-            }
-            method == "GET" && path == "/pipeline" -> page(pipeline, query, respond)
-            method == "GET" && path == "/fabric/threads" -> {
-                if (query.contains("cursor=${failThreadsFrom}") && failThreadsFrom != null) return err(503, "unavailable")
-                page(threads, query, respond)
-            }
-            method == "GET" && path == "/fabric/tags" -> respond(200, """{"items":[${tags.joinToString(",")}]}""", none)
-            method == "GET" && path == "/wiki/pages" -> page(wiki, query, respond)
-            method == "GET" && path == "/dictionary" -> respond(200, """{"items":[${dictionary.joinToString(",")}]}""", none)
-            method in setOf("POST", "PATCH", "DELETE") && (parts[0] == "threads" || parts[0] == "dictionary") -> {
-                val key = x.requestHeaders.getFirst("Idempotency-Key") ?: return err(422, "idempotency_key_required")
-                replayed[key]?.let { return respond(200, it, none) }
-                val text = body.decodeToString()
-                if (parts[0] == "threads" && parts.getOrNull(1) in historyThreads) return err(422, "history_thread")
-                writes.add(Triple(method, path, text)); writeKeys.add(key)
-                val answer = if (path == "/threads/tags/batch") """{"changed":${
-                    (json.parseToJsonElement(text).jsonObject["thread_ids"] as kotlinx.serialization.json.JsonArray).size},"skipped":0}"""
-                else """{"ok":true}"""
-                replayed[key] = answer
-                respond(200, answer, none)
-            }
-            else -> err(404, "not_found")
+        val key = "$method $path"
+        val cases = scripted[key] ?: return fixtureError(x, "errors.not_found")
+        val paged = cases.any { it.query.containsKey("cursor") }
+        val case = if (paged) {
+            // Pages are answered by cursor; a cursor no case names yet gets the next scripted page (the fixtures' page chain
+            // is c4 -> c8 while the last page is recorded for c10), and a cursor past the last case is unknown: 404.
+            val exact = cases.indexOfFirst { it.query["cursor"] == query["cursor"] }
+            val index = if (exact >= 0) exact else (lastPage[key] ?: -1) + 1
+            if (index >= cases.size) return fixtureError(x, "errors.not_found")
+            lastPage[key] = index
+            cases[index]
+        } else cases[minOf(consumed.merge(key, 1, Int::plus)!! - 1, cases.size - 1)]
+        // The phone must send exactly what the contract says (content headers, JSON/text body, cursor).
+        val problems = mutableListOf<String>()
+        case.requestHeaders.filterKeys { it != "authorization" }.forEach { (k, v) ->
+            if (x.requestHeaders.getFirst(k) != v) problems += "header $k: expected $v, got ${x.requestHeaders.getFirst(k)}"
         }
+        case.requestBody?.let { expected ->
+            val actual = runCatching { json.parseToJsonElement(body.decodeToString()) }.getOrNull()
+            if (actual?.let(::withoutNulls) != withoutNulls(expected)) problems += "body: expected $expected, got ${body.decodeToString()}"
+        }
+        case.requestText?.let { expected ->
+            val text = body.decodeToString()
+            val same = if (expected.trimStart().startsWith("{")) runCatching { withoutNulls(json.parseToJsonElement(text)) == withoutNulls(json.parseToJsonElement(expected)) }.getOrDefault(false) else text == expected
+            if (!same) problems += "body text differs"
+        }
+        if (problems.isNotEmpty()) { mismatches += "${case.key}: ${problems.joinToString("; ")}"; reply(x, FixtureCase("mismatch", JsonObject(mapOf(
+            "request" to JsonObject(mapOf("method" to JsonPrimitive(method), "path" to JsonPrimitive(path))),
+            "response" to JsonObject(mapOf("status" to JsonPrimitive(400), "body" to JsonObject(mapOf("code" to JsonPrimitive("fixture_request_mismatch"), "retryable" to JsonPrimitive(false))))))))); return }
+        respond(x, case)
     }
 
-    var failThreadsFrom: String? = null
+    /** Optional fields the phone omits (e.g. Manifest `capture_host: null`) equal an explicit null in the fixture. */
+    private fun withoutNulls(e: JsonElement): JsonElement = if (e is JsonObject) JsonObject(e.filterValues { it !is kotlinx.serialization.json.JsonNull }.mapValues { withoutNulls(it.value) }) else e
+
+    private fun respond(x: HttpExchange, case: FixtureCase) {
+        val drop = dropResponse.firstOrNull { x.requestURI.path.endsWith(it) }
+        if (drop != null) { dropResponse.remove(drop); x.close() } else reply(x, case)
+    }
 
     companion object {
-        const val SERVER_ID = "srv-test"
         fun pairing(server: FakeMobileServer, pki: TestPki = server.pki, token: String = server.token) =
-            Pairing(server.url, server.serverId, "dev-1", token, pki.caSha256, pki.caDer)
+            Pairing(server.url, server.serverId, (ContractFixtures.pairingPayload()["device_id"] as JsonPrimitive).content, token, pki.caSha256, pki.caDer)
 
-        /** The QR payload the server prints, as the phone parses it. */
-        fun code(server: FakeMobileServer, pki: TestPki = server.pki, token: String = server.token, serverId: String = server.serverId, caDer: ByteArray = pki.caDer, caSha: String = pki.caSha256) =
-            """{"v":1,"server_url":"${server.url}","server_id":"$serverId","device_id":"dev-1","token":"$token","ca_sha256":"$caSha","ca_der_b64":"${java.util.Base64.getEncoder().encodeToString(caDer)}"}"""
+        /** The QR payload as the phone parses it: the fixture's fields with this test PKI's CA and this server's URL. */
+        fun code(server: FakeMobileServer, pki: TestPki = server.pki, token: String = server.token, serverId: String = server.serverId,
+                 caDer: ByteArray = pki.caDer, caSha: String = pki.caSha256): String {
+            val p = ContractFixtures.pairingPayload()
+            return JsonObject(p.toMutableMap().also {
+                it["server_url"] = JsonPrimitive(server.url); it["server_id"] = JsonPrimitive(serverId); it["token"] = JsonPrimitive(token)
+                it["ca_sha256"] = JsonPrimitive(caSha); it["ca_der_b64"] = JsonPrimitive(java.util.Base64.getEncoder().encodeToString(caDer))
+            }).toString()
+        }
     }
 }
 

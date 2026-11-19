@@ -31,9 +31,14 @@ class UnreachableException(cause: Throwable? = null) : IOException("unreachable"
 class PinMismatchException : IOException("pin_mismatch")
 
 data class Versioned(val body: ByteArray, val etag: String?)
-data class ReviewRef(val packageId: String, val revision: Long)
-data class Operation(val id: String, val state: String, val code: String?) {
-    val terminal: Boolean get() = state in setOf("applied", "failed", "stale")
+data class ReviewRef(val packageId: String, val revision: Long, val etag: String?)
+
+/**
+ * The server's operation (contract item 2): `queued` (accepted or waiting; [code] says why), `applied` (the domain
+ * journal confirmed), `rejected` (the domain refused: stale, conflict; never resend) or `failed` (stopped on the server).
+ */
+data class Operation(val id: String, val state: String, val code: String?, val kind: String?, val result: JsonObject?) {
+    val terminal: Boolean get() = state in setOf("applied", "rejected", "failed")
 }
 data class Page(val items: List<JsonElement>, val nextCursor: String?)
 
@@ -87,10 +92,13 @@ interface MobileApi {
     fun pipeline(cursor: String?, limit: Int): Page
     fun threads(cursor: String?, limit: Int): Page
     fun tags(): List<JsonElement>
+    /** Page list without bodies; the body comes from [wikiPage] when the page is opened. */
     fun wikiPages(cursor: String?, limit: Int): Page
+    /** One page with its body and ETag, or null when [etag] is still current (304). */
+    fun wikiPage(id: String, etag: String?): Versioned?
     fun dictionary(): List<JsonElement>
-    /** Idempotent write: the same [key] and body return the first answer. Returns the response JSON. */
-    fun write(method: String, path: String, body: JsonObject?, key: String): JsonElement
+    /** POST to `/edits/...`; idempotency is the `client_id` inside [body]. Returns the operation JSON. */
+    fun edit(path: String, body: JsonObject): JsonObject
 }
 
 /**
@@ -149,7 +157,7 @@ class HttpsMobileApi(
                 }
             }
             val status = connection.responseCode
-            if (status in 300..399) throw ApiException(status, "redirect_refused", false)
+            if (status in 300..399 && status != 304) throw ApiException(status, "redirect_refused", false)
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
             val bytes = stream?.use { readLimited(it, limit) } ?: ByteArray(0)
             val reply = Reply(status, connection.headerFields.filterKeys { it != null }
@@ -216,7 +224,8 @@ class HttpsMobileApi(
 
     override fun reviews() = items(call("GET", "/reviews")).map {
         val o = it.jsonObject
-        ReviewRef((o["package_id"] as JsonPrimitive).content, (o["revision"] as JsonPrimitive).content.toLong())
+        ReviewRef((o["package_id"] as JsonPrimitive).content, (o["revision"] as JsonPrimitive).content.toLong(),
+            (o["etag"] as? JsonPrimitive)?.contentOrNull)
     }
 
     override fun review(packageId: String, revision: Long): Versioned {
@@ -231,7 +240,7 @@ class HttpsMobileApi(
     override fun operation(id: String): Operation {
         val o = obj(call("GET", "/operations/$id"))
         return Operation(id, (o["state"] as? JsonPrimitive)?.content ?: throw UnreachableException(),
-            (o["code"] as? JsonPrimitive)?.contentOrNull)
+            (o["code"] as? JsonPrimitive)?.contentOrNull, (o["kind"] as? JsonPrimitive)?.contentOrNull, o["result"] as? JsonObject)
     }
 
     override fun alerts() = items(call("GET", "/alerts"))
@@ -242,16 +251,19 @@ class HttpsMobileApi(
         operationId(call("PUT", "/actions/$actionId/result", mapOf("Content-Type" to "application/json"), result))
 
     override fun pipeline(cursor: String?, limit: Int) = page(call("GET", cursor("/pipeline", cursor, limit), limit = MAX_PAGE))
-    override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/fabric/threads", cursor, limit), limit = MAX_PAGE))
-    override fun tags() = items(call("GET", "/fabric/tags", limit = MAX_PAGE))
-    override fun wikiPages(cursor: String?, limit: Int) = page(call("GET", cursor("/wiki/pages", cursor, limit), limit = MAX_PAGE))
-    override fun dictionary() = items(call("GET", "/dictionary", limit = MAX_PAGE))
+    override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/read/threads", cursor, limit), limit = MAX_PAGE))
+    override fun tags() = items(call("GET", "/read/tags", limit = MAX_PAGE))
+    override fun wikiPages(cursor: String?, limit: Int) = page(call("GET", cursor("/read/wiki/pages", cursor, limit), limit = MAX_PAGE))
+    override fun dictionary() = items(call("GET", "/read/dictionary", limit = MAX_PAGE))
 
-    override fun write(method: String, path: String, body: JsonObject?, key: String): JsonElement {
-        val reply = call(method, path, mapOf("Content-Type" to "application/json", "Idempotency-Key" to key),
-            body?.toString()?.toByteArray() ?: "{}".toByteArray())
-        return runCatching { json.parseToJsonElement(reply.body.decodeToString()) }.getOrDefault(JsonObject(emptyMap()))
+    override fun wikiPage(id: String, etag: String?): Versioned? {
+        val reply = call("GET", "/read/wiki/pages/$id", if (etag != null) mapOf("If-None-Match" to etag) else emptyMap(), limit = MAX_DOCUMENT)
+        if (reply.status == 304) return null
+        return Versioned(reply.body, reply.headers["etag"])
     }
+
+    override fun edit(path: String, body: JsonObject): JsonObject =
+        obj(call("POST", "/edits$path", mapOf("Content-Type" to "application/json"), body.toString().toByteArray()))
 
     private fun operationId(reply: Reply): String =
         (obj(reply)["operation_id"] as? JsonPrimitive)?.contentOrNull ?: throw UnreachableException()

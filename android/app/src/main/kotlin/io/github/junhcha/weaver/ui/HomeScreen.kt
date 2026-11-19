@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -68,6 +69,7 @@ fun ToolsScreen(showPendingCalls: Boolean = false) {
                 ConnectionPanel()
                 CourierPanel()
                 CalendarPanel(alwaysShow = true)
+                if (io.github.junhcha.weaver.BuildConfig.DEBUG) DebugCallBriefEntry()
                 Feature.entries.forEach { feature ->
                     FeatureCard(
                         feature = feature,
@@ -106,4 +108,20 @@ private fun FeatureCard(feature: Feature, granted: Boolean, onRequest: () -> Uni
             }
         }
     }
+}
+
+/** Debug builds only: the call-briefing experiment is no longer a second launcher icon but an entry here. */
+@Composable
+private fun DebugCallBriefEntry() {
+    val context = LocalContext.current
+    OutlinedButton(
+        onClick = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent().setClassName(context.packageName, "io.github.junhcha.weaver.callbrief.CallBriefSetupActivity"),
+                )
+            }
+        },
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+    ) { Text("통화 브리핑 시험") }
 }

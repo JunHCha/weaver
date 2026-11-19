@@ -51,6 +51,32 @@ class HttpPhoneReadModel(
         return runCatching { counted(cached) }.getOrDefault(PhoneSnapshot(emptyList(), emptyList(), emptyList()))
     }
 
+    /**
+     * Opens a page: its body is fetched with `If-None-Match` and cached next to the snapshot, so a page read once also opens
+     * offline. A failed fetch falls back to the cached body; none cached means null (the viewer says so).
+     */
+    override suspend fun wikiBody(page: WikiPage): String? {
+        val file = File(cache.parentFile, "${cache.nameWithoutExtension}-wiki/${page.id}.json")
+        val cached = runCatching { json.parseToJsonElement(file.readText()).jsonObject }.getOrNull()
+        val client = api()
+        if (client != null) {
+            val etag = cached?.str("etag")?.takeIf { it.isNotEmpty() }
+            val result = runCatching { client.wikiPage(page.id, etag) }
+            if (result.isSuccess) {
+                val fresh = result.getOrNull() ?: return cached?.str("body") // 304: the cached copy is current
+                val body = runCatching { json.parseToJsonElement(fresh.body.decodeToString()).jsonObject.str("body") }.getOrNull()
+                if (body != null) {
+                    runCatching {
+                        file.parentFile?.mkdirs()
+                        file.writeText(buildJsonObject { put("etag", fresh.etag ?: ""); put("body", body) }.toString())
+                    }
+                    return body
+                }
+            }
+        }
+        return cached?.str("body")
+    }
+
     private fun counted(root: JsonObject): PhoneSnapshot {
         val unknown = java.util.concurrent.atomic.AtomicInteger()
         val invalid = java.util.concurrent.atomic.AtomicInteger()
@@ -120,13 +146,17 @@ class HttpPhoneReadModel(
             else -> null
         }
 
-        /** Web `Thread` fields plus the display `source` label; `field`/`value` carry deadline and schedule. */
+        /**
+         * `/read/threads` item: the web Thread plus the server's `presentation`, `open`, `retracted`, `effective_deadline`,
+         * `effective_schedule` (an object), `mentions` and the display `source`. Taken as given, never recomputed.
+         */
         private fun thread(o: JsonObject): PhoneThread {
             val field = o.str("field")
-            val value = o.str("value")
             val correction = (o["correction"] as? JsonObject)?.let {
                 TagCorrection(it.str("target")!!, it.strings("add"), it.strings("remove"))
             }
+            val schedule = (o["effective_schedule"] as? JsonObject) ?: (o["value"] as? JsonObject)?.takeIf { field == "schedule" }
+            val deadline = o.str("effective_deadline") ?: o.str("value")?.takeIf { field == "deadline" }
             return PhoneThread(
                 id = o.str("thread_id")!!,
                 seq = o.str("seq")!!.toLong(),
@@ -138,25 +168,29 @@ class HttpPhoneReadModel(
                 counterpart = o.str("counterpart"),
                 tags = o.strings("tags"),
                 direction = when (o.str("direction")) { "받음" -> Direction.RECEIVED; "보냄" -> Direction.SENT; else -> null },
-                deadline = if (field == "deadline" && value != null) runCatching { LocalDate.parse(value) }.getOrNull() else null,
-                scheduleAt = if (field == "schedule" && value != null) runCatching { Instant.parse(value) }.getOrNull() else null,
+                deadline = deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+                scheduleAt = schedule?.str("start")?.let { runCatching { Instant.parse(it) }.getOrNull() },
                 field = field,
                 presentation = when (o.str("presentation")) { "fact" -> Presentation.FACT; "history" -> Presentation.HISTORY; else -> null },
                 resolves = o.str("resolves"), retracts = o.str("retracts"), updates = o.str("updates"),
                 executes = o.str("executes"), correction = correction,
+                open = (o["open"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(),
+                retracted = (o["retracted"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(),
+                mentions = if (o["mentions"] is JsonArray) o.strings("mentions") else null,
             )
         }
 
         private fun tag(o: JsonObject) = PhoneTag(o.str("name")!!, tagKind(o.str("kind")))
 
+        /** List entry without a body (`/read/wiki/pages`); [updated] is the Seoul calendar day of `updated_at`. */
         private fun page(o: JsonObject): WikiPage {
             val front = o["frontmatter"] as? JsonObject
             return WikiPage(
-                id = o.str("page_id")!!,
+                id = o.str("id")!!,
                 title = o.str("title")!!,
                 kind = tagKind(o.str("kind")) ?: TagKind.TOPIC,
                 area = o.str("area"),
-                updated = LocalDate.parse(o.str("updated")!!),
+                updated = Instant.parse(o.str("updated_at")!!).atZone(SeoulZone).toLocalDate(),
                 frontmatter = WikiFrontmatter(
                     status = front?.str("status"),
                     deadline = front?.str("deadline")?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
@@ -164,6 +198,7 @@ class HttpPhoneReadModel(
                     next = front?.str("next"),
                 ),
                 body = o.str("body").orEmpty(),
+                sha256 = o.str("sha256"),
             )
         }
     }

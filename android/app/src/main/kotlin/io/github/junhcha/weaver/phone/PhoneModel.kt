@@ -59,6 +59,14 @@ data class PhoneThread(
     val updates: String? = null,
     val executes: String? = null,
     val correction: TagCorrection? = null,
+    /**
+     * Server-computed values (`/read/threads`): when [open] is non-null the whole thread list comes from the server with
+     * effective values already applied, and the phone uses [open], [retracted] and [mentions] as given instead of
+     * recomputing them from the history rows.
+     */
+    val open: Boolean? = null,
+    val retracted: Boolean? = null,
+    val mentions: List<String>? = null,
 )
 
 /** A 태그정정 row: [target] gets [add] tags and loses [remove] tags (web `correction`). */
@@ -80,6 +88,8 @@ data class WikiPage(
     val updated: LocalDate,
     val frontmatter: WikiFrontmatter = WikiFrontmatter(),
     val body: String,
+    /** SHA-256 of the whole file as the server lists it; the body is fetched when the page is opened. */
+    val sha256: String? = null,
 )
 
 data class PhoneSnapshot(
@@ -100,6 +110,9 @@ interface PhoneReadModel {
     val offlineSince: java.time.Instant? get() = null
 
     suspend fun snapshot(): PhoneSnapshot
+
+    /** Body of a Wiki page the list showed without one (cached, so it also opens offline); null when unavailable. */
+    suspend fun wikiBody(page: WikiPage): String? = page.body.takeIf { it.isNotEmpty() }
 }
 
 /** Nothing connected: no pairing yet, so a release build has no data to show. */

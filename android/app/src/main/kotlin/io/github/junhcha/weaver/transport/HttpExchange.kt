@@ -104,7 +104,7 @@ class HttpExchange(
             item(TransportFeature.VERDICT, "review:$key") {
                 if (!spool.exists("proposals", "$key.json")) {
                     val doc = api.review(ref.packageId, ref.revision)
-                    val etag = doc.etag ?: throw ApiException(200, "etag_missing", false)
+                    val etag = doc.etag ?: ref.etag ?: throw ApiException(200, "etag_missing", false)
                     // The ETag is remembered first: a package without its ETag could never be answered.
                     state.update { it.copy(etags = it.etags + (key to etag)) }
                     spool.put("proposals", "$key.json", doc.body)
@@ -257,14 +257,17 @@ class HttpExchange(
                 state.update { it.copy(verdictOps = it.verdictOps - name, verdictOutcomes = it.verdictOutcomes + (name to "APPLIED")) }
                 spool.delete("decisions", name)
             }
-            "stale" -> {
-                state.update { it.copy(verdictOps = it.verdictOps - name, verdictOutcomes = it.verdictOutcomes + (name to "STALE")) }
+            // The domain refused (stale revision, conflict): final. The ReviewStore keeps the person's text.
+            "rejected" -> {
+                val outcome = if (operation.code?.startsWith("stale") == true) "STALE" else "CONFLICT"
+                state.update { it.copy(verdictOps = it.verdictOps - name, verdictOutcomes = it.verdictOutcomes + (name to outcome)) }
                 spool.delete("decisions", name)
             }
             "failed" -> {
                 state.update { it.copy(verdictOutcomes = it.verdictOutcomes + (name to "ERROR")) }
                 blockItem("verdict:$name", operation.code ?: "apply_failed")
             }
+            // queued: accepted but waiting (the code says why); keep polling.
         }
     }
 
@@ -286,7 +289,7 @@ class HttpExchange(
                         spool.delete(CourierRules.ACTION_RESULTS, entry.name)
                         spool.delete(CourierRules.ACTIONS, entry.name)
                     }
-                    "failed", "stale" -> blockItem("result:$id", current.code ?: "apply_failed")
+                    "failed", "rejected" -> blockItem("result:$id", current.code ?: "apply_failed")
                 }
             }
         }

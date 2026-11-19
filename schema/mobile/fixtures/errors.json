@@ -1,0 +1,226 @@
+{
+  "contract_version": 1,
+  "group": "errors",
+  "description": "Authentication and common refusals. Body is always {code, retryable, ...}.",
+  "cases": [
+    {
+      "name": "whois_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "retry-after": "2"
+        },
+        "body": {
+          "code": "whois_unavailable",
+          "retryable": true
+        }
+      },
+      "note": "Transient: tailscaled could not answer. Retry with backoff; not a re-pairing case."
+    },
+    {
+      "name": "peer_unverified",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "peer_unverified",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "node_mismatch",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "node_mismatch",
+          "retryable": false
+        }
+      },
+      "note": "With 401 invalid_token/token_revoked this means: pair again."
+    },
+    {
+      "name": "invalid_token",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "www-authenticate": "Bearer"
+        },
+        "body": {
+          "code": "invalid_token",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "missing_token",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "www-authenticate": "Bearer"
+        },
+        "body": {
+          "code": "invalid_token",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "scope_denied",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/reviews",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "scope_denied",
+          "retryable": false
+        }
+      },
+      "note": "Only that feature is blocked; the rest keeps working."
+    },
+    {
+      "name": "invalid_host",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_host",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "origin_not_allowed",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "origin_not_allowed",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/nope",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "invalid_request",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/threads",
+        "query": {
+          "limit": "501"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_request",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "not_executor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/actions",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "not_executor",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "token_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "www-authenticate": "Bearer"
+        },
+        "body": {
+          "code": "token_revoked",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

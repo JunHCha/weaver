@@ -29,36 +29,41 @@ fun suggestTags(query: String, tags: List<PhoneTag>, entries: List<DictionaryEnt
 }
 
 /**
- * Tag writes against the paired server (web editor rules, ADR-040 contract). Every write is a POST because
- * `HttpURLConnection` cannot send PATCH and DELETE with a body is not reliable. Each call carries its own
- * `Idempotency-Key`; a retry of the *same* user action keeps it, so a lost response never edits twice.
+ * Tag writes against the paired server (the edits endpoints, web editor rules). The idempotency key is the `client_id` inside the
+ * body: a retry of the *same* user action keeps it, so a lost response never edits twice; the server answers a replay
+ * with the first result. Rejections (history thread, new tag without a kind, merge needing a kind) come back as fixed
+ * codes and are never retried.
  */
 class TagEditor(private val api: MobileApi) {
     fun newKey(): String = UUID.randomUUID().toString()
 
-    private fun names(key: String, values: Collection<String>) = JsonArray(values.map(::JsonPrimitive))
+    private fun strings(values: Collection<String>) = JsonArray(values.map(::JsonPrimitive))
 
-    private fun body(add: Collection<String>, remove: Collection<String>, kinds: Map<String, TagKind>, ids: List<String>? = null) =
+    private fun tagBody(ids: List<String>, add: Collection<String>, remove: Collection<String>, kinds: Map<String, TagKind>, key: String) =
         buildJsonObject {
-            if (ids != null) put("thread_ids", JsonArray(ids.map(::JsonPrimitive)))
-            put("add", names("add", add)); put("remove", names("remove", remove))
-            put("kinds", JsonObject(kinds.mapValues { JsonPrimitive(it.value.wire) }))
+            put("client_id", key)
+            put("thread_ids", strings(ids))
+            if (add.isNotEmpty()) put("add", strings(add))
+            if (remove.isNotEmpty()) put("remove", strings(remove))
+            if (kinds.isNotEmpty()) put("kinds", JsonObject(kinds.mapValues { JsonPrimitive(it.value.wire) }))
         }
 
-    fun editThread(threadId: String, add: Collection<String>, remove: Collection<String>,
-                   kinds: Map<String, TagKind> = emptyMap(), key: String = newKey()): TagEditResult {
-        api.write("POST", "/threads/$threadId/tags", body(add, remove, kinds), key)
-        return TagEditResult(1, 0)
-    }
+    private fun result(operation: JsonObject): JsonObject? = operation["result"] as? JsonObject
 
-    /** One request for every selected thread; the server skips rows that already have that state. */
-    fun editBatch(threadIds: List<String>, add: Collection<String>, remove: Collection<String>,
-                  kinds: Map<String, TagKind> = emptyMap(), key: String = newKey()): TagEditResult {
-        val answer = api.write("POST", "/threads/tags/batch", body(add, remove, kinds, threadIds), key) as? JsonObject
-        val changed = (answer?.get("changed") as? JsonPrimitive)?.content?.toIntOrNull() ?: threadIds.size
-        val skipped = (answer?.get("skipped") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+    /** One request for one or many threads; the server skips rows that already have that state. */
+    fun editTags(threadIds: List<String>, add: Collection<String>, remove: Collection<String>,
+                 kinds: Map<String, TagKind> = emptyMap(), key: String = newKey()): TagEditResult {
+        val result = result(api.edit("/tags", tagBody(threadIds, add, remove, kinds, key)))
+        val changed = (result?.get("changed") as? JsonPrimitive)?.content?.toIntOrNull() ?: threadIds.size
+        val skipped = (result?.get("skipped") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
         return TagEditResult(changed, skipped)
     }
+
+    fun editThread(threadId: String, add: Collection<String>, remove: Collection<String>,
+                   kinds: Map<String, TagKind> = emptyMap(), key: String = newKey()) = editTags(listOf(threadId), add, remove, kinds, key)
+
+    fun editBatch(threadIds: List<String>, add: Collection<String>, remove: Collection<String>,
+                  kinds: Map<String, TagKind> = emptyMap(), key: String = newKey()) = editTags(threadIds, add, remove, kinds, key)
 
     fun dictionary(): List<DictionaryEntry> = api.dictionary().mapNotNull { element ->
         val o = element as? JsonObject ?: return@mapNotNull null
@@ -70,26 +75,19 @@ class TagEditor(private val api: MobileApi) {
         )
     }
 
-    fun rename(entry: String, name: String, key: String = newKey()) {
-        api.write("POST", "/dictionary/edit", buildJsonObject { put("entry", entry); put("name", name) }, key)
+    private fun dictionary(path: String, key: String, vararg fields: Pair<String, String?>) {
+        api.edit("/dictionary/$path", buildJsonObject {
+            put("client_id", key)
+            fields.forEach { (name, value) -> if (value != null) put(name, value) }
+        })
     }
 
-    fun setKind(entry: String, kind: TagKind, key: String = newKey()) {
-        api.write("POST", "/dictionary/edit", buildJsonObject { put("entry", entry); put("kind", kind.wire) }, key)
-    }
+    fun rename(entry: String, name: String, key: String = newKey()) = dictionary("rename", key, "entry" to entry, "name" to name)
+    fun setKind(entry: String, kind: TagKind, key: String = newKey()) = dictionary("kind", key, "entry" to entry, "kind" to kind.wire)
+    fun addAlias(entry: String, alias: String, key: String = newKey()) = dictionary("alias-add", key, "entry" to entry, "alias" to alias)
+    fun removeAlias(entry: String, alias: String, key: String = newKey()) = dictionary("alias-remove", key, "entry" to entry, "alias" to alias)
 
-    fun addAlias(entry: String, alias: String, key: String = newKey()) {
-        api.write("POST", "/dictionary/aliases", buildJsonObject { put("entry", entry); put("alias", alias) }, key)
-    }
-
-    fun removeAlias(entry: String, alias: String, key: String = newKey()) {
-        api.write("POST", "/dictionary/aliases/remove", buildJsonObject { put("entry", entry); put("alias", alias) }, key)
-    }
-
-    /** [kind] is required by the server when the two entries' kinds differ. */
-    fun merge(entry: String, target: String, kind: TagKind? = null, key: String = newKey()) {
-        api.write("POST", "/dictionary/merge", buildJsonObject {
-            put("entry", entry); put("target", target); if (kind != null) put("kind", kind.wire)
-        }, key)
-    }
+    /** [kind] is required by the server when the two entries' kinds differ (422 `kind_choice_required`). */
+    fun merge(entry: String, target: String, kind: TagKind? = null, key: String = newKey()) =
+        dictionary("merge", key, "entry" to entry, "target" to target, "kind" to kind?.wire)
 }

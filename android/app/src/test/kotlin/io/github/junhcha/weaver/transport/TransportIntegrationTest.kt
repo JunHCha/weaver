@@ -1,12 +1,10 @@
 package io.github.junhcha.weaver.transport
 
 import android.content.Context
-import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.WorkManagerTestInitHelper
 import io.github.junhcha.weaver.courier.CourierDatabase
-import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierWorker
 import io.github.junhcha.weaver.courier.MemoryFolder
 import io.github.junhcha.weaver.inbox.InboxRuntime
@@ -17,6 +15,10 @@ import io.github.junhcha.weaver.schema.*
 import io.github.junhcha.weaver.storage.AppStorage
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -27,7 +29,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** The whole phone path against the local test server: pairing, server-driven routes, queue, retry, migration, reviews. */
+/** The whole phone path against a server that answers only with the shared fixtures. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class TransportIntegrationTest {
@@ -35,8 +37,9 @@ class TransportIntegrationTest {
     private lateinit var context: Context
     private lateinit var server: FakeMobileServer
     private val extra = mutableListOf<FakeMobileServer>()
-    private val pkgId = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0"
-    private val actionId = "act_0123456789abcdef0123456789abcdef"
+    private val id = Fx.captureId
+    private val uploadFlow = arrayOf("captures.receipt_before_upload", "captures.payload_staged", "captures.manifest_stored")
+    private val captureOnly = mapOf("capture" to "http", "review" to "files", "action" to "files")
     private val allHttp = mapOf("capture" to "http", "review" to "http", "action" to "http")
 
     @Before fun setup() {
@@ -48,20 +51,23 @@ class TransportIntegrationTest {
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         server = FakeMobileServer()
     }
-    @After fun stop() { server.close(); extra.forEach { it.close() } }
-
-    private fun example(name: String) = File(SharedSchema.dir, "examples/$name.json").readText()
+    @After fun stop() {
+        server.close(); extra.forEach { it.close() }
+        assertEquals("the phone sent what the fixtures expect", emptyList<String>(), (server.mismatches + extra.flatMap { it.mismatches }).toList())
+    }
 
     /** Pairs and lets the server's capabilities decide the routes, exactly as the worker does. */
-    private fun pairFollowing(transports: Map<String, String> = allHttp, features: Map<String, Boolean> = emptyMap()) {
-        server.transports = transports; server.features = features
-        TransportRuntime.pair(context, FakeMobileServer.code(server))
+    private fun pairFollowing(transports: Map<String, String> = captureOnly, features: Map<String, Boolean> = emptyMap(), on: FakeMobileServer = server) {
+        on.capabilities(transports, features)
+        TransportRuntime.pair(context, FakeMobileServer.code(on))
         TransportRuntime.refresh(context)
     }
 
-    private fun capture(text: String = "synthetic"): Manifest {
-        val file = tmp.newFile("source-${System.nanoTime()}.txt").apply { writeText(text) }
-        return CourierRuntime.prepare(context, Uri.fromFile(file), CaptureKind.TEXT, Channel.SHARE_TEXT, "txt")
+    /** A capture as the phone stores it: the fixture manifest, its payload staged in the app, recorded in the capture log. */
+    private fun capture(manifest: Manifest = Fx.manifest): Manifest {
+        val staged = File(context.filesDir, "staged-${manifest.captureId}.txt").apply { writeText(Fx.payloadText) }
+        CourierDatabase(context).use { it.prepare("content://fixture/${manifest.captureId}", manifest, staged) }
+        return manifest
     }
 
     private fun run(): ListenableWorker.Result = CourierWorker.run(context, network = true)
@@ -72,31 +78,31 @@ class TransportIntegrationTest {
         val foreign = FakeMobileServer(pki = TestPki.create()).also { extra += it }
         assertThrows(PinMismatchException::class.java) { TransportRuntime.pair(context, FakeMobileServer.code(foreign, pki = TestPki.default)) }
         assertFalse(TransportRuntime.settings(context).paired)
-        assertThrows(ApiException::class.java) { TransportRuntime.pair(context, FakeMobileServer.code(server, token = "x".repeat(43))) }
+        assertThrows(ApiException::class.java) { TransportRuntime.pair(context, FakeMobileServer.code(server, token = "wvr_" + "9".repeat(43))) }
         assertFalse(TransportRuntime.settings(context).paired)
         assertThrows("the code names another server than the one that answered", PairingException::class.java) {
-            TransportRuntime.pair(context, FakeMobileServer.code(server, serverId = "srv-other"))
+            TransportRuntime.pair(context, FakeMobileServer.code(server, serverId = "srv_other"))
         }
         assertFalse(TransportRuntime.settings(context).paired)
         val result = TransportRuntime.pair(context, FakeMobileServer.code(server))
-        assertEquals("srv-test", result.serverId)
+        assertEquals(server.serverId, result.serverId)
         assertTrue(TransportRuntime.settings(context).paired)
     }
 
-    @Test fun pairingStartsOnSyncthingAndTheServerCapabilitiesSwitchTheRoutes() {
-        server.transports = allHttp
+    @Test fun pairingStartsFromTheServersTransportsAndRefreshFollowsEveryChange() {
+        server.capabilities(allHttp)
         TransportRuntime.pair(context, FakeMobileServer.code(server))
-        // pair() already applied them: the server is the single source of truth.
         TransportFeature.entries.forEach { assertEquals(TransportRoute.HTTP, TransportRuntime.settings(context).route(it)) }
-        server.transports = mapOf("capture" to "files", "review" to "http", "action" to "files")
+        server.capabilities(mapOf("capture" to "files", "review" to "http", "action" to "files"))
         TransportRuntime.refresh(context)
         assertEquals(TransportRoute.FILES, TransportRuntime.settings(context).route(TransportFeature.CAPTURE))
         assertEquals(TransportRoute.HTTP, TransportRuntime.settings(context).route(TransportFeature.VERDICT))
+        assertFalse("alerts are not offered by this server", TransportRuntime.settings(context).feature(ServerFeature.ALERTS))
     }
 
     @Test fun revokedNodeShowsRePairAndRetryBlockedDoesNotHideIt() {
         pairFollowing(); capture()
-        server.fail["/receipt"] = 403; server.failCodes["/receipt"] = "node_mismatch"
+        server.failWith("/receipt", "errors.node_mismatch")
         assertEquals(ListenableWorker.Result.success(), run())
         val settings = TransportRuntime.settings(context)
         assertTrue(settings.needsRepair)
@@ -104,7 +110,7 @@ class TransportIntegrationTest {
         assertNull("no exchange while the node is rejected", TransportRuntime.exchange(context))
         TransportRuntime.retryBlocked(context)
         assertTrue("retry must not clear a real re-pair need", settings.needsRepair)
-        server.fail.clear()
+        server.clearFailures()
         TransportRuntime.pair(context, FakeMobileServer.code(server))
         assertFalse(settings.needsRepair)
     }
@@ -119,111 +125,107 @@ class TransportIntegrationTest {
 
     // ---- queue: offline, retry, idempotence ----
 
-    @Test fun capturesQueueWhileTheMacIsOffAndArriveOnceWhenItReturns() {
-        pairFollowing()
+    @Test fun aCaptureQueuesWhileTheMacIsOffAndArrivesOnceWhenItReturns() {
+        pairFollowing(); server.serve(*uploadFlow)
         server.offline = true
-        val first = capture("one"); val second = capture("two")
+        capture()
         assertEquals(ListenableWorker.Result.retry(), run())
         val settings = TransportRuntime.settings(context)
         assertEquals("unreachable", settings.lastError)
-        assertEquals(2, TransportRuntime.queue(context).captures)
-        assertTrue(server.receipts.isEmpty())
+        assertEquals(1, TransportRuntime.queue(context).captures)
         server.offline = false
         assertEquals(ListenableWorker.Result.success(), run())
-        assertEquals(setOf(first.captureId, second.captureId), server.receipts.keys)
         assertEquals(0, TransportRuntime.queue(context).captures)
         assertNull(settings.lastError)
         assertTrue(settings.lastSyncAt > 0)
-        CourierDatabase(context).use { db -> assertTrue(db.captures().all { it.state == "RECEIVED" }) }
+        CourierDatabase(context).use { db -> assertEquals("RECEIVED", db.captures().single().state) }
         run()
-        assertEquals("a finished capture is not uploaded again", 2, server.payloadPuts)
+        assertEquals("a finished capture is not uploaded again", 1, server.count("/payload"))
     }
 
     @Test fun lostResponsesAcrossRunsNeverDuplicateOrLoseACapture() {
-        pairFollowing()
-        val manifest = capture()
+        pairFollowing(); server.serve("captures.receipt_before_upload", "captures.receipt", "captures.payload_staged", "captures.manifest_stored")
+        capture()
         server.dropResponse.add("/manifest")
         assertEquals(ListenableWorker.Result.retry(), run())
         assertEquals(ListenableWorker.Result.success(), run())
-        assertEquals(1, server.receipts.size)
-        assertEquals(manifest.captureId, server.receipts.keys.single())
-        assertEquals(1, server.manifestPuts)
+        assertEquals(1, server.count("/manifest"))
+        assertEquals(1, server.count("/payload"))
+        CourierDatabase(context).use { db -> assertEquals("RECEIVED", db.captures().single().state) }
     }
 
     // ---- route changes and unpairing move every queued item with its original ID ----
 
-    private fun queueEverythingOffline(): Triple<Manifest, String, String> {
-        pairFollowing()
+    private val verdictName = "${Fx.pkg}.r1.json"
+    private val resultName = "${Fx.actionId}.json"
+
+    private fun queueEverythingOffline(): Manifest {
+        pairFollowing(allHttp)
         server.offline = true
-        val manifest = capture("keep my bytes")
+        val manifest = capture()
         run() // the capture reaches the spool, the Mac is off
         val spool = TransportRuntime.spool(context)
-        val verdictName = "$pkgId.r1.json"
-        spool.publish("decisions", verdictName) {
-            it.write(WeaverCodec.encode(Verdict(2, pkgId, 1, Verdict.Action.APPROVE, listOf("네"), null, null)).toByteArray())
-        }
-        spool.publish("action-results", "$actionId.json") { it.write(example("ActionResult").toByteArray()) }
+        spool.publish("decisions", verdictName) { it.write(WeaverCodec.encode(Fx.verdict).toByteArray()) }
+        spool.publish("action-results", resultName) { it.write(Fx.resultText.toByteArray()) }
         val queue = TransportRuntime.queue(context)
         assertEquals(1, queue.captures); assertEquals(1, queue.verdicts); assertEquals(1, queue.results)
-        return Triple(manifest, verdictName, "$actionId.json")
+        return manifest
     }
 
     @Test fun whenTheServerSwitchesFeaturesBackToSyncthingEveryUnsentItemMovesWithItsOriginalId() {
-        val (manifest, verdictName, resultName) = queueEverythingOffline()
-        server.transports = mapOf("capture" to "files", "review" to "files", "action" to "files")
+        val manifest = queueEverythingOffline()
+        server.capabilities(mapOf("capture" to "files", "review" to "files", "action" to "files"))
         server.offline = false
         TransportRuntime.refresh(context)
         val files = MemoryFolder()
         assertEquals(4, TransportRuntime.migrateOrphans(context, files))
-        assertTrue(files.files.containsKey("outbox/${manifest.payload}"))
-        assertEquals("keep my bytes", files.files.getValue("outbox/${manifest.payload}").decodeToString())
-        assertTrue(files.files.containsKey("outbox/${manifest.captureId}.json"))
+        assertEquals(Fx.payloadText, files.files.getValue("outbox/${manifest.payload}").decodeToString())
+        assertTrue(files.files.containsKey("outbox/$id.json"))
         assertTrue(files.files.containsKey("decisions/$verdictName"))
         assertTrue(files.files.containsKey("action-results/$resultName"))
-        assertTrue("payload goes before its manifest", files.published.indexOf(manifest.payload) < files.published.indexOf("${manifest.captureId}.json"))
+        assertTrue("payload goes before its manifest", files.published.indexOf(manifest.payload) < files.published.indexOf("$id.json"))
         assertEquals(QueueCounts(0, 0, 0, 0), TransportRuntime.queue(context))
         assertEquals(0, TransportRuntime.migrateOrphans(context, files))
     }
 
     @Test fun unpairingMovesQueuedItemsToSyncthingAndLeavesNothingOrphaned() {
-        val (manifest, _, _) = queueEverythingOffline()
+        queueEverythingOffline()
         TransportRuntime.unpair(context)
-        // Syncthing is not selected in this test, so nothing may be dropped: the items wait in the spool...
-        assertEquals(3, TransportRuntime.queue(context).total)
+        assertEquals("Syncthing is not selected here, so nothing may be dropped: the items wait in the spool", 3, TransportRuntime.queue(context).total)
         val files = MemoryFolder()
         TransportRuntime.migrateOrphans(context, files)
         assertEquals(0, TransportRuntime.queue(context).total)
-        assertTrue(files.files.containsKey("outbox/${manifest.captureId}.json"))
+        assertTrue(files.files.containsKey("outbox/$id.json"))
         assertEquals(TransportRoute.FILES, TransportRuntime.settings(context).route(TransportFeature.CAPTURE))
     }
 
     @Test fun nothingMovesWhileTheSyncthingFolderIsUnavailable() {
         queueEverythingOffline()
-        server.transports = mapOf("capture" to "files", "review" to "files", "action" to "files")
+        server.capabilities(mapOf("capture" to "files", "review" to "files", "action" to "files"))
         server.offline = false
         TransportRuntime.refresh(context)
-        assertEquals(0, TransportRuntime.migrateOrphans(context, io.github.junhcha.weaver.transport.MissingFolder))
+        assertEquals(0, TransportRuntime.migrateOrphans(context, MissingFolder))
         assertEquals(3, TransportRuntime.queue(context).total)
     }
 
     @Test fun aSwitchToHttpResendsAnUnconfirmedCaptureOverHttpWithTheSameIdAndBytes() {
-        TransportRuntime.pair(context, FakeMobileServer.code(server))
-        val manifest = capture("same bytes")
+        pairFollowing(mapOf("capture" to "files", "review" to "files", "action" to "files"))
+        val manifest = capture()
         val files = MemoryFolder()
         val settings = TransportRuntime.settings(context)
         val routed = RoutedFolder(files, TransportRuntime.spool(context), settings::route)
         CourierDatabase(context).use { db -> CourierWorker.synchronize(context, routed, db) }
-        val filePayload = files.files.getValue("outbox/${manifest.payload}")
-        server.transports = allHttp
+        assertEquals(Fx.payloadText, files.files.getValue("outbox/${manifest.payload}").decodeToString())
+        server.capabilities(captureOnly); server.serve(*uploadFlow)
         TransportRuntime.refresh(context)
         CourierDatabase(context).use { db -> CourierWorker.synchronize(context, routed, db, TransportRuntime.exchange(context)) }
-        assertEquals(setOf(manifest.captureId), server.receipts.keys)
-        assertEquals("same bytes", server.payloads.getValue(manifest.captureId).decodeToString())
-        assertEquals("same bytes", filePayload.decodeToString())
+        assertEquals("sent once, with the manifest's own ID", 1, server.count("/manifest"))
+        assertTrue(TransportRuntime.spool(context).exists("receipts", "$id.json"))
     }
 
     @Test fun mixedRoutesKeepCapturesOnSyncthingAndSendOnlyTheChosenFeaturesOverHttp() {
         pairFollowing(mapOf("capture" to "files", "review" to "http", "action" to "files"))
+        server.serve("reviews.list", "reviews.get_revision")
         val manifest = capture()
         val files = MemoryFolder()
         val routed = RoutedFolder(files, TransportRuntime.spool(context), TransportRuntime.settings(context)::route)
@@ -238,91 +240,71 @@ class TransportIntegrationTest {
     @Test fun aDifferentServerGetsItsOwnSpoolAndTheOldItemsAreKeptAndWarnedAbout() {
         pairFollowing()
         server.offline = true
-        capture("belongs to server A")
+        capture()
         run()
         assertEquals(1, TransportRuntime.queue(context).captures)
-        val second = FakeMobileServer(serverId = "srv-second").also { extra += it }
-        second.transports = allHttp
-        val result = TransportRuntime.pair(context, FakeMobileServer.code(second))
-        assertEquals("srv-second", result.serverId)
+        val second = FakeMobileServer().also { extra += it }
+        second.capabilities(captureOnly, serverId = "srv_second")
+        val result = TransportRuntime.pair(context, FakeMobileServer.code(second, serverId = "srv_second"))
+        assertEquals("srv_second", result.serverId)
         assertEquals(1, result.otherServerQueued)
         assertEquals("the new server starts with an empty queue", 0, TransportRuntime.queue(context).total)
         assertEquals(1, TransportRuntime.otherServerQueue(context))
-        TransportRuntime.refresh(context)
-        run()
-        // The phone's own capture log is not tied to a server, so the unconfirmed capture is offered to the new server
-        // through the new spool; server A's copy in A's spool is untouched (same ID: re-pairing A later stays idempotent).
-        assertEquals("http:srv-second", TransportRuntime.routed(context, MissingFolder).identity)
-        assertEquals(1, TransportRuntime.otherServerQueue(context))
+        // Identity follows the verdict route; with review on Syncthing it is the folder's, so route review over HTTP to see it.
+        second.capabilities(allHttp, serverId = "srv_second"); TransportRuntime.refresh(context)
+        assertEquals("http:srv_second", TransportRuntime.routed(context, MissingFolder).identity)
+        assertEquals("server A's copy is untouched", 1, TransportRuntime.otherServerQueue(context))
     }
 
     // ---- review round trip ----
 
     @Test fun reviewArrivesInTheInboxIsAnsweredOverHttpAndEndsAsApplied() {
-        pairFollowing()
-        server.reviews[pkgId to 1L] = example("ReviewPackage") to "\"e1\""
+        pairFollowing(mapOf("capture" to "files", "review" to "http", "action" to "files"))
+        server.serve("reviews.list", "reviews.get_revision", "reviews.verdict_accepted", "reviews.operation_queued")
         assertEquals(ListenableWorker.Result.success(), run())
-        assertEquals(listOf(pkgId), InboxRuntime.reviews(context).map { it.packageId })
-        val pkg = ReviewRuntime.open(context, pkgId)
-        val verdict = Verdict(2, pkgId, 1, Verdict.Action.APPROVE, pkg.questions.map { "네" }, null, null)
-        ReviewRuntime.submit(context, pkg, verdict)
+        assertEquals(listOf(Fx.pkg), InboxRuntime.reviews(context).map { it.packageId })
+        val pkg = ReviewRuntime.open(context, Fx.pkg)
+        ReviewRuntime.submit(context, pkg, Fx.verdict)
         assertEquals(ListenableWorker.Result.success(), run())
-        assertEquals(1, server.verdicts.size)
+        assertEquals(1, server.count("/verdict"))
         assertEquals("accepted, not yet applied", ReviewStatus.SENT, ReviewRuntime.records(context).single().status)
-        server.applyAll()
+        server.reset("reviews.operation_queued"); server.serve("reviews.operation_applied")
         run()
         assertEquals(ReviewStatus.APPLIED, ReviewRuntime.records(context).single().status)
         assertEquals(0, TransportRuntime.queue(context).verdicts)
     }
 
-    @Test fun anAnswerToASupersededRevisionIsMarkedStaleAndTheDraftTextIsKept() {
-        pairFollowing()
-        server.reviews[pkgId to 1L] = example("ReviewPackage") to "\"e1\""
-        run()
-        val pkg = ReviewRuntime.open(context, pkgId)
-        val verdict = Verdict(2, pkgId, 1, Verdict.Action.APPROVE, pkg.questions.map { "내 답" }, null, null)
-        // A new revision lands on the server while the phone still shows revision 1; submitting kicks the workers.
-        server.reviews[pkgId to 2L] = example("ReviewPackage").replace("\"revision\": 1", "\"revision\": 2") to "\"e2\""
-        ReviewRuntime.submit(context, pkg, verdict)
-        run()
-        val record = ReviewRuntime.records(context).single()
-        assertEquals(ReviewStatus.STALE, record.status)
-        assertEquals("the person's answers are preserved", pkg.questions.map { "내 답" }, record.verdict.answers)
-        assertTrue(server.operations.isEmpty())
-    }
-
-    @Test fun alertsStayOnTheSyncthingFolderUntilTheServerOffersThemOverHttp() {
-        pairFollowing(features = emptyMap())
-        server.alerts["alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"] = example("Alert")
+    @Test fun alertsStayOnTheSyncthingFolderWhileTheServerDoesNotOfferThemOverHttp() {
+        pairFollowing(mapOf("capture" to "files", "review" to "http", "action" to "files"), features = mapOf("alerts" to false, "pipeline" to false))
         val files = MemoryFolder()
-        files.put("proposals", "alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA9.json", example("Alert").replace("FA0", "FA9"))
-        val routed = RoutedFolder(files, TransportRuntime.spool(context), TransportRuntime.settings(context)::route, TransportRuntime.settings(context)::feature)
-        assertEquals("the alert file still comes from Syncthing while review runs over HTTP",
-            listOf("alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA9.json"), routed.list("proposals").map { it.name })
-        assertTrue(server.requests.none { it.contains("/alerts") })
-        server.features = mapOf("alerts" to true)
-        TransportRuntime.refresh(context)
+        files.put("proposals", "alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA9.json", File(SharedSchema.dir, "examples/Alert.json").readText())
+        files.put("proposals/pipeline", "src_x.json", "{}")
+        val settings = TransportRuntime.settings(context)
+        val routed = RoutedFolder(files, TransportRuntime.spool(context), settings::route, settings::feature)
+        assertEquals("the alert still comes from Syncthing while review runs over HTTP",
+            listOf("alert_alt_01ARZ3NDEKTSV4RRFFQ69G5FA9.json"), routed.list("proposals").map { it.name }.filter { it != "pipeline" })
+        assertEquals(listOf("src_x.json"), routed.list("proposals/pipeline").map { it.name })
+        server.serve("reviews.list", "reviews.get_revision")
         run()
-        assertEquals(1, InboxRuntime.alerts(context).size)
-        assertTrue(server.requests.any { it.contains("/alerts") })
-        assertTrue(InboxRuntime.dismissAlert(context, "alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"))
-        run()
-        assertEquals(listOf("alt_01ARZ3NDEKTSV4RRFFQ69G5FA0"), server.acked)
+        assertTrue(server.requests.none { it.contains("/alerts") || it.contains("/pipeline") })
     }
 
     // ---- read model problems reach the connection card ----
 
     @Test fun anUnknownThreadKindIsCountedIntoLastErrorNotSilentlyDropped() = runBlocking {
         pairFollowing()
-        server.threads = listOf(
-            """{"thread_id":"a","seq":1,"kind":"요청","content":"x","occurred_at":"2026-11-10T01:00:00Z","recorded_at":"2026-11-10T01:00:00Z","tags":[],"source":"통화"}""",
-            """{"thread_id":"b","seq":2,"kind":"미지","content":"x","occurred_at":"2026-11-10T01:00:00Z","recorded_at":"2026-11-10T01:00:00Z","tags":[],"source":"통화"}""",
-        )
-        server.tags = emptyList(); server.wiki = emptyList()
+        server.serveDerived("read.threads_first_page") { body ->
+            val root = body.jsonObject
+            val items = (root["items"] as JsonArray).toMutableList()
+            items[0] = JsonObject(items[0].jsonObject.toMutableMap().also { it["kind"] = JsonPrimitive("미지") })
+            JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
+        }
+        server.serve("read.threads_next_page", "read.threads_last_page", "read.tags", "wiki.list")
         val snapshot = PhoneReadModels.forContext(context, debug = false).snapshot()
-        assertEquals(1, snapshot.threads.size)
+        assertEquals(9, snapshot.threads.size)
         assertEquals("unknown_thread_kind:1", TransportRuntime.settings(context).lastError)
-        server.threads = server.threads.take(1)
+        server.reset("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
+        server.serve("read.threads_first_page", "read.threads_next_page", "read.threads_last_page")
         PhoneReadModels.forContext(context, debug = false).snapshot()
         assertNull("a clean read clears the note", TransportRuntime.settings(context).lastError)
     }

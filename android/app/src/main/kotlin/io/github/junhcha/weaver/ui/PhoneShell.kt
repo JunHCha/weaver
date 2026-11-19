@@ -108,7 +108,13 @@ fun PhoneShell(
                 } ?: SubjectList("영역", areaEntries(data), emptyText ?: "아직 없어요") { area = it }
                 PhoneTab.WIKI -> if (data == null) Loading() else {
                     val open = page?.let { id -> data.wikiPages.firstOrNull { it.id == id } }
-                    if (open != null) WikiViewer(data, open, { page = null }, ::open)
+                    if (open != null) {
+                        // The list carries no bodies: fetch (or read the cached) body when the page is opened.
+                        val body by produceState<String?>(open.body.takeIf { it.isNotEmpty() }, open.id, open.sha256) {
+                            value = readModel.wikiBody(open) ?: value
+                        }
+                        WikiViewer(data, open.copy(body = body.orEmpty()), { page = null }, ::open, loading = body == null)
+                    }
                     else WikiList(data.wikiPages, emptyText ?: "아직 페이지가 없어요") { page = it }
                 }
             }
