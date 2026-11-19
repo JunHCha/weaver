@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -81,18 +82,18 @@ fun PhoneShell(
     var area by rememberSaveable { mutableStateOf<String?>(null) }
     var page by rememberSaveable { mutableStateOf<String?>(null) }
     @Suppress("UNUSED_VARIABLE") val observedReadVersion = readVersion
-    val controller = readModel.nowController?.takeIf { it.supported && it.snapshot != null }
+    val nowUi = readModel.nowController?.uiState?.collectAsState()?.value
+    val controller = readModel.nowController?.takeIf { nowUi?.supported == true && nowUi.snapshot != null }
     var selectedThread by rememberSaveable { mutableStateOf<String?>(null) }
-    var localChanges by remember { mutableIntStateOf(0) }
-    val currentEpoch = controller?.snapshot?.epoch
+    val currentEpoch = nowUi?.snapshot?.epoch
     var detailEpoch by remember { mutableStateOf(currentEpoch) }
     LaunchedEffect(currentEpoch) {
         if (detailEpoch != currentEpoch) selectedThread = null
         detailEpoch = currentEpoch
     }
-    LaunchedEffect(snapshot, localChanges, readModel, readVersion, resumes) {
+    LaunchedEffect(snapshot, nowUi?.nextRefreshAt, readModel, readVersion, resumes) {
         val moment = now()
-        val next = controller?.nextRefresh(moment) ?: moment.atZone(io.github.junhcha.weaver.phone.SeoulZone)
+        val next = nowUi?.nextRefreshAt ?: moment.atZone(io.github.junhcha.weaver.phone.SeoulZone)
             .toLocalDate().plusDays(1).atStartOfDay(io.github.junhcha.weaver.phone.SeoulZone).toInstant()
         kotlinx.coroutines.delay(java.time.Duration.between(moment, next).toMillis().coerceAtLeast(1000))
         resumes++
@@ -116,22 +117,22 @@ fun PhoneShell(
         tab != PhoneTab.NOW -> BackHandler { tab = PhoneTab.NOW }
     }
     selectedThread?.let { id ->
-        val target = (controller?.snapshot?.threads.orEmpty() + data?.threads.orEmpty() + controller?.suppressed().orEmpty()).firstOrNull { it.id == id }
+        val target = (nowUi?.snapshot?.threads.orEmpty() + data?.threads.orEmpty() + nowUi?.suppressed.orEmpty()).firstOrNull { it.id == id }
         if (target != null) NowThreadSheet(target,
             data?.threads.orEmpty().filter { it.historyTargetForDetail(id, data?.threads.orEmpty()) }, controller,
-            { localChanges++; edits++ }, { selectedThread = null })
+            { edits++ }, { selectedThread = null })
     }
     Column(Modifier.fillMaxSize()) {
         if (readModel.isExample) ExampleBadge()
-        if (readModel.nowController?.supported == true && controller == null) Muted("지금 목록을 확인하지 못했어요. 연결 후 다시 불러와 주세요.", Modifier.padding(16.dp))
-        offlineSince?.let { OfflineBanner(it, controller?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone) }
+        if (nowUi?.supported == true && controller == null) Muted(if (nowUi?.problem == "response_too_large") "지금 목록이 너무 커요. 서버 페이지네이션 지원이 필요해요. 자동 재시도를 멈췄어요." else "지금 목록을 확인하지 못했어요. 연결 후 다시 불러와 주세요.", Modifier.padding(16.dp))
+        offlineSince?.let { OfflineBanner(it, nowUi?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone) }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 PhoneTab.NOW -> NowScreen(
-                    if (readModel.nowController?.supported == true) controller?.visible(current) else data?.let { nowView(it, current) }, counts, if (controller?.online == true) controller.snapshot!!.generatedAt else current, connected = !noData, onOpenMap, onOpenSettings,
-                    zone = controller?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone,
+                    if (nowUi?.supported == true) nowUi?.visible else data?.let { nowView(it, current) }, counts, if (nowUi?.online == true) nowUi.snapshot!!.generatedAt else current, connected = !noData, onOpenMap, onOpenSettings,
+                    zone = nowUi?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone,
                     onThread = { selectedThread = it.id },
-                    handling = controller?.let { host -> { NowHandlingBar(host, { localChanges++; edits++ }, { selectedThread = it.id }, data?.threads.orEmpty()) } },
+                    handling = controller?.let { host -> { NowHandlingBar(host, { edits++ }, { selectedThread = it.id }, data?.threads.orEmpty()) } },
                 )
                 PhoneTab.PEOPLE -> if (data == null) Loading() else person?.let { name ->
                     TimelineScreen(data, name, { person = null }, tagHost, onEdited)

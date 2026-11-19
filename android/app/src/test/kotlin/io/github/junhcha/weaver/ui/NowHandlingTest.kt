@@ -25,7 +25,8 @@ import org.robolectric.annotation.Config
 class NowHandlingTest {
     @get:Rule val compose = createComposeRule()
     private val store = NowStore(ApplicationProvider.getApplicationContext(), "now-ui-${UUID.randomUUID()}.db")
-    private val now = Instant.parse("2026-11-19T00:00:00Z")
+    private var now = Instant.parse("2026-11-19T00:00:00Z")
+    private var snapshotCalls = 0
     private var readOnly = false
     private var fail = false
     private val raw = ContractFixtures["request_handling.now_since_seq"].responseBody!!.jsonObject
@@ -52,7 +53,10 @@ class NowHandlingTest {
         runBlocking { controller.refresh() }
         val model = object : PhoneReadModel {
             override val nowController = controller
-            override suspend fun snapshot() = PhoneSnapshot(controller.snapshot!!.threads, emptyList(), emptyList())
+            override suspend fun snapshot(): PhoneSnapshot {
+                snapshotCalls++
+                return PhoneSnapshot(controller.snapshot!!.threads, emptyList(), emptyList())
+            }
         }
         compose.setContent { MaterialTheme { WeaverTheme { PhoneShell(model, StatusCounts(0, 0, 0), { now }, {}, {}) } } }
     }
@@ -103,14 +107,40 @@ class NowHandlingTest {
         compose.onNodeWithText("기한 ${thread.deadline ?: "없음"} · 철회됨").assertExists()
     }
 
-    @Test fun readOnlyTokenShowsDetailButNoHandlingMenu() {
+    @Test fun expiredCustomTimeClickShowsGuidanceAndKeepsSheetOpen() {
+        show()
+        compose.onNodeWithText(controller.snapshot!!.threads.first().content).performScrollTo().performClick()
+        val time = now.plusSeconds(60).atZone(controller.snapshot!!.zone).format(java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm"))
+        compose.onNodeWithText("다시 볼 시각 (YYYY-MM-DD HH:mm)").performScrollTo().performTextReplacement(time)
+        now = now.plusSeconds(120)
+        compose.onNodeWithText("지정한 시각까지 미루기").performScrollTo().performClick()
+        compose.waitUntil(10000) {
+            compose.onAllNodesWithText("저장하지 못했거나 지정 시각이 지났어요. 시각과 저장 상태를 확인해 주세요.").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("now-thread-detail").assertExists()
+        assertTrue(controller.suppressed().isEmpty())
+    }
+
+    @Test fun localSqliteFailureIsShownInsteadOfCrashingTheClick() {
+        show()
+        compose.onNodeWithText(controller.snapshot!!.threads.first().content).performScrollTo().performClick()
+        store.writableDatabase.execSQL("DROP TABLE view_state")
+        compose.onNodeWithText("지금에서 숨기기").performScrollTo().performClick()
+        compose.waitUntil(10000) {
+            compose.onAllNodesWithText("저장하지 못했거나 지정 시각이 지났어요. 시각과 저장 상태를 확인해 주세요.").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("now-thread-detail").assertExists()
+        assertEquals("local_storage_error", controller.uiState.value.problem)
+    }
+
+    @Test fun readOnlyTokenShowsLocalHandlingButNoBusinessWrites() {
         readOnly = true; show()
-        compose.onNodeWithText("숨긴·미룬 항목").assertDoesNotExist()
+        compose.onNodeWithText("숨긴·미룬 항목").assertExists()
         compose.onNodeWithText(controller.snapshot!!.threads.first().content).performScrollTo().performClick()
         compose.onNodeWithTag("now-thread-detail").assertExists()
         compose.onNodeWithText("완료").assertDoesNotExist()
         compose.onNodeWithText("기한 변경").assertDoesNotExist()
-        compose.onNodeWithText("지금에서 숨기기").assertDoesNotExist()
+        compose.onNodeWithText("지금에서 숨기기").assertExists()
     }
 
     @Test fun offlineCacheDisablesAcknowledgementAndBusinessWrites() {
@@ -131,12 +161,17 @@ class NowHandlingTest {
 
     @Test fun hideAndRestoreAreLocalAndExplicitAckKeepsDueItems() {
         show(); val thread = controller.snapshot!!.threads.first()
+        compose.waitForIdle()
+        val readsBefore = snapshotCalls
         compose.onNodeWithText(thread.content).performScrollTo().performClick()
         compose.onNodeWithText("지금에서 숨기기").performScrollTo().performClick()
-        compose.onNodeWithTag("now-thread-detail").assertDoesNotExist()
+        compose.waitUntil(10000) { compose.onAllNodesWithTag("now-thread-detail").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithText("숨긴·미룬 항목").performClick()
         compose.onNodeWithText("다시 표시").performScrollTo().performClick()
-        assertTrue(controller.suppressed().isEmpty())
+        compose.waitUntil(10000) { controller.suppressed().isEmpty() }
+        compose.waitForIdle()
+        assertEquals(readsBefore, snapshotCalls)
+        assertTrue(controller.online)
         assertTrue(sent.isEmpty())
     }
 }

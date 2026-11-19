@@ -27,6 +27,7 @@ class NowControllerTest {
     private var scope = true
     private var raw = ContractFixtures["request_handling.now_since_seq"].responseBody!!.jsonObject
     private var failRead = false
+    private var tooLarge = false
     private var editError: Exception? = null
     private var readError: ApiException? = null
     private val reads = mutableListOf<Pair<Long?, String?>>()
@@ -40,6 +41,7 @@ class NowControllerTest {
         }
         override fun now(afterSeq: Long?, fabricEpoch: String?): JsonObject {
             reads += afterSeq to fabricEpoch
+            if (tooLarge) throw ApiException(200, "response_too_large", false)
             if (failRead) throw java.io.IOException("offline")
             if (afterSeq != null && readError != null) { val error = readError!!; readError = null; throw error }
             return raw
@@ -64,7 +66,7 @@ class NowControllerTest {
         val snap = controller.snapshot!!
         assertEquals(listOf(null to null, 0L to snap.epoch), reads)
         assertEquals(0L, store.ack(server, snap.epoch))
-        assertTrue(controller.acknowledge())
+        assertTrue(controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch))
         assertEquals(snap.head, store.ack(server, snap.epoch))
         assertTrue(controller.visible()!!.recent.isEmpty())
         assertEquals(0L, store.ack("another-server", snap.epoch))
@@ -75,7 +77,7 @@ class NowControllerTest {
         val before = controller.snapshot
         editThread { JsonObject(it.toMutableMap().apply { put("kind", JsonPrimitive("future-kind")) }) }
         controller.refresh()
-        assertFalse(controller.online); assertFalse(controller.acknowledge())
+        assertFalse(controller.online); assertFalse(controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch))
         assertSame(before, controller.snapshot)
         assertEquals(0L, store.ack(server, before!!.epoch))
         assertEquals(before, controller().also { it.refresh() }.snapshot)
@@ -83,7 +85,7 @@ class NowControllerTest {
 
     @Test fun truncatedReadAndOfflineRestartDoNotAdvanceBookmark() = runBlocking {
         val controller = controller(); controller.refresh(); failRead = true; controller.refresh()
-        assertFalse(controller.acknowledge())
+        assertFalse(controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch))
         val restarted = controller(); restarted.refresh()
         assertFalse(restarted.online); assertTrue(restarted.supported)
         assertEquals(controller.snapshot, restarted.snapshot)
@@ -96,18 +98,20 @@ class NowControllerTest {
         controller.snooze(thread, clock.plusSeconds(60))
         assertFalse(controller.visible()!!.recent.any { it.thread.id == thread.id })
         clock = clock.plusSeconds(61)
+        controller.refreshLocal()
         assertTrue(controller.visible()!!.recent.any { it.thread.id == thread.id })
         controller.hide(thread)
         assertTrue(controller.suppressed().any { it.id == thread.id })
         assertFalse(store.suppressed("other", controller.snapshot!!.epoch, thread, clock))
         assertFalse(store.suppressed(server, "another-epoch", thread, clock))
         assertFalse(store.suppressed(server, controller.snapshot!!.epoch, thread.copy(revision = thread.revision + 1), clock))
+        controller.refreshLocal()
         assertTrue(controller.visible()!!.recent.any { it.thread.id == thread.id })
     }
 
     @Test fun hiddenItemsRemainRestorableAfterTheyLeaveAcknowledgedSnapshot() = runBlocking {
         val controller = controller(); controller.refresh(); val thread = controller.snapshot!!.threads.first()
-        controller.hide(thread); controller.acknowledge()
+        controller.hide(thread); controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch)
         change("recent" to JsonArray(emptyList()))
         controller.refresh()
         assertEquals(thread, controller.suppressed().first())
@@ -140,9 +144,10 @@ class NowControllerTest {
         val controller = controller(); controller.refresh(); val thread = controller.snapshot!!.threads.first()
         controller.submit(thread, "deadline", "기한을 변경했습니다", LocalDate.parse("2026-12-01"))
         assertEquals("2026-12-01", sent.last().second.getValue("deadline").jsonPrimitive.content)
-        controller.submit(thread, "undo", editThreadId = "phone-request:made-here")
+        controller.undo(store.operations(server).single())
         assertEquals(setOf("client_id", "edit_thread_id", "expected_revision"), sent.last().second.keys)
-        assertEquals("phone-request:made-here", sent.last().second.getValue("edit_thread_id").jsonPrimitive.content)
+        assertEquals(store.operations(server).first().result!!.getValue("edit_thread_id"), sent.last().second.getValue("edit_thread_id"))
+        assertEquals(store.operations(server).first().result!!.getValue("revision"), sent.last().second.getValue("expected_revision"))
         assertNotEquals(sent.first().second["client_id"], sent.last().second["client_id"])
     }
 
@@ -152,12 +157,13 @@ class NowControllerTest {
         controller.submit(thread, "complete", "완료를 확인했습니다")
         assertEquals("rejected", store.operations(server).single().state)
         assertEquals("revision_conflict", store.operations(server).single().code)
+        assertEquals("revision_conflict", controller.uiState.value.problem)
         controller.refresh(); assertEquals(1, sent.size)
     }
 
     @Test fun epochMismatchReadsNewGenerationAtZeroAndQuarantinesPending() = runBlocking {
         val controller = controller(); controller.refresh(); val thread = controller.snapshot!!.threads.first()
-        controller.acknowledge()
+        controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch)
         editError = java.io.IOException("response_lost")
         controller.submit(thread, "complete", "완료했습니다")
         assertEquals(1, sent.size)
@@ -179,7 +185,7 @@ class NowControllerTest {
         val controller = controller(); controller.refresh()
         val displayed = controller.snapshot!!.head
         change("head" to JsonPrimitive(displayed + 10)) // appended after the phone fetched
-        controller.acknowledge()
+        controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch)
         assertEquals(displayed, store.ack(server, controller.snapshot!!.epoch))
         assertEquals(1, controller.visible()!!.overdue.size)
     }
@@ -221,7 +227,7 @@ class NowControllerTest {
         val controller = controller(); controller.refresh()
         editThread { JsonObject(it.toMutableMap().apply { put("effective_deadline", JsonPrimitive("2026-99-99")) }) }
         controller.refresh()
-        assertFalse(controller.online); assertFalse(controller.acknowledge())
+        assertFalse(controller.online); assertFalse(controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch))
         assertEquals(0L, store.ack(server, controller.snapshot!!.epoch))
     }
 
@@ -238,6 +244,135 @@ class NowControllerTest {
                 JsonObject(pending.body.toMutableMap().apply { put("content", JsonPrimitive("different")) })) }.isFailure)
             assertEquals(pending.body, reopened.operations(server).single().body)
         }
+    }
+
+    @Test fun renderedBookmarkCannotAcknowledgeANewerHeadOrAnotherEpoch() = runBlocking {
+        val controller = controller(); controller.refresh()
+        val rendered = controller.snapshot!!
+        change("head" to JsonPrimitive(rendered.head + 1))
+        controller.refresh()
+        assertFalse(controller.acknowledge(rendered.head, rendered.epoch))
+        assertEquals(0L, store.ack(server, rendered.epoch))
+        change("fabric_epoch" to JsonPrimitive("new-epoch"))
+        readError = ApiException(409, "epoch_mismatch", false)
+        controller.refresh()
+        assertFalse(controller.acknowledge(controller.snapshot!!.head, rendered.epoch))
+        assertEquals(0L, store.ack(server, "new-epoch"))
+    }
+
+    @Test fun outOfRangeBookmarkResetsWithinTheSameEpoch() = runBlocking {
+        val controller = controller(); controller.refresh()
+        val rendered = controller.snapshot!!
+        controller.acknowledge(rendered.head, rendered.epoch)
+        readError = ApiException(409, "checkpoint_out_of_range", false)
+        controller.refresh()
+        assertEquals(0L to rendered.epoch, reads.last())
+        assertEquals(0L, store.ack(server, rendered.epoch))
+        assertTrue(controller.online)
+    }
+
+    @Test fun forbiddenWriteKeepsPendingAndReusesItsBodyAfterTokenRepair() = runBlocking {
+        val controller = controller(); controller.refresh()
+        editError = ApiException(403, "scope_required", false)
+        controller.submit(controller.snapshot!!.threads.first(), "complete", "완료했습니다")
+        assertEquals("pending", store.operations(server).single().state)
+        editError = null
+        controller.refresh()
+        assertEquals(sent.first(), sent.last())
+        assertEquals("applied", store.operations(server).single().state)
+    }
+
+    @Test fun expiredSnoozeReturnsFalseWithoutWritingOrRefetching() = runBlocking {
+        val controller = controller(); controller.refresh()
+        val renderedTime = clock.plusSeconds(1)
+        clock = clock.plusSeconds(2)
+        val before = reads.size
+        assertFalse(controller.snooze(controller.snapshot!!.threads.first(), renderedTime))
+        assertTrue(controller.suppressed().isEmpty())
+        assertEquals(before, reads.size)
+        assertTrue(controller.online)
+    }
+
+    @Test fun localWritesPublishStateWithoutAnyNetworkRead() = runBlocking {
+        val controller = controller(); controller.refresh(); val thread = controller.snapshot!!.threads.first()
+        val before = reads.size
+        assertTrue(controller.hide(thread)); assertEquals(listOf(thread), controller.uiState.value.suppressed)
+        assertTrue(controller.restore(thread)); assertTrue(controller.uiState.value.suppressed.isEmpty())
+        assertTrue(controller.snooze(thread, clock.plusSeconds(60)))
+        assertTrue(controller.acknowledge(controller.snapshot!!.head, controller.snapshot!!.epoch))
+        assertEquals(before, reads.size)
+        assertTrue(controller.uiState.value.online)
+    }
+
+    @Test fun damagedViewRowIsRemovedWithoutLosingOtherRows() = runBlocking {
+        val controller = controller(); controller.refresh(); val thread = controller.snapshot!!.threads.first()
+        store.setView(server, controller.snapshot!!.epoch, thread, hidden = true)
+        val valid = thread.copy(id = "valid-other-row")
+        store.setView(server, controller.snapshot!!.epoch, valid, hidden = true)
+        store.writableDatabase.execSQL("UPDATE view_state SET payload='{' WHERE thread=?", arrayOf(thread.id))
+        controller.refreshLocal()
+        assertEquals(listOf(valid), controller.suppressed())
+        assertEquals(listOf(valid), store.savedViews(server, controller.snapshot!!.epoch))
+    }
+
+    @Test fun failedLocalDatabaseWriteReturnsFalseAndPublishesGuidance() = runBlocking {
+        val controller = controller(); controller.refresh()
+        store.writableDatabase.execSQL("DROP TABLE view_state")
+        assertFalse(controller.hide(controller.snapshot!!.threads.first()))
+        assertFalse(controller.restore(controller.snapshot!!.threads.first()))
+        assertFalse(controller.snooze(controller.snapshot!!.threads.first(), clock.plusSeconds(60)))
+        assertEquals("local_storage_error", controller.uiState.value.problem)
+    }
+
+    @Test fun immutableUiReadsDoNotAccessTheDatabase() = runBlocking {
+        val controller = controller(); controller.refresh()
+        val state = controller.uiState.value
+        store.writableDatabase.execSQL("DROP TABLE view_state")
+        store.writableDatabase.execSQL("DROP TABLE pending")
+        store.writableDatabase.execSQL("DROP TABLE bookmark")
+        assertEquals(state.visible, controller.visible())
+        assertEquals(state.suppressed, controller.suppressed())
+        assertEquals(state.operations, controller.operations())
+        assertEquals(state.nextRefreshAt, controller.nextRefresh(clock))
+    }
+
+    @Test fun databaseOpenAndLocalWritesAreDispatchedOffMain() = runBlocking {
+        val main = android.os.Looper.getMainLooper().thread
+        val opened = java.util.concurrent.atomic.AtomicInteger()
+        val guarded = object : NowStore(ApplicationProvider.getApplicationContext(), "guarded-${UUID.randomUUID()}.db") {
+            override fun onOpen(db: android.database.sqlite.SQLiteDatabase) {
+                assertNotEquals(main, Thread.currentThread())
+                opened.incrementAndGet()
+                super.onOpen(db)
+            }
+        }
+        guarded.use {
+            val controller = NowController(server, { api }, guarded) { clock }
+            assertEquals(0, opened.get())
+            controller.refresh()
+            assertEquals(1, opened.get())
+            guarded.close() // force a reopen on the next local write
+            assertTrue(controller.hide(controller.snapshot!!.threads.first()))
+            assertEquals(2, opened.get())
+        }
+    }
+
+    @Test fun oversizedUnpagedResponseShowsProblemAndStopsPeriodicRetry() = runBlocking {
+        tooLarge = true
+        val controller = controller(); controller.refresh()
+        assertEquals("response_too_large", controller.uiState.value.problem)
+        assertNull(controller.uiState.value.nextRefreshAt)
+        assertFalse(controller.online)
+    }
+
+    @Test fun migrationsRefuseToDropAPendingJournal() = runBlocking {
+        val controller = controller(); controller.refresh()
+        editError = java.io.IOException("lost")
+        controller.submit(controller.snapshot!!.threads.first(), "complete", "완료")
+        val before = store.operations(server)
+        assertThrows(android.database.sqlite.SQLiteException::class.java) { store.onUpgrade(store.writableDatabase, 1, 2) }
+        assertThrows(android.database.sqlite.SQLiteException::class.java) { store.onDowngrade(store.writableDatabase, 2, 1) }
+        assertEquals(before, store.operations(server))
     }
 
     @Test fun unsupportedServerFallsBackWithoutCallingNowAndReadOnlyScopeCannotWrite() = runBlocking {

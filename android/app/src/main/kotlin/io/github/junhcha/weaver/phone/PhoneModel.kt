@@ -140,7 +140,7 @@ object PhoneReadModels {
         override val isExample: Boolean get() = current.isExample
         override val offlineSince: java.time.Instant? get() = current.offlineSince
         override suspend fun wikiBody(page: WikiPage): String? = current.wikiBody(page)
-        override suspend fun snapshot(): PhoneSnapshot {
+        override suspend fun snapshot(): PhoneSnapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val app = context.applicationContext
             val settings = io.github.junhcha.weaver.transport.TransportRuntime.settings(app)
             current = if (!settings.paired) forBuild(debug) else HttpPhoneReadModel(
@@ -155,7 +155,7 @@ object PhoneReadModels {
             )
             val result = current.snapshot()
             nowController?.refresh()
-            return result
+            result
         }
     }
 }
