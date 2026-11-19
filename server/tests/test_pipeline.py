@@ -7,7 +7,7 @@ import pytest
 from server.tests.fake_responses import fixture_response
 
 from weaver.runtime.progress import PipelineJournal, package_title
-from weaver.schema import PipelineItem, ReviewPackage, Source, ThreadDraft
+from weaver.schema import PipelineItem, PipelineTag, ReviewPackage, Source, ThreadDraft
 
 
 def source():
@@ -375,9 +375,9 @@ def test_capture_card_legacy_title_and_thread_content_reach_phone_file(
     assert item.location == "fabric"
     assert item.status == ("rejected" if action == "reject" else "done")
     assert item.title == expected_title
-    assert item.summary == (
-        "" if action == "reject" else "제품팀은 다음 주에 검색 시안을 검토한다."
-    )
+    line = "제품팀은 다음 주에 검색 시안을 검토한다."
+    # A summary that merely repeats the (derived) title is omitted.
+    assert item.summary == ("" if action == "reject" or item.title == line else line)
     assert [(tag.name, tag.kind) for tag in item.related_tags] == (
         [] if action == "reject" else [("예시", "topic"), ("업무 운영", "area")]
     )
@@ -555,7 +555,7 @@ def test_card_metadata_uses_approved_summary_explicit_contact_and_recovers_legac
     runtime._tick(threading.Event())
     progress = runtime.publisher.progress
     item = progress.journal.get(package.source_id)
-    assert item.summary == "승인된 검색 검토"
+    assert item.summary == "둘째 줄"  # the heading line is skipped
     assert item.counterpart == "민수"
     assert [(t.name, t.kind) for t in item.related_tags] == [
         ("예시", "topic"),
@@ -602,3 +602,40 @@ def test_card_metadata_uses_approved_summary_explicit_contact_and_recovers_legac
         PipelineItem.model_validate_json(path.read_bytes()).summary == recovered.summary
     )
     assert progress.journal.get(package.source_id).revision == recovered.revision
+
+
+def test_default_card_keys_are_omitted_and_present_when_set(tmp_path):
+    journal = PipelineJournal(tmp_path / "state", tmp_path / "proposals")
+    item = journal.receive(source(), datetime.now(UTC))
+    path = tmp_path / "proposals" / "pipeline" / f"{item.source_id}.json"
+    wire = json.loads(path.read_text())
+    assert not {"summary", "counterpart", "related_tags"} & wire.keys()
+    assert PipelineItem.model_validate(wire).related_tags == []
+    journal.update(
+        item.source_id,
+        summary="요약",
+        counterpart="민수",
+        related_tags=[PipelineTag(name="검색", kind="area")],
+    )
+    wire = json.loads(path.read_text())
+    assert wire["summary"] == "요약" and wire["counterpart"] == "민수"
+    assert wire["related_tags"] == [{"name": "검색", "kind": "area"}]
+
+
+def test_card_summary_bounds_skips_headings_and_falls_through():
+    from weaver.runtime.progress import card_summary, card_summary_chain, card_tags
+
+    long_line = "가" * 300
+    summary = card_summary(f"# 제목\n{long_line}", "제목")
+    assert len(summary) == 120 and summary.endswith("…")
+    assert card_summary("# 제목만", "제목만") == ""
+    assert card_summary("# 제목\n제목", "제목") == ""  # repeats the title
+    assert card_summary_chain(["", "---\n---\n", "# 제목\n셋째"], "다른") == "셋째"
+    assert card_summary_chain(["", "  \n"], "다른") == ""
+    threads = [
+        ThreadDraft.model_construct(
+            kind="사실", content="x", tags=[f"태그{i}" for i in range(20)]
+        )
+    ]
+    tags = card_tags(threads, None)
+    assert [t.name for t in tags] == [f"태그{i}" for i in range(8)]
