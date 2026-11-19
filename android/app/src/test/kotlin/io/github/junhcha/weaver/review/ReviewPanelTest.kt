@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import io.github.junhcha.weaver.inbox.InboxDatabase
@@ -206,6 +207,109 @@ class ReviewPanelTest {
             compose.runOnUiThread { compose.activity.intent = original }
         }
     }
+
+    private fun openMapReview(p: ReviewPackage): Float {
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
+        model.refresh()
+        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
+        compose.onNodeWithTag("status-strip").performClick()
+        compose.onNodeWithContentDescription("You 노드").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
+        compose.onNodeWithTag("node-panel").performTouchInput { swipeUp() }
+        compose.onNodeWithText("승인하러 가기").performScrollTo()
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val scroll = panelScroll()
+        compose.onNodeWithText("승인하러 가기").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-screen").fetchSemanticsNodes().isNotEmpty() &&
+            compose.onAllNodesWithText(p.reviewTitle()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("내 데이터 흐름").assertDoesNotExist()
+        compose.onNodeWithTag("node-panel").assertDoesNotExist()
+        return scroll
+    }
+
+    private fun panelScroll(): Float = compose.onNodeWithTag("node-panel").fetchSemanticsNode()
+        .config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+    @Test fun dedicatedReviewSystemAndTopBackRestoreSelectedNodeExpansionAndScroll() {
+        val (_, p) = prepare { it.copy(questions = emptyList()) }
+        val originalScroll = openMapReview(p)
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.onNodeWithText("단계 시각 접기").assertExists()
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val scroll = panelScroll()
+        assertEquals(originalScroll, scroll, 1f)
+        assertTrue("The expanded panel must restore its scrolled position", scroll > 0f)
+        compose.waitUntil(10_000) { compose.onNodeWithText("승인하러 가기").isDisplayed() }
+        compose.onNodeWithText("승인하러 가기").performClick()
+        compose.onNodeWithTag("review-screen").assertExists()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("review-screen").assertExists()
+        compose.onNodeWithText("‹ 데이터 흐름").performClick()
+        compose.onNodeWithText("단계 시각 접기").assertExists()
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        assertEquals(scroll, panelScroll(), 1f)
+        compose.waitUntil(10_000) { compose.onNodeWithText("승인하러 가기").isDisplayed() }
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w1000dp-h600dp-land-xhdpi")
+    fun wideReviewBackRestoresSelectedNodeExpansionAndScroll() =
+        dedicatedReviewSystemAndTopBackRestoreSelectedNodeExpansionAndScroll()
+
+    @Test fun reviewBackPreservesTheOriginPhoneTab() {
+        prepare { it.copy(questions = emptyList()) }
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
+        model.refresh()
+        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
+        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        val originalIntent = compose.activity.intent
+        try {
+            compose.runOnUiThread {
+                MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java)
+                    .apply { isAccessible = true }.invoke(compose.activity, Intent(InboxRuntime.OPEN_INBOX))
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
+            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
+            compose.onNodeWithTag("review-screen").assertExists()
+            compose.onNodeWithText("‹ 데이터 흐름").performClick()
+            compose.onNodeWithText("닫기").performScrollTo().performClick()
+            compose.onNodeWithText("‹ 지금").performClick()
+            compose.onNodeWithTag("tab-PEOPLE").assertIsSelected()
+        } finally {
+            compose.runOnUiThread { compose.activity.intent = originalIntent }
+        }
+    }
+
+    private fun submitFromDestination(action: Verdict.Action) {
+        val (context, p) = prepare { it.copy(questions = emptyList()) }
+        openMapReview(p)
+        if (action == Verdict.Action.EDIT)
+            compose.onNodeWithText("요약 본문").performTextReplacement("전용 화면에서 수정한 요약")
+        compose.onNodeWithText("최종 검토").performScrollTo().performClick()
+        val label = when (action) {
+            Verdict.Action.APPROVE -> "승인"
+            Verdict.Action.EDIT -> "수정 제출"
+            Verdict.Action.REJECT -> "거절"
+        }
+        compose.onNodeWithText(label).performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("지금 승인할 항목이 없어요").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-screen").assertDoesNotExist()
+        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        assertEquals(action, ReviewRuntime.records(context).single().verdict.action)
+        compose.onNodeWithText("닫기").performClick()
+        compose.onNodeWithContentDescription("Loom 노드").performClick()
+        compose.onNodeWithText("승인을 보냈어요 · Mac 반영 대기", substring = true).assertExists()
+    }
+
+    @Test fun approveReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.APPROVE)
+    @Test fun editReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.EDIT)
+    @Test fun rejectReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.REJECT)
 
     @Test fun missingPackageShowsReadErrorAndKeepsApprovalDisabled() {
         val (context, p) = prepare()

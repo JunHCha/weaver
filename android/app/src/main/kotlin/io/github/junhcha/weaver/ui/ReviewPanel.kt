@@ -20,7 +20,12 @@ import io.github.junhcha.weaver.schema.Verdict
 import kotlinx.coroutines.*
 
 @Composable
-fun ReviewPanel(id: String, onClose: () -> Unit) {
+fun ReviewPanel(
+    id: String,
+    onSubmitted: () -> Unit = {},
+    showCloseButton: Boolean = true,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
@@ -58,7 +63,7 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
         } while (isActive)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onClose) { Text("검토 닫기") }
+        if (showCloseButton) OutlinedButton(onClick = onClose) { Text("검토 닫기") }
         if (p != null) {
             val stale = latest != p
             val enabled = !busy && !stale && record == null
@@ -131,7 +136,7 @@ fun ReviewPanel(id: String, onClose: () -> Unit) {
                                 ReviewRuntime.submit(context, p, verdict)
                                 ReviewRuntime.records(context).first { it.verdict == verdict }
                             } }
-                            result.onSuccess { record = it }.onFailure { error = it.message ?: "전송 준비 실패" }
+                            result.onSuccess { record = it; onSubmitted() }.onFailure { error = it.message ?: "전송 준비 실패" }
                             busy = false
                         }
                     }) { Text(when (requestedAction) {

@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +63,7 @@ internal fun NodePanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     focusedItemId: String? = null,
+    onReview: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -71,7 +73,6 @@ internal fun NodePanel(
     var availability by remember { mutableStateOf(emptySet<String>()) }
     var message by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
-    var approval by rememberSaveable(node) { mutableStateOf<String?>(null) }
     val today = LocalDate.now()
     val results = items.filter { it.node == MapNode.WIKI }
         .sortedBy { if (it.id == focusedItemId) 0 else 1 }.mapNotNull { it.server }
@@ -130,7 +131,7 @@ internal fun NodePanel(
             }
         }
     Column(
-        modifier.padding(20.dp).verticalScroll(rememberScrollState()),
+        modifier.padding(20.dp).testTag("node-panel").verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
@@ -237,7 +238,7 @@ internal fun NodePanel(
                 )
             here.sortedBy { if (it.id == focusedItemId) 0 else 1 }.forEach { item ->
                 if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault) { message = it }
-                else if (node == MapNode.USER) ApprovalCard(item) { approval = item.packageId }
+                else if (node == MapNode.USER) ApprovalCard(item) { item.packageId?.let(onReview) }
                 else {
                     KindCard(kind = item.server?.threads?.cardKind()) {
                         Column(
@@ -264,10 +265,6 @@ internal fun NodePanel(
                         }
                     }
                 }
-            }
-            approval?.let { id ->
-                HorizontalDivider()
-                ReviewPanel(id, onClose = { approval = null })
             }
         }
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
