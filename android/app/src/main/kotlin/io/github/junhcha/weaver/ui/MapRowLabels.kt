@@ -5,9 +5,11 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private val sentenceEnd = Regex("(?U)…+[\"'”’」』)\\]}]*|[.!?。！？]+[\"'”’」』)\\]}]*(?=\\s|$)|[\\r\\n]+")
-private val whitespace = Regex("(?U)\\s+")
-private val leadingMarker = Regex("(?U)^(?:\\d+[.)]|[-+*>])(?:\\s+|$)")
+// Android ICU rejects the inline Unicode-class flag and the desktop JVM \s skips NBSP, so spell Unicode spaces out explicitly.
+private const val WS = "[\\s\\u00A0\\u2007\\u202F\\u3000]"
+private val sentenceEnd = Regex("…+[\"'”’」』)\\]}]*|[.!?。！？]+[\"'”’」』)\\]}]*(?=$WS|$)|[\\r\\n]+")
+private val whitespace = Regex("$WS+")
+private val leadingMarker = Regex("^(?:\\d+[.)]|[-+*>])(?:$WS+|$)")
 private val bareNumber = Regex("^\\d+\\.$")
 
 internal fun displayName(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFC)
