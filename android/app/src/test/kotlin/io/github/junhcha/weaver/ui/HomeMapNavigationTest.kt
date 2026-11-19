@@ -49,9 +49,13 @@ class HomeMapNavigationTest {
     private val apiCreatedOnMain = AtomicBoolean(false)
     private val apiCreations = AtomicInteger()
     @Volatile private var failApiConstruction = false
+    private var initializedWorkManager = false
     private val items = listOf(
         observation(1, PipelineLocation.USER, PipelineStatus.REVIEW).copy(packageId = "synthetic-review", packageRevision = 1),
-        observation(2, PipelineLocation.FABRIC, PipelineStatus.DONE),
+        observation(2, PipelineLocation.FABRIC, PipelineStatus.DONE).copy(
+            summary = "검색 시안을 다음 주 검토하기로 했다.", counterpart = "민수",
+            relatedTags = listOf(PipelineTag("검색", "area"), PipelineTag("민수", "person"), PipelineTag("미분류"), PipelineTag("없는사람", "person")),
+        ),
         observation(3, PipelineLocation.WIKI, PipelineStatus.DONE).copy(title = Normalizer.normalize("합성 장비 점검", Normalizer.Form.NFD), pages = listOf(
             PipelinePage("pages/" + Normalizer.normalize("합성 장비 점검", Normalizer.Form.NFD) + ".md", OffsetDateTime.now().toString(), "a".repeat(64)),
         )),
@@ -78,7 +82,7 @@ class HomeMapNavigationTest {
             else Proxy.newProxyInstance(MobileApi::class.java.classLoader, arrayOf(MobileApi::class.java)) { _, method, _ ->
                     when (method.name) {
                         "threads", "wikiPages" -> Page(emptyList(), null)
-                        "tags" -> emptyList<kotlinx.serialization.json.JsonElement>()
+                        "tags" -> listOf("{\"name\":\"민수\",\"kind\":\"person\"}", "{\"name\":\"검색\",\"kind\":\"area\"}").map { kotlinx.serialization.json.Json.parseToJsonElement(it) }
                         else -> error("Unexpected API call in synthetic navigation test: ${method.name}")
                     }
                 } as MobileApi
@@ -92,6 +96,10 @@ class HomeMapNavigationTest {
     }
 
     @After fun resetTransport() {
+        if (initializedWorkManager) {
+            androidx.work.WorkManager.getInstance(context).cancelAllWork().result.get()
+            androidx.work.testing.WorkManagerTestInitHelper.closeWorkDatabase()
+        }
         context.getSharedPreferences("transport", Context.MODE_PRIVATE).edit().clear().commit()
         TransportRuntime.apiFactory = originalApiFactory
         TransportRuntime.secretBox = originalSecretBox
@@ -182,4 +190,39 @@ class HomeMapNavigationTest {
             compose.onNodeWithText("닫기").performScrollTo().performClick()
         }
     }
+    @Test fun fabricCardOpensExistingPersonAndAreaTimelinesAndRestoresMapAfterRecreation() {
+        home()
+        compose.onNodeWithTag("status-strip").performClick()
+        compose.onNodeWithContentDescription("Fabric 노드").performClick()
+        compose.onNodeWithText("검색 시안을 다음 주 검토하기로 했다.").assertIsDisplayed()
+        compose.onNodeWithText("출처 통화 녹음 · 폰 · Mac").assertExists()
+        compose.onNodeWithText("#미분류").performScrollTo().assertHasNoClickAction()
+        compose.onNodeWithText("#없는사람").performScrollTo().assertHasNoClickAction()
+        compose.onNodeWithText("#검색").performScrollTo().assertHasClickAction().performClick()
+        compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
+        compose.onNodeWithText("검색", useUnmergedTree = true).assertExists()
+        compose.onNodeWithContentDescription("뒤로").performClick()
+        compose.onNodeWithText("내 데이터 흐름").assertIsDisplayed()
+        compose.onNodeWithText("상대 민수").performScrollTo().assertHasClickAction().performClick()
+        compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
+        // Recreated MainActivity schedules background work: keep every worker synthetic too.
+        val factory = object : androidx.work.WorkerFactory() {
+            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: androidx.work.WorkerParameters): androidx.work.ListenableWorker =
+                object : androidx.work.Worker(appContext, workerParameters) {
+                    override fun doWork() = Result.success()
+                }
+        }
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).setWorkerFactory(factory).build())
+        initializedWorkManager = true
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) { compose.onNodeWithTag("timeline-screen").isDisplayed() }
+        compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText("내 데이터 흐름").assertIsDisplayed()
+        compose.onNodeWithText("검색 시안을 다음 주 검토하기로 했다.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("리마인더로 전환").assertDoesNotExist()
+        compose.onNodeWithText("메모 추가").assertDoesNotExist()
+    }
+
 }

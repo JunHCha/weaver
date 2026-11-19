@@ -9,7 +9,13 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.schema.*
 @Composable
-internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: String, onError: (String) -> Unit) {
+internal fun WikiEditCard(
+    item: PipelineItem, availability: Set<String>, vault: String,
+    showMetadata: Boolean = false,
+    subjectTarget: (String, String?) -> io.github.junhcha.weaver.phone.LinkTarget = { _, _ -> io.github.junhcha.weaver.phone.LinkTarget.None },
+    onOpenSubject: (io.github.junhcha.weaver.phone.LinkTarget) -> Unit = {},
+    onError: (String) -> Unit,
+) {
     val edit = checkNotNull(item.wikiEdit)
     var selected by rememberSaveable(item.sourceId) { mutableIntStateOf(0) }
     val outputs = item.pages + listOfNotNull(item.digest)
@@ -19,6 +25,7 @@ internal fun WikiEditCard(item: PipelineItem, availability: Set<String>, vault: 
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
             Text(sourceTitle(item.title), style = MaterialTheme.typography.titleMedium)
+            if (showMetadata) FabricCardInfo(item, subjectTarget, onOpenSubject, showCounterpart = false)
             Text(displayName(edit.path), style = MaterialTheme.typography.bodySmall)
             Text(when (edit.state) {
                 "settling" -> if (edit.readyAt == null) "수정 내용 확인 중" else "수정 감지 · 편집 안정 대기"

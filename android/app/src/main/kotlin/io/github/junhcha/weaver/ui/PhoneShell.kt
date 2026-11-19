@@ -56,6 +56,8 @@ fun PhoneShell(
     onOpenSettings: () -> Unit,
     initialTab: PhoneTab = PhoneTab.NOW,
     tagHost: TagEditHost? = null,
+    initialSubject: String? = null,
+    onSubjectBack: (() -> Unit)? = null,
 ) {
     // Every resume re-reads the snapshot and recomputes "now" so day groups never go stale.
     var resumes by rememberSaveable { mutableIntStateOf(0) }
@@ -78,8 +80,8 @@ fun PhoneShell(
     io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen =
         io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen.copy(last_tab = tab.name)
 
-    var person by rememberSaveable { mutableStateOf<String?>(null) }
-    var area by rememberSaveable { mutableStateOf<String?>(null) }
+    var person by rememberSaveable { mutableStateOf(initialSubject.takeIf { initialTab == PhoneTab.PEOPLE }) }
+    var area by rememberSaveable { mutableStateOf(initialSubject.takeIf { initialTab == PhoneTab.AREAS }) }
     var page by rememberSaveable { mutableStateOf<String?>(null) }
     @Suppress("UNUSED_VARIABLE") val observedReadVersion = readVersion
     val nowUi = readModel.nowController?.uiState?.collectAsState()?.value
@@ -110,9 +112,12 @@ fun PhoneShell(
             LinkTarget.None -> Unit
         }
     }
+    // Only the subject opened directly from the map returns there; others keep the normal tab behavior.
+    val closePerson: () -> Unit = { if (onSubjectBack != null && initialTab == PhoneTab.PEOPLE && person == initialSubject) onSubjectBack() else person = null }
+    val closeArea: () -> Unit = { if (onSubjectBack != null && initialTab == PhoneTab.AREAS && area == initialSubject) onSubjectBack() else area = null }
     when {
-        tab == PhoneTab.PEOPLE && person != null -> BackHandler { person = null }
-        tab == PhoneTab.AREAS && area != null -> BackHandler { area = null }
+        tab == PhoneTab.PEOPLE && person != null -> BackHandler(onBack = closePerson)
+        tab == PhoneTab.AREAS && area != null -> BackHandler(onBack = closeArea)
         tab == PhoneTab.WIKI && page != null -> BackHandler { page = null }
         tab != PhoneTab.NOW -> BackHandler { tab = PhoneTab.NOW }
     }
@@ -135,10 +140,10 @@ fun PhoneShell(
                     handling = controller?.let { host -> { NowHandlingBar(host, { edits++ }, { selectedThread = it.id }, data?.threads.orEmpty()) } },
                 )
                 PhoneTab.PEOPLE -> if (data == null) Loading() else person?.let { name ->
-                    TimelineScreen(data, name, { person = null }, tagHost, onEdited)
+                    TimelineScreen(data, name, closePerson, tagHost, onEdited)
                 } ?: SubjectList("사람", peopleEntries(data), emptyText ?: "아직 없어요") { person = it }
                 PhoneTab.AREAS -> if (data == null) Loading() else area?.let { name ->
-                    TimelineScreen(data, name, { area = null }, tagHost, onEdited)
+                    TimelineScreen(data, name, closeArea, tagHost, onEdited)
                 } ?: SubjectList("영역", areaEntries(data), emptyText ?: "아직 없어요") { area = it }
                 PhoneTab.WIKI -> if (data == null) Loading() else {
                     val open = page?.let { id -> data.wikiPages.firstOrNull { it.id == id } }

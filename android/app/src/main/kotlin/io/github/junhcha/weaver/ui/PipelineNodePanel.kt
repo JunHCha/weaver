@@ -64,6 +64,8 @@ internal fun NodePanel(
     modifier: Modifier = Modifier,
     focusedItemId: String? = null,
     onReview: (String) -> Unit,
+    subjectTarget: (String, String?) -> io.github.junhcha.weaver.phone.LinkTarget = { _, _ -> io.github.junhcha.weaver.phone.LinkTarget.None },
+    onOpenSubject: (io.github.junhcha.weaver.phone.LinkTarget) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -237,7 +239,7 @@ internal fun NodePanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             here.sortedBy { if (it.id == focusedItemId) 0 else 1 }.forEach { item ->
-                if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault) { message = it }
+                if (item.server?.wikiEdit != null) WikiEditCard(checkNotNull(item.server), availability, vault, showMetadata = node == MapNode.FABRIC, subjectTarget = subjectTarget, onOpenSubject = onOpenSubject) { message = it }
                 else if (node == MapNode.USER) ApprovalCard(item) { item.packageId?.let(onReview) }
                 else {
                     KindCard(kind = item.server?.threads?.cardKind()) {
@@ -246,11 +248,12 @@ internal fun NodePanel(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(sourceTitle(item.server?.title ?: item.title), style = MaterialTheme.typography.titleSmall)
+                            if (node == MapNode.FABRIC) item.server?.let { FabricCardInfo(it, subjectTarget, onOpenSubject) }
                             Text(
-                                "${item.source} · ${item.stateLabel}",
+                                if (node == MapNode.FABRIC) item.stateLabel else "${item.source} · ${item.stateLabel}",
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
+                            if (node != MapNode.FABRIC) Text(item.captureLabels.joinToString(" · "), style = MaterialTheme.typography.labelSmall)
                             if (item.stopped)
                                 Text(
                                     "Mac에서 Weaver 로그를 확인해 주세요. 문제를 고친 뒤 다시 시도할 수 있어요.",
