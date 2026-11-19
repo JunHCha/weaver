@@ -36,6 +36,7 @@ class HttpPhoneReadModel(
     private val now: () -> Instant = Instant::now,
     /** Reports stable fetch/parse codes and skipped row counts; a clean snapshot reports null. */
     private val onProblem: (String?) -> Unit = {},
+    private val onWikiProblem: (String?) -> Unit = {},
 ) : PhoneReadModel {
     @Volatile override var offlineSince: Instant? = null
         private set
@@ -91,19 +92,23 @@ class HttpPhoneReadModel(
             val client = api() ?: return@withContext cached?.str("body")
             val etag = cached?.str("etag")?.takeIf { it.isNotEmpty() }
             val fresh = client.wikiPage(page.id, etag)
-                ?: return@withContext cached?.str("body") // 304: the cached copy is current
+            if (fresh == null) {
+                onWikiProblem(null)
+                return@withContext cached?.str("body") // 304: the cached copy is current
+            }
             val body = json.parseToJsonElement(fresh.body.decodeToString()).jsonObject.str("body")
             if (body == null) {
-                onProblem("invalid_wiki_body")
+                onWikiProblem("invalid_wiki_body")
             } else {
                 runCatching {
                     file.parentFile?.mkdirs()
                     file.writeText(buildJsonObject { put("etag", fresh.etag ?: ""); put("body", body) }.toString())
                 }
+                onWikiProblem(null)
                 return@withContext body
             }
         } catch (error: CancellationException) { throw error
-        } catch (error: Exception) { onProblem(problemCode(error)) }
+        } catch (error: Exception) { onWikiProblem(problemCode(error)) }
         return@withContext cached?.str("body")
     }
 

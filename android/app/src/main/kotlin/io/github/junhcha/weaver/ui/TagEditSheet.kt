@@ -39,7 +39,9 @@ import io.github.junhcha.weaver.phone.TagKind
 import io.github.junhcha.weaver.phone.suggestTags
 import io.github.junhcha.weaver.phone.tagEditable
 import io.github.junhcha.weaver.transport.ApiException
+import io.github.junhcha.weaver.transport.InvalidResponseException
 import io.github.junhcha.weaver.transport.UnreachableException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,8 +71,13 @@ class ApiTagEditHost(private val editor: TagEditor) : TagEditHost {
     override suspend fun merge(entry: String, target: String, kind: TagKind?, key: String) = io { editor.merge(entry, target, kind, key) }
 }
 
+/** Coroutine cancellation belongs to the caller, never to the sheet's error or empty states. */
+internal inline fun <T> editAttempt(block: () -> T): Result<T> =
+    runCatching(block).onFailure { if (it is CancellationException) throw it }
+
 /** User-facing text for a failed edit; never a server message, only what the fixed codes mean. */
 internal fun editErrorText(error: Throwable): String = when (error) {
+    is InvalidResponseException -> "서버 응답 형식이 올바르지 않아요"
     is UnreachableException -> "서버에 연결할 수 없어요. 연결 후 다시 시도해 주세요"
     is ApiException -> when (error.code) {
         "history_thread_readonly" -> "이력 Thread는 편집할 수 없어요"
@@ -105,11 +112,11 @@ internal fun TagEditSheet(
         // One key per user action: pressing 저장 again after a lost response must not edit twice.
         val key = remember { java.util.UUID.randomUUID().toString() }
         val scope = rememberCoroutineScope()
-        LaunchedEffect(host) { entries = runCatching { host.dictionary() }.getOrDefault(emptyList()) }
+        LaunchedEffect(host) { entries = editAttempt { host.dictionary() }.getOrDefault(emptyList()) }
         TagEditContent(threads, tags, entries, saving, error, onCancel = { onDone(false) }) { add, remove, kinds ->
             saving = true; error = null
             scope.launch {
-                runCatching { host.editTags(threads.filter { it.tagEditable() }.map { it.id }, add, remove, kinds, key) }
+                editAttempt { host.editTags(threads.filter { it.tagEditable() }.map { it.id }, add, remove, kinds, key) }
                     .onSuccess { onDone(true) }
                     .onFailure { error = editErrorText(it); saving = false }
             }
@@ -208,12 +215,12 @@ internal fun DictionarySheet(name: String, tags: List<PhoneTag>, host: TagEditHo
         var busy by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
         var current by remember { mutableStateOf(name) }
-        suspend fun reload() { entry = runCatching { host.dictionary() }.getOrDefault(emptyList()).firstOrNull { it.name == current } }
+        suspend fun reload() { entry = editAttempt { host.dictionary() }.getOrDefault(emptyList()).firstOrNull { it.name == current } }
         LaunchedEffect(host) { reload() }
         fun run(rename: String? = null, action: suspend () -> Unit) {
             busy = true; error = null
             scope.launch {
-                runCatching { action() }.onSuccess { changed = true; if (rename != null) current = rename; reload() }
+                editAttempt { action() }.onSuccess { changed = true; if (rename != null) current = rename; reload() }
                     .onFailure { error = editErrorText(it) }
                 busy = false
             }

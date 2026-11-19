@@ -132,6 +132,7 @@ object PhoneReadModels {
         @Volatile private var current: PhoneReadModel = forBuild(debug)
         override val isExample: Boolean get() = current.isExample
         override val offlineSince: java.time.Instant? get() = current.offlineSince
+        override suspend fun wikiBody(page: WikiPage): String? = current.wikiBody(page)
         override suspend fun snapshot(): PhoneSnapshot {
             val app = context.applicationContext
             val settings = io.github.junhcha.weaver.transport.TransportRuntime.settings(app)
@@ -139,6 +140,7 @@ object PhoneReadModels {
                 { io.github.junhcha.weaver.transport.TransportRuntime.api(app) },
                 java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/phone-snapshot-${settings.serverId}.json"),
                 onProblem = { code -> settings.lastReadError = code },
+                onWikiProblem = { code -> settings.lastWikiError = code },
             )
             return current.snapshot()
         }

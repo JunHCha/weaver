@@ -26,8 +26,8 @@ class HttpPhoneReadModelTest {
     private fun serveReads() { server.serve(*pages, "read.tags", "wiki.list") }
 
     private fun model(cache: java.io.File = tmp.newFile("snapshot.json").also { it.delete() }, live: Boolean = true,
-                      onProblem: (String?) -> Unit = {}) =
-        HttpPhoneReadModel({ if (live) HttpsMobileApi(FakeMobileServer.pairing(server), connectTimeoutMs = 500, readTimeoutMs = 1000) else null }, cache, onProblem = onProblem)
+                      onProblem: (String?) -> Unit = {}, onWikiProblem: (String?) -> Unit = {}) =
+        HttpPhoneReadModel({ if (live) HttpsMobileApi(FakeMobileServer.pairing(server), connectTimeoutMs = 500, readTimeoutMs = 1000) else null }, cache, onProblem = onProblem, onWikiProblem = onWikiProblem)
 
     @Test fun readsThreadsTagsAndWikiAsTheServerComputedThem() = runBlocking {
         serveReads()
@@ -84,8 +84,10 @@ class HttpPhoneReadModelTest {
         assertEquals(Fx.threadCount, online.snapshot().threads.size)
         assertNull(online.offlineSince)
         server.offline = true
-        val offline = model(cache)
+        var problem: String? = null
+        val offline = model(cache, onProblem = { problem = it })
         val snapshot = offline.snapshot()
+        assertEquals("unreachable", problem)
         assertEquals("the cached copy is shown", Fx.threadCount, snapshot.threads.size)
         assertEquals(2, snapshot.wikiPages.size)
         assertNotNull(offline.offlineSince)
@@ -211,7 +213,7 @@ class HttpPhoneReadModelTest {
     @Test fun wikiFetchErrorsAreReportedWhileTheLastBodyStaysReadable() = runBlocking {
         serveReads(); server.serve("wiki.page")
         var problem: String? = null
-        val model = model(onProblem = { problem = it })
+        val model = model(onWikiProblem = { problem = it })
         val page = model.snapshot().wikiPages.first { it.title == "방화벽 교체" }
         val body = model.wikiBody(page)
         server.failWith("/read/wiki/pages/${page.id}", "errors.scope_denied")

@@ -24,11 +24,11 @@ import kotlinx.serialization.json.jsonObject
 class ApiException(val status: Int, val code: String, val retryable: Boolean, val retryAfterSeconds: Long? = null) :
     IOException("api_$status")
 
-/** The server could not be reached (VPN off, Mac asleep, DNS, timeout) or answered an unreadable body. */
-open class UnreachableException(cause: Throwable? = null) : IOException("unreachable", cause)
+/** The server could not be reached (VPN off, Mac asleep, DNS, timeout). */
+class UnreachableException(cause: Throwable? = null) : IOException("unreachable", cause)
 
 /** The server responded, but its JSON did not match the transport envelope. */
-class InvalidResponseException : UnreachableException()
+class InvalidResponseException : IOException("invalid_read_response")
 
 /** The certificate did not match the fingerprint from pairing. Never retried, never downgraded to plain HTTP. */
 class PinMismatchException : IOException("pin_mismatch")

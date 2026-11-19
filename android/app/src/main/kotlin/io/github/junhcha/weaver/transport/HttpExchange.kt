@@ -87,6 +87,7 @@ class HttpExchange(
                 else -> { blockItem(key, error.code); summary.fail(error.code, false) }
             }
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false); throw Abort()
+        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); throw Abort()
         } catch (error: UnreachableException) { summary.unreachable = true; summary.fail("unreachable", true); throw Abort()
         } catch (error: SecurityException) { throw error
         } catch (error: Exception) { blockItem(key, CourierClient.errorCode(error)); summary.fail(CourierClient.errorCode(error), false) }

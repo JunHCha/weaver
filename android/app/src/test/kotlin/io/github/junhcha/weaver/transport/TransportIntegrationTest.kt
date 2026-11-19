@@ -345,4 +345,53 @@ class TransportIntegrationTest {
         PhoneReadModels.forContext(context, debug = false).snapshot()
         assertNull(settings.lastError)
     }
+    @Test fun wikiErrorsStaySeparateFromSnapshotSkipsAndClearOnSuccessAnd304() = runBlocking {
+        pairFollowing()
+        server.serveDerived(Fx.threadPages.first()) { body ->
+            val root = body.jsonObject
+            val items = (root["items"] as JsonArray).toMutableList()
+            items[0] = JsonObject(items[0].jsonObject.toMutableMap().also { it["kind"] = JsonPrimitive("미지") })
+            JsonObject(root.toMutableMap().also { it["items"] = JsonArray(items) })
+        }
+        server.serve(*Fx.threadPages.drop(1).toTypedArray(), "read.tags", "wiki.list", "wiki.page")
+        val model = PhoneReadModels.forContext(context, debug = false)
+        val page = model.snapshot().wikiPages.first { it.title == "방화벽 교체" }
+        val settings = TransportRuntime.settings(context)
+        server.failWith("/read/wiki/pages/${page.id}", "errors.scope_denied")
+        assertNull(model.wikiBody(page))
+        assertEquals("unknown_thread_kind:1", settings.lastReadError)
+        assertEquals("scope_denied", settings.lastWikiError)
+        assertEquals("read:unknown_thread_kind:1,scope_denied", settings.lastError)
+        model.snapshot()
+        assertEquals("scope_denied", settings.lastWikiError)
+        server.clearFailures()
+        val body = model.wikiBody(page)
+        assertNotNull(body)
+        assertNull(settings.lastWikiError)
+        assertEquals("read:unknown_thread_kind:1", settings.lastError)
+        server.failWith("/read/wiki/pages/${page.id}", "errors.scope_denied")
+        assertEquals(body, model.wikiBody(page))
+        assertEquals("scope_denied", settings.lastWikiError)
+        server.clearFailures()
+        server.reset("wiki.page"); server.serve("wiki.page_not_modified")
+        assertEquals(body, model.wikiBody(page))
+        assertNull(settings.lastWikiError)
+        assertEquals("read:unknown_thread_kind:1", settings.lastError)
+    }
+
+    @Test fun malformedCapabilitiesAreAFormatErrorAndNotAnOfflineRun() {
+        pairFollowing()
+        val previous = TransportRuntime.apiFactory
+        try {
+            TransportRuntime.apiFactory = { pairing ->
+                object : MobileApi by HttpsMobileApi(pairing) {
+                    override fun capabilities(): JsonObject = throw InvalidResponseException()
+                }
+            }
+            val summary = TransportRuntime.refresh(context)
+            assertFalse(summary.unreachable)
+            assertEquals("invalid_read_response", summary.errorCode)
+        } finally { TransportRuntime.apiFactory = previous }
+    }
+
 }

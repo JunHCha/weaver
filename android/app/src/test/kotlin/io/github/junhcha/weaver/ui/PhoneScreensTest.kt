@@ -202,4 +202,14 @@ class PhoneScreensTest {
         assertTrue("snapshot re-read on resume ($before -> $reads)", reads > before)
         scenario.close()
     }
+    @Test fun cachedReadsKeepTheOfflineSinceBadge() {
+        val cached = object : PhoneReadModel {
+            override val offlineSince = Instant.parse("2026-11-18T00:00:00Z")
+            override suspend fun snapshot() = model.snapshot()
+        }
+        show(readModel = cached)
+        compose.onNodeWithTag("offline-banner").assertIsDisplayed()
+        compose.onNodeWithText("오프라인 · 11/18 09:00 기준 사본").assertIsDisplayed()
+    }
+
 }
