@@ -29,6 +29,8 @@ import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,8 +65,9 @@ internal fun NodePanel(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var vault by remember { mutableStateOf(VaultAccess.name(context)) }
-    var folderSelected by remember { mutableStateOf(VaultAccess.tree(context) != null) }
+    var vault by remember { mutableStateOf("") }
+    var folderSelected by remember { mutableStateOf(false) }
+    var vaultLoaded by remember { mutableStateOf(false) }
     var availability by remember { mutableStateOf(emptySet<String>()) }
     var message by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -73,7 +76,20 @@ internal fun NodePanel(
     val results = items.filter { it.node == MapNode.WIKI }
         .sortedBy { if (it.id == focusedItemId) 0 else 1 }.mapNotNull { it.server }
     val pages = panelResultPages(results, today)
-    LaunchedEffect(vault) {
+    LaunchedEffect(context) {
+        val settings = withContext(Dispatchers.IO) {
+            runCatching { VaultAccess.name(context) to (VaultAccess.tree(context) != null) }
+        }
+        currentCoroutineContext().ensureActive()
+        settings.onSuccess { (name, selected) ->
+            vault = name
+            folderSelected = selected
+            vaultLoaded = true
+        }.onFailure { message = "vault 설정을 읽지 못했어요. 폰의 연결 설정을 확인해 주세요." }
+    }
+    LaunchedEffect(vault, vaultLoaded) {
+        // Do not overwrite a saved name with the initial empty value while loading it.
+        if (!vaultLoaded) return@LaunchedEffect
         delay(300)
         withContext(Dispatchers.IO) { runCatching { VaultAccess.setName(context, vault) } }
     }
@@ -81,8 +97,8 @@ internal fun NodePanel(
         refresh++
         onPauseOrDispose {}
     }
-    LaunchedEffect(pages, vault, refresh, folderSelected) {
-        if (node != MapNode.WIKI) return@LaunchedEffect
+    LaunchedEffect(pages, vault, refresh, folderSelected, vaultLoaded) {
+        if (node != MapNode.WIKI || !vaultLoaded) return@LaunchedEffect
         do {
             availability =
                 withContext(Dispatchers.IO) {
@@ -186,10 +202,12 @@ internal fun NodePanel(
                 vault,
                 { vault = it },
                 label = { Text("Obsidian vault 이름") },
+                enabled = vaultLoaded,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(
+                enabled = vaultLoaded,
                 onClick = {
                     launcher.launch(
                         Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
