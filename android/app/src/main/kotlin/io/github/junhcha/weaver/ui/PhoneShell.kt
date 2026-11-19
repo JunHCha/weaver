@@ -112,8 +112,9 @@ fun PhoneShell(
             LinkTarget.None -> Unit
         }
     }
-    val closePerson: () -> Unit = { if (onSubjectBack != null) onSubjectBack() else person = null }
-    val closeArea: () -> Unit = { if (onSubjectBack != null) onSubjectBack() else area = null }
+    // Only the subject opened directly from the map returns there; others keep the normal tab behavior.
+    val closePerson: () -> Unit = { if (onSubjectBack != null && initialTab == PhoneTab.PEOPLE && person == initialSubject) onSubjectBack() else person = null }
+    val closeArea: () -> Unit = { if (onSubjectBack != null && initialTab == PhoneTab.AREAS && area == initialSubject) onSubjectBack() else area = null }
     when {
         tab == PhoneTab.PEOPLE && person != null -> BackHandler(onBack = closePerson)
         tab == PhoneTab.AREAS && area != null -> BackHandler(onBack = closeArea)

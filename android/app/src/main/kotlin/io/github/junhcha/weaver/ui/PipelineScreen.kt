@@ -110,8 +110,11 @@ fun HomeScreen(
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var mapSubject by rememberSaveable { mutableStateOf<String?>(null) }
     var mapSubjectKind by rememberSaveable { mutableStateOf<String?>(null) }
-    val mapDirectory by produceState<PhoneSnapshot?>(null, readModel, map) {
-        if (map) {
+    // Fetched once, the first time the map opens; later opens reuse it (no repeated full fetch or reset).
+    var mapOpened by remember { mutableStateOf(false) }
+    if (map) mapOpened = true
+    val mapDirectory by produceState<PhoneSnapshot?>(null, readModel, mapOpened) {
+        if (mapOpened) {
             value = try { readModel.snapshot() } catch (_: Exception) {
                 currentCoroutineContext().ensureActive()
                 null

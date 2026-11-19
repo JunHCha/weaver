@@ -196,14 +196,14 @@ class HomeMapNavigationTest {
         compose.onNodeWithContentDescription("Fabric 노드").performClick()
         compose.onNodeWithText("검색 시안을 다음 주 검토하기로 했다.").assertIsDisplayed()
         compose.onNodeWithText("출처 통화 녹음 · 폰 · Mac").assertExists()
-        compose.onNodeWithText("#미분류").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("#없는사람").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("#검색").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("#미분류").performScrollTo().assertHasNoClickAction()
+        compose.onNodeWithText("#없는사람").performScrollTo().assertHasNoClickAction()
+        compose.onNodeWithText("#검색").performScrollTo().assertHasClickAction().performClick()
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         compose.onNodeWithText("검색", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("뒤로").performClick()
         compose.onNodeWithText("내 데이터 흐름").assertIsDisplayed()
-        compose.onNodeWithText("상대 민수").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("상대 민수").performScrollTo().assertHasClickAction().performClick()
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         // Recreated MainActivity schedules background work: keep every worker synthetic too.
         val factory = object : androidx.work.WorkerFactory() {

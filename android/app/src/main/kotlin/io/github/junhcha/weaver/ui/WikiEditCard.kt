@@ -25,7 +25,7 @@ internal fun WikiEditCard(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Wiki에서 시작 · 사람 직접 수정", color = wikiEditColor, style = MaterialTheme.typography.labelMedium)
             Text(sourceTitle(item.title), style = MaterialTheme.typography.titleMedium)
-            if (showMetadata) FabricCardInfo(item, subjectTarget, onOpenSubject)
+            if (showMetadata) FabricCardInfo(item, subjectTarget, onOpenSubject, showCounterpart = false)
             Text(displayName(edit.path), style = MaterialTheme.typography.bodySmall)
             Text(when (edit.state) {
                 "settling" -> if (edit.readyAt == null) "수정 내용 확인 중" else "수정 감지 · 편집 안정 대기"
