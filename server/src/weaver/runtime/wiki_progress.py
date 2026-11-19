@@ -19,7 +19,7 @@ from weaver.schema import (
 from weaver.wiki.compiler import Compiler
 from weaver.wiki.store import WikiEditState, WikiStore
 
-from .progress import PipelineJournal, observation
+from .progress import PipelineJournal, card_summary_chain, card_tags, observation
 
 
 def wiki_edit_source(path: str, base_rev: str) -> str:
@@ -155,6 +155,18 @@ class WikiEditPublisher:
                 )
                 continue
             recorded = [threads[t.thread_id] for t in drafts]
+            counterparts = {t.counterpart for t in recorded if t.counterpart}
+            current = self.journal.update(
+                source_id,
+                summary=card_summary_chain(
+                    [t.content or "" for t in recorded],
+                    self.journal.get(source_id).title,
+                ),
+                counterpart=next(iter(counterparts))
+                if len(counterparts) == 1
+                else None,
+                related_tags=card_tags(recorded, self.compiler.context.snapshot()),
+            )
             if current.wiki_edit is not None and current.wiki_edit.state == "published":
                 # Recover the latest output hashes without replaying Fabric on every tick.
                 pass

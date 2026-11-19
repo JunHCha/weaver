@@ -124,6 +124,12 @@ def test_wait_record_publish_and_restart_preserve_reverse_history(tmp_path):
     assert complete.wiki_edit.changes[0].before == "2026-11-16"
     assert complete.wiki_edit.changes[0].after == "2026-11-19"
     assert set(complete.stage_times) == {"반영", "wiki갱신"}
+    assert complete.summary
+    assert [(t.name, t.kind) for t in complete.related_tags] == [
+        ("점검", "topic"),
+        ("업무 운영", "area"),
+    ]
+    assert complete.counterpart is None
     assert all(t.content for t in complete.threads)
     assert len(fabric.entries(ThreadQuery())) == 2
     restarted = WikiEditPublisher(

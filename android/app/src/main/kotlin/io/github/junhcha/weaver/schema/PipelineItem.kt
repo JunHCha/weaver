@@ -33,6 +33,14 @@ data class PipelineThread(@SerialName("thread_id") val threadId: String, val kin
 }
 
 @Serializable
+data class PipelineTag(val name: String, val kind: String? = null) {
+    init {
+        Rules.nonEmpty(name, "name")
+        require(kind == null || kind in setOf("person", "organization", "project", "area", "topic"))
+    }
+}
+
+@Serializable
 data class PipelinePage(
     val path: String,
     @SerialName("updated_at") val updatedAt: String,
@@ -104,8 +112,12 @@ data class PipelineItem(
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("wiki_edit") val wikiEdit: PipelineWikiEdit? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("capture_hosts") val captureHosts: List<CaptureHost> = emptyList(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val summary: String = "",
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val counterpart: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("related_tags") val relatedTags: List<PipelineTag> = emptyList(),
 ) {
     init {
+        counterpart?.let { Rules.nonEmpty(it, "counterpart") }
         Rules.schemaVersion(schemaVersion, 2)
         Rules.revision(revision)
         Rules.revision(applyFailureLimit)

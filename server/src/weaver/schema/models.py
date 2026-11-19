@@ -651,6 +651,11 @@ class PipelineThread(Contract):
     content: str = ""
 
 
+class PipelineTag(Contract):
+    name: NonEmpty
+    kind: Literal["person", "organization", "project", "area", "topic"] | None = None
+
+
 class PipelinePage(Contract):
     """Full-file fingerprint; path is relative to the phone's shared vault."""
 
@@ -750,6 +755,9 @@ class PipelineItem(Version2):
     package_revision: Revision | None
     source_type: Channel | Literal["wiki_edit"]
     title: str
+    summary: str = ""
+    counterpart: NonEmpty | None = None
+    related_tags: list[PipelineTag] = Field(default_factory=list)
     location: PipelineLocation
     status: PipelineStatus
     apply_failure_limit: Revision

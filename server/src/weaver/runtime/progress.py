@@ -10,13 +10,14 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from weaver.archive import ArchiveStore
+from weaver.context import ContextDictionary, DictionarySnapshot
 from weaver.courier.atomic import write_bytes_atomic
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.loom.summary_review import Prepared
@@ -24,9 +25,11 @@ from weaver.loom.summary_state import SummaryState
 from weaver.schema import (
     PipelineItem,
     PipelinePage,
+    PipelineTag,
     PipelineThread,
     ReviewPackage,
     Source,
+    ThreadDraft,
     Verdict,
 )
 from weaver.wiki.store import WikiStore
@@ -38,8 +41,39 @@ def package_title(package: ReviewPackage, fallback: str) -> str:
     """Derive a bounded, readable legacy title from the current draft revision."""
     if package.title.strip():
         return package.title.strip()
+    title = body_line(package.draft_body)
+    return (
+        (title if len(title) <= 80 else title[:79].rstrip() + "…")
+        if title
+        else fallback
+    )
+
+
+SUMMARY_LIMIT = 120
+TAG_LIMIT = 8
+
+
+def clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def card_summary(body: str, title: str) -> str:
+    return card_summary_chain([body], title)
+
+
+def card_summary_chain(candidates: Sequence[str], title: str) -> str:
+    """Take the first non-empty line across candidates; omit it when it repeats the title."""
+    line = next(
+        (found for body in candidates if (found := body_line(body, headings=False))),
+        "",
+    )
+    return "" if line == title or clip(line, 80) == title else clip(line, SUMMARY_LIMIT)
+
+
+def body_line(body: str, *, headings: bool = True) -> str:
+    """Use existing text, without generating new facts or retaining Markdown metadata."""
     at_start, in_frontmatter = True, False
-    for line in package.draft_body.splitlines():
+    for line in body.splitlines():
         if at_start:
             if not line.strip():
                 continue
@@ -51,10 +85,28 @@ def package_title(package: ReviewPackage, fallback: str) -> str:
             if line.strip() == "---":
                 in_frontmatter = False
             continue
+        if not headings and line.lstrip().startswith("#"):
+            continue
         title = re.sub(r"^[\s#>*-]+", "", line).strip()
         if title:
-            return title if len(title) <= 80 else title[:79].rstrip() + "…"
-    return fallback
+            return title
+    return ""
+
+
+def card_tags(
+    threads: Sequence[ThreadDraft], dictionary: DictionarySnapshot | None
+) -> list[PipelineTag]:
+    tags: dict[str, PipelineTag] = {}
+    for thread in threads:
+        if thread.kind == "실행":
+            continue
+        for label in thread.tags:
+            entry = dictionary.resolve(label) if dictionary is not None else None
+            name = entry.name if entry else label
+            tags.setdefault(
+                name, PipelineTag(name=name, kind=entry.kind if entry else None)
+            )
+    return list(tags.values())[:TAG_LIMIT]
 
 
 def observation[**P](operation: Callable[P, None]) -> Callable[P, None]:
@@ -182,6 +234,13 @@ class PipelineJournal:
         payload = item.model_dump(mode="json")
         if not item.capture_hosts or set(item.capture_hosts) == {"unknown"}:
             payload.pop("capture_hosts", None)
+        # Omitted card keys mean their defaults, so older readers never see them.
+        if not item.summary:
+            payload.pop("summary", None)
+        if item.counterpart is None:
+            payload.pop("counterpart", None)
+        if not item.related_tags:
+            payload.pop("related_tags", None)
         if item.wiki_edit is None:
             # Omit the Wiki-only extension for ordinary capture observations.
             payload.pop("wiki_edit", None)
@@ -206,6 +265,8 @@ class PipelinePublisher:
         state: SummaryState,
         fabric: Fabric,
         proposals: Path,
+        *,
+        context: ContextDictionary | None = None,
     ) -> None:
         self.journal, self.archive, self.state, self.fabric, self.proposals = (
             journal,
@@ -214,6 +275,7 @@ class PipelinePublisher:
             fabric,
             proposals,
         )
+        self.context = context
         self.wiki: WikiStore | None = None
         self.vault: Path | None = None
 
@@ -244,7 +306,10 @@ class PipelinePublisher:
             package.source_id,
             package_id=package.package_id,
             package_revision=package.revision,
-            title=package_title(package, old.title),
+            title=(title := package_title(package, old.title)),
+            summary=card_summary(package.draft_body, title),
+            counterpart=self.state.contact_name(package.package_id, package.source_id)
+            or source.hints.counterpart,
             location="user",
             status="review",
             stage_times=old.stage_times | package.stage_times,
@@ -309,6 +374,14 @@ class PipelinePublisher:
             "package_id": package.package_id,
             "package_revision": package.revision,
             "title": package_title(package, current.title),
+            "summary": card_summary(
+                package.draft_body, package_title(package, current.title)
+            ),
+            "counterpart": self.state.contact_name(
+                package.package_id, package.source_id
+            )
+            or source.hints.counterpart,
+            "related_tags": [],
             "stage_times": current.stage_times | package.stage_times,
         }
         if review is not None and review[0] == "APPLIED":
@@ -327,6 +400,19 @@ class PipelinePublisher:
             values.update(
                 location="fabric",
                 status="rejected" if verdict.action == "reject" else "done",
+                summary=""
+                if verdict.action == "reject"
+                else card_summary_chain(
+                    [
+                        prepared.summary.body if prepared.summary is not None else "",
+                        next((t.content for t in threads if t.content), ""),
+                        package.draft_body,
+                    ],
+                    values["title"],
+                ),
+                related_tags=card_tags(
+                    threads, self.context.snapshot() if self.context else None
+                ),
                 threads=[
                     PipelineThread(
                         thread_id=t.thread_id, kind=t.kind, content=t.content or ""
@@ -335,6 +421,9 @@ class PipelinePublisher:
                     if t.kind != "실행"
                 ],
             )
+            counterparts = {t.counterpart for t in threads if t.counterpart}
+            if len(counterparts) == 1:
+                values["counterpart"] = next(iter(counterparts))
             if current.location == "wiki":
                 values["location"] = "wiki"
         elif (

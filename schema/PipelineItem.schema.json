@@ -69,6 +69,38 @@
       ],
       "type": "string"
     },
+    "PipelineTag": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "person",
+                "organization",
+                "project",
+                "area",
+                "topic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PipelineTag",
+      "type": "object"
+    },
     "PipelineThread": {
       "additionalProperties": false,
       "properties": {
@@ -358,6 +390,17 @@
         }
       ]
     },
+    "counterpart": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "digest": {
       "anyOf": [
         {
@@ -405,6 +448,13 @@
       "title": "Pages",
       "type": "array"
     },
+    "related_tags": {
+      "items": {
+        "$ref": "#/$defs/PipelineTag"
+      },
+      "title": "Related Tags",
+      "type": "array"
+    },
     "revision": {
       "$ref": "#/$defs/Revision"
     },
@@ -440,6 +490,11 @@
     },
     "status": {
       "$ref": "#/$defs/PipelineStatus"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
     },
     "threads": {
       "items": {

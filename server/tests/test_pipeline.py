@@ -7,7 +7,7 @@ import pytest
 from server.tests.fake_responses import fixture_response
 
 from weaver.runtime.progress import PipelineJournal, package_title
-from weaver.schema import PipelineItem, ReviewPackage, Source, ThreadDraft
+from weaver.schema import PipelineItem, PipelineTag, ReviewPackage, Source, ThreadDraft
 
 
 def source():
@@ -68,7 +68,7 @@ def test_feedback_history_and_stopped_do_not_become_done_on_restart(tmp_path):
     assert restarted.get(sid).status == "apply_stopped"
 
 
-def runtime_capture(tmp_path, failure_limit=5):
+def runtime_capture(tmp_path, failure_limit=5, counterpart=None):
     import hashlib
     import json
 
@@ -79,6 +79,7 @@ def runtime_capture(tmp_path, failure_limit=5):
         model = "fake"
         failing = True
         summary_body = "가상 요약"
+        approved_body = None
         thread_content = "가상 기록"
 
         def generate_json(self, task, system, user, schema):
@@ -93,8 +94,11 @@ def runtime_capture(tmp_path, failure_limit=5):
                 return fixture_response(
                     schema,
                     {
-                        "body": self.summary_body,
-                        "new_entries": [{"name": "예시", "kind": "topic"}],
+                        "body": self.approved_body or self.summary_body,
+                        "new_entries": [
+                            {"name": "예시", "kind": "topic"},
+                            {"name": "업무 운영", "kind": "area"},
+                        ],
                         "corrections": [],
                         "threads": [
                             {
@@ -140,7 +144,7 @@ def runtime_capture(tmp_path, failure_limit=5):
         "payload": cap + ".txt",
         "sha256": hashlib.sha256(data).hexdigest(),
         "size": len(data),
-        "hints": {"counterpart": None},
+        "hints": {"counterpart": counterpart},
     }
     (config.courier.outbox / manifest["payload"]).write_bytes(data)
     (config.courier.outbox / (cap + ".json")).write_text(json.dumps(manifest))
@@ -371,6 +375,12 @@ def test_capture_card_legacy_title_and_thread_content_reach_phone_file(
     assert item.location == "fabric"
     assert item.status == ("rejected" if action == "reject" else "done")
     assert item.title == expected_title
+    line = "제품팀은 다음 주에 검색 시안을 검토한다."
+    # A summary that merely repeats the (derived) title is omitted.
+    assert item.summary == ("" if action == "reject" or item.title == line else line)
+    assert [(tag.name, tag.kind) for tag in item.related_tags] == (
+        [] if action == "reject" else [("예시", "topic"), ("업무 운영", "area")]
+    )
     stored = progress.fabric.entries(ThreadQuery())
     assert [(t.thread_id, t.kind, t.content) for t in item.threads] == [
         (t.thread_id, t.kind, t.content or "") for t in stored if t.kind != "실행"
@@ -492,7 +502,7 @@ def test_unknown_hosts_are_omitted_from_projection(tmp_path):
     assert json.loads(path.read_text())["capture_hosts"] == ["mac", "unknown"]
 
 
-def test_pipeline_wire_has_no_counterpart_with_or_without_wiki_edit():
+def test_pipeline_wire_keeps_counterpart_at_card_level_only():
     from pathlib import Path
 
     for name in ("PipelineItem.json", "PipelineItem-wiki-edit.json"):
@@ -501,7 +511,131 @@ def test_pipeline_wire_has_no_counterpart_with_or_without_wiki_edit():
         ).read_text()
         item = PipelineItem.model_validate_json(text)
         wire = item.model_dump_json()
-        assert '"counterpart"' not in wire
+        assert "counterpart" in json.loads(wire)
         assert all(
             "counterpart" not in thread for thread in json.loads(wire)["threads"]
         )
+
+
+def test_card_metadata_uses_approved_summary_explicit_contact_and_recovers_legacy(
+    tmp_path,
+):
+    import threading
+
+    from weaver.context import ContextDictionary
+    from weaver.fabric import ThreadQuery
+    from weaver.runtime.progress import card_tags
+
+    runtime, config, llm = runtime_capture(tmp_path, counterpart="민수")
+    context = ContextDictionary(config.state_root)
+    context.add_entry("민수", "person")
+    context.add_entry("검색", "area", aliases=("검색서비스",))
+    llm.summary_body = "# 승인 전 초안"
+    llm.approved_body = "---\ntitle: 메타\n---\n# 승인된 검색 검토\n둘째 줄"
+    llm.thread_content = "검색 시안 검토를 합의했다."
+    runtime._tick(threading.Event())
+    package = ReviewPackage.model_validate_json(
+        next(config.courier.proposals.glob("*.json")).read_bytes()
+    )
+    decision = config.courier.decisions / f"{package.package_id}.r1.json"
+    decision.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "package_id": package.package_id,
+                "revision": 1,
+                "action": "approve",
+                "answers": [],
+                "edited_body": None,
+                "feedback": None,
+            }
+        )
+    )
+    llm.failing = False
+    runtime._tick(threading.Event())
+    progress = runtime.publisher.progress
+    item = progress.journal.get(package.source_id)
+    assert item.summary == "둘째 줄"  # the heading line is skipped
+    assert item.counterpart == "민수"
+    assert [(t.name, t.kind) for t in item.related_tags] == [
+        ("예시", "topic"),
+        ("업무 운영", "area"),
+    ]
+    fact = progress.fabric.entries(ThreadQuery())[0]
+    tags = card_tags(
+        [
+            fact.model_copy(update={"tags": ["검색서비스", "검색", "미분류", "민수"]}),
+            fact.model_copy(update={"kind": "실행", "tags": ["실행전용"]}),
+        ],
+        context.snapshot(),
+    )
+    assert [(t.name, t.kind) for t in tags] == [
+        ("검색", "area"),
+        ("미분류", None),
+        ("민수", "person"),
+    ]
+    # Pre-summary APPLIED records recover a summary from their committed Thread.
+    with progress.state.connect() as db:
+        prepared = json.loads(
+            db.execute(
+                "SELECT prepared FROM reviews WHERE id=?", (package.package_id,)
+            ).fetchone()[0]
+        )
+        prepared.pop("summary", None)
+        db.execute(
+            "UPDATE reviews SET prepared=? WHERE id=?",
+            (json.dumps(prepared), package.package_id),
+        )
+    progress.publish()
+    recovered = progress.journal.get(package.source_id)
+    assert recovered.summary == llm.thread_content
+    path = config.courier.proposals / "pipeline" / f"{package.source_id}.json"
+    wire = json.loads(path.read_text())
+    assert wire["summary"] == recovered.summary and wire["counterpart"] == "민수"
+    assert wire["related_tags"] == [
+        {"name": "예시", "kind": "topic"},
+        {"name": "업무 운영", "kind": "area"},
+    ]
+    path.unlink()
+    progress.publish()
+    assert (
+        PipelineItem.model_validate_json(path.read_bytes()).summary == recovered.summary
+    )
+    assert progress.journal.get(package.source_id).revision == recovered.revision
+
+
+def test_default_card_keys_are_omitted_and_present_when_set(tmp_path):
+    journal = PipelineJournal(tmp_path / "state", tmp_path / "proposals")
+    item = journal.receive(source(), datetime.now(UTC))
+    path = tmp_path / "proposals" / "pipeline" / f"{item.source_id}.json"
+    wire = json.loads(path.read_text())
+    assert not {"summary", "counterpart", "related_tags"} & wire.keys()
+    assert PipelineItem.model_validate(wire).related_tags == []
+    journal.update(
+        item.source_id,
+        summary="요약",
+        counterpart="민수",
+        related_tags=[PipelineTag(name="검색", kind="area")],
+    )
+    wire = json.loads(path.read_text())
+    assert wire["summary"] == "요약" and wire["counterpart"] == "민수"
+    assert wire["related_tags"] == [{"name": "검색", "kind": "area"}]
+
+
+def test_card_summary_bounds_skips_headings_and_falls_through():
+    from weaver.runtime.progress import card_summary, card_summary_chain, card_tags
+
+    long_line = "가" * 300
+    summary = card_summary(f"# 제목\n{long_line}", "제목")
+    assert len(summary) == 120 and summary.endswith("…")
+    assert card_summary("# 제목만", "제목만") == ""
+    assert card_summary("# 제목\n제목", "제목") == ""  # repeats the title
+    assert card_summary_chain(["", "---\n---\n", "# 제목\n셋째"], "다른") == "셋째"
+    assert card_summary_chain(["", "  \n"], "다른") == ""
+    threads = [
+        ThreadDraft.model_construct(
+            kind="사실", content="x", tags=[f"태그{i}" for i in range(20)]
+        )
+    ]
+    tags = card_tags(threads, None)
+    assert [t.name for t in tags] == [f"태그{i}" for i in range(8)]

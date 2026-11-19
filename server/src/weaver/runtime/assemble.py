@@ -92,6 +92,7 @@ def build_runtime(
         review.state,
         fabric,
         config.courier.proposals,
+        context=context,
     )
     adapter = ReviewAdapter(review, summaries, progress)
     courier = Courier(

@@ -167,8 +167,8 @@ the Wiki-only `wiki_edit` extension. See `examples/PipelineItem-wiki-edit.json`.
 `Thread` and `ThreadDraft` include optional `counterpart` (one nonempty canonical
 person/organization name or null), defaulting to null for older payloads. It is
 not an array and is not rewritten by tag corrections. `PipelineItem.threads`
-deliberately has no counterpart key: existing Android clients reject unknown
-keys, and the phone map does not need this field. The server validates
+has no counterpart key: `PipelineItem.counterpart` holds the one explicit
+card-level counterpart instead. The server validates
 dictionary ownership and kinds at extraction time; standalone
 JSON Schema validates only the scalar shape. Web-only `presentation` is derived
 and does not belong to the persisted Thread schema.
@@ -179,3 +179,20 @@ changed. It cannot combine with resolves/retracts/updates/executes. Store-level
 validation checks the request target and reference cycles. `updates` stays
 schedule-only. Read views classify amends as history and expose effective
 request deadlines without rewriting the original value.
+
+### Fabric card metadata
+
+`PipelineItem.summary` (default `""`), `counterpart` (default null), and
+`related_tags` (default `[]`) supply the observation card without an extra LLM
+call. The summary is a readable first line of the approved summary, then an
+existing Thread or draft; rejected packages have no summary. Wiki edits use
+their recorded Thread content. Tags contain `name` and nullable dictionary
+`kind` (`person`, `organization`, `project`, `area`, `topic`); unknown tags keep
+their name and null kind. Execution Threads are excluded. Source channel and
+capture-host labels reuse the existing fields.
+
+Deploy the Android model with these optional defaults before enabling this
+server's file publisher: older strict APKs reject the new card-level keys.
+Old files remain readable by the new Android model; this is not compatibility
+with older APKs reading newer files. Pipeline observations still use
+`proposals/pipeline/`, not HTTP. No note writing or reminder action is added.
