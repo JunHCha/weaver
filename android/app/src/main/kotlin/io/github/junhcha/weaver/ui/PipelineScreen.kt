@@ -54,7 +54,7 @@ import io.github.junhcha.weaver.schema.*
 import java.time.Instant
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -102,7 +102,7 @@ fun HomeScreen(
     // Follow the existing state-based destinations; save each origin while review replaces it.
     val destinations = rememberSaveableStateHolder()
     var review by rememberSaveable { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+    var submitted by rememberSaveable { mutableStateOf(false) }
     var tools by rememberSaveable { mutableStateOf(false) }
     var map by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -125,21 +125,27 @@ fun HomeScreen(
         model.refresh()
         onPauseOrDispose {}
     }
+    // The queued verdict survives recreation; restart only the bounded refresh wait after rotation.
+    LaunchedEffect(review, submitted) {
+        val id = review
+        if (id != null && submitted) {
+            model.refresh()
+            withTimeoutOrNull(3_000) {
+                model.state.first { current ->
+                    current.error != null || (current.loaded && current.items.none { it.packageId == id && it.needsReview })
+                }
+            }
+            review = null
+            submitted = false
+        }
+    }
     WeaverTheme {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             when {
                 review != null -> ReviewScreen(
                     checkNotNull(review),
-                    onBack = { review = null },
-                    onSubmitted = {
-                        val id = checkNotNull(review)
-                        scope.launch {
-                            model.refresh()
-                            // Return only once the origin has the submitted state, avoiding an actionable stale card.
-                            model.state.first { current -> current.items.none { it.packageId == id && it.needsReview } }
-                            if (review == id) review = null
-                        }
-                    },
+                    onBack = { review = null; submitted = false },
+                    onSubmitted = { submitted = true },
                 )
                 tools -> {
                     val closeTools = { tools = false; pendingCalls = false }
@@ -164,7 +170,7 @@ fun HomeScreen(
                                 { replay++ },
                                 { tools = true },
                                 model::claimAnimation,
-                                onReview = { review = it },
+                                onReview = { submitted = false; review = it },
                             )
                         }
                     }
@@ -277,7 +283,10 @@ internal fun PipelineContent(
             }
             if (!wide && selected != null) {
                 // Keep the approval list at a stable height when its saved scroll is restored.
-                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = selected == MapNode.USER)
+                // A notification can switch the selected node while this dialog is open.
+                // Keep its expansion policy stable for this visit instead of recreating the SheetState.
+                val skipPartial = rememberSaveable { selected == MapNode.USER }
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartial)
                 ModalBottomSheet(onDismissRequest = { onSelect(null) }, sheetState = sheetState) {
                     panelState.SaveableStateProvider(selected.name) {
                         NodePanel(

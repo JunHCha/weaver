@@ -23,6 +23,7 @@ import kotlinx.coroutines.*
 fun ReviewPanel(
     id: String,
     onSubmitted: () -> Unit = {},
+    onBusyChanged: (Boolean) -> Unit = {},
     showCloseButton: Boolean = true,
     onClose: () -> Unit,
 ) {
@@ -129,7 +130,7 @@ fun ReviewPanel(
                 actions.forEach { requestedAction ->
                     val action = if (requestedAction == Verdict.Action.APPROVE && body != p.draftBody) Verdict.Action.EDIT else requestedAction
                     OutlinedButton(enabled = enabled, onClick = {
-                        busy = true; error = null
+                        busy = true; onBusyChanged(true); error = null
                         scope.launch {
                             val result = withContext(Dispatchers.IO) { runCatching {
                                 val verdict = ReviewDraft.verdict(p, answers, action, body, feedback)
@@ -138,6 +139,7 @@ fun ReviewPanel(
                             } }
                             result.onSuccess { record = it; onSubmitted() }.onFailure { error = it.message ?: "전송 준비 실패" }
                             busy = false
+                            onBusyChanged(false)
                         }
                     }) { Text(when (requestedAction) {
                         Verdict.Action.APPROVE -> if (body != p.draftBody) "수정 제출" else "승인"; Verdict.Action.EDIT -> "수정 제출"
