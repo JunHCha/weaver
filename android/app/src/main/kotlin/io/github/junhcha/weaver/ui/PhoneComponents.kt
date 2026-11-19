@@ -1,6 +1,7 @@
 package io.github.junhcha.weaver.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -77,8 +78,9 @@ internal fun ThreadCard(
     modifier: Modifier = Modifier,
     badge: String? = null,
     muted: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
-    KindCard(modifier, kind = thread.kind.styleKey) {
+    KindCard(if (onClick == null) modifier else modifier.clickable(role = Role.Button, onClickLabel = "Thread 상세 열기", onClick = onClick), kind = thread.kind.styleKey) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 // Muted rows use the muted ink (>= 4.5:1 on the card), not alpha, so the text stays readable.

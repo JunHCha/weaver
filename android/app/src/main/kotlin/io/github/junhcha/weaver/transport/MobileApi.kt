@@ -95,6 +95,7 @@ interface MobileApi {
     fun putActionResult(actionId: String, result: ByteArray): String
     fun pipeline(cursor: String?, limit: Int): Page
     fun threads(cursor: String?, limit: Int): Page
+    fun now(afterSeq: Long? = null, fabricEpoch: String? = null): JsonObject = throw UnsupportedOperationException()
     fun tags(): List<JsonElement>
     /** Page list without bodies; the body comes from [wikiPage] when the page is opened. */
     fun wikiPages(cursor: String?, limit: Int): Page
@@ -256,6 +257,12 @@ class HttpsMobileApi(
 
     override fun pipeline(cursor: String?, limit: Int) = page(call("GET", cursor("/pipeline", cursor, limit), limit = MAX_PAGE))
     override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/read/threads", cursor, limit), limit = MAX_PAGE))
+    override fun now(afterSeq: Long?, fabricEpoch: String?): JsonObject {
+        require(afterSeq == null || fabricEpoch != null)
+        val query = if (afterSeq == null) "" else "?after_seq=$afterSeq&fabric_epoch=" + java.net.URLEncoder.encode(fabricEpoch, "UTF-8")
+        return obj(call("GET", "/read/now$query", limit = MAX_PAGE))
+    }
+
     override fun tags() = items(call("GET", "/read/tags", limit = MAX_PAGE))
     override fun wikiPages(cursor: String?, limit: Int) = page(call("GET", cursor("/read/wiki/pages", cursor, limit), limit = MAX_PAGE))
     override fun dictionary() = items(call("GET", "/read/dictionary", limit = MAX_PAGE))

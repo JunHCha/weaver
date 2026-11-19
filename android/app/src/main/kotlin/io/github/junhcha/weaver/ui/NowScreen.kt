@@ -41,8 +41,11 @@ internal fun NowScreen(
     connected: Boolean,
     onOpenMap: () -> Unit,
     onOpenSettings: () -> Unit,
+    zone: java.time.ZoneId = SeoulZone,
+    onThread: (PhoneThread) -> Unit = {},
+    handling: (@Composable () -> Unit)? = null,
 ) {
-    val today = now.atZone(SeoulZone).toLocalDate()
+    val today = now.atZone(zone).toLocalDate()
     Column(Modifier.fillMaxSize().testTag("now-screen")) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("지금", style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
@@ -50,6 +53,7 @@ internal fun NowScreen(
             TextButton(onClick = onOpenSettings, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("수집·설정") }
         }
         StatusStrip(counts, onOpenMap)
+        handling?.invoke()
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -58,18 +62,18 @@ internal fun NowScreen(
                 view == null -> Muted("불러오는 중")
                 view.isEmpty -> Muted(if (connected) "지금 처리할 일이 없어요" else "연결된 데이터 없음")
                 else -> {
-                    NowSection("기한 지남", view.overdue, emphasis = true) { entry ->
+                    NowSection("기한 지남", view.overdue, emphasis = true, onThread = onThread) { entry ->
                         "마감 ${entry.thread.deadline?.shortDate()} · ${entry.thread.typeLabel()} · ${entry.thread.counterpart.orEmpty()}"
                     }
-                    NowSection("오늘", view.today) { entry ->
-                        val time = if (entry.dueKind == DueKind.SCHEDULE) entry.thread.scheduleAt?.clock() else "마감 오늘"
+                    NowSection("오늘", view.today, onThread = onThread) { entry ->
+                        val time = if (entry.dueKind == DueKind.SCHEDULE) entry.thread.scheduleAt?.atZone(zone)?.toLocalTime()?.let { "%02d:%02d".format(it.hour, it.minute) } else "마감 오늘"
                         listOfNotNull(time, entry.thread.typeLabel(), entry.thread.tags.firstOrNull().takeIf { entry.dueKind == DueKind.SCHEDULE } ?: entry.thread.counterpart)
                             .joinToString(" · ")
                     }
-                    NowSection("새로 반영됨", view.recent) { entry ->
+                    NowSection("새로 반영됨", view.recent, onThread = onThread) { entry ->
                         val at = entry.thread.recordedAt
-                        val day = if (at.atZone(SeoulZone).toLocalDate() == today) "오늘" else if (at.atZone(SeoulZone).toLocalDate() == today.minusDays(1)) "어제" else at.shortDate()
-                        "$day ${at.clock()} · ${entry.thread.kind.label} · ${entry.thread.source}"
+                        val day = if (at.atZone(zone).toLocalDate() == today) "오늘" else if (at.atZone(zone).toLocalDate() == today.minusDays(1)) "어제" else at.atZone(zone).toLocalDate().shortDate()
+                        "$day ${at.atZone(zone).toLocalTime().let { "%02d:%02d".format(it.hour, it.minute) }} · ${entry.thread.kind.label} · ${entry.thread.source}"
                     }
                 }
             }
@@ -104,10 +108,18 @@ private fun StatusCell(label: String, count: Int, modifier: Modifier) {
 }
 
 @Composable
-private fun NowSection(title: String, entries: List<NowEntry>, emphasis: Boolean = false, detail: (NowEntry) -> String) {
+private fun NowSection(title: String, entries: List<NowEntry>, emphasis: Boolean = false, onThread: (PhoneThread) -> Unit, detail: (NowEntry) -> String) {
     if (entries.isEmpty()) return
     SectionHeading(title, emphasis)
-    entries.forEach { ThreadCard(it.thread, detail(it)) }
+    entries.forEach { entry ->
+        val badge = when {
+            entry.thread.retracted == true -> "철회됨"
+            entry.thread.kind == io.github.junhcha.weaver.phone.ThreadKind.REQUEST && entry.thread.open == false -> "해결됨"
+            entry.thread.revision > entry.thread.seq -> "새 변경"
+            else -> null
+        }
+        ThreadCard(entry.thread, detail(entry), badge = badge, onClick = { onThread(entry.thread) })
+    }
 }
 
 /** "받은 요청" / "보낸 요청" when the direction is known, otherwise the plain kind. */

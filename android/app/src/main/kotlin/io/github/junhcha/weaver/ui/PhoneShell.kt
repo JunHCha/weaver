@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,12 +66,14 @@ fun PhoneShell(
     }
     var edits by rememberSaveable { mutableIntStateOf(0) }
     var offlineSince by remember { mutableStateOf<Instant?>(null) }
+    var readVersion by remember { mutableIntStateOf(0) }
     val snapshot by produceState<PhoneSnapshot?>(null, readModel, resumes, edits) {
         value = readModel.snapshot()
         offlineSince = readModel.offlineSince
+        readVersion++
     }
     val onEdited: () -> Unit = { edits++ }
-    val current = remember(resumes, snapshot) { now() }
+    val current = remember(resumes, snapshot, readVersion, edits) { now() }
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen =
         io.github.junhcha.weaver.diagnostics.CrashDiagnostics.screen.copy(last_tab = tab.name)
@@ -77,6 +81,23 @@ fun PhoneShell(
     var person by rememberSaveable { mutableStateOf<String?>(null) }
     var area by rememberSaveable { mutableStateOf<String?>(null) }
     var page by rememberSaveable { mutableStateOf<String?>(null) }
+    @Suppress("UNUSED_VARIABLE") val observedReadVersion = readVersion
+    val nowUi = readModel.nowController?.uiState?.collectAsState()?.value
+    val controller = readModel.nowController?.takeIf { nowUi?.supported == true && nowUi.snapshot != null }
+    var selectedThread by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentEpoch = nowUi?.snapshot?.epoch
+    var detailEpoch by remember { mutableStateOf(currentEpoch) }
+    LaunchedEffect(currentEpoch) {
+        if (detailEpoch != currentEpoch) selectedThread = null
+        detailEpoch = currentEpoch
+    }
+    LaunchedEffect(snapshot, nowUi?.nextRefreshAt, readModel, readVersion, resumes) {
+        val moment = now()
+        val next = nowUi?.nextRefreshAt ?: moment.atZone(io.github.junhcha.weaver.phone.SeoulZone)
+            .toLocalDate().plusDays(1).atStartOfDay(io.github.junhcha.weaver.phone.SeoulZone).toInstant()
+        kotlinx.coroutines.delay(java.time.Duration.between(moment, next).toMillis().coerceAtLeast(1000))
+        resumes++
+    }
     val data = snapshot
     val noData = data?.isEmpty == true
     val emptyText = if (noData) "연결된 데이터 없음" else null
@@ -95,13 +116,23 @@ fun PhoneShell(
         tab == PhoneTab.WIKI && page != null -> BackHandler { page = null }
         tab != PhoneTab.NOW -> BackHandler { tab = PhoneTab.NOW }
     }
+    selectedThread?.let { id ->
+        val target = (nowUi?.snapshot?.threads.orEmpty() + data?.threads.orEmpty() + nowUi?.suppressed.orEmpty()).firstOrNull { it.id == id }
+        if (target != null) NowThreadSheet(target,
+            data?.threads.orEmpty().filter { it.historyTargetForDetail(id, data?.threads.orEmpty()) }, controller,
+            { edits++ }, { selectedThread = null })
+    }
     Column(Modifier.fillMaxSize()) {
         if (readModel.isExample) ExampleBadge()
-        offlineSince?.let { OfflineBanner(it) }
+        if (nowUi?.supported == true && controller == null) Muted(if (nowUi?.problem == "response_too_large") "지금 목록이 너무 커요. 서버 페이지네이션 지원이 필요해요. 자동 재시도를 멈췄어요." else "지금 목록을 확인하지 못했어요. 연결 후 다시 불러와 주세요.", Modifier.padding(16.dp))
+        offlineSince?.let { OfflineBanner(it, nowUi?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone) }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 PhoneTab.NOW -> NowScreen(
-                    data?.let { nowView(it, current) }, counts, current, connected = !noData, onOpenMap, onOpenSettings,
+                    if (nowUi?.supported == true) nowUi?.visible else data?.let { nowView(it, current) }, counts, if (nowUi?.online == true) nowUi.snapshot!!.generatedAt else current, connected = !noData, onOpenMap, onOpenSettings,
+                    zone = nowUi?.snapshot?.zone ?: io.github.junhcha.weaver.phone.SeoulZone,
+                    onThread = { selectedThread = it.id },
+                    handling = controller?.let { host -> { NowHandlingBar(host, { edits++ }, { selectedThread = it.id }, data?.threads.orEmpty()) } },
                 )
                 PhoneTab.PEOPLE -> if (data == null) Loading() else person?.let { name ->
                     TimelineScreen(data, name, { person = null }, tagHost, onEdited)
@@ -137,8 +168,8 @@ fun PhoneShell(
 
 /** Shown while the screens use the last copy from the server because it cannot be reached right now. */
 @Composable
-private fun OfflineBanner(since: Instant) {
-    val at = since.atZone(io.github.junhcha.weaver.phone.SeoulZone)
+private fun OfflineBanner(since: Instant, zone: java.time.ZoneId) {
+    val at = since.atZone(zone)
     Box(
         Modifier.fillMaxWidth().background(WeaverTokens.line).padding(vertical = 4.dp).testTag("offline-banner"),
         contentAlignment = Alignment.Center,
@@ -184,4 +215,15 @@ private fun BottomTabs(current: PhoneTab, onSelect: (PhoneTab) -> Unit) {
             }
         }
     }
+}
+
+private fun io.github.junhcha.weaver.phone.PhoneThread.historyTargetForDetail(id: String, threads: List<io.github.junhcha.weaver.phone.PhoneThread>): Boolean {
+    var row = this
+    val seen = mutableSetOf<String>()
+    while (seen.add(row.id)) {
+        val target = row.correction?.target ?: row.retracts ?: row.executes ?: row.resolves ?: row.amends ?: row.updates ?: return false
+        if (target == id) return true
+        row = threads.firstOrNull { it.id == target } ?: return false
+    }
+    return false
 }

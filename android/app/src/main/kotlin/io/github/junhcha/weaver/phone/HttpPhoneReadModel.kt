@@ -191,7 +191,7 @@ class HttpPhoneReadModel(
          * `/read/threads` item: the web Thread plus the server's `presentation`, `open`, `retracted`, `effective_deadline`,
          * `effective_schedule` (an object), `mentions` and the display `source`. Taken as given, never recomputed.
          */
-        private fun thread(o: JsonObject): PhoneThread {
+        fun thread(o: JsonObject): PhoneThread {
             val field = o.str("field")
             val correction = (o["correction"] as? JsonObject)?.let {
                 TagCorrection(it.str("target")!!, it.strings("add"), it.strings("remove"))
