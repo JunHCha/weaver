@@ -39,7 +39,8 @@ class Backlog(Protocol):
 
 
 # Placeholders for lineage that cannot be named (shared dictionary prose, Wiki
-# pages whose Threads are gone). They are never recorded in the backlog.
+# pages whose Threads are gone, human-only synthetic origins). They are never
+# recorded in the backlog, including when supplied as the requester.
 UNKNOWN_DICTIONARY_SOURCE = "unknown_dictionary_provenance"
 UNKNOWN_WIKI_SOURCE = "unknown_wiki_provenance"
 UNKNOWN_LINEAGE = frozenset({UNKNOWN_DICTIONARY_SOURCE, UNKNOWN_WIKI_SOURCE})
@@ -101,6 +102,7 @@ class LlmPolicy:
         shared_sources: Callable[[], Iterable[str]] | None = None,
         backlog: Backlog | None = None,
         webex_present: Callable[[], bool] | None = None,
+        normalize_source: Callable[[str], str] | None = None,
     ) -> None:
         self.resolver = resolver
         self.settings = settings if settings is not None else PrivacySettings()
@@ -111,6 +113,7 @@ class LlmPolicy:
         # Reports whether the archive holds any Webex Source. Without it,
         # unknown lineage always fails closed.
         self.webex_present = webex_present
+        self.normalize_source = normalize_source
 
     def prepare(self, system: str, user: str) -> PreparedInput:
         provenance = _current.get()
@@ -172,16 +175,23 @@ class LlmPolicy:
 
     def _evaluate(self, provenance: Provenance, *, allow_empty: bool) -> None:
         ids = provenance.source_ids
+        requester = provenance.requester
+        if self.normalize_source is not None:
+            try:
+                ids = frozenset(self.normalize_source(sid) for sid in ids)
+                if requester is not None:
+                    requester = self.normalize_source(requester)
+            except Exception:
+                raise PolicyBlocked() from None
         if not ids:
             if allow_empty:
                 return  # shared context was read completely and has no lineage
             raise PolicyBlocked()
         closed = self._closed(ids)
-        requester = provenance.requester
         if closed:
             # Block this call, and remember only what can actually be resumed:
             # the closed/unknown origins and the one Source waiting on them.
-            held = closed - UNKNOWN_LINEAGE | ({requester} if requester else set())
+            held = (closed | ({requester} if requester else set())) - UNKNOWN_LINEAGE
             self._remember(held)
             raise PolicyBlocked()
         if self.backlog is not None:

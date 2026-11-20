@@ -15,7 +15,13 @@ from weaver.readonly import connect_snapshot
 from weaver.schema import Manifest, ReviewPackage, Source, ThreadDraft
 from weaver.spinner.webex import WebexProvenanceStore
 
-from .policy import ALLOWED_CHANNELS, UNKNOWN_DICTIONARY_SOURCE, LlmPolicy
+from .policy import (
+    ALLOWED_CHANNELS,
+    UNKNOWN_DICTIONARY_SOURCE,
+    UNKNOWN_LINEAGE,
+    UNKNOWN_WIKI_SOURCE,
+    LlmPolicy,
+)
 
 
 class ArchiveProvenanceResolver:
@@ -71,6 +77,44 @@ class ArchiveProvenanceResolver:
         # A live daemon must consume committed WAL contents. Opening mode=ro
         # never initializes the archive, sweeps payloads or publishes Receipts.
         return sqlite3.connect(f"{self.index.resolve().as_uri()}?mode=ro", uri=True)
+
+    def normalize_source(self, source_id: str) -> str:
+        """Human-only Fabric IDs without an archived Source have unknown lineage.
+
+        Wiki observations and phone decisions predate any origin marker. Inspect
+        all references rather than guessing from IDs or trusting one human row.
+        An archived Source always retains its original policy classification.
+        """
+        if source_id in UNKNOWN_LINEAGE:
+            return source_id
+        if self.index.is_file():
+            with closing(self._connect()) as db:
+                if db.execute(
+                    "SELECT 1 FROM sources WHERE source_id=?", (source_id,)
+                ).fetchone():
+                    return source_id
+        if self.state_root is None:
+            return source_id
+        path = self.state_root / "fabric.sqlite3"
+        if not path.is_file():
+            return source_id
+        db = (
+            connect_snapshot(path)
+            if self.snapshot
+            else sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        )
+        with closing(db):
+            references = [
+                ThreadDraft.model_validate_json(raw)
+                for (raw,) in db.execute(
+                    "SELECT payload FROM threads "
+                    "WHERE json_extract(payload, '$.source_id')=?",
+                    (source_id,),
+                )
+            ]
+        if references and all(t.actor == "human" for t in references):
+            return UNKNOWN_WIKI_SOURCE
+        return source_id
 
     def resolve(self, source_id: str) -> tuple[str, str | None] | None:
         if not self.index.is_file():
@@ -158,4 +202,5 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
         excluded_space_ids=frozenset(config.shepherds.webex.exclude_space_ids),
         shared_sources=shared_sources,
         webex_present=resolver.has_webex_source,
+        normalize_source=resolver.normalize_source,
     )
