@@ -73,6 +73,52 @@ class LlmConfig:
 
 
 @dataclass(frozen=True)
+class WebexPrivacy:
+    llm_allowed: bool = True
+    policy_confirmed_at: str = "2026-11-19"
+
+
+@dataclass(frozen=True)
+class PrivacyChannels:
+    webex: WebexPrivacy = WebexPrivacy()
+
+
+@dataclass(frozen=True)
+class PrivacySettings:
+    channels: PrivacyChannels = PrivacyChannels()
+
+
+def _privacy_settings(value: object) -> PrivacySettings:
+    if not isinstance(value, dict) or value.keys() - {"channels"}:
+        raise ConfigError("privacy: expected channels table")
+    channels = value.get("channels", {})
+    if not isinstance(channels, dict) or channels.keys() - {"webex"}:
+        raise ConfigError("privacy.channels: unknown channel")
+    webex = channels.get("webex", {})
+    if not isinstance(webex, dict) or webex.keys() - {
+        "llm_allowed",
+        "policy_confirmed_at",
+    }:
+        raise ConfigError("privacy.channels.webex: unknown fields")
+    allowed = webex.get("llm_allowed", True)
+    confirmed = webex.get("policy_confirmed_at", "2026-11-19")
+    if type(allowed) is not bool:
+        raise ConfigError("privacy.channels.webex.llm_allowed: expected boolean")
+    if not isinstance(confirmed, str):
+        raise ConfigError("privacy.channels.webex.policy_confirmed_at: expected date")
+    try:
+        from datetime import date
+
+        if date.fromisoformat(confirmed).isoformat() != confirmed:
+            raise ValueError()
+    except ValueError:
+        raise ConfigError(
+            "privacy.channels.webex.policy_confirmed_at: expected date"
+        ) from None
+    return PrivacySettings(PrivacyChannels(WebexPrivacy(allowed, confirmed)))
+
+
+@dataclass(frozen=True)
 class TimeConfig:
     """Shared timezone for interpreting local source timestamps."""
 
@@ -316,6 +362,7 @@ class ServerConfig:
     courier_settings: CourierSettings = CourierSettings()
     mobile: MobileSettings = dataclass_field(default_factory=MobileSettings)
     shepherds: ShepherdSettings = dataclass_field(default_factory=ShepherdSettings)
+    privacy: PrivacySettings = PrivacySettings()
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -519,6 +566,7 @@ def load_config(
         "wiki",
         "mobile",
         "shepherds",
+        "privacy",
     }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
@@ -635,6 +683,7 @@ def load_config(
         raise ConfigError("shepherds.webex: secret files must be distinct")
     mobile = _mobile_settings(raw.get("mobile", {}), env, config_file.parent)
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
+    privacy = _privacy_settings(raw.get("privacy", {}))
     stt_raw = raw.get("stt", {})
     if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
         raise ConfigError("stt: expected a table containing only model_path")
@@ -695,4 +744,5 @@ def load_config(
         wiki=wiki,
         mobile=mobile,
         shepherds=shepherds,
+        privacy=privacy,
     )

@@ -53,6 +53,7 @@ from weaver.llm.errors import (
     UsageLimited,
     WikiTimeoutBudgetExceeded,
 )
+from weaver.llm.policy import PolicyBlocked
 
 from .gate import Interrupted, LlmGate, LlmUnavailable
 from .ledger import Progress, RuntimeLedger
@@ -348,6 +349,14 @@ class Runtime[S: HasSourceId]:
             outcome = self.processor.process(source, stop)
         except Interrupted:
             return  # stop requested before the next stage; nothing failed
+        except PolicyBlocked:
+            self.ledger.record(
+                sid,
+                "waiting_llm",
+                attempts=attempts,
+                contract_failures=contract,
+                error_class="PolicyBlocked",
+            )
         except _LLM_OFF as error:
             reason = getattr(error, "code", type(error).__name__)
             if self.gate.available:
@@ -460,6 +469,8 @@ class Runtime[S: HasSourceId]:
                     logger.warning("Wiki timeout; retry in %.0fs", delay)
                 else:
                     logger.warning("maintenance timeout")
+            except PolicyBlocked:
+                logger.warning("maintenance waiting: %s policy_blocked", task.name)
             except WikiTimeoutBudgetExceeded:
                 pass  # The CLI guard logs once per day, before reserving a call.
             except (*_LLM_OFF, RateLimited) as error:

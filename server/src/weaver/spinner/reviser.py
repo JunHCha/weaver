@@ -18,7 +18,7 @@ from pydantic import Field, StrictStr, ValidationError, field_validator, model_v
 
 from weaver.llm import AnthropicClient, LlmClient, SchemaMismatch
 from weaver.llm.client import MODEL
-from weaver.llm.webex_guard import require_webex_gate
+from weaver.llm.policy import provenance_scope
 from weaver.schema import Contract, NonEmpty, Ref, Script, Segment
 
 PROMPT_VERSION: Literal["spinner.revise.v2"] = "spinner.revise.v2"
@@ -297,14 +297,14 @@ class LlmReviser:
         return f"{PROMPT_VERSION}:{prompt}:{model}"
 
     def revise(self, thread: Script, hints: ReviseHints) -> str:
-        require_webex_gate(thread.channel)
         original = _revision_segments(thread)
         speech = [
             revised
             for revised, s in zip(original, thread.segments, strict=True)
             if _revisable(s, revised.text)
         ]
-        edited = self._edit(speech, hints) if speech else {}
+        with provenance_scope([thread.source_id]):
+            edited = self._edit(speech, hints) if speech else {}
         revision = Revision(
             segments=[
                 s.model_copy(update={"text": edited[s.segment_id]})

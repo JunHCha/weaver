@@ -10,6 +10,7 @@ from typing import Protocol
 from weaver.archive import ArchiveStore
 from weaver.courier.atomic import write_json_atomic
 from weaver.fabric import Fabric, ThreadQuery
+from weaver.llm.policy import LlmPolicy, Provenance
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import Prepared, SummaryReview
 from weaver.loom.summary_state import SummaryState
@@ -129,7 +130,10 @@ class SummaryProcessor:
         drafts: SummaryDrafts,
         gate: LlmGate,
         progress: PipelinePublisher | None = None,
+        *,
+        policy: LlmPolicy | None = None,
     ) -> None:
+        self.policy = policy
         self.spinner, self.drafts, self.gate = spinner, drafts, gate
         self.progress = progress
 
@@ -137,12 +141,17 @@ class SummaryProcessor:
         if self.progress is not None:
             self.progress.begin(source)
         if source.channel == "webex":
-            # Keep local parsing/provenance available, but do not create a Loom
-            # package until B2 replaces this temporary source-channel barrier.
+            # Parse locally first: the private Space ID is saved by the parser
+            # and is what the policy resolves. No Loom package is created here.
             self.spinner.spin(source)
             if self.progress is not None:
                 self.progress.organized(source)
-            return "waiting_llm"
+            if self.policy is None:
+                return "waiting_llm"  # fail closed without a policy gate
+        # Observe holds even while credentials/backend availability are off,
+        # so enabling them later cannot silently release a denied backlog.
+        if self.policy is not None:
+            self.policy.check(Provenance(frozenset({source.source_id})))
         with self.drafts.state.connect() as db:
             rows = db.execute(
                 "SELECT package FROM packages WHERE revision=1"

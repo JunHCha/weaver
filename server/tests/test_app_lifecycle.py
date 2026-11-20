@@ -719,7 +719,7 @@ def test_wiki_timeout_backoff_only_resets_on_success(tmp_path, other):
 
 
 def test_paused_wiki_skips_compile_reservations_and_warns_once_per_day(
-    tmp_path, monkeypatch, caplog
+    tmp_path, monkeypatch, caplog, transport_policy
 ):
     from dataclasses import replace
     from datetime import datetime as RealDatetime

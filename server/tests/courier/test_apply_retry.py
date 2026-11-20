@@ -144,6 +144,7 @@ def test_retry_settings_reject_invalid_values(values):
 
 def test_cli_failure_ledger_does_not_grow_after_stop(
     tmp_path,
+    transport_policy,
     paths,
     captures,
     revisions,

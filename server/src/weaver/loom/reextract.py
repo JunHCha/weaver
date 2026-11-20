@@ -18,6 +18,7 @@ from weaver.action.outbox import ActionRecord, _record
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot, _key
 from weaver.fabric import FabricStore, ThreadQuery
+from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
 from weaver.loom.summary_review import ApprovalExtractor, MissingApprovalTime, Prepared
 from weaver.loom.summary_state import read_contact_name, read_source_reference
@@ -31,7 +32,8 @@ from weaver.schema import (
     ThreadDraft,
     Verdict,
 )
-from weaver.wiki.store import _properties
+from weaver.wiki.provenance import source_ids as wiki_source_ids
+from weaver.wiki.store import WikiStore, _properties
 
 RUN_KEY = "feedback-time-v6"
 BOOTSTRAP_MAX_ENTRIES = 200
@@ -771,6 +773,12 @@ def reextract(
         report.valid = False
         return _seal(report)
     selected, extracted_ids = _reviews(root, report, source)
+    wiki_origins = wiki_source_ids(
+        WikiStore.open_readonly(wiki.parent, root, wiki_root=wiki.name)
+    )
+    llm = ScopedClient(
+        llm, {*selected, *(t.source_id for t in threads)} | wiki_origins, shared=True
+    )
     if not report.valid:
         return _seal(report)
     active = _active(threads)

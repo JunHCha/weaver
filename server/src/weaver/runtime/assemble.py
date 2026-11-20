@@ -15,6 +15,9 @@ from weaver.fabric import FabricStore
 from weaver.ingest import VerdictIngest
 from weaver.llm import create_client
 from weaver.llm.cli import ClaudeCliClient
+from weaver.llm.ledger import Ledger
+from weaver.llm.policy import LedgerBacklog, LlmPolicy
+from weaver.llm.policy_archive import configured_policy
 from weaver.llm.types import LlmClient
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import SummaryReview
@@ -58,13 +61,20 @@ def build_runtime(
     plugins = plugins or Plugins()
     env = os.environ if environ is None else environ
     real: LlmClient | None
+    policy: LlmPolicy | None = None
     if plugins.client is not None:
         real = plugins.client
         gate = LlmGate(lambda: LlmStatus(True, "injected"))
     else:
+        policy = configured_policy(config)
+        policy.backlog = LedgerBacklog(Ledger(config.state_root / "llm.sqlite3"))
         # Constructing the client needs no credentials; the gate decides use.
         real = (
-            create_client(config.llm, state_root=config.state_root)
+            create_client(
+                config.llm,
+                state_root=config.state_root,
+                policy=policy,
+            )
             if config.llm.backend in {"anthropic", "claude_cli", "codex_cli"}
             else None
         )
@@ -115,7 +125,7 @@ def build_runtime(
         reviser=LlmReviser(client),
         revision_threshold=drafts.revision_threshold,
     )
-    processor = SummaryProcessor(spinner, drafts, gate, progress)
+    processor = SummaryProcessor(spinner, drafts, gate, progress, policy=policy)
 
     maintenance = list(plugins.maintenance)
     if config.wiki.enabled:

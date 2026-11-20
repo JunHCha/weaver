@@ -7,6 +7,7 @@ import pytest
 from server.tests.fake_responses import fixture_response
 
 from weaver.action import ActionEngine, ActionOutbox
+from weaver.config import PrivacySettings
 from weaver.context import ContextDictionary, Page
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.loom.reextract import reextract, render
@@ -275,6 +276,8 @@ def test_plan_export_inside_state_is_refused_and_cli_apply_has_no_client(
         vault_root=tmp_path,
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         llm=None,
+        archive_root=tmp_path / "archive",
+        privacy=PrivacySettings(),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
@@ -328,6 +331,8 @@ def test_cli_uses_overridden_wiki_root(tmp_path, monkeypatch):
         vault_root=tmp_path,
         wiki=SimpleNamespace(vault_root=tmp_path / "overridden", folder="Custom"),
         llm=None,
+        archive_root=tmp_path / "archive",
+        privacy=PrivacySettings(),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
