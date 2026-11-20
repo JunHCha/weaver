@@ -94,6 +94,7 @@ def build_runtime(
         summaries.archive,
         state_root=config.state_root,
         proposals=config.courier.proposals,
+        publish_files=config.mobile.transport_for("review") == "files",
         timezone=config.time.timezone,
     )
     progress = PipelinePublisher(
@@ -101,6 +102,7 @@ def build_runtime(
             config.state_root,
             config.courier.proposals,
             failure_limit=config.courier_settings.max_attempts,
+            publish_files=config.mobile.transport_for("pipeline") == "files",
         ),
         archive,
         review.state,
@@ -119,7 +121,11 @@ def build_runtime(
     courier = Courier(config.courier, archive, adapter, adapter, ingest=ingest)
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     drafts = SummaryDrafts(
-        client, context, config.courier.proposals, state_root=config.state_root
+        client,
+        context,
+        config.courier.proposals,
+        state_root=config.state_root,
+        publish_files=config.mobile.transport_for("review") == "files",
     )
     spinner = Spinner.from_config(
         archive,
@@ -131,6 +137,7 @@ def build_runtime(
     processor = SummaryProcessor(spinner, drafts, gate, progress, policy=policy)
 
     maintenance = list(plugins.maintenance)
+    maintenance.append(MaintenanceTask("review-projection", interval, review.republish))
     if config.wiki.enabled:
         store = WikiStore(
             config.wiki.vault_root or config.vault_root,

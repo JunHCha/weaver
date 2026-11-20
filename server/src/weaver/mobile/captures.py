@@ -147,7 +147,7 @@ class CaptureService:
         elif (staged[1], staged[2]) != (manifest.sha256, manifest.size):
             raise ApiError(409, "payload_mismatch")
         try:
-            self.archive.put(manifest, path)
+            self.archive.commit(manifest, path)
         except CaptureConflict:
             raise ApiError(409, "capture_conflict") from None
         except PayloadMismatch:

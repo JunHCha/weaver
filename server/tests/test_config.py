@@ -721,3 +721,27 @@ def test_cli_timeouts_load_defaults_and_overrides(tmp_path):
 def test_cli_timeouts_reject_invalid_toml(tmp_path, field, value):
     with pytest.raises(ConfigError, match=field):
         load_config(write_config(tmp_path, f"[llm]\n{field} = {value}\n"), environ={})
+
+
+@pytest.mark.parametrize("initialize", [False, True])
+def test_http_config_does_not_require_or_initialize_shared_folders(
+    tmp_path, initialize
+):
+    import shutil
+
+    path = write_config(tmp_path, '[mobile]\ntransport = "http"\n')
+    shutil.rmtree(tmp_path / "sync_root")
+    config = load_config(path, environ={}, init_directories=initialize)
+    assert not config.sync_root.exists()
+
+
+def test_http_config_accepts_unwritable_shared_folder(tmp_path, monkeypatch):
+    path = write_config(tmp_path, '[mobile]\ntransport = "http"\n')
+    access = os.access
+    sync = tmp_path / "sync_root"
+    monkeypatch.setattr(
+        os,
+        "access",
+        lambda p, mode: False if p == sync or sync in p.parents else access(p, mode),
+    )
+    assert load_config(path, environ={}).sync_root == sync.resolve()

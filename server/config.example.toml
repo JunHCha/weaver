@@ -47,7 +47,9 @@ api_key_env = "ANTHROPIC_API_KEY"
 # When CLI timeouts consume >= half the daily call cap, Wiki CLI calls stop
 # for the rest of the local day. Source calls can still use the remaining cap.
 
-# All five roots plus sync/{outbox,receipts,proposals,decisions} must exist.
+# Private roots must exist (or be initialized explicitly).
+# File mode also requires sync/{outbox,receipts,proposals,decisions}; when all
+# mobile transports are HTTP, shared Courier folders are optional and not created.
 # To create missing directories explicitly (existing data is preserved):
 # uv run --project server python -m weaver.app run --config <file> --init-directories
 # Temporarily override the configured backend (also works with --check-config):

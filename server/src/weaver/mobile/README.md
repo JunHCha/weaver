@@ -202,7 +202,10 @@ scope: `read`, `capture`, `review`, `action`(+실행 폰 1대), `edit`. 표시 �
 HTTP 요청은 durable inbox(operations)만 커밋하고 202를 답한다. 데몬의 `mobile` 유지보수 작업이
 `VerdictIngest.apply_external`(파일 Courier와 공유하는 도메인 적용·재시도·backoff·`apply_stopped`)과 `ActionCourier.apply_result`로 적용한다.
 파일 Courier는 같은 서비스의 `apply`를 호출하며 파일 검증·정리만 맡는다. capture의 `/captures` 경로는 기존
-`ArchiveStore.captures` journal과 Receipt 경계를 유지한다. 별도 HTTP 도메인 journal은 만들지 않는다.
+`ArchiveStore.commit`으로 `ArchiveStore.captures` journal과 Receipt 경계를 유지한다.
+HTTP 수집은 공유 `receipts/`에 게시하지 않고 journal의 최초 Receipt를 반환한다. 파일 Courier의
+`put`/`accept`/`confirm`은 같은 영속 커밋 뒤 별도 `ReceiptPublisher`로 게시하므로 롤백 경로를 유지한다.
+별도 HTTP 도메인 journal은 만들지 않는다.
 적용 뒤 operation 갱신 전에 종료돼도 도메인 journal이 막아 중복 적용이 없다. 재시작하면 중지된 Verdict를 다시 시도한다.
 
 ## 인증 (서버 설정)
@@ -228,8 +231,13 @@ node(+로그인 사용자) 결합, scope 분리다.
 
 ## 범위 밖
 
-Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alerts/pipeline=false`). 검토 패키지 파일
-(`proposals/`) 게시는 설정과 무관하게 계속된다.
+Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alerts/pipeline=false`).
+검토 패키지·legacy diff 파일(`proposals/`)은 review transport가 `files`일 때만 선택적으로 게시한다.
+요약 journal과 private archive 및 `pipeline.sqlite3` 관찰이 원천이며 공유 폴더 쓰기 실패는 HTTP durable
+commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 기본 transport가 `files`일 때 유지한다.
+모든 transport가 HTTP면 설정 로딩·초기화도 공유 Courier 폴더의 존재/쓰기 권한을 요구하거나 폴더를 만들지 않는다.
+private state/archive/vault 경계·권한 검사는 유지한다. 미결 파일 재게시와 명시적 `mobile reconcile`은
+롤백용이며 I7 관찰 완료 전까지 파일 어댑터를 제거하지 않는다.
 
 
 ### 충돌 진단 (인증된 모든 기기, scope 제한 없음)

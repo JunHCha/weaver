@@ -13,7 +13,10 @@ Commit order, each step durable before the next:
    an existing file, and fsync the directory.
 2. One ``BEGIN IMMEDIATE`` transaction inserts the Source (first manifest only)
    and the capture row (manifest verbatim and the exact receipt bytes).
-3. Publish ``receipts/<capture_id>.json`` with the common atomic write.
+``commit`` stops here: HTTP returns the Receipt stored in the index.
+The legacy file adapter (``put``/``accept``/``confirm``) then optionally:
+
+3. Publishes ``receipts/<capture_id>.json`` via ``ReceiptPublisher``.
 
 A crash after 1 leaves an unindexed body that the retry reuses after hashing
 it; a crash after 2 leaves an indexed capture whose receipt ``confirm``
@@ -143,6 +146,20 @@ def _hash_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+class ReceiptPublisher:
+    """File transport adapter for already committed, byte-identical Receipts."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+
+    def publish(self, capture_id: str, data: bytes) -> None:
+        final = self.directory / f"{capture_id}.json"
+        with contextlib.suppress(OSError):
+            if not final.is_symlink() and final.read_bytes() == data:
+                return
+        write_bytes_atomic(final, data)
+
+
 class ArchiveStore:
     """SourceStore and Courier CaptureStore over one ``archive_root``.
 
@@ -153,13 +170,14 @@ class ArchiveStore:
     def __init__(
         self,
         archive_root: Path,
-        receipts: Path,
+        receipts: Path | None = None,
         *,
         clock: Callable[[], datetime] = _utc_now,
         new_id: Callable[[], str] = new_source_id,
     ) -> None:
         self.root = archive_root
         self.receipts = receipts
+        self.receipt_publisher = ReceiptPublisher(receipts) if receipts else None
         self._clock = clock
         self._new_id = new_id
         self._index = archive_root / INDEX_NAME
@@ -190,8 +208,17 @@ class ArchiveStore:
         with a stored body links to the existing Source. The same capture_id
         with another sha256 raises ``CaptureConflict`` and changes nothing.
         """
-        source, receipt = self._persist(manifest, payload)
-        self._publish_receipt(manifest.capture_id, receipt)
+        source = self.commit(manifest, payload)
+        self.confirm(manifest.capture_id)
+        return source
+
+    def commit(self, manifest: Manifest, payload: Path) -> Source:
+        """Durably archive a capture without publishing a shared-folder Receipt.
+
+        HTTP uses this boundary; ``put``/``accept``/``confirm`` are the legacy
+        file adapter and may fail publication after this commit succeeds.
+        """
+        source, _ = self._persist(manifest, payload)
         return source
 
     def get(self, source_id: str) -> Source:
@@ -477,11 +504,9 @@ class ArchiveStore:
         return source, receipt.encode("utf-8")
 
     def _publish_receipt(self, capture_id: str, data: bytes) -> None:
-        final = self.receipts / f"{capture_id}.json"
-        with contextlib.suppress(OSError):
-            if not final.is_symlink() and final.read_bytes() == data:
-                return  # already published; avoid needless sync traffic
-        write_bytes_atomic(final, data)
+        if self.receipt_publisher is None:
+            raise ValueError("file Receipt publisher is not configured")
+        self.receipt_publisher.publish(capture_id, data)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._index, timeout=30.0, isolation_level=None)

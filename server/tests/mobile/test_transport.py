@@ -247,3 +247,29 @@ def test_runtime_without_a_bind_has_no_mobile_task(tmp_path):
     runtime = build_runtime(load_config(path, init_directories=True), environ={})
     assert "mobile" not in [task.name for task in runtime.maintenance]
     assert not (root / "state" / "mobile.sqlite3").exists()
+
+
+def test_failed_review_rollback_keeps_recorded_transport_for_retry(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    h = Harness(tmp_path, HTTP)
+    h.add_package()
+    reconcile(h)
+    settings = MobileSettings(
+        transport="files", features=(("action", "http"), ("capture", "http"))
+    )
+
+    def fail(*args):
+        raise OSError("synthetic rollback projection failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("weaver.loom.projection.write_json_atomic", fail)
+        with pytest.raises(OSError):
+            reconcile_transports(settings, h.store, h.reviews, h.actions, h.config)
+    assert h.store.recorded_transport("review") == "http"
+    assert reconcile_transports(settings, h.store, h.reviews, h.actions, h.config) == [
+        "review"
+    ]
+    assert (h.config.courier.proposals / "pkg_a.r1.json").is_file()

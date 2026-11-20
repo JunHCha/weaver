@@ -639,3 +639,32 @@ def test_card_summary_bounds_skips_headings_and_falls_through():
     ]
     tags = card_tags(threads, None)
     assert [t.name for t in tags] == [f"태그{i}" for i in range(8)]
+
+
+@pytest.mark.parametrize("publish_files", [False, True])
+def test_projection_failure_does_not_interrupt_durable_observations(
+    tmp_path, monkeypatch, publish_files
+):
+    journal = PipelineJournal(
+        tmp_path / "state", tmp_path / "proposals", publish_files=publish_files
+    )
+
+    def fail(*args):
+        raise OSError("synthetic shared-folder failure")
+
+    monkeypatch.setattr("weaver.runtime.pipeline_projection.write_bytes_atomic", fail)
+    first = journal.receive(source(), datetime.now(UTC))
+    updated = journal.update(
+        first.source_id, location="loom", summary="합성 요약", capture_hosts=["mac"]
+    )
+    journal.publish()
+    restarted = PipelineJournal(
+        tmp_path / "state", tmp_path / "proposals", publish_files=False
+    )
+    assert restarted.get(first.source_id) == updated
+    assert updated.revision == first.revision + 1
+    assert updated.history == ["spinner", "loom"]
+    monkeypatch.undo()
+    PipelineJournal(tmp_path / "state", tmp_path / "proposals").publish()
+    data = (tmp_path / "proposals/pipeline" / f"{first.source_id}.json").read_bytes()
+    assert PipelineItem.model_validate_json(data) == updated

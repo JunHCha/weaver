@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from weaver.courier.atomic import write_json_atomic
+from weaver.loom.projection import ReviewProjection
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import ReviewPackage, Verdict
 
@@ -128,23 +128,5 @@ class ReviewService:
         )
 
     def republish(self, proposals: Path) -> list[str]:
-        """Write unfinished packages back to ``proposals/`` (return to files)."""
-        written = []
-        for package in self.open_packages():
-            target = proposals / f"{package.package_id}.r{package.revision}.json"
-            data = package.model_dump_json().encode()
-            if not target.is_file() or _normal(target) != _normal_bytes(data):
-                write_json_atomic(target, package)
-                written.append(target.name)
-        return written
-
-
-def _normal_bytes(data: bytes) -> object:
-    return json.loads(data)
-
-
-def _normal(path: Path) -> object:
-    try:
-        return json.loads(path.read_bytes())
-    except ValueError:
-        return None
+        """Explicit rollback adapter; HTTP reads never publish shared files."""
+        return ReviewProjection(proposals, strict=True).recover(self.state)

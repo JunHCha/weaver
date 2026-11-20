@@ -7,8 +7,8 @@ into Fabric Threads. It never appends a fact the user did not approve.
    revised Script, one summary document and at most three questions with three
    choices each (`loom.summary`). Context names (`ContextDictionary.candidates`)
    are the only hints. The `ReviewPackage` revision 1 is journaled in
-   `state_root/summary.sqlite3` and then published as `<package_id>.r1.json` in
-   the Courier `proposals/` folder. Extra questions are appended to the body as
+   `state_root/summary.sqlite3`. In file mode, `ReviewProjection` then publishes
+   `<package_id>.r1.json` in the Courier `proposals/` folder. Extra questions are appended to the body as
    a list instead of being asked. A call Script at or below `revision_threshold`
    also gets its speech segments corrected in that same call (changed segments
    only; an invalid correction is dropped and the original is summarized). Longer
@@ -30,6 +30,16 @@ into Fabric Threads. It never appends a fact the user did not approve.
    (`weaver.action`) turns that judgement into calendar commands. A schedule that
    the approved document describes as a change of a standing schedule carries
    `updates` (the model sees `existing_schedules`); an unfounded link is dropped.
+
+The summary journal and private EventSummary archive are authoritative. The runtime
+sets `publish_files=false` for HTTP review transport: creating or approving a
+review never requires the shared proposals folder. File publication runs after
+the durable commit and logs an I/O failure without changing an approval to a
+failed operation. File mode retries unfinished packages from the journal each
+tick; completed packages stay consumed by Courier. Legacy correction diffs are
+retained in the prepared decision and recovered with the full revised package.
+The explicit HTTP-to-files rollback command propagates publication failures so
+the transport switch can be retried.
 
 Approval loads one dictionary snapshot and bounds `dictionary` plus
 `existing_tags` to 8,000 estimated tokens, conservatively charging one token per
