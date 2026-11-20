@@ -5,6 +5,7 @@ import os
 import pytest
 
 from weaver.courier import Courier
+from weaver.ingest import VerdictIngest
 
 from .conftest import BODY, CAP, CAP2, assert_schema_valid, manifest_for, write_json
 
@@ -175,7 +176,13 @@ def test_symlinked_manifest_is_rejected(courier, paths, captures, tmp_path):
 def test_restart_rescan_recovers_and_does_not_duplicate(
     paths, captures, revisions, decisions
 ):
-    first = Courier(paths, captures, revisions, decisions)
+    first = Courier(
+        paths,
+        captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
     write_json(paths.outbox / f"{CAP}.json", manifest_for())
     assert first.scan_once().accepted == []  # body not synced before shutdown
     # Server is down while the body and a second capture arrive.
@@ -183,11 +190,23 @@ def test_restart_rescan_recovers_and_does_not_duplicate(
     other = b"second synthetic capture"
     publish_capture(paths.outbox, CAP2, other, "m4a", kind="fleece", channel="call")
 
-    restarted = Courier(paths, captures, revisions, decisions)
+    restarted = Courier(
+        paths,
+        captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
     assert restarted.scan_once().accepted == [CAP, CAP2]
     # Same files reappear on later scans and after another restart.
     assert restarted.scan_once().duplicates == [CAP, CAP2]
-    again = Courier(paths, captures, revisions, decisions)
+    again = Courier(
+        paths,
+        captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
     assert again.scan_once().accepted == []
     assert len(captures.accepted) == 2
 

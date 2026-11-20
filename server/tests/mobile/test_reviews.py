@@ -195,10 +195,10 @@ def test_applier_waits_while_the_llm_gate_is_closed(tmp_path):
     headers = h.pair()
     h.add_package()
     first = submit(h, headers)
-    h.courier._can_apply = lambda: False
+    h.ingest._can_apply = lambda: False
     h.tick()
     assert operation(h, headers, first)["code"] == "apply_waiting"
-    h.courier._can_apply = None
+    h.ingest._can_apply = None
     h.tick()
     assert operation(h, headers, first)["state"] == "applied"
 

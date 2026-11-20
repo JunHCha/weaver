@@ -2,7 +2,7 @@
 
 HTTP only commits the durable inbox row and answers 202. This worker applies
 each row through the same domain journals the file transport uses
-(``Courier`` decision application, ``ActionCourier`` results), so a request
+(``VerdictIngest`` decision application, ``ActionCourier`` results), so a request
 delivered twice, or over both transports, changes the domain once.
 ``applied`` is recorded only after the domain confirms it.
 """
@@ -10,8 +10,8 @@ delivered twice, or over both transports, changes the domain once.
 import logging
 
 from weaver.action.courier import ActionCourier
-from weaver.courier import Courier, CourierFileError
 from weaver.fabric import FabricError
+from weaver.ingest import CourierFileError, VerdictIngest
 from weaver.schema import ActionResult, Verdict
 
 from .store import MobileStore, Operation
@@ -30,16 +30,16 @@ _STALE = {"stale_rev"}
 
 class MobileApplier:
     def __init__(
-        self, store: MobileStore, courier: Courier, actions: ActionCourier
+        self, store: MobileStore, ingest: VerdictIngest, actions: ActionCourier
     ) -> None:
         self.store = store
-        self.courier = courier
+        self.ingest = ingest
         self.actions = actions
 
     def recover(self) -> int:
         """A restart retries stopped verdicts, like the file path does."""
         count = 0
-        self.courier.forget_external_failures()
+        self.ingest.forget_external_failures()
         for op in self.store.stopped():
             self.store.update_operation(op.operation_id, "queued")
             count += 1
@@ -56,7 +56,7 @@ class MobileApplier:
             self.store.update_operation(op.operation_id, "failed", error="payload_lost")
             return
         try:
-            self.courier.apply_external(
+            self.ingest.apply_external(
                 op.operation_id, Verdict.model_validate_json(op.payload)
             )
         except CourierFileError as error:

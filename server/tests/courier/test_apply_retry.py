@@ -6,6 +6,7 @@ import pytest
 
 from weaver.config import ConfigError, CourierSettings
 from weaver.courier import Courier
+from weaver.ingest import VerdictIngest
 
 from .conftest import PKG, verdict_for, write_json
 
@@ -19,8 +20,12 @@ def setup_retry(paths, captures, revisions, decisions, *, attempts=3):
         captures,
         revisions,
         decisions,
-        retry=CourierSettings(attempts, 10, 15),
-        clock=lambda: clock[0],
+        ingest=VerdictIngest(
+            revisions,
+            decisions,
+            retry=CourierSettings(attempts, 10, 15),
+            clock=lambda: clock[0],
+        ),
     )
     return courier, path, clock
 
@@ -101,7 +106,13 @@ def test_restart_recovers_three_existing_failed_verdicts(
     clock[0] = 10000
     courier.scan_once()
     assert len(decisions.calls) == 3
-    restarted = Courier(paths, captures, revisions, decisions)
+    restarted = Courier(
+        paths,
+        captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
     assert len(restarted.scan_once().applied) == 3
     assert not list(paths.decisions.iterdir())
 

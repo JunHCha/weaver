@@ -17,6 +17,7 @@ from weaver.archive import ArchiveStore
 from weaver.config import CourierSettings, ServerConfig, load_config
 from weaver.courier import Courier
 from weaver.fabric import FabricStore
+from weaver.ingest import VerdictIngest
 from weaver.loom.summary_state import SummaryState
 from weaver.mobile.api import create_app
 from weaver.mobile.applier import MobileApplier
@@ -115,9 +116,7 @@ class Harness:
         self.reviews = ReviewService(self.summary, self.store)
         self.decisions = Decisions(self.summary)
         self.clock = [1000.0]
-        self.courier = Courier(
-            self.config.courier,
-            self.archive,
+        self.ingest = VerdictIngest(
             self.reviews,
             self.decisions,
             retry=CourierSettings(
@@ -125,7 +124,14 @@ class Harness:
             ),
             clock=lambda: self.clock[0],
         )
-        self.applier = MobileApplier(self.store, self.courier, self.actions)
+        self.courier = Courier(
+            self.config.courier,
+            self.archive,
+            self.reviews,
+            self.decisions,
+            ingest=self.ingest,
+        )
+        self.applier = MobileApplier(self.store, self.ingest, self.actions)
         self.app = create_app(
             self.config,
             self.whois,

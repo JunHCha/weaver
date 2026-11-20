@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from weaver.ingest.errors import CourierFileError as CourierFileError
 from weaver.schema.models import ULID
 
 MAX_JSON_BYTES = 1 << 20
@@ -36,14 +37,6 @@ def is_ignored(name: str) -> bool:
 def is_conflict(name: str) -> bool:
     """Syncthing conflict copies are preserved for a human, never processed."""
     return CONFLICT_MARKER in name
-
-
-class CourierFileError(Exception):
-    """A file cannot be processed now. ``code`` is safe to log; no content is."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 @dataclass(frozen=True)

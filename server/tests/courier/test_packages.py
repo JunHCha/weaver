@@ -76,7 +76,7 @@ def test_apply_failure_is_retried_and_unconfirmed_apply_is_reported(
     courier, paths, revisions, decisions, monkeypatch
 ):
     tick = [0.0]
-    monkeypatch.setattr(courier, "_clock", lambda: tick[0])
+    monkeypatch.setattr(courier.ingest, "_clock", lambda: tick[0])
     revisions.latest[PKG] = 1
     path = write_json(paths.decisions / f"{PKG}.r1.json", verdict_for())
     decisions.failures = 1

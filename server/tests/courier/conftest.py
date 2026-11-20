@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from weaver.config import CourierPaths
 from weaver.courier import Courier
+from weaver.ingest import VerdictIngest
 from weaver.schema import ReviewPackage, Verdict
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -166,7 +167,13 @@ def decisions():
 
 @pytest.fixture
 def courier(paths, captures, revisions, decisions):
-    return Courier(paths, captures, revisions, decisions)
+    return Courier(
+        paths,
+        captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
 
 
 def place_package(paths, package):
