@@ -1,5 +1,6 @@
 """Private atomic credential storage, serialized across CLI/poller processes."""
 
+import errno
 import fcntl
 import os
 import secrets
@@ -13,13 +14,15 @@ class OAuthError(ValueError):
     """Fixed error codes only; never include server responses or credentials."""
 
 
-def _check(fd: int, mode: int, *, directory: bool = False) -> None:
+def _check(
+    fd: int, mode: int, *, directory: bool = False, any_mode: bool = False
+) -> None:
     info = os.fstat(fd)
     valid_type = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
     if (
         not valid_type
         or info.st_uid != os.getuid()
-        or stat.S_IMODE(info.st_mode) != mode
+        or (not any_mode and stat.S_IMODE(info.st_mode) != mode)
     ):
         raise OAuthError("unsafe_private_permissions")
     if not directory and info.st_nlink != 1:
@@ -45,9 +48,14 @@ class PrivateFile:
                     os.mkdir(part, mode=0o700, dir_fd=fd)
                 except FileExistsError:
                     pass
-                child = os.open(
-                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
-                )
+                try:
+                    child = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                    )
+                except OSError as error:
+                    if error.errno in (errno.ELOOP, errno.ENOTDIR):
+                        raise OAuthError("unsafe_private_path") from None
+                    raise
                 os.close(fd)
                 fd = child
             _check(fd, 0o700, directory=True)
@@ -67,7 +75,7 @@ class PrivateFile:
                 os.close(lock)
             os.close(fd)
 
-    def read(self, parent: int) -> bytes | None:
+    def read(self, parent: int, *, any_mode: bool = False) -> bytes | None:
         try:
             fd = os.open(
                 self.path.name,
@@ -77,7 +85,7 @@ class PrivateFile:
         except FileNotFoundError:
             return None
         try:
-            _check(fd, 0o600)
+            _check(fd, 0o600, any_mode=any_mode)
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 data = stream.read(65537)
             if len(data) > 65536:
@@ -86,11 +94,11 @@ class PrivateFile:
         finally:
             os.close(fd)
 
-    def write(self, parent: int, data: bytes) -> None:
+    def write(self, parent: int, data: bytes, *, any_mode: bool = False) -> None:
         if len(data) > 65536:
             raise OAuthError("invalid_credentials")
         # Validate existing destination before replacing it, including symlinks.
-        self.read(parent)
+        self.read(parent, any_mode=any_mode)
         temporary = ".webex-" + secrets.token_hex(16)
         fd = os.open(
             temporary,

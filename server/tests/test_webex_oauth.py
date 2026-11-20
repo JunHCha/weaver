@@ -7,6 +7,7 @@ no assumption about real account permissions, retention, or message APIs.
 import json
 import os
 import stat
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -26,8 +27,8 @@ def token_response(suffix: str = "one") -> dict[str, object]:
     return {
         "access_token": "fake-access-" + suffix,
         "refresh_token": "fake-refresh-" + suffix,
-        "expires_in": 60,
-        "refresh_token_expires_in": 600,
+        "expires_in": 300,
+        "refresh_token_expires_in": 3000,
     }
 
 
@@ -127,13 +128,13 @@ def test_denial_and_new_attempt_invalidate_state(oauth: OAuth) -> None:
 
 def test_rotation_uses_response_expiry_and_new_tokens(oauth: OAuth) -> None:
     authorize(oauth)
-    oauth.clock = lambda: 1060.0
+    oauth.clock = lambda: 1240.0
     assert oauth.status() == "refresh_required"
     assert oauth.access_token() == "fake-access-refresh_token"
     content = json.loads(oauth.file.path.read_bytes())
     assert content["refresh_token"] == "fake-refresh-refresh_token"
-    assert content["access_expires_at"] == 1120
-    assert content["refresh_expires_at"] == 1660
+    assert content["access_expires_at"] == 1540
+    assert content["refresh_expires_at"] == 4240
     assert "fake-access-authorization_code" not in oauth.file.path.read_text()
 
 
@@ -146,7 +147,7 @@ def test_concurrent_refresh_is_serialized(oauth: OAuth) -> None:
         return httpx.Response(200, json=token_response("rotated"))
 
     oauth.client = httpx.Client(transport=httpx.MockTransport(handler))
-    oauth.clock = lambda: 1061.0
+    oauth.clock = lambda: 1241.0
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: oauth.access_token(), range(2)))
     assert results == ["fake-access-rotated"] * 2
@@ -220,7 +221,7 @@ def test_timeout_and_expired_refresh(oauth: OAuth) -> None:
     oauth.client = httpx.Client(transport=httpx.MockTransport(fail))
     with pytest.raises(OAuthError, match="oauth_network_error"):
         oauth.access_token(force_refresh=True)
-    oauth.clock = lambda: 1600.0
+    oauth.clock = lambda: 3940.0
     with pytest.raises(OAuthError, match="reauthentication_required"):
         oauth.access_token()
     assert "fake-access" not in oauth.file.path.read_text()
@@ -243,12 +244,10 @@ def test_registered_loopback_redirect_only(uri: str) -> None:
         redirect_address(uri)
 
 
-@pytest.mark.parametrize("target", ["parent", "file", "symlink", "hardlink", "lock"])
+@pytest.mark.parametrize("target", ["parent", "symlink", "hardlink", "lock"])
 def test_unsafe_storage_is_rejected(oauth: OAuth, tmp_path: Path, target: str) -> None:
     if target == "parent":
         oauth.file.path.parent.chmod(0o755)
-    elif target == "file":
-        oauth.file.path.chmod(0o644)
     elif target == "lock":
         oauth.file.path.with_suffix(".json.lock").chmod(0o644)
     elif target == "hardlink":
@@ -278,9 +277,11 @@ def test_cli_status_revoke_and_help(
     runner = CliRunner()
     authorize(oauth)
     result = runner.invoke(cli, ["webex", "status"])
-    assert result.exit_code == 0 and result.output.strip() == "authorized"
+    assert result.exit_code == 0 and result.stdout.strip() == "authorized"
+    assert "lock" in result.stderr
     result = runner.invoke(cli, ["webex", "revoke"])
     assert result.exit_code == 0
+    assert "lock" in result.stderr
     assert "Webex Authorized Apps" in result.output
     assert "fake-" not in result.output
     assert runner.invoke(cli, ["webex", "--help"]).exit_code == 0
@@ -289,7 +290,7 @@ def test_cli_status_revoke_and_help(
 
 def test_refresh_without_replacement_keeps_original_expiry(oauth: OAuth) -> None:
     authorize(oauth)
-    oauth.clock = lambda: 1060.0
+    oauth.clock = lambda: 1240.0
     oauth.client = httpx.Client(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(
@@ -300,8 +301,8 @@ def test_refresh_without_replacement_keeps_original_expiry(oauth: OAuth) -> None
     assert oauth.access_token() == "fake-new"
     content = json.loads(oauth.file.path.read_bytes())
     assert content["refresh_token"] == "fake-refresh-authorization_code"
-    assert content["refresh_expires_at"] == 1600
-    assert content["access_expires_at"] == 1085
+    assert content["refresh_expires_at"] == 4000
+    assert content["access_expires_at"] == 1265
 
 
 @pytest.mark.parametrize(
@@ -402,6 +403,248 @@ def test_oversized_response_does_not_commit_unreadable_credentials(
             )
         )
     )
-    with pytest.raises(OAuthError, match="invalid_credentials"):
+    with pytest.raises(OAuthError, match="token_store_failed"):
         oauth.access_token(force_refresh=True)
     assert oauth.file.path.read_bytes() == before
+
+
+def sent(oauth: OAuth) -> dict[str, object]:
+    return json.loads(oauth.file.path.read_bytes())
+
+
+def test_access_token_during_reauthentication_keeps_pending_consent(
+    oauth: OAuth,
+) -> None:
+    uri = callback(oauth)  # begin() while in the reauthentication state
+    with pytest.raises(OAuthError, match="reauthentication_required"):
+        oauth.access_token()
+    assert sent(oauth)["pending_state"] is not None
+    oauth.complete(uri)
+    assert oauth.status() == "authorized"
+
+
+def test_refresh_failure_keeps_pending_consent(oauth: OAuth) -> None:
+    authorize(oauth)
+    uri = callback(oauth)
+    oauth.client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(400))
+    )
+    with pytest.raises(OAuthError, match="reauthentication_required"):
+        oauth.access_token(force_refresh=True)
+    assert sent(oauth)["pending_state"] is not None
+    oauth.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=token_response("again"))
+        )
+    )
+    oauth.complete(uri)
+    assert oauth.access_token() == "fake-access-again"
+
+
+def test_cancel_and_revoke_clear_pending_state(oauth: OAuth) -> None:
+    callback(oauth)
+    oauth.cancel()
+    assert sent(oauth)["pending_state"] is None
+    callback(oauth)
+    oauth.revoke()
+    assert sent(oauth)["pending_state"] is None
+
+
+@pytest.mark.parametrize("status", [400, 401, 403])
+def test_failed_code_exchange_keeps_existing_tokens(oauth: OAuth, status: int) -> None:
+    authorize(oauth)
+    before = sent(oauth)
+    uri = callback(oauth)
+    oauth.client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, text="fake-x"))
+    )
+    with pytest.raises(OAuthError, match="consent_failed"):
+        oauth.complete(uri)
+    after = sent(oauth)
+    for key in ("access_token", "refresh_token", "access_expires_at"):
+        assert after[key] == before[key]
+    assert after["pending_state"] is None
+    assert oauth.status() == "authorized"
+
+
+def test_expiry_margin_boundaries(oauth: OAuth) -> None:
+    authorize(oauth)  # access expires 1300, refresh 4000; margin 60s
+    for now, expected in [
+        (1239.9, "authorized"),
+        (1240.0, "refresh_required"),
+        (3939.9, "refresh_required"),
+        (3940.0, "reauthentication_required"),
+    ]:
+        oauth.clock = lambda now=now: now
+        assert oauth.status() == expected
+    oauth.clock = lambda: 1239.9
+    assert oauth.access_token() == "fake-access-authorization_code"
+    oauth.clock = lambda: 3939.9
+    assert oauth.access_token() == "fake-access-refresh_token"
+    oauth.clock = lambda: 3940.0 + 3000
+    with pytest.raises(OAuthError, match="reauthentication_required"):
+        oauth.access_token()
+
+
+def test_refresh_rotation_without_lifetime_inherits_existing_expiry(
+    oauth: OAuth,
+) -> None:
+    authorize(oauth)
+    oauth.clock = lambda: 1240.0
+    oauth.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "access_token": "fake-new",
+                    "refresh_token": "fake-rotated",
+                    "expires_in": 300,
+                },
+            )
+        )
+    )
+    assert oauth.access_token() == "fake-new"
+    content = sent(oauth)
+    assert content["refresh_token"] == "fake-rotated"
+    assert content["refresh_expires_at"] == 4000  # inherited, never extended
+
+
+def test_code_exchange_without_refresh_lifetime_is_invalid(oauth: OAuth) -> None:
+    uri = callback(oauth)
+    oauth.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "access_token": "fake-a",
+                    "refresh_token": "fake-r",
+                    "expires_in": 300,
+                },
+            )
+        )
+    )
+    with pytest.raises(OAuthError, match="invalid_token_response"):
+        oauth.complete(uri)
+
+
+def test_save_failure_after_exchange_is_distinguished(
+    oauth: OAuth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authorize(oauth)
+    original = oauth.file.write
+    calls = []
+
+    def fail(*args: object, **kwargs: object) -> None:
+        calls.append(1)
+        raise OSError("fake-private-failure")
+
+    monkeypatch.setattr(oauth.file, "write", fail)
+    with pytest.raises(OAuthError, match="token_store_failed"):
+        oauth.access_token(force_refresh=True)
+    assert calls and original
+
+
+def test_revoke_repairs_wrong_file_mode(oauth: OAuth) -> None:
+    authorize(oauth)
+    oauth.file.path.chmod(0o644)
+    oauth.revoke()
+    assert stat.S_IMODE(oauth.file.path.stat().st_mode) == 0o600
+    assert "fake-access" not in oauth.file.path.read_text()
+    oauth.file.path.chmod(0o644)
+    with pytest.raises(OAuthError, match="unsafe_private_permissions"):
+        oauth.status()  # only revoke tolerates the mode
+
+
+def test_revoke_cli_gives_manual_deletion_for_unsafe_storage(
+    oauth: OAuth, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("weaver.webex.cli._oauth", lambda _: oauth)
+    os.link(oauth.file.path, tmp_path / "copy")
+    result = CliRunner().invoke(cli, ["webex", "revoke"])
+    assert result.exit_code == 1
+    assert "Delete the credentials file manually" in result.stderr
+    assert "private/" in result.stderr
+    assert "fake-" not in result.output
+
+
+def test_symlinked_ancestor_is_rejected_with_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    (tmp_path / "link").symlink_to(real)
+    service = OAuth(tmp_path / "link" / "private" / "oauth.json")
+    with pytest.raises(OAuthError, match="unsafe_private_path"):
+        service.redirect_uri()
+    monkeypatch.setattr("weaver.webex.cli._oauth", lambda _: service)
+    result = CliRunner().invoke(cli, ["webex", "status"])
+    assert result.exit_code == 1 and "private/" in result.stderr
+
+
+def test_configure_cli_never_echoes_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = OAuth(tmp_path / "private" / "oauth.json")
+    monkeypatch.setattr("weaver.webex.cli._oauth", lambda _: service)
+    runner = CliRunner()
+    answers = "fake-client-id\nfake-client-secret\n" + REDIRECT + "\n"
+    for _ in range(2):  # second run hits already_configured
+        result = runner.invoke(cli, ["webex", "configure"], input=answers)
+        assert "fake-client" not in result.output + result.stderr
+    assert sent(service)["client_id"] == "fake-client-id"
+
+
+def test_real_loopback_callback_rejects_bad_requests(tmp_path: Path) -> None:
+    import http.client
+    import socket
+    import threading
+
+    from weaver.webex.cli import receive_consent
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    redirect = f"http://127.0.0.1:{port}/oauth/callback"
+    service = OAuth(
+        tmp_path / "private" / "oauth.json",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, json=token_response())
+            )
+        ),
+    )
+    service.configure("fake-client", "fake-secret", redirect)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            receive_consent(service, open_browser=False)
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not (state := sent(service)["pending_state"]) and time.time() < deadline:
+        time.sleep(0.05)
+    assert state
+    good = f"/oauth/callback?state={state}&code=fake-code"
+
+    def get(path: str, host: str | None = None) -> int:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.putrequest("GET", path, skip_host=True)
+        connection.putheader("Host", host or f"127.0.0.1:{port}")
+        connection.endheaders()
+        try:
+            return connection.getresponse().status
+        finally:
+            connection.close()
+
+    assert get(good, host="evil.example") == 400
+    assert get(good.replace("/oauth/callback", "/other")) == 400
+    assert get(good + "&x=" + "a" * 9000) == 400
+    assert sent(service)["pending_state"] == state  # nothing consumed
+    assert get(good) == 200
+    thread.join(10)
+    assert not thread.is_alive() and not errors
+    assert service.status() == "authorized"

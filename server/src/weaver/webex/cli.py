@@ -32,8 +32,39 @@ def _oauth(config: str | None) -> OAuth:
     return OAuth(path)
 
 
-def _error(error: OAuthError) -> None:
+STORAGE_CODES = {
+    "unsafe_private_permissions",
+    "unsafe_private_links",
+    "unsafe_private_path",
+    "private_file_unavailable",
+}
+STORAGE_HINT = (
+    "The credentials file must be a regular file you own (0600) in a 0700 directory "
+    "with no symlinks in its path. Use a path under the private/ directory next to "
+    'the config, as in config.example.toml (credentials_file = "private/webex-oauth.json").'
+)
+LOCK_NOTICE = (
+    "Waiting for the credentials lock; another Webex process may be using it "
+    "(a token request can take up to about 20 seconds)."
+)
+MANUAL_DELETE = (
+    "Local tokens could not be removed safely. Delete the credentials file "
+    "manually (this also removes the client registration), then revoke the "
+    "remote grant in Webex Authorized Apps."
+)
+
+
+def _error(error: OAuthError, *, manual_delete: bool = False) -> None:
     typer.echo(f"Error: {error}", err=True)
+    if str(error) in STORAGE_CODES:
+        typer.echo(STORAGE_HINT, err=True)
+        if manual_delete:
+            typer.echo(MANUAL_DELETE, err=True)
+    elif str(error) == "token_store_failed":
+        typer.echo(
+            "Token storage failed; reauthentication may be required (run webex consent).",
+            err=True,
+        )
     raise typer.Exit(1) from None
 
 
@@ -127,7 +158,11 @@ def receive_consent(oauth: OAuth, *, open_browser: bool = True) -> None:
                 if not complete:
                     raise OAuthError("consent_timeout")
             finally:
-                oauth.cancel()
+                try:
+                    oauth.cancel()
+                except OAuthError:
+                    # Never mask the original error; pending state expires by TTL.
+                    pass
     except OSError:
         raise OAuthError("callback_listener_unavailable") from None
 
@@ -151,7 +186,9 @@ def consent(
 def status(config: ConfigOption = None) -> None:
     """Show authentication state without reading Spaces or printing tokens."""
     try:
-        typer.echo(_oauth(config).status())
+        service = _oauth(config)
+        typer.echo(LOCK_NOTICE, err=True)
+        typer.echo(service.status())
     except OAuthError as error:
         _error(error)
 
@@ -160,9 +197,11 @@ def status(config: ConfigOption = None) -> None:
 def revoke(config: ConfigOption = None) -> None:
     """Remove local access/refresh tokens and pending consent; keep queued work."""
     try:
-        _oauth(config).revoke()
+        service = _oauth(config)
+        typer.echo(LOCK_NOTICE, err=True)
+        service.revoke()
     except OAuthError as error:
-        _error(error)
+        _error(error, manual_delete=True)
     typer.echo(
         "Local tokens and pending consent removed; reauthentication required. To revoke the remote grant, open Webex Authorized Apps and remove this Integration. Courier credentials and queued work are retained."
     )

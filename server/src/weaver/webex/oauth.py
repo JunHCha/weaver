@@ -20,6 +20,9 @@ AUTHORIZE_URL = "https://webexapis.com/v1/authorize"
 TOKEN_URL = "https://webexapis.com/v1/access_token"
 SCOPES = ("spark:rooms_read", "spark:messages_read", "spark:kms")
 STATE_TTL_SECONDS = 180
+# Treat tokens as expired this long before their stated expiry (clock skew,
+# request latency); applies to both access and refresh tokens.
+EXPIRY_MARGIN_SECONDS = 60
 
 
 class Credentials(BaseModel):
@@ -69,8 +72,8 @@ class OAuth:
         self.client = client
         self.clock = clock
 
-    def _read(self, parent: int) -> Credentials:
-        data = self.file.read(parent)
+    def _read(self, parent: int, *, any_mode: bool = False) -> Credentials:
+        data = self.file.read(parent, any_mode=any_mode)
         if data is None:
             raise OAuthError("oauth_not_configured")
         try:
@@ -80,8 +83,22 @@ class OAuth:
         except ValidationError:
             raise OAuthError("invalid_credentials") from None
 
-    def _write(self, parent: int, credentials: Credentials) -> None:
-        self.file.write(parent, credentials.model_dump_json().encode())
+    def _write(
+        self, parent: int, credentials: Credentials, *, any_mode: bool = False
+    ) -> None:
+        self.file.write(
+            parent, credentials.model_dump_json().encode(), any_mode=any_mode
+        )
+
+    def _access_fresh(self, credentials: Credentials) -> bool:
+        return self.clock() < credentials.access_expires_at - EXPIRY_MARGIN_SECONDS
+
+    def _refresh_usable(self, credentials: Credentials) -> bool:
+        return bool(
+            not credentials.reauthentication_required
+            and credentials.refresh_token
+            and self.clock() < credentials.refresh_expires_at - EXPIRY_MARGIN_SECONDS
+        )
 
     def configure(self, client_id: str, client_secret: str, redirect_uri: str) -> None:
         redirect_address(redirect_uri)
@@ -106,17 +123,9 @@ class OAuth:
     def status(self) -> str:
         with self.file.locked() as parent:
             value = self._read(parent)
-            if (
-                value.reauthentication_required
-                or not value.refresh_token
-                or self.clock() >= value.refresh_expires_at
-            ):
+            if not self._refresh_usable(value):
                 return "reauthentication_required"
-            return (
-                "authorized"
-                if self.clock() < value.access_expires_at
-                else "refresh_required"
-            )
+            return "authorized" if self._access_fresh(value) else "refresh_required"
 
     def begin(self) -> str:
         with self.file.locked() as parent:
@@ -214,8 +223,12 @@ class OAuth:
                 )
         except httpx.HTTPError:
             raise OAuthError("oauth_network_error") from None
+        refreshing = fields["grant_type"] == "refresh_token"
         if response.status_code in (400, 401, 403):
-            self._clear(credentials)
+            if not refreshing:
+                # A failed code exchange must not destroy a still-valid grant.
+                raise OAuthError("consent_failed")
+            self._clear_tokens(credentials)
             self._write(parent, credentials)
             raise OAuthError("reauthentication_required")
         if response.status_code != 200:
@@ -225,7 +238,6 @@ class OAuth:
             if not isinstance(raw, dict):
                 raise ValueError
             access = raw["access_token"]
-            refreshing = fields["grant_type"] == "refresh_token"
             refresh = raw.get(
                 "refresh_token", credentials.refresh_token if refreshing else None
             )
@@ -237,7 +249,9 @@ class OAuth:
             ):
                 raise ValueError
             refresh_lifetime = raw.get("refresh_token_expires_in")
-            if refresh_lifetime is None and refreshing and "refresh_token" not in raw:
+            if refresh_lifetime is None and refreshing:
+                # Conservative policy: without refresh_token_expires_in, inherit
+                # the existing refresh expiry, even when a new refresh_token is sent.
                 refresh_lifetime = credentials.refresh_expires_at - self.clock()
             lifetimes = [raw["expires_in"], refresh_lifetime]
             if any(
@@ -252,16 +266,18 @@ class OAuth:
         credentials.access_expires_at = now + lifetimes[0]
         credentials.refresh_expires_at = now + lifetimes[1]
         credentials.reauthentication_required = False
-        self._write(parent, credentials)
+        try:
+            self._write(parent, credentials)
+        except (OAuthError, OSError):
+            raise OAuthError("token_store_failed") from None
 
     @staticmethod
-    def _clear(credentials: Credentials) -> None:
+    def _clear_tokens(credentials: Credentials) -> None:
+        """Drop tokens only; an in-progress consent's pending state is kept."""
         credentials.access_token = None
         credentials.refresh_token = None
-        credentials.pending_state = None
         credentials.access_expires_at = 0
         credentials.refresh_expires_at = 0
-        credentials.pending_since = 0
         credentials.reauthentication_required = True
 
     def access_token(self, *, force_refresh: bool = False) -> str:
@@ -272,25 +288,22 @@ class OAuth:
         """
         with self.file.locked() as parent:
             credentials = self._read(parent)
-            if (
-                credentials.reauthentication_required
-                or not credentials.refresh_token
-                or self.clock() >= credentials.refresh_expires_at
-            ):
-                self._clear(credentials)
+            refresh = credentials.refresh_token
+            if not refresh or not self._refresh_usable(credentials):
+                self._clear_tokens(credentials)
                 self._write(parent, credentials)
                 raise OAuthError("reauthentication_required")
             if (
                 force_refresh
                 or not credentials.access_token
-                or self.clock() >= credentials.access_expires_at
+                or not self._access_fresh(credentials)
             ):
                 self._exchange(
                     parent,
                     credentials,
                     {
                         "grant_type": "refresh_token",
-                        "refresh_token": credentials.refresh_token,
+                        "refresh_token": refresh,
                     },
                 )
             if credentials.access_token is None:
@@ -300,6 +313,10 @@ class OAuth:
     def revoke(self) -> None:
         """Remove local tokens/state atomically; remote grant needs Authorized Apps."""
         with self.file.locked() as parent:
-            credentials = self._read(parent)
-            self._clear(credentials)
-            self._write(parent, credentials)
+            # Tolerate wrong file mode (own regular file) so tokens can be removed;
+            # the rewrite restores 0600. Links/owner/type checks still apply.
+            credentials = self._read(parent, any_mode=True)
+            self._clear_tokens(credentials)
+            credentials.pending_state = None
+            credentials.pending_since = 0
+            self._write(parent, credentials, any_mode=True)
