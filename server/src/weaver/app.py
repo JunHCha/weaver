@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from weaver.mobile.cli import mobile_cli
+from weaver.shepherd.cli import shepherd_cli
 from weaver.webex.cli import webex_cli
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 cli.add_typer(mobile_cli, name="mobile")
+cli.add_typer(shepherd_cli, name="shepherd")
 cli.add_typer(webex_cli, name="webex")
 
 ConfigOption = Annotated[

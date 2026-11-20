@@ -377,11 +377,11 @@ def test_atomic_write_failure_retains_previous_tokens_and_cleans_temp(
     def fail(*args: object, **kwargs: object) -> None:
         raise OSError("fake-private-failure")
 
-    monkeypatch.setattr("weaver.webex.private.os.replace", fail)
+    monkeypatch.setattr("weaver.private.os.replace", fail)
     with pytest.raises(OAuthError, match="private_file_unavailable"):
         oauth.revoke()
     assert oauth.file.path.read_bytes() == before
-    assert not list(oauth.file.path.parent.glob(".webex-*"))
+    assert not list(oauth.file.path.parent.glob(".private-*"))
 
 
 def test_fifo_credentials_are_rejected_without_blocking(oauth: OAuth) -> None:

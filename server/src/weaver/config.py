@@ -640,8 +640,11 @@ def load_config(
         )
     wiki = WikiSettings(**wiki_values)
     shepherds_raw = raw.get("shepherds", {})
-    if not isinstance(shepherds_raw, dict) or shepherds_raw.keys() - {"webex"}:
-        raise ConfigError("shepherds: expected webex table")
+    if not isinstance(shepherds_raw, dict) or shepherds_raw.keys() - {
+        "webex",
+        "courier",
+    }:
+        raise ConfigError("shepherds: expected webex/courier tables")
     webex_raw = shepherds_raw.get("webex", {})
     if (
         not isinstance(webex_raw, dict)
@@ -684,13 +687,27 @@ def load_config(
                 "shepherds.webex.exclude_space_ids: expected string array"
             )
         webex_values["exclude_space_ids"] = tuple(ids)
-    shepherds = ShepherdSettings(WebexSettings(**webex_values))
+    from weaver.shepherd.settings import CourierSettings as ShepherdCourierSettings
+
+    courier_raw = shepherds_raw.get("courier", {})
+    if (
+        not isinstance(courier_raw, dict)
+        or courier_raw.keys() - ShepherdCourierSettings.__dataclass_fields__.keys()
+    ):
+        raise ConfigError("shepherds.courier: unknown fields")
+    try:
+        local_courier = ShepherdCourierSettings(**courier_raw)
+    except (ValueError, TypeError) as error:
+        raise ConfigError(str(error)) from None
+    shepherds = ShepherdSettings(WebexSettings(**webex_values), local_courier)
     if (
         shepherds.webex.credentials_file is not None
         and shepherds.webex.credentials_file == shepherds.webex.courier_token_file
     ):
         raise ConfigError("shepherds.webex: secret files must be distinct")
     mobile = _mobile_settings(raw.get("mobile", {}), env, config_file.parent)
+    if mobile.bind == local_courier.bind and mobile.port == local_courier.port:
+        raise ConfigError("shepherds.courier: listener must be separate from mobile")
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     privacy = _privacy_settings(raw.get("privacy", {}))
     stt_raw = raw.get("stt", {})

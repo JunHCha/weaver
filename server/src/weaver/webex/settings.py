@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from weaver.shepherd.settings import CourierSettings
+
 
 @dataclass(frozen=True)
 class WebexSettings:
@@ -65,3 +67,4 @@ class WebexSettings:
 @dataclass(frozen=True)
 class ShepherdSettings:
     webex: WebexSettings = field(default_factory=WebexSettings)
+    courier: CourierSettings = field(default_factory=CourierSettings)

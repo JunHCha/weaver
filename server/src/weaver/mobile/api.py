@@ -1,7 +1,7 @@
-"""The phone-only HTTPS API, ``/mobile/v1`` (ADR-040, transport contract v1).
+"""Capture and phone API, ``/mobile/v1`` (ADR-040/044, transport contract v1).
 
-Separate from the loopback web app: its own ASGI app, its own listener, no
-shared session token. Success of a write means only that the durable inbox or
+The tailnet HTTPS and Shepherd loopback listeners use separate ASGI apps and
+authentication modes. Neither shares the loopback web app's session token. Success of a write means only that the durable inbox or
 archive step named in the contract is complete.
 """
 
@@ -121,16 +121,17 @@ def operation_body(op: Operation) -> dict[str, object]:
 
 def create_app(
     config: ServerConfig,
-    whois: Whois,
+    whois: Whois | None,
     *,
     store: MobileStore | None = None,
     archive: ArchiveStore | None = None,
     summary: SummaryState | None = None,
     actions: ActionCourier | None = None,
     clock: Callable[[], datetime] | None = None,
+    local_bind: tuple[str, int] | None = None,
 ) -> FastAPI:
     mobile = config.mobile
-    if mobile.bind is None:
+    if mobile.bind is None and local_bind is None:
         raise ValueError("mobile.bind is not configured")
     store = store or MobileStore(config.state_root)
     archive = archive or ArchiveStore.from_config(config)
@@ -161,7 +162,8 @@ def create_app(
         AuthMiddleware,
         store=store,
         whois=whois,
-        allowed_hosts=allowed_hosts(mobile.bind, mobile.port),
+        allowed_hosts=allowed_hosts(*(local_bind or (mobile.bind or "", mobile.port))),
+        local_bind=local_bind,
     )
 
     @app.exception_handler(ApiError)

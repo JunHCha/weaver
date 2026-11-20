@@ -6,6 +6,10 @@
    unverifiable peers are refused (fail closed) before the token is looked at.
 3. The bearer token must belong to an active device bound to that same node.
 
+Only the dedicated Shepherd loopback app replaces whois with an explicit
+loopback peer/listener check and a registered local capture-only credential.
+The tailnet app always requires whois; tokens cannot cross these listeners.
+
 Every refusal is a fixed code. Nothing request-controlled reaches a log.
 """
 
@@ -16,6 +20,8 @@ from typing import Any
 
 import anyio.to_thread
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from weaver.shepherd.registry import Registry
 
 from .store import Device, MobileStore
 from .whois import Whois, WhoisUnavailable
@@ -61,9 +67,15 @@ class AuthMiddleware:
         app: ASGIApp,
         *,
         store: MobileStore,
-        whois: Whois,
+        whois: Whois | None,
         allowed_hosts: frozenset[str],
+        local_bind: tuple[str, int] | None = None,
     ) -> None:
+        if local_bind is not None and local_bind[0] not in ("127.0.0.1", "::1"):
+            raise ValueError("invalid_loopback_bind")
+        if local_bind is None and whois is None:
+            raise ValueError("tailnet_requires_whois")
+        self.local_bind = local_bind
         self.app = app
         self.store = store
         self.whois = whois
@@ -78,7 +90,12 @@ class AuthMiddleware:
         if path != PREFIX and not path.startswith(PREFIX + "/"):
             await _respond(send, 404, "not_found")
             return
-        headers = {k.lower(): v for k, v in scope["headers"]}
+        raw_headers = scope["headers"]
+        for name in (b"host", b"authorization"):
+            if sum(k.lower() == name for k, _ in raw_headers) > 1:
+                await _respond(send, 400, "invalid_headers")
+                return
+        headers = {k.lower(): v for k, v in raw_headers}
         host = headers.get(b"host", b"").decode("latin-1").lower()
         if host not in self.allowed_hosts:
             await _respond(send, 400, "invalid_host")
@@ -90,19 +107,29 @@ class AuthMiddleware:
         if not client:
             await _respond(send, 403, "peer_unverified")
             return
-        try:
-            identity = await anyio.to_thread.run_sync(
-                self.whois.lookup, str(client[0]), int(client[1])
-            )
-        except WhoisUnavailable:
-            # Not a refusal of this peer: tailscaled could not answer. Retry.
-            logger.info("mobile deferred: whois_unavailable")
-            await _respond(send, 503, "whois_unavailable", retryable=True)
-            return
-        if identity is None:
-            logger.info("mobile refused: peer_unverified")
-            await _respond(send, 403, "peer_unverified")
-            return
+        identity = None
+        if self.local_bind is not None:
+            # Both real peer and listener must be loopback; ignore forwarded headers.
+            if (
+                client[0] not in ("127.0.0.1", "::1")
+                or tuple(scope.get("server") or ()) != self.local_bind
+            ):
+                await _respond(send, 403, "socket_mismatch")
+                return
+        else:
+            assert self.whois is not None
+            try:
+                identity = await anyio.to_thread.run_sync(
+                    self.whois.lookup, str(client[0]), int(client[1])
+                )
+            except WhoisUnavailable:
+                logger.info("mobile deferred: whois_unavailable")
+                await _respond(send, 503, "whois_unavailable", retryable=True)
+                return
+            if identity is None:
+                logger.info("mobile refused: peer_unverified")
+                await _respond(send, 403, "peer_unverified")
+                return
         authorization = headers.get(b"authorization", b"").decode("latin-1")
         scheme, _, token = authorization.partition(" ")
         challenge = [(b"www-authenticate", b"Bearer")]
@@ -117,8 +144,23 @@ class AuthMiddleware:
             logger.info("mobile refused: token_revoked %s", device.device_id)
             await _respond(send, 401, "token_revoked", headers=challenge)
             return
-        if device.node_id != identity.node_id or (
-            device.login_name is not None and device.login_name != identity.login_name
+        transport = await anyio.to_thread.run_sync(
+            Registry(self.store).transport, device.device_id
+        )
+        if self.local_bind is not None:
+            if transport != "loopback" or device.scopes != frozenset({"capture"}):
+                await _respond(send, 403, "socket_mismatch")
+                return
+        elif transport == "loopback":
+            await _respond(send, 403, "socket_mismatch")
+            return
+        elif (
+            identity is None
+            or device.node_id != identity.node_id
+            or (
+                device.login_name is not None
+                and device.login_name != identity.login_name
+            )
         ):
             logger.info("mobile refused: node_mismatch %s", device.device_id)
             await _respond(send, 403, "node_mismatch")
