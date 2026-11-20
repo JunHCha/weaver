@@ -382,10 +382,11 @@ class ClaudeCliClient:
             "cost_source": "unavailable",
             "attempt_records": [],
         }
+        # Re-check just before spending anything; a closed gate reserves nothing.
+        self.policy.check(prepared.provenance)
         # Subscription calls carry no dollar charge: the month budget gets 0.
         call_id = self.ledger.reserve(record, 0)
         try:
-            self.policy.check(prepared.provenance)
             result = self._run(record, started, system, user, schema)
             record["status"] = "succeeded"
             return result

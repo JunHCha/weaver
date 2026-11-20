@@ -800,9 +800,12 @@ class Compiler:
         """Collect settled edits and advance only after every page is durable."""
         with self.state_path.with_suffix(".lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            threads = self.fabric.entries(ThreadQuery())
             with provenance_scope(
-                {t.source_id for t in self.fabric.entries(ThreadQuery())}
-                | wiki_source_ids(self.store),
+                {t.source_id for t in threads}
+                | wiki_source_ids(
+                    self.store, {t.thread_id: t.source_id for t in threads}
+                ),
                 shared=True,
             ):
                 self._run()

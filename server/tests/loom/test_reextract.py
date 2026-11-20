@@ -320,6 +320,7 @@ def test_cli_noninteractive_apply_requires_yes_and_daemon_lock(tmp_path, monkeyp
         llm=None,
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
+        shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
@@ -349,6 +350,7 @@ def test_cli_json_preview_uses_fake_client(tmp_path, monkeypatch):
         llm=None,
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
+        shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
@@ -474,6 +476,7 @@ def test_json_apply_reports_partial_failure_with_nonzero_exit(tmp_path, monkeypa
         llm=None,
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
+        shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )

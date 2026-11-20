@@ -7,7 +7,20 @@ from server.tests.fake_responses import edit_response, fixture_response
 
 from weaver.config import load_config
 from weaver.courier import Courier
+from weaver.llm.policy import LlmPolicy
 from weaver.runtime.assemble import Plugins, build_runtime
+
+
+class _AnyOrigin:
+    def resolve(self, source_id):
+        return ("call", None)
+
+
+def open_policy():
+    """Real gate over synthetic Source IDs that never reach an archive."""
+    return LlmPolicy(
+        _AnyOrigin(), shared_sources=lambda: (), webex_present=lambda: False
+    )
 
 
 class FakeLlm:
@@ -37,7 +50,9 @@ def test_runtime_uses_courier_review_transport(tmp_path):
         )
     )
     config = load_config(config_file, init_directories=True)
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     assert isinstance(runtime.scanner, Courier)
     assert runtime._tick(threading.Event()) == runtime.interval
 
@@ -57,7 +72,9 @@ def test_capture_approval_and_restart(tmp_path):
         )
     )
     config = load_config(config_file, init_directories=True)
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     cap = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV"
     data = b"test text"
     manifest = {
@@ -88,7 +105,9 @@ def test_capture_approval_and_restart(tmp_path):
         "feedback": None,
     }
     (config.courier.decisions / paths[0].name).write_text(json.dumps(verdict))
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     runtime._tick(threading.Event())
     assert not list(config.courier.decisions.glob("*.json"))
     assert len(list((config.archive_root / "summaries").glob("*/*.json"))) == 1
@@ -120,7 +139,9 @@ def test_review_budget_gate_stops_repeat_calls(tmp_path):
     )
     config = load_config(config_file, init_directories=True)
     client = BudgetClient()
-    runtime = build_runtime(config, plugins=Plugins(client=client))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=client, policy=open_policy())
+    )
     now = [1000.0]
     runtime.clock = lambda: now[0]
     runtime.scanner.ingest._clock = lambda: now[0]
@@ -167,7 +188,9 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
         )
     )
     config = load_config(config_file, init_directories=True)
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     cap = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV"
     data = b"test text"
     manifest = {
@@ -219,7 +242,9 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
     runtime._tick(threading.Event())
     assert len(list(config.courier.decisions.glob("*.json"))) == 1
     monkeypatch.setattr(review_module, "write_json_atomic", write)
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     runtime._tick(threading.Event())
     summaries = [
         EventSummary.model_validate_json(p.read_bytes())
@@ -245,7 +270,9 @@ def test_wiki_configuration_and_runtime_wiring(tmp_path):
         + '\n[wiki]\nenabled = true\nfolder = "Notes/Wiki"\ntimezone = "UTC"\nsettle_seconds = 0\ninterval_seconds = 1\n'
     )
     config = load_config(config_file, init_directories=True)
-    runtime = build_runtime(config, plugins=Plugins(client=FakeLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
     assert config.wiki.enabled
     assert config.wiki.timezone == "UTC"
     assert any(task.name == "wiki" for task in runtime.maintenance)
@@ -359,7 +386,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
 
     config = load_config(config_file, init_directories=True)
     client = WikiFake()
-    runtime = build_runtime(config, plugins=Plugins(client=client))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=client, policy=open_policy())
+    )
     cap = "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV"
     data = b"test text"
     manifest = {
@@ -390,7 +419,9 @@ def test_capture_to_wiki_and_human_feedback(tmp_path, monkeypatch):
         "feedback": None,
     }
     (config.courier.decisions / paths[0].name).write_text(json.dumps(verdict))
-    runtime = build_runtime(config, plugins=Plugins(client=client))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=client, policy=open_policy())
+    )
     runtime._tick(threading.Event())
     assert not list(config.courier.decisions.glob("*.json"))
     assert len(list((config.archive_root / "summaries").glob("*/*.json"))) == 1
@@ -512,7 +543,9 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
         runtime._last_run.clear()  # maintenance jobs are interval-gated
         runtime._tick(threading.Event())
 
-    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=ScheduleLlm(), policy=open_policy())
+    )
     package, _ = runtime.processor.drafts.create(
         "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "원문",
@@ -582,7 +615,9 @@ def test_runtime_turns_approved_schedules_into_actions_and_records_results(tmp_p
     results = config.sync_root / "action-results"
     results.mkdir()
     (results / f"{action.action_id}.json").write_text(result.model_dump_json())
-    runtime = build_runtime(config, plugins=Plugins(client=ScheduleLlm()))
+    runtime = build_runtime(
+        config, plugins=Plugins(client=ScheduleLlm(), policy=open_policy())
+    )
     tick(runtime)
     (recorded,) = fabric.entries(ThreadQuery(kind="실행"))
     assert recorded.executes == schedule.thread_id and recorded.actor == "system"
@@ -669,7 +704,7 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
     )
     config = load_config(config_file, init_directories=True)
     llm = MovingLlm()
-    runtime = build_runtime(config, plugins=Plugins(client=llm))
+    runtime = build_runtime(config, plugins=Plugins(client=llm, policy=open_policy()))
     zone = ZoneInfo("Asia/Seoul")
     detector = ScheduleAlertDetector(
         AlertHistory(config.state_root / "alerts.sqlite3"),

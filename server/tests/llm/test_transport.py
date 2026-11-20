@@ -17,6 +17,8 @@ from weaver.llm.errors import (
 )
 from weaver.llm.types import Request
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 @pytest.fixture
 def fake_sdk(monkeypatch):

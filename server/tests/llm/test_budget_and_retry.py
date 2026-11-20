@@ -25,6 +25,8 @@ from weaver.llm.types import BackendReply, TokenUsage
 
 from .test_client import make_client
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 @pytest.mark.parametrize("error", [RateLimited, TransientError])
 def test_only_one_retry_and_failed_attempts_recorded(tmp_path: Path, error) -> None:

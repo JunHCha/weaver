@@ -13,6 +13,8 @@ from weaver.llm.cli import RunResult
 from weaver.llm.errors import LlmTimeout, WikiTimeoutBudgetExceeded
 from weaver.llm.ledger import Ledger, MemoryLedger
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 @pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
 def test_delayed_fake_cli_uses_configured_timeout_and_wiki_override(tmp_path, backend):

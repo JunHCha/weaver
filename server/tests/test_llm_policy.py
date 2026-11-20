@@ -493,9 +493,13 @@ def test_unknown_wiki_page_provenance_is_denied_before_external_call(tmp_path):
     source_id = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
     resolver = Resolver()
     resolver.origins[source_id] = ("webex", "allowed-space")
-    checked = CheckedFake(fake, policy_for(resolver, shared_sources=lambda: ()))
+    checked = CheckedFake(
+        fake,
+        policy_for(resolver, shared_sources=lambda: (), webex_present=lambda: True),
+    )
     compiler.llm = checked
     store.write("pages/Unknown.md", {}, "# Unknown\nPrivate derived prose", None)
+    store.write_metadata("pages/Unknown.md", {"thread_ids": ["thr_gone"]})
     with pytest.raises(PolicyBlocked):
         compiler.run()
     assert checked.inputs == []
@@ -516,7 +520,9 @@ def test_closed_source_hold_is_recorded_even_without_backend_credentials(tmp_pat
         policy=policy,
     )
     with pytest.raises(PolicyBlocked):
-        processor.process(SimpleNamespace(source_id="excluded"), None)
+        processor.process(
+            SimpleNamespace(source_id="excluded", channel="share_text"), None
+        )
     assert [sid for sid, _ in ledger.policy_backlog()] == ["excluded"]
 
 
@@ -555,3 +561,55 @@ def test_unprocessed_denied_capture_does_not_taint_unrelated_shared_input(tmp_pa
     with provenance_scope([source.source_id], shared=True):
         policy.prepare("s", "allowed content")
     assert excluded.source_id not in resolver.seen
+
+
+def test_wiki_maintenance_blocks_then_resumes_through_the_real_policy(tmp_path):
+    from .wiki.test_batch import setup
+
+    _, _, fake, compiler = setup(tmp_path)
+    source_id = "src_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    resolver = Resolver()
+    resolver.origins[source_id] = ("webex", "private-space")
+    ledger = Ledger(tmp_path / "llm.sqlite3")
+    policy = policy_for(
+        resolver, shared_sources=lambda: (), backlog=LedgerBacklog(ledger)
+    )
+    checked = CheckedFake(fake, policy)
+    compiler.llm = checked
+    with pytest.raises(PolicyBlocked):
+        compiler.run()
+    assert [sid for sid, _ in ledger.policy_backlog()] == [source_id]
+    resolver.origins[source_id] = ("call", None)  # gate opens
+    with pytest.raises(PolicyBlocked):
+        compiler.run()  # still held until explicitly resumed
+    ledger.policy_resume(ledger.policy_backlog())
+    compiler.run()
+    assert checked.inputs[0][0] == "wiki.compile_batch"
+
+
+def test_loom_approval_blocks_then_resumes_through_the_real_policy(tmp_path):
+    from weaver.context import ContextDictionary
+    from weaver.loom.reextract import reextract
+
+    from .loom.test_reextract import SOURCE, FakeLlm, seed
+
+    state = tmp_path / "state"
+    ContextDictionary(state)
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    seed(state)
+    resolver = Resolver()
+    resolver.origins[SOURCE] = ("webex", "private-space")
+    ledger = Ledger(tmp_path / "llm.sqlite3")
+    checked = CheckedFake(
+        FakeLlm(),
+        policy_for(resolver, shared_sources=lambda: (), backlog=LedgerBacklog(ledger)),
+    )
+    denied = reextract(state, wiki, checked)
+    assert any("PolicyBlocked" in (plan.error or "") for plan in denied.sources)
+    assert checked.inputs == []
+    assert [sid for sid, _ in ledger.policy_backlog()] == [SOURCE]
+    resolver.origins[SOURCE] = ("call", None)
+    ledger.policy_resume(ledger.policy_backlog())
+    assert reextract(state, wiki, checked).valid
+    assert "loom.approve" in [task for task, _ in checked.inputs]

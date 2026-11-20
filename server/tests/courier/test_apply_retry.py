@@ -209,3 +209,58 @@ def test_apply_validation_logs_safe_reason(
     assert "Input should be a string" in caplog.text
     assert "synthetic-private-source" not in caplog.text
     assert "secret" not in caplog.text
+
+
+def test_policy_block_waits_without_spending_retries_and_resumes(
+    tmp_path, paths, captures, revisions, decisions
+):
+    """A closed gate holds an approval; it neither counts nor freezes it."""
+    from weaver.llm.ledger import Ledger
+    from weaver.llm.policy import (
+        LedgerBacklog,
+        LlmPolicy,
+        PolicyClient,
+        provenance_scope,
+    )
+
+    origins = {"src_closed": ("webex", "private-space")}
+
+    class Resolver:
+        def resolve(self, source_id):
+            return origins.get(source_id)
+
+    class Inner:
+        def generate_text(self, task, system, user):
+            return "ok"
+
+    ledger = Ledger(tmp_path / "llm.sqlite3")
+    policy = LlmPolicy(
+        Resolver(),
+        excluded_space_ids=frozenset({"private-space"}),
+        backlog=LedgerBacklog(ledger),
+    )
+    client = PolicyClient(Inner(), policy)  # type: ignore[arg-type]
+    courier, path, clock = setup_retry(
+        paths, captures, revisions, decisions, attempts=2
+    )
+    real_apply = decisions.apply
+
+    def apply(verdict):
+        with provenance_scope(["src_closed"], requester="src_closed"):
+            client.generate_text("loom.approve", "system", "user")
+        real_apply(verdict)
+
+    decisions.apply = apply
+    for _ in range(10):  # far beyond max_attempts=2
+        report = courier.scan_once()
+        clock[0] += 1000
+        assert report.problems[f"decisions/{path.name}"] == "apply_waiting"
+    assert path.exists() and not decisions.applied
+    assert [sid for sid, _ in ledger.policy_backlog()] == ["src_closed"]
+
+    origins["src_closed"] = ("call", None)  # the gate opens (config change)
+    courier.scan_once()
+    assert not decisions.applied  # still held until the backlog is resumed
+    ledger.policy_resume(ledger.policy_backlog())
+    courier.scan_once()
+    assert (PKG, 1) in decisions.applied

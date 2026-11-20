@@ -1,4 +1,4 @@
-"""Read-only archive policy adapter; Webex private provenance is added by W1-B1.
+"""Read-only archive policy adapter; Webex Space IDs come from its private store.
 
 Shared dictionary prose lacks complete per-entry lineage. Check the superset
 of approved/prepared review and Fabric origins; unprocessed raw captures are
@@ -13,14 +13,57 @@ from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
 from weaver.readonly import connect_snapshot
 from weaver.schema import Manifest, ReviewPackage, Source, Thread
+from weaver.spinner.webex import WebexProvenanceStore
 
-from .policy import LlmPolicy
+from .policy import ALLOWED_CHANNELS, UNKNOWN_DICTIONARY_SOURCE, LlmPolicy
 
 
 class ArchiveProvenanceResolver:
-    def __init__(self, archive_root: Path, *, snapshot: bool = False) -> None:
+    def __init__(
+        self,
+        archive_root: Path,
+        *,
+        snapshot: bool = False,
+        state_root: Path | None = None,
+    ) -> None:
         self.index = archive_root / "index.sqlite3"
         self.snapshot = snapshot
+        self.state_root = state_root
+
+    def _webex_space(self, source: Source) -> str | None:
+        """Space ID from Webex's private store, which is never created here."""
+        if self.state_root is None:
+            return None
+        path = self.state_root / "webex-provenance.sqlite3"
+        if not path.is_file():
+            return None
+        db = (
+            connect_snapshot(path)
+            if self.snapshot
+            else sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        )
+        with closing(db):
+            row = db.execute(
+                "SELECT body FROM provenance WHERE source_id=?", (source.source_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        value = WebexProvenanceStore._decode(row[0])
+        if value.sha256 != source.sha256:
+            return None  # lineage of different content: unknown
+        return value.space_id
+
+    def has_webex_source(self) -> bool:
+        if not self.index.is_file():
+            return False
+        with closing(self._connect()) as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM sources "
+                    "WHERE json_extract(source_json, '$.channel')='webex' LIMIT 1"
+                ).fetchone()
+                is not None
+            )
 
     def _connect(self) -> sqlite3.Connection:
         if self.snapshot:
@@ -48,8 +91,11 @@ class ArchiveProvenanceResolver:
         # Content dedup must not erase a second, differently classified origin.
         if not captures or any(c.channel != source.channel for c in captures):
             return None
-        if source.channel not in {"call", "voice_memo", "kakao", "share_text"}:
-            return None  # W1-B1 resolves Webex's private Space ID here.
+        if source.channel == "webex":
+            space_id = self._webex_space(source)
+            return ("webex", space_id) if space_id else None
+        if source.channel not in ALLOWED_CHANNELS:
+            return None
         return source.channel, None
 
     def source_ids(self) -> tuple[str, ...]:
@@ -62,7 +108,9 @@ class ArchiveProvenanceResolver:
 
 
 def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPolicy:
-    resolver = ArchiveProvenanceResolver(config.archive_root, snapshot=snapshot)
+    resolver = ArchiveProvenanceResolver(
+        config.archive_root, snapshot=snapshot, state_root=config.state_root
+    )
 
     def shared_sources() -> tuple[str, ...]:
         ids: set[str] = set()
@@ -98,14 +146,15 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
         dictionary = config.state_root / "context.sqlite3"
         if not ids and dictionary.is_file():
             if ContextDictionary.open_readonly(dictionary).snapshot().entries:
-                ids.add("unknown_dictionary_provenance")
+                ids.add(UNKNOWN_DICTIONARY_SOURCE)
         return tuple(sorted(ids))
 
     return LlmPolicy(
         resolver,
         settings=config.privacy,
-        # W1-B3 owns config.shepherds.webex.exclude_space_ids. The later PR
-        # wires that tuple as frozenset here; None deliberately denies Webex.
-        excluded_space_ids=None,
+        # An empty tuple means no Space is excluded; a missing Space ID or
+        # unresolvable Webex Source is still denied by the resolver.
+        excluded_space_ids=frozenset(config.shepherds.webex.exclude_space_ids),
         shared_sources=shared_sources,
+        webex_present=resolver.has_webex_source,
     )

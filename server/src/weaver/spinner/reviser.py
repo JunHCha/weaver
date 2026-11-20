@@ -303,7 +303,7 @@ class LlmReviser:
             for revised, s in zip(original, thread.segments, strict=True)
             if _revisable(s, revised.text)
         ]
-        with provenance_scope([thread.source_id]):
+        with provenance_scope([thread.source_id], requester=thread.source_id):
             edited = self._edit(speech, hints) if speech else {}
         revision = Revision(
             segments=[

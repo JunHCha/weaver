@@ -278,6 +278,7 @@ def test_plan_export_inside_state_is_refused_and_cli_apply_has_no_client(
         llm=None,
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
+        shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
@@ -333,6 +334,7 @@ def test_cli_uses_overridden_wiki_root(tmp_path, monkeypatch):
         llm=None,
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
+        shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         time=SimpleNamespace(timezone="Asia/Seoul"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from weaver.config import CourierSettings
 from weaver.failures import failure_reason
+from weaver.llm.policy import PolicyBlocked
 from weaver.schema import Verdict
 
 from .errors import CourierFileError
@@ -108,6 +109,12 @@ class VerdictIngest:
             self._decisions.apply(verdict)
             if not _ask(self._decisions.is_applied, pid, rev):
                 raise CourierFileError("apply_unconfirmed")
+        except PolicyBlocked:
+            # A closed gate is a hold, not a failure: it must not consume the
+            # retry budget and freeze the verdict as apply_stopped. The decision
+            # stays queued and is applied once the gate opens or is resumed.
+            logger.warning("courier apply waiting: policy_blocked (%s, %s)", pid, rev)
+            raise CourierFileError("apply_waiting") from None
         except Exception as exc:
             logger.warning(
                 "courier apply failed: %s reason=%s (%s, %s)",
