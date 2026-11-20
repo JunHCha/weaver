@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from weaver.mobile.cli import mobile_cli
+from weaver.shepherd.cli import shepherd_cli
 from weaver.webex.cli import webex_cli
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 cli.add_typer(mobile_cli, name="mobile")
+cli.add_typer(shepherd_cli, name="shepherd")
 cli.add_typer(webex_cli, name="webex")
 
 ConfigOption = Annotated[
@@ -557,6 +559,15 @@ def web(
     from weaver.web import create_app
 
     settings = _load(config)
+    local = settings.shepherds.courier
+    if port == local.port and (host == local.bind or host == "localhost"):
+        raise typer.BadParameter("web port conflicts with shepherds.courier listener")
+    if (
+        settings.mobile.bind is not None
+        and port == settings.mobile.port
+        and (host == "localhost" or settings.mobile.bind in (host, "0.0.0.0", "::"))
+    ):
+        raise typer.BadParameter("web port conflicts with mobile listener")
     if static_dir is None:
         candidate = Path(__file__).resolve().parents[3] / "web" / "out"
         if candidate.is_dir():

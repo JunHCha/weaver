@@ -130,3 +130,16 @@ max_backoff_seconds = 1800
 # attachments = "metadata_only"
 # Run `python -m weaver.app webex configure --config ...`, then `webex consent`.
 # `webex revoke` removes local tokens; revoke the remote grant in Authorized Apps.
+
+# Separate Mac Shepherd capture listener (start with `weaver shepherd serve`).
+# Neither this listener nor its local token bypasses the phone listener's whois.
+# Limits combine pending captures, open buffers and quarantine in each spool.
+# Reaching a limit stops collection/cursor advancement; nothing is auto-deleted.
+# [shepherds.courier]
+# bind = "127.0.0.1" # or exactly "::1"; no wildcard/LAN fallback
+# port = 8788        # separate from mobile/web listeners
+# max_items = 10000
+# max_bytes = 2147483648      # 2 GiB
+# min_free_bytes = 5368709120 # 5 GiB
+# `weaver shepherd register mac-webex-primary --token-file /private/path/capture.token`
+# Use the same token path as shepherds.webex.courier_token_file.

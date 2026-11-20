@@ -14,7 +14,7 @@ server workflow with fake LLMs and temporary paths. Follow the
 
 ## How it works
 
-The names follow a weaving metaphor: **Shepherd** captures material on the phone,
+The names follow a weaving metaphor: **Shepherd** captures material on phones, Macs, and other devices,
 **Courier** transports files through Syncthing, **Spinner** parses a source into a
 Script, **Loom** drafts the event summary and applies your review, **Fabric** keeps
 the approved facts as a log, and **Wiki** compiles that log into the vault.

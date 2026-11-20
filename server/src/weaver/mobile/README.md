@@ -295,3 +295,13 @@ head가 아닌 해당 요청의 업무 revision이다. 누락 대상 404, 요청
 
 미루기·숨김·사람의 확인 seq는 기기 로컬 보기 상태이며 서버나 Fabric에 쓰지 않는다.
 외부 할 일/리마인더 Action은 후속 범위다. 서버 계약은 Android UI보다 먼저 배포할 수 있다.
+
+
+## Mac Shepherd capture listener (ADR-044/045)
+
+`weaver shepherd register|revoke|serve|outbox` adds stable capture-only instances,
+private 0600 token files and a separate explicit loopback socket. Local tokens
+never work on this tailnet listener, which still requires real-peer whois.
+Both listeners reuse the capture routes and ArchiveStore Receipt journal above.
+The [Shepherd guide](../shepherd/README.md) documents TOML capacity limits,
+immutable SQLite spools, Receipt-first replay, quarantine and operator recovery.
