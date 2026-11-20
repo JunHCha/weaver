@@ -199,9 +199,9 @@ class ShepherdDatabase(context: Context) : SQLiteOpenHelper(context, "shepherd.s
         writableDatabase.delete("auto_share_attempts", "outcome=?", arrayOf(AutoShareOutcome.GAVE_UP.name))
     }
 
-    /** Stable unshared calls that auto share may still try, oldest first. */
+    /** Stable unshared calls with a known time that auto share may still try, oldest first. */
     internal fun autoShareCandidates(now: Long): List<AutoShareJob> = readableDatabase.rawQuery(
-        "SELECT c.id,c.name,c.size,a.call_id,a.attempts,a.last_step,a.error_type,a.outcome,a.updated_at " +
+        "SELECT c.id,c.name,c.size,a.call_id,a.attempts,a.last_step,a.error_type,a.outcome,a.updated_at,c.occurred_at " +
             "FROM calls c LEFT JOIN auto_share_attempts a ON a.call_id=c.id " +
             "WHERE c.state='UNSHARED' ORDER BY c.stable_since ASC,c.id", null,
     ).use { c ->
@@ -209,7 +209,8 @@ class ShepherdDatabase(context: Context) : SQLiteOpenHelper(context, "shepherd.s
             while (c.moveToNext()) {
                 val attempt = if (c.isNull(3)) null else AutoShareAttempt(c.getString(3), c.getInt(4),
                     c.getString(5), c.getString(6), AutoShareOutcome.valueOf(c.getString(7)), c.getLong(8))
-                if (AutoSharePolicy.retryEligible(attempt, now)) {
+                // A call without a time from its file name is never shared (ADR-052), so it is never started.
+                if (PendingCalls.validTime(c.getString(9)) != null && AutoSharePolicy.retryEligible(attempt, now)) {
                     add(AutoShareJob(c.getString(0), c.getString(1).substringBeforeLast('.'), c.getLong(2)))
                 }
             }

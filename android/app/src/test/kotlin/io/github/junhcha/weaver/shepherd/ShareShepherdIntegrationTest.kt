@@ -140,6 +140,35 @@ class ShareShepherdIntegrationTest {
         CourierDatabase(app).use { assertEquals(1, it.captures().size) }
     }
 
+    @Test fun realRepositoryExcludesUnknownTimeFromSelectionAndRejectsItsSubmission() {
+        val unknown = row(1, "unknown.m4a")
+        rows = listOf(unknown)
+        ShepherdDatabase(app).use { db ->
+            db.observe(rows, now - 31_000, zone)
+            db.observe(rows, now - 1_000, zone)
+        }
+        assertNull(ShepherdRuntime.pendingCalls(app).single().occurredAt)
+        assertTrue(PendingCalls.repository(app).pending().isEmpty())
+        launch().use {
+            ready()
+            compose.onNodeWithTag("channel-CALL").assertIsNotEnabled()
+            compose.onNode(hasText("unknown.m4a", substring = true)).assertDoesNotExist()
+        }
+        val file = SharedText.receive(app, Intent(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, "시각 없는 통화"))
+        assertThrows(IllegalStateException::class.java) {
+            ShareSubmission.submit(app, file, Channel.CALL, unknown.uri)
+        }
+        assertTrue(file.exists())
+        CourierDatabase(app).use { assertTrue(it.captures().isEmpty()) }
+        assertTrue(File(app.filesDir, "courier-staging").listFiles().isNullOrEmpty())
+        listOf("shepherd-call-drafts", "shepherd-call-links", "shepherd-call-assignments").forEach {
+            assertTrue(app.getSharedPreferences(it, Context.MODE_PRIVATE).all.isEmpty())
+        }
+        // Explicit manual text sharing remains outside the call policy.
+        assertEquals(Channel.SHARE_TEXT, ShareSubmission.submit(app, file, Channel.SHARE_TEXT, null).manifest.channel)
+    }
+
     @Test fun realListExcludesUnknownTimesAndTerminalStatesAndSortsNewestFirst() {
         val stable = listOf(row(1, "Older_261108_123456.m4a"), row(2, "Recent_261108_133456.m4a"),
             row(3, "unknown.m4a"), row(4, "Processed_261108_143456.m4a"),

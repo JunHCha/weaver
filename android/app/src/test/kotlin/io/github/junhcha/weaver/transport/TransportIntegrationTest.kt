@@ -94,6 +94,22 @@ class TransportIntegrationTest {
         assertFalse(TransportRuntime.spool(context).exists("receipts", "$id.json"))
     }
 
+    @Test fun callRejectionIsDiagnosedEvenAfterAnEarlierRetryableError() {
+        pairFollowing(mapOf("capture" to "http", "review" to "http", "action" to "files"))
+        server.failWith("/reviews", "errors.whois_unavailable")
+        server.serve("captures.receipt_before_upload", "captures.payload_staged", "captures.call_occurred_at_required")
+        capture(CourierClient.decoded<Manifest>(ContractFixtures["captures.call_occurred_at_required"].requestText!!))
+        assertEquals(ListenableWorker.Result.retry(), run())
+        assertEquals("whois_unavailable", TransportRuntime.settings(context).lastError)
+        CourierDatabase(context).use { db ->
+            assertTrue(db.diagnostics().any { "capture:$id: call_occurred_at_required" in it })
+            assertFalse(db.diagnostics().any { "whois_unavailable" in it })
+        }
+        val sent = server.count("/captures/")
+        assertEquals(ListenableWorker.Result.retry(), run())
+        assertEquals(sent, server.count("/captures/"))
+    }
+
     // ---- pairing ----
 
     @Test fun pairingTrustsOnlyTheServerWhoseCertificateChainsToTheCodesCa() {

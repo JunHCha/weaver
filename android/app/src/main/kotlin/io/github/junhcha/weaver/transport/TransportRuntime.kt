@@ -72,8 +72,8 @@ object TransportRuntime {
         val settings = settings(context)
         if (summary.needsRepair) settings.needsRepair = true
         settings.lastError = summary.errorCode
-        summary.errorCode?.let { code ->
-            CourierDatabase(context).use { it.diagnostic("http", "exchange", code) }
+        if (summary.rejected.isNotEmpty()) CourierDatabase(context).use { db ->
+            summary.rejected.forEach { (key, code) -> db.diagnostic("http", key, code) }
         }
         if (!summary.unreachable && !summary.needsRepair) settings.lastSyncAt = System.currentTimeMillis()
     }

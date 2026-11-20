@@ -266,3 +266,18 @@ def test_occurrence_requirement_is_call_only(tmp_path, channel, occurred_at):
     assert accepted.status_code == 201
     source = h.archive.get(accepted.json()["source_id"])
     assert source.occurred_at == manifest(occurred_at=occurred_at).occurred_at
+
+
+def test_legacy_call_without_occurrence_replays_its_original_receipt(tmp_path):
+    h = Harness(tmp_path)
+    headers = h.pair()
+    legacy = manifest(channel="call", occurred_at=None)
+    payload = tmp_path / "legacy.txt"
+    payload.write_bytes(BODY)
+    h.archive.put(legacy, payload)  # A capture stored before the HTTP policy.
+    original = h.archive.stored_capture(CAP)
+    assert original is not None
+    replay = put_manifest(h, headers, legacy)
+    assert replay.status_code == 200
+    assert Receipt.model_validate_json(replay.text) == original[1]
+    assert len(h.archive.sources()) == 1

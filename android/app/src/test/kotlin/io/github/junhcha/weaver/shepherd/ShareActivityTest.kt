@@ -89,6 +89,7 @@ class ShareActivityTest {
             compose.onNode(hasText("미처리 통화가 없어", substring = true)).assertExists()
         }
     }
+
     @Test fun excludesUnknownTimeBeforeAndAfterRecreation() {
         pending = listOf(PendingCall("one", null, null, "공유할 통화 파일"))
         launch().use { scenario ->
