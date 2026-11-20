@@ -40,6 +40,13 @@ class FabricCardInfoTest {
         compose.onNodeWithText("출처 공유 텍스트").assertIsDisplayed()
     }
 
+    @Test fun webexCardShowsWebexSourceNotSharedText() {
+        val card = item().copy(sourceType = "webex")
+        compose.setContent { WeaverTheme { Column { FabricCardInfo(card) } } }
+        compose.onNodeWithText("출처 Webex").assertIsDisplayed()
+        compose.onNodeWithText("출처 공유 텍스트").assertDoesNotExist()
+    }
+
     @Test fun oldCardHasNoInventedSummaryTagsOrCounterpart() {
         val card = item().copy(summary = "", counterpart = null, relatedTags = emptyList())
         compose.setContent { WeaverTheme { Column { FabricCardInfo(card) } } }

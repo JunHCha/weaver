@@ -46,6 +46,8 @@ class SummaryLookup:
     def title(self, source_id: str) -> str:
         source = self.sources.get(source_id)
         date = (source.occurred_at or source.captured_at).date().isoformat()
+        if source.channel == "webex":
+            return f"{date} Webex 대화"
         counterpart = source.hints.counterpart or "알 수 없음"
         return f"{date} {counterpart} {source.channel}"
 
@@ -134,6 +136,13 @@ class SummaryProcessor:
     def process(self, source: Source, stop: threading.Event) -> Outcome:
         if self.progress is not None:
             self.progress.begin(source)
+        if source.channel == "webex":
+            # Keep local parsing/provenance available, but do not create a Loom
+            # package until B2 replaces this temporary source-channel barrier.
+            self.spinner.spin(source)
+            if self.progress is not None:
+                self.progress.organized(source)
+            return "waiting_llm"
         with self.drafts.state.connect() as db:
             rows = db.execute(
                 "SELECT package FROM packages WHERE revision=1"

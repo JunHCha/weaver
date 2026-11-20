@@ -18,6 +18,7 @@ from pydantic import Field, StrictStr, ValidationError, field_validator, model_v
 
 from weaver.llm import AnthropicClient, LlmClient, SchemaMismatch
 from weaver.llm.client import MODEL
+from weaver.llm.webex_guard import require_webex_gate
 from weaver.schema import Contract, NonEmpty, Ref, Script, Segment
 
 PROMPT_VERSION: Literal["spinner.revise.v2"] = "spinner.revise.v2"
@@ -296,6 +297,7 @@ class LlmReviser:
         return f"{PROMPT_VERSION}:{prompt}:{model}"
 
     def revise(self, thread: Script, hints: ReviseHints) -> str:
+        require_webex_gate(thread.channel)
         original = _revision_segments(thread)
         speech = [
             revised

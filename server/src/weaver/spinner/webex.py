@@ -4,8 +4,10 @@ Raw identifiers and attachment URLs stay in the archive/private index. The Scrip
 contains only message text, display speakers and timestamps. No network or LLM.
 """
 
+import json
 import os
 import sqlite3
+from contextlib import closing
 from datetime import UTC
 from pathlib import Path
 from typing import Literal, Self
@@ -52,13 +54,21 @@ class WebexBundle(Contract):
         return self
 
 
+class WebexMessageRef(Contract):
+    message_id: NonEmpty
+    parent_id: NonEmpty | None = None
+    updated_at: Timestamp | None = None
+    segment_id: NonEmpty
+
+
 class WebexProvenance(Contract):
+    format_version: Literal[1] = 1
     source_id: str
     sha256: str
     instance_id: NonEmpty
     space_id: NonEmpty
     # Position corresponds to Script segment s1, s2, ...; IDs never enter Script.
-    messages: list[WebexMessage]
+    messages: list[WebexMessageRef]
 
 
 def parse_webex(source: Source, text: str) -> tuple[Script, WebexProvenance]:
@@ -83,6 +93,11 @@ def parse_webex(source: Source, text: str) -> tuple[Script, WebexProvenance]:
             # Names/URLs may themselves carry private identifiers: expose existence.
             marker = f"[첨부 {len(message.attachments)}개 · 다운로드하지 않음]"
             body = f"{body}\n{marker}" if body.strip() else marker
+        speaker = " ".join((message.author_display or "작성자 미상").splitlines())
+        prefix = f"[{message.created_at.isoformat()} · {speaker}] "
+        body = "\n".join(
+            prefix + line for line in body.replace("\r\n", "\n").split("\n")
+        )
         parts.append(body)
         segments.append(
             Segment(
@@ -110,7 +125,15 @@ def parse_webex(source: Source, text: str) -> tuple[Script, WebexProvenance]:
             sha256=source.sha256,
             instance_id=bundle.instance_id,
             space_id=bundle.space_id,
-            messages=messages,
+            messages=[
+                WebexMessageRef(
+                    message_id=message.message_id,
+                    parent_id=message.parent_id,
+                    updated_at=message.updated_at,
+                    segment_id=f"s{number}",
+                )
+                for number, message in enumerate(messages, 1)
+            ],
         ),
     )
 
@@ -126,35 +149,71 @@ class WebexProvenanceStore:
             os.fchmod(fd, 0o600)
         finally:
             os.close(fd)
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS provenance "
                 "(source_id TEXT PRIMARY KEY, body TEXT NOT NULL)"
             )
+            db.execute("PRAGMA secure_delete=ON")
+            for source_id, body in db.execute(
+                "SELECT source_id,body FROM provenance"
+            ).fetchall():
+                value = self._decode(body)
+                db.execute(
+                    "UPDATE provenance SET body=? WHERE source_id=?",
+                    (value.model_dump_json(), source_id),
+                )
+
+    @staticmethod
+    def _decode(body: str) -> WebexProvenance:
+        raw = json.loads(body)
+        if "format_version" not in raw:
+            # Unreleased initial format duplicated archive content. Strip it on
+            # upgrade, keeping only the lookup identity and segment mapping.
+            raw["format_version"] = 1
+            raw["messages"] = [
+                {
+                    "message_id": message["message_id"],
+                    "parent_id": message.get("parent_id"),
+                    "updated_at": message.get("updated_at"),
+                    "segment_id": f"s{number}",
+                }
+                for number, message in enumerate(raw["messages"], 1)
+            ]
+        return WebexProvenance.model_validate(raw)
 
     def save(self, value: WebexProvenance) -> None:
-        body = value.model_dump_json()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
-            db.execute(
-                "INSERT OR IGNORE INTO provenance(source_id,body) VALUES(?,?)",
-                (value.source_id, body),
-            )
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT body FROM provenance WHERE source_id=?", (value.source_id,)
             ).fetchone()
-            if row is None or row[0] != body:
-                raise ValueError("webex_provenance_conflict")
+            if row is not None:
+                previous = self._decode(row[0])
+                if (previous.sha256, previous.instance_id, previous.space_id) != (
+                    value.sha256,
+                    value.instance_id,
+                    value.space_id,
+                ):
+                    raise ValueError("webex_provenance_conflict")
+            # Refresh derived mapping/defaults, never confuse model evolution
+            # with changes to the immutable archived identity.
+            db.execute(
+                "INSERT INTO provenance(source_id,body) VALUES(?,?) "
+                "ON CONFLICT(source_id) DO UPDATE SET body=excluded.body",
+                (value.source_id, value.model_dump_json()),
+            )
 
     def get(self, source_id: str) -> WebexProvenance | None:
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             row = db.execute(
                 "SELECT body FROM provenance WHERE source_id=?", (source_id,)
             ).fetchone()
-        return WebexProvenance.model_validate_json(row[0]) if row else None
+        return self._decode(row[0]) if row else None
 
     def resolve(self, source_id: str) -> tuple[str, str] | None:
         value = self.get(source_id)
@@ -162,7 +221,7 @@ class WebexProvenanceStore:
 
 
 class WebexParser:
-    version = "spinner.webex.v1"
+    version = "spinner.webex.v2"
 
     def __init__(self, provenance: WebexProvenanceStore) -> None:
         self.provenance = provenance
