@@ -37,7 +37,7 @@ private fun PhoneSnapshot.partyNames(): Set<String> =
     tags.filter { it.kind?.isParty == true }.map { it.name }.toSet()
 
 /** Newest first; seq breaks ties like the PC. */
-private val newestFirst = compareByDescending<PhoneThread> { it.occurredAt }.thenByDescending { it.seq }
+internal val newestFirst = compareByDescending<PhoneThread> { it.occurredAt }.thenByDescending { it.seq }
 
 private fun rootTarget(row: PhoneThread, byId: Map<String, PhoneThread>): PhoneThread {
     var current = row
@@ -81,7 +81,8 @@ data class StatusCounts(val waitingReview: Int, val processing: Int, val stopped
 
 enum class DueKind { DEADLINE, SCHEDULE }
 
-data class NowEntry(val thread: PhoneThread, val dueKind: DueKind? = null)
+/** [revised]: seq is at or before the acknowledged mark but a later revision brought it back into recent. */
+data class NowEntry(val thread: PhoneThread, val dueKind: DueKind? = null, val revised: Boolean = false)
 
 data class NowView(
     val overdue: List<NowEntry>,
@@ -113,7 +114,7 @@ fun nowView(raw: PhoneSnapshot, now: Instant, zone: ZoneId = SeoulZone): NowView
     val listed = (overdue + dueToday).map { it.thread.id }.toSet()
     val since = today.minusDays(1).atStartOfDay(zone).toInstant()
     val recent = facts.filter { it.id !in listed && !it.recordedAt.isBefore(since) }
-        .sortedWith(compareByDescending<PhoneThread> { it.recordedAt }.thenByDescending { it.seq })
+        .sortedWith(newestFirst)
         .map { NowEntry(it) }
     return NowView(overdue, dueToday, recent)
 }

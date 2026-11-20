@@ -71,6 +71,15 @@ class PhoneRulesTest {
         assertEquals(listOf("recent"), view.recent.map { it.thread.id })
     }
 
+    @Test fun recentSortsByOccurrenceThenSeqButFiltersByRecordedDay() {
+        val now = kst("2026-11-20", "09:00")
+        val newer = thread("newer", at = kst("2026-11-19", "09:00"))
+        val tie = thread("tie", at = newer.occurredAt)
+        val late = thread("late", at = kst("2026-11-06", "09:00")).copy(recordedAt = now)
+        val excluded = thread("excluded", at = now).copy(recordedAt = kst("2026-11-18", "23:59"))
+        assertEquals(listOf("tie", "newer", "late"), nowView(snap(newer, tie, late, excluded), now).recent.map { it.thread.id })
+    }
+
     @Test fun dayBoundaryFollowsSeoulNotUtc() {
         // 2026-11-17T15:30Z is already 11/18 00:30 in Seoul.
         val now = Instant.parse("2026-11-17T15:30:00Z")
