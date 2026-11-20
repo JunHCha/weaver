@@ -157,6 +157,21 @@ class AutoShareRuntimeTest {
         assertEquals(StartResult.STARTED, AutoShareRuntime.maybeStart(app, morning))
     }
 
+    @Test fun unknownTimeNeverStartsTheServiceOrReservesRetries() {
+        ShepherdDatabase(app).use { stableCall(it, name = "unknown.m4a") }
+        enable()
+        repeat(3) {
+            assertEquals(StartResult.NO_CANDIDATE, AutoShareRuntime.maybeStart(app, morning + it * AutoSharePolicy.RETRY_DELAY_MS))
+        }
+        assertTrue(started.isEmpty())
+        assertNull(AutoShareRuntime.active)
+        ShepherdDatabase(app).use { db ->
+            assertTrue(db.autoShareCandidates(morning).isEmpty())
+            assertNull(db.lastAutoShare())
+        }
+        assertTrue(WorkManager.getInstance(app).getWorkInfosForUniqueWork("shepherd-autoshare-retry").get().isEmpty())
+    }
+
     @Test fun callsStillStabilizingAreNotQueued() {
         ShepherdDatabase(app).use { db ->
             db.activate(1_000)
@@ -244,13 +259,15 @@ class AutoShareRuntimeTest {
 
     @Test fun onlyTheRunningJobsOwnTranscriptIsSubmittedUnattended() {
         val job = AutoShareJob("c1", "통화 홍길동_261110_111103", 1)
-        val pending = listOf(PendingCall("c1", null, null, "통화 홍길동_261110_111103.m4a"))
+        val pending = listOf(PendingCall("c1", "2026-11-10T11:11:03+09:00", null, "통화 홍길동_261110_111103.m4a"))
         assertNull(AutoShareRuntime.autoSubmitCallId("통화 홍길동_261110_111103_original.txt", pending))
         AutoShareRuntime.active = AutoShareRuntime.ActiveJob(job)
         assertEquals("c1", AutoShareRuntime.autoSubmitCallId("통화 홍길동_261110_111103_original.txt", pending))
         assertEquals("c1", AutoShareRuntime.autoSubmitCallId("통화 홍길동_261110_111103_original (1).txt", pending))
         assertNull(AutoShareRuntime.autoSubmitCallId("통화 임꺽정_261109_101010_original.txt", pending))
         assertNull(AutoShareRuntime.autoSubmitCallId("memo.txt", pending))
+        // A call without a time is not selectable, so the running job never submits it (and never falls back to shared text).
+        assertNull(AutoShareRuntime.autoSubmitCallId("통화 홍길동_261110_111103_original.txt", emptyList()))
         assertNull(AutoShareRuntime.autoSubmitCallId("통화 홍길동_261110_111103_original.txt", emptyList()))
         AutoShareRuntime.onSubmitted("other")
         assertFalse(AutoShareRuntime.active!!.submitted)

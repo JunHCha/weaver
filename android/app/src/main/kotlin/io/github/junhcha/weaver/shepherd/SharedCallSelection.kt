@@ -35,10 +35,10 @@ internal object SharedCallSelection {
     fun stem(name: String?): String? = parse(name)?.stem
 
     fun channel(name: String?, calls: List<PendingCall>): Channel =
-        if (parse(name) != null && calls.isNotEmpty()) Channel.CALL else Channel.SHARE_TEXT
+        if (parse(name) != null && PendingCalls.selectable(calls).isNotEmpty()) Channel.CALL else Channel.SHARE_TEXT
 
     fun call(name: String?, calls: List<PendingCall>): String? {
-        val recent = calls.sortedWith(compareByDescending<PendingCall> {
+        val recent = PendingCalls.selectable(calls).sortedWith(compareByDescending<PendingCall> {
             it.occurredAt?.let { time -> runCatching { OffsetDateTime.parse(time).toInstant() }.getOrNull() }
         }.thenBy { it.id })
         val hint = parse(name) ?: return recent.firstOrNull()?.id
@@ -49,7 +49,7 @@ internal object SharedCallSelection {
             // the observation zone. Do not reinterpret old calls in the current device zone.
             val recording = CallFilename.parse(call.displayName, ZoneOffset.UTC)
             val counterpart = (call.counterpart ?: recording.counterpart)?.let(::person)
-            val time = (call.occurredAt ?: recording.occurredAt)?.let {
+            val time = call.occurredAt?.let {
                 runCatching { OffsetDateTime.parse(it).toLocalDateTime() }.getOrNull()
             } ?: return@mapNotNull null
             val distance = abs(ChronoUnit.SECONDS.between(time, hint.time))

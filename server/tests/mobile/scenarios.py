@@ -164,6 +164,14 @@ def captures(tmp: Path) -> Recorder:
         content=BODY,
     )
     r.call(
+        "call_occurred_at_required",
+        "PUT",
+        f"{BASE}/captures/{CAP}/manifest",
+        headers=headers,
+        content=manifest(channel="call", occurred_at=None).model_dump_json(),
+        note="Call occurrence must come from the canonical filename; blocked without retry.",
+    )
+    r.call(
         "manifest_stored",
         "PUT",
         f"{BASE}/captures/{CAP}/manifest",
@@ -438,7 +446,15 @@ def read(tmp: Path) -> Recorder:
 
     labels = {}
     for cap, body, kwargs in (
-        (CAP, BODY, {"channel": "call", "hints": {"counterpart": "이서준"}}),
+        (
+            CAP,
+            BODY,
+            {
+                "channel": "call",
+                "occurred_at": "2026-11-07T12:00:00+09:00",
+                "hints": {"counterpart": "이서준"},
+            },
+        ),
         (CAP2, b"memo", {"channel": "voice_memo", "hints": {"counterpart": None}}),
     ):
         upload(h, headers, cap, body)

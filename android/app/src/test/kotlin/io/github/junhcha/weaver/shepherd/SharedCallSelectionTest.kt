@@ -23,11 +23,11 @@ class SharedCallSelectionTest {
         }
         assertNull(SharedCallSelection.call(name, emptyList()))
     }
-    @Test fun usesRecordingNameWhenMetadataIsUnknown() {
+    @Test fun excludesUnknownTimesEvenWhenRecordingNameMatches() {
         val recording = PendingCall("recording", null, null, "가짜 상대_261108_120031.m4a")
-        assertEquals("recording", SharedCallSelection.call(name, listOf(latest, recording)))
+        assertEquals("latest", SharedCallSelection.call(name, listOf(latest, recording)))
         val long = recording.copy(displayName = "Call recording 가짜 상대_20261108_120031.m4a")
-        assertEquals("recording", SharedCallSelection.call(name, listOf(latest, long)))
+        assertEquals("latest", SharedCallSelection.call(name, listOf(latest, long)))
     }
     @Test fun matchesWithinSixtySecondsAcrossMinuteBoundary() {
         val before = match.copy(id = "before", occurredAt = "2026-11-08T11:59:50+09:00")
@@ -43,15 +43,15 @@ class SharedCallSelectionTest {
     @Test fun matchesPrefixedRecordingNames() {
         listOf("통화 가짜 상대_261108_120031.m4a", "통화 녹음 가짜 상대_261108_120031.m4a",
             "Call recording 가짜 상대_261108_120031.m4a").forEach {
-            val recording = PendingCall("recording", null, null, it)
+            val recording = PendingCall("recording", match.occurredAt, null, it)
             assertEquals(it, "recording", SharedCallSelection.call(name, listOf(latest, recording)))
         }
         // Rows stored before #30 stripped prefixes still carry them.
         assertEquals("old", SharedCallSelection.call(name, listOf(latest,
             match.copy(id = "old", counterpart = "통화 가짜 상대"))))
-        // Same base name matches even when metadata cannot be compared.
+        // Same base name cannot bypass the occurrence requirement.
         val same = PendingCall("same", null, null, "통화 가짜 상대_261108_120030.M4A")
-        assertEquals("same", SharedCallSelection.call(name, listOf(latest, same)))
+        assertEquals("latest", SharedCallSelection.call(name, listOf(latest, same)))
     }
     @Test fun acceptsUnderscoreNamesNfdDuplicateSuffixAndExtensionCase() {
         val underscored = PendingCall("under", "2026-11-08T12:00:25+09:00", "가짜_상대")
@@ -78,6 +78,9 @@ class SharedCallSelectionTest {
     }
     @Test fun defaultsToCallOnlyForValidTranscriptAndAvailableCalls() {
         assertEquals(Channel.CALL, SharedCallSelection.channel(name, listOf(latest)))
+        val unknown = latest.copy(occurredAt = null)
+        assertEquals(Channel.SHARE_TEXT, SharedCallSelection.channel(name, listOf(unknown)))
+        assertNull(SharedCallSelection.call(name, listOf(unknown)))
         assertEquals(Channel.SHARE_TEXT, SharedCallSelection.channel(name, emptyList()))
         assertEquals(Channel.SHARE_TEXT, SharedCallSelection.channel("ordinary.txt", listOf(match)))
         assertEquals(Channel.SHARE_TEXT, SharedCallSelection.channel(null, listOf(match)))

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.WorkManagerTestInitHelper
+import io.github.junhcha.weaver.courier.CourierClient
 import io.github.junhcha.weaver.courier.CourierDatabase
 import io.github.junhcha.weaver.courier.CourierWorker
 import io.github.junhcha.weaver.courier.MemoryFolder
@@ -71,6 +72,43 @@ class TransportIntegrationTest {
     }
 
     private fun run(): ListenableWorker.Result = CourierWorker.run(context, network = true)
+
+    @Test fun callWithoutOccurrenceIsDiagnosedAndNotRetried() {
+        pairFollowing()
+        server.serve("captures.receipt_before_upload", "captures.payload_staged", "captures.call_occurred_at_required")
+        val manifest = CourierClient.decoded<Manifest>(ContractFixtures["captures.call_occurred_at_required"].requestText!!)
+        capture(manifest)
+        assertEquals(ListenableWorker.Result.success(), run())
+        assertEquals("call_occurred_at_required", TransportRuntime.settings(context).lastError)
+        assertEquals("call_occurred_at_required", TransportRuntime.state(context).load().blocked["capture:$id"])
+        CourierDatabase(context).use { db ->
+            assertTrue(db.diagnostics().any { "call_occurred_at_required" in it })
+            assertEquals("SENT", db.captures().single().state)
+        }
+        val sent = server.count("/captures/")
+        assertEquals(ListenableWorker.Result.success(), run())
+        assertEquals(sent, server.count("/captures/"))
+        CourierDatabase(context).use { db ->
+            assertTrue(db.diagnostics().any { "call_occurred_at_required" in it })
+        }
+        assertFalse(TransportRuntime.spool(context).exists("receipts", "$id.json"))
+    }
+
+    @Test fun callRejectionIsDiagnosedEvenAfterAnEarlierRetryableError() {
+        pairFollowing(mapOf("capture" to "http", "review" to "http", "action" to "files"))
+        server.failWith("/reviews", "errors.whois_unavailable")
+        server.serve("captures.receipt_before_upload", "captures.payload_staged", "captures.call_occurred_at_required")
+        capture(CourierClient.decoded<Manifest>(ContractFixtures["captures.call_occurred_at_required"].requestText!!))
+        assertEquals(ListenableWorker.Result.retry(), run())
+        assertEquals("whois_unavailable", TransportRuntime.settings(context).lastError)
+        CourierDatabase(context).use { db ->
+            assertTrue(db.diagnostics().any { "capture:$id: call_occurred_at_required" in it })
+            assertFalse(db.diagnostics().any { "whois_unavailable" in it })
+        }
+        val sent = server.count("/captures/")
+        assertEquals(ListenableWorker.Result.retry(), run())
+        assertEquals(sent, server.count("/captures/"))
+    }
 
     // ---- pairing ----
 

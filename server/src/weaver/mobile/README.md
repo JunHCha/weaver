@@ -114,8 +114,14 @@ scope: `read`, `capture`, `review`, `action`(+실행 폰 1대), `edit`. 표시 �
 | 요청 | 의미 |
 |---|---|
 | `PUT /captures/{id}/payload` | `Content-Length`·`X-Content-SHA256` 필수. 201 `{capture_id, state:"staged"}`, 같은 내용 200, 이미 보관됐으면 200 `state:"stored"`. 400 `length_mismatch`, 411, 413 `too_large`, 422 `sha256_mismatch`·`invalid_sha256`, 409 `payload_conflict`·`capture_conflict`. **Receipt가 아니다** |
-| `PUT /captures/{id}/manifest` | Manifest v1. 201 Receipt v1(archive 보관 뒤), 재전송 200(최초 Receipt). 409 `payload_missing`(retryable), `manifest_conflict`, `capture_conflict`, `payload_mismatch` |
+| `PUT /captures/{id}/manifest` | Manifest v1. 201 Receipt v1(archive 보관 뒤), 재전송 200(최초 Receipt). 409 `payload_missing`(retryable), `manifest_conflict`, `capture_conflict`, `payload_mismatch`. 422 `call_occurred_at_required`(아래) |
 | `GET /captures/{id}/receipt` | 200 Receipt, 없으면 404 `receipt_not_found`. 응답 유실 뒤 본문 재전송 전에 조회 |
+
+`channel=call`은 정형 파일 이름에서 확정한 `occurred_at`이 있어야 한다(ADR-052).
+없거나 null이면 HTTP 수신 단계에서 422 `{code:"call_occurred_at_required", retryable:false}`로
+거부하며 Source·Receipt를 만들지 않는다. 폰은 항목을 차단하고 Courier 진단에 코드를 남긴다.
+먼저 올린 payload는 미확정 staging으로 남아 아래 보존 기간 뒤 정리된다.
+다른 채널의 nullable 시각 및 Manifest v1 스키마는 유지한다.
 
 한도: payload 64 MiB(`max_payload_bytes`), JSON 1 MiB. 이어 올리기는 없고 항상 전체 본문. 미확정 staging은 7일 뒤 정리.
 

@@ -17,6 +17,8 @@ class ExchangeSummary {
     var unreachable = false
     var needsRepair = false
     var errorCode: String? = null
+    /** Items the server refused for good with a code the person must be able to see: item key to code. */
+    val rejected = linkedMapOf<String, String>()
     internal fun fail(code: String, retry: Boolean) { errorCode = errorCode ?: code; if (retry) this.retry = true }
 }
 
@@ -84,7 +86,11 @@ class HttpExchange(
                 error.status == 403 -> { summary.fail(error.code, false); throw Abort() }
                 error.status == 409 && error.code == "transport_files" -> Unit // the server switched this feature back; the next capabilities read follows it
                 error.retryable -> summary.fail(error.code, true)
-                else -> { blockItem(key, error.code); summary.fail(error.code, false) }
+                else -> {
+                    blockItem(key, error.code)
+                    if (error.status == 422 && error.code == CALL_TIME_REQUIRED) summary.rejected[key] = error.code
+                    summary.fail(error.code, false)
+                }
             }
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false); throw Abort()
         } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); throw Abort()
@@ -306,6 +312,8 @@ class HttpExchange(
         (o[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) } ?: throw ApiException(200, "invalid_item", false)
 
     companion object {
+        const val CALL_TIME_REQUIRED = "call_occurred_at_required"
+
         fun queue(spool: SpoolFolder, state: TransportState): QueueCounts {
             val receipts = spool.list("receipts").map { it.name }.toSet()
             return QueueCounts(

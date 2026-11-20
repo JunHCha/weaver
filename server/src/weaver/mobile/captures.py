@@ -136,6 +136,9 @@ class CaptureService:
                 raise ApiError(409, "manifest_conflict")
             self._release(capture_id)
             return 200, receipt
+        # Checked after the idempotent replay: a call stored before this policy keeps its 200.
+        if manifest.channel == "call" and manifest.occurred_at is None:
+            raise ApiError(422, "call_occurred_at_required")
         path = self._path(capture_id)
         staged = self.store.staged(capture_id)
         if staged is None or not path.is_file():
