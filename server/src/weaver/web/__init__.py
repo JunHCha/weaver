@@ -146,6 +146,7 @@ def sources(
                     "voice_memo": "음성 메모",
                     "share_text": "공유 텍스트",
                     "kakao": "공유 텍스트",
+                    "webex": "Webex",
                 }[item.source_type],
                 status=status,
                 updated_at=at,

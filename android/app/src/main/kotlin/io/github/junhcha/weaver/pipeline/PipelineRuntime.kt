@@ -94,6 +94,7 @@ fun sourceLabel(value: String): String =
     when (value) {
         "wiki_edit" -> "Wiki 직접 수정"
         "call" -> "통화"
+        "webex" -> "Webex"
         "fleece",
         "voice_memo" -> "음성 메모"
         else -> "공유한 글"

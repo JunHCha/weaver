@@ -12,6 +12,7 @@ enum class Channel {
     @SerialName("voice_memo") VOICE_MEMO,
     @SerialName("kakao") KAKAO,
     @SerialName("share_text") SHARE_TEXT,
+    @SerialName("webex") WEBEX,
 }
 
 /** Payload kind: `fleece` is raw audio, `text` is shared text. */

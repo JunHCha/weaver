@@ -11,6 +11,7 @@ fun ReviewPackage.reviewTitle(): String = title.ifBlank {
 fun ReviewPackage.sourceLabel(): String = when (sourceType.lowercase()) {
     "call", "audio", "call_transcript" -> "통화"
     "voice_memo" -> "음성 메모"
+    "webex" -> "Webex"
     "kakao", "kakaotalk" -> "카카오톡"
     "text", "share_text" -> "텍스트"
     else -> "문서"

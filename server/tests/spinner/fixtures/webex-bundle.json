@@ -1,0 +1,9 @@
+{
+  "format": "weaver.webex.bundle.v1",
+  "instance_id": "synthetic-mac-webex",
+  "space_id": "SYNTHETIC_PRIVATE_SPACE",
+  "messages": [
+    {"message_id": "SYNTHETIC_REPLY", "parent_id": "SYNTHETIC_ROOT", "author_display": "가상 동료", "created_at": "2026-11-19T10:00:01+09:00", "updated_at": "2026-11-19T10:05:00+09:00", "text": "", "attachments": [{"name": "synthetic.pdf", "media_type": "application/pdf", "url": "https://fixture.invalid/private/attachment"}]},
+    {"message_id": "SYNTHETIC_ROOT", "author_display": "가상 작성자", "created_at": "2026-11-19T01:00:00Z", "text": "합성 메시지 👋\n두 번째 줄"}
+  ]
+}

@@ -66,7 +66,7 @@ type Digest = Annotated[
         strict=True, pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64
     ),
 ]
-type Channel = Literal["call", "voice_memo", "kakao", "share_text"]
+type Channel = Literal["call", "voice_memo", "kakao", "share_text", "webex"]
 type Kind = Literal["fleece", "text"]
 TIMESTAMP_PATTERN = (
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"

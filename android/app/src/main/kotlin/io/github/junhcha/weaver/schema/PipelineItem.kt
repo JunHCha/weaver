@@ -121,7 +121,7 @@ data class PipelineItem(
         Rules.schemaVersion(schemaVersion, 2)
         Rules.revision(revision)
         Rules.revision(applyFailureLimit)
-        require(sourceType in setOf("call", "voice_memo", "kakao", "share_text", "wiki_edit"))
+        require(sourceType in setOf("call", "voice_memo", "kakao", "share_text", "webex", "wiki_edit"))
         if (sourceType == "wiki_edit") {
             require(captureId == null && wikiEdit != null && packageId == null && packageRevision == null)
             require(location in setOf(PipelineLocation.WIKI, PipelineLocation.FABRIC))
