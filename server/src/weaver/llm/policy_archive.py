@@ -12,7 +12,7 @@ from pathlib import Path
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
 from weaver.readonly import connect_snapshot
-from weaver.schema import Manifest, ReviewPackage, Source, Thread
+from weaver.schema import Manifest, ReviewPackage, Source, ThreadDraft
 from weaver.spinner.webex import WebexProvenanceStore
 
 from .policy import ALLOWED_CHANNELS, UNKNOWN_DICTIONARY_SOURCE, LlmPolicy
@@ -122,8 +122,9 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
                 else sqlite3.connect(f"{fabric.resolve().as_uri()}?mode=ro", uri=True)
             )
             with closing(db):
+                # Fabric stores drafts; the append sequence lives in its own column.
                 ids.update(
-                    Thread.model_validate_json(raw).source_id
+                    ThreadDraft.model_validate_json(raw).source_id
                     for (raw,) in db.execute("SELECT payload FROM threads")
                 )
         reviews = config.state_root / "summary.sqlite3"
