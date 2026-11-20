@@ -10,6 +10,7 @@ import io.github.junhcha.weaver.schema.Manifest
 import java.io.File
 
 object ShareSubmission {
+    private const val CALL_TIME_REQUIRED = "통화 시각을 파일 이름에서 확인하지 못해 저장하지 않았습니다."
     data class Result(val manifest: Manifest, val duplicate: Boolean)
     fun submit(context: Context, file: File, channel: Channel, callId: String?): Result = synchronized(CourierRuntime.lock) {
         require(channel in listOf(Channel.SHARE_TEXT, Channel.KAKAO, Channel.CALL))
@@ -20,6 +21,7 @@ object ShareSubmission {
         if (existing != null) {
             require(existing.manifest.channel == channel) { "이미 다른 종류로 등록된 텍스트입니다." }
             if (channel == Channel.CALL) {
+                require(PendingCalls.validTime(existing.manifest.occurredAt) != null) { CALL_TIME_REQUIRED }
                 // A replay must never consume the next pending call.
                 val assigned = context.getSharedPreferences("shepherd-call-assignments", Context.MODE_PRIVATE)
                     .getString(hash, null)
@@ -32,6 +34,7 @@ object ShareSubmission {
         val call = if (channel == Channel.CALL) PendingCalls.repository(context).pending()
             .firstOrNull { it.id == callId } ?: error("연결할 미처리 통화가 없습니다. 저장하지 않았습니다.") else null
         val occurredAt = PendingCalls.validTime(call?.occurredAt)
+        require(channel != Channel.CALL || occurredAt != null) { CALL_TIME_REQUIRED }
         val counterpart = call?.counterpart?.trim()?.takeIf(String::isNotEmpty)
         // The durable intent survives death between queueing and link persistence.
         val links = context.getSharedPreferences("shepherd-call-drafts", Context.MODE_PRIVATE)

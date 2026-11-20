@@ -99,6 +99,25 @@
       }
     },
     {
+      "name": "call_occurred_at_required",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/captures/cap_01ARZ3NDEKTSV4RRFFQ69G5FA0/manifest",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body_text": "{\"schema_version\":1,\"capture_host\":null,\"capture_id\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0\",\"kind\":\"text\",\"channel\":\"call\",\"payload\":\"cap_01ARZ3NDEKTSV4RRFFQ69G5FA0.txt\",\"sha256\":\"4b1ef94dc6765e2163fa6ccb76a83270b2a643fa6eb29194508af8134c7e4cb3\",\"size\":45,\"captured_at\":\"2026-11-07T15:32:00+09:00\",\"occurred_at\":null,\"hints\":{\"counterpart\":null}}"
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "call_occurred_at_required",
+          "retryable": false
+        }
+      },
+      "note": "Call occurrence must come from the canonical filename; blocked without retry."
+    },
+    {
       "name": "manifest_stored",
       "request": {
         "method": "PUT",

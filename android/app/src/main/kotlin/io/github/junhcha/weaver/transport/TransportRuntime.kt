@@ -10,6 +10,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import io.github.junhcha.weaver.courier.CourierDatabase
 import io.github.junhcha.weaver.courier.CourierFolder
 import io.github.junhcha.weaver.courier.CourierRules
 import io.github.junhcha.weaver.courier.CourierRuntime
@@ -71,6 +72,9 @@ object TransportRuntime {
         val settings = settings(context)
         if (summary.needsRepair) settings.needsRepair = true
         settings.lastError = summary.errorCode
+        summary.errorCode?.let { code ->
+            CourierDatabase(context).use { it.diagnostic("http", "exchange", code) }
+        }
         if (!summary.unreachable && !summary.needsRepair) settings.lastSyncAt = System.currentTimeMillis()
     }
 

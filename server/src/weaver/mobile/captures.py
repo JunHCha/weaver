@@ -117,6 +117,8 @@ class CaptureService:
             manifest = Manifest.model_validate_json(raw)
         except ValidationError:
             raise ApiError(422, "invalid_manifest") from None
+        if manifest.channel == "call" and manifest.occurred_at is None:
+            raise ApiError(422, "call_occurred_at_required")
         if manifest.capture_id != capture_id:
             raise ApiError(422, "id_mismatch")
         stem, dot, extension = manifest.payload.partition(".")

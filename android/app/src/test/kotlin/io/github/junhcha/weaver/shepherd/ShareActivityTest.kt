@@ -89,19 +89,19 @@ class ShareActivityTest {
             compose.onNode(hasText("미처리 통화가 없어", substring = true)).assertExists()
         }
     }
-    @Test fun restoresSelectionAndShowsUnknownTimeAndDisplayName() {
+    @Test fun excludesUnknownTimeBeforeAndAfterRecreation() {
         pending = listOf(PendingCall("one", null, null, "공유할 통화 파일"))
         launch().use { scenario ->
             ready()
-            compose.onNodeWithTag("channel-CALL").performClick()
-            compose.onNode(hasText("시각 미상 · 공유할 통화 파일", substring = true)).assertExists()
+            compose.onNodeWithTag("channel-CALL").assertIsNotEnabled()
+            compose.onNode(hasText("공유할 통화 파일", substring = true)).assertDoesNotExist()
             val context = ApplicationProvider.getApplicationContext<Context>()
             val snapshots = java.io.File(context.filesDir, "shepherd-shares").listFiles()!!.map { it.name }.toSet()
             scenario.recreate()
             ready()
             Assert.assertEquals(snapshots, java.io.File(context.filesDir, "shepherd-shares").listFiles()!!.map { it.name }.toSet())
-            compose.onNodeWithTag("channel-CALL").assertIsSelected()
-            compose.onNode(hasText("● 시각 미상", substring = true)).assertExists()
+            compose.onNodeWithTag("channel-CALL").assertIsNotEnabled()
+            compose.onNode(hasText("시각 미상", substring = true)).assertDoesNotExist()
         }
     }
 }

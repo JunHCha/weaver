@@ -3,6 +3,8 @@
 import hashlib
 import time
 
+import pytest
+
 from weaver.mobile.captures import CaptureService
 from weaver.schema import Receipt
 
@@ -225,3 +227,42 @@ def test_unfinished_staging_expires_but_committed_archives_do_not(tmp_path):
     put_manifest(h, headers)
     assert service.collect_garbage(now=time.time() + 30 * 86400) == []
     assert h.archive.stored_capture(CAP) is not None
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_call_without_occurrence_is_rejected_before_archive_registration(
+    tmp_path, staged
+):
+    h = Harness(tmp_path)
+    headers = h.pair()
+    if staged:
+        assert upload(h, headers).status_code == 201
+    rejected = put_manifest(h, headers, manifest(channel="call", occurred_at=None))
+    assert (rejected.status_code, rejected.json()) == (
+        422,
+        {"code": "call_occurred_at_required", "retryable": False},
+    )
+    assert h.archive.stored_capture(CAP) is None
+    assert h.archive.sources() == []
+    assert receipt_of(h, headers).status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("channel", "occurred_at"),
+    [
+        ("call", "2026-11-01T12:00:00+09:00"),
+        ("share_text", None),
+        ("kakao", None),
+        ("voice_memo", None),
+    ],
+)
+def test_occurrence_requirement_is_call_only(tmp_path, channel, occurred_at):
+    h = Harness(tmp_path)
+    headers = h.pair()
+    upload(h, headers)
+    accepted = put_manifest(
+        h, headers, manifest(channel=channel, occurred_at=occurred_at)
+    )
+    assert accepted.status_code == 201
+    source = h.archive.get(accepted.json()["source_id"])
+    assert source.occurred_at == manifest(occurred_at=occurred_at).occurred_at

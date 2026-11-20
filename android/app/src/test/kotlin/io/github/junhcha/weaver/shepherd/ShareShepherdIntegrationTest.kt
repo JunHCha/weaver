@@ -140,7 +140,7 @@ class ShareShepherdIntegrationTest {
         CourierDatabase(app).use { assertEquals(1, it.captures().size) }
     }
 
-    @Test fun realListExcludesTerminalStatesAndSortsKnownTimesBeforeUnknown() {
+    @Test fun realListExcludesUnknownTimesAndTerminalStatesAndSortsNewestFirst() {
         val stable = listOf(row(1, "Older_261108_123456.m4a"), row(2, "Recent_261108_133456.m4a"),
             row(3, "unknown.m4a"), row(4, "Processed_261108_143456.m4a"),
             row(5, "Dismissed_261108_153456.m4a"), row(6, "Removed_261108_163456.m4a"))
@@ -155,13 +155,13 @@ class ShareShepherdIntegrationTest {
             ready()
             compose.onNodeWithTag("channel-CALL").performClick()
             compose.onNode(hasText("● ", substring = true) and hasText("Recent_", substring = true)).assertExists()
-            compose.onNode(hasText("시각 미상 · unknown.m4a", substring = true)).assertExists()
+            compose.onNode(hasText("unknown.m4a", substring = true)).assertDoesNotExist()
             listOf("Processed_", "Dismissed_", "Removed_").forEach { name ->
                 compose.onNode(hasText(name, substring = true)).assertDoesNotExist()
             }
         }
         assertFalse(queriedOnMain)
-        assertEquals(listOf(stable[1].uri, stable[0].uri, stable[2].uri),
+        assertEquals(listOf(stable[1].uri, stable[0].uri),
             PendingCalls.repository(app).pending().map { it.id })
         assertEquals(CallStatus.REMOVED, ShepherdRuntime.calls(app).single { it.id == stable[5].uri }.status)
     }

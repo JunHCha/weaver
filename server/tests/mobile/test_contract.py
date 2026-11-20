@@ -149,7 +149,13 @@ def test_source_labels_follow_the_archived_channel(tmp_path):
     headers = h.pair("read", "capture")
     upload(h, headers)
     receipt = put_manifest(
-        h, headers, manifest(channel="call", hints={"counterpart": "이서준"})
+        h,
+        headers,
+        manifest(
+            channel="call",
+            occurred_at="2026-11-07T12:00:00+09:00",
+            hints={"counterpart": "이서준"},
+        ),
     ).json()
     h.fabric.append([thread("c1", source_id=receipt["source_id"]), thread("c2")])
     items = {

@@ -187,27 +187,40 @@ class ShareSubmissionTest {
         assertTrue(PendingCalls.reconcile(context))
         assertTrue(links.all.isEmpty())
     }
-    @Test fun adapterFiltersProcessedSortsInstantsAndKeepsUnknownLast() {
+    @Test fun adapterExcludesMissingAndInvalidTimesAndSortsInstants() {
         val records = listOf(
             CallRecord("unknown", "unknown file", null, null, CallStatus.UNSHARED),
+            CallRecord("invalid", "invalid file", null, "invalid", CallStatus.UNSHARED),
             CallRecord("older", "old file", null, "2026-11-08T13:00:00+09:00", CallStatus.UNSHARED),
             CallRecord("processed", "done", null, "2026-11-09T01:00:00Z", CallStatus.PROCESSED),
             CallRecord("recent", "new file", null, "2026-11-08T05:00:00Z", CallStatus.UNSHARED))
         val result = PendingCalls.adapt(records)
-        assertEquals(listOf("recent", "older", "unknown"), result.map { it.id })
+        assertEquals(listOf("recent", "older"), result.map { it.id })
         assertEquals("new file", result.first().displayName)
     }
-    @Test fun invalidMetadataNormalizesBeforePersistingAndPrepareCleansFailedManifest() {
-        pending = listOf(call.copy(occurredAt = "2026-11-08T12:00+09:00", counterpart = "  "))
-        val manifest = ShareSubmission.submit(context, text(), Channel.CALL, call.id).manifest
-        assertNull(manifest.occurredAt); assertNull(manifest.hints.counterpart)
-        val before = File(context.filesDir, "courier-staging").listFiles()!!.map { it.name }.toSet()
+    @Test fun missingOrInvalidCallTimeRejectsBeforeSavingAnything() {
+        listOf(null, "2026-11-08T12:00+09:00").forEach { time ->
+            pending = listOf(call.copy(occurredAt = time))
+            val file = text()
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                ShareSubmission.submit(context, file, Channel.CALL, call.id)
+            }
+            assertEquals("통화 시각을 파일 이름에서 확인하지 못해 저장하지 않았습니다.", error.message)
+            assertTrue(file.exists())
+            CourierDatabase(context).use { assertTrue(it.captures().isEmpty()) }
+            assertTrue(File(context.filesDir, "courier-staging").listFiles().isNullOrEmpty())
+            listOf("shepherd-call-drafts", "shepherd-call-links", "shepherd-call-assignments").forEach {
+                assertTrue(context.getSharedPreferences(it, Context.MODE_PRIVATE).all.isEmpty())
+            }
+        }
+    }
+    @Test fun prepareCleansFailedManifest() {
         val source = File(context.cacheDir, "invalid-meta.txt").apply { writeText("different") }
         assertThrows(IllegalArgumentException::class.java) {
             io.github.junhcha.weaver.courier.CourierRuntime.prepare(context, Uri.fromFile(source),
                 CaptureKind.TEXT, Channel.CALL, "txt", "invalid", "  ")
         }
-        assertEquals(before, File(context.filesDir, "courier-staging").listFiles()!!.map { it.name }.toSet())
+        assertTrue(File(context.filesDir, "courier-staging").listFiles().isNullOrEmpty())
     }
     @Test fun crashDraftReservesCallBeforeNextSubmission() {
         val first = ShareSubmission.submit(context, text("first"), Channel.CALL, call.id).manifest

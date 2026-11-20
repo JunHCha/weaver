@@ -18,7 +18,11 @@ object PendingCalls {
     internal fun adapt(records: List<CallRecord>): List<PendingCall> = records
         .filter { it.status == CallStatus.UNSHARED }
         .map { PendingCall(it.id, validTime(it.occurredAt), it.counterpart?.trim()?.takeIf(String::isNotEmpty), it.displayName) }
+        .filter { it.occurredAt != null }
         .sortedWith(compareByDescending { it.occurredAt?.let(OffsetDateTime::parse)?.toInstant() })
+
+    internal fun selectable(calls: List<PendingCall>): List<PendingCall> =
+        calls.filter { validTime(it.occurredAt) != null }
 
     internal fun validTime(value: String?): String? = value?.takeIf {
         runCatching { io.github.junhcha.weaver.schema.Rules.timestamp(it, "occurred_at") }.isSuccess

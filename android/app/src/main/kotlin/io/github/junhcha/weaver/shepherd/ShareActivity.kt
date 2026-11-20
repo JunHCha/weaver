@@ -57,7 +57,7 @@ class ShareActivity : ComponentActivity() {
                             Text("연결할 통화 (파일명과 일치하는 통화, 없으면 가장 최근 통화가 기본)")
                             calls.forEach { call ->
                                 TextButton(enabled = !busy, onClick = { callId = call.id }) {
-                                    Text("${if (callId == call.id) "● " else "○ "}${call.occurredAt ?: "시각 미상"} · ${call.displayName} · ${call.counterpart ?: "알 수 없음"}")
+                                    Text("${if (callId == call.id) "● " else "○ "}${call.occurredAt} · ${call.displayName} · ${call.counterpart ?: "알 수 없음"}")
                                 }
                             }
                         }
@@ -81,7 +81,7 @@ class ShareActivity : ComponentActivity() {
                 }
                 // Include recordings not yet seen by the periodic worker, even while stabilizing.
                 ShepherdRuntime.scanNow(this)
-                val pending = PendingCalls.repository(this).pending()
+                val pending = PendingCalls.selectable(PendingCalls.repository(this).pending())
                 val displayName = SharedText.displayName(this, intent)
                 runOnUiThread {
                     if (isDestroyed) {
