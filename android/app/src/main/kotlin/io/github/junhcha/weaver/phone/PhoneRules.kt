@@ -81,7 +81,8 @@ data class StatusCounts(val waitingReview: Int, val processing: Int, val stopped
 
 enum class DueKind { DEADLINE, SCHEDULE }
 
-data class NowEntry(val thread: PhoneThread, val dueKind: DueKind? = null)
+/** [revised]: seq is at or before the acknowledged mark but a later revision brought it back into recent. */
+data class NowEntry(val thread: PhoneThread, val dueKind: DueKind? = null, val revised: Boolean = false)
 
 data class NowView(
     val overdue: List<NowEntry>,

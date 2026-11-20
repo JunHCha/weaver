@@ -2,6 +2,7 @@
 effective-value rules; every dataset here is synthetic."""
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -283,6 +284,36 @@ def test_now_recent_sorts_by_occurrence_then_seq_without_changing_filters(tmp_pa
         "late",
         "unseen-old",
     ]
+
+
+def test_now_recent_orders_and_filters_across_the_seoul_date_boundary(tmp_path):
+    h = Harness(tmp_path)
+    utc = lambda day, hour, minute=0: datetime(2026, 11, day, hour, minute, tzinfo=UTC)  # noqa: E731
+    h.fabric.append(
+        [
+            # Same UTC day (19th) but 11/19 23:00 vs 11/20 01:00 in Seoul.
+            thread("before-midnight", occurred_at=utc(19, 14), recorded_at=utc(19, 14)),
+            thread("after-midnight", occurred_at=utc(19, 16), recorded_at=utc(19, 16)),
+            # Yesterday 00:00 Seoul is 11-18T15:00Z: the filter is inclusive there.
+            thread("edge-in", occurred_at=utc(1, 0), recorded_at=utc(18, 15)),
+            thread("edge-out", occurred_at=utc(1, 0), recorded_at=utc(18, 14, 59)),
+        ]
+    )
+    view = ReadModel(h.config).now(utc(20, 10))
+    assert view.today == "2026-11-20"
+    assert [e.thread.thread_id for e in view.recent] == [
+        "after-midnight",
+        "before-midnight",
+        "edge-in",
+    ]
+    seoul = [
+        (
+            e.thread.occurred_at.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat(),
+            e.thread.recorded_at.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat(),
+        )
+        for e in view.recent[:2]
+    ]
+    assert seoul == [("2026-11-20", "2026-11-20"), ("2026-11-19", "2026-11-19")]
 
 
 def test_now_endpoint_returns_the_same_shape(tmp_path):

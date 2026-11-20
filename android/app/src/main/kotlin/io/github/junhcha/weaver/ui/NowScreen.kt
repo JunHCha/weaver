@@ -71,17 +71,17 @@ internal fun NowScreen(
                             .joinToString(" · ")
                     }
                     NowSection("새로 반영됨", view.recent, onThread = onThread) { entry ->
-                        val occurred = entry.thread.occurredAt.atZone(SeoulZone)
-                        val recordedDay = entry.thread.recordedAt.atZone(SeoulZone).toLocalDate()
+                        val occurred = entry.thread.occurredAt.atZone(zone)
+                        val recordedDay = entry.thread.recordedAt.atZone(zone).toLocalDate()
                         val occurredDay = occurred.toLocalDate()
-                        val seoulToday = now.atZone(SeoulZone).toLocalDate()
+                        val seoulToday = now.atZone(zone).toLocalDate()
                         val day = when (occurredDay) {
                             seoulToday -> "오늘"
                             seoulToday.minusDays(1) -> "어제"
                             else -> occurredDay.shortDate()
                         }
                         val reflected = if (occurredDay != recordedDay) " · ${recordedDay.shortDate()} 반영" else ""
-                        "$day ${"%02d:%02d".format(occurred.hour, occurred.minute)} · ${entry.thread.kind.label} · ${entry.thread.source}$reflected"
+                        "$day ${"%02d:%02d".format(occurred.hour, occurred.minute)} · ${entry.thread.kind.label} · ${entry.thread.source}$reflected${if (entry.revised) " · 변경 반영" else ""}"
                     }
                 }
             }

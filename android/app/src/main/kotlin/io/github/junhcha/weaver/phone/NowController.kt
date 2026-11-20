@@ -176,7 +176,8 @@ class NowController(val server: String, private val api: () -> MobileApi?, priva
             grouped.copy(recent = current.threads.filter { it.id !in listed && maxOf(it.seq, it.revision) > ack }.sortedWith(newestFirst).map { NowEntry(it) })
         }
         fun filter(items: List<NowEntry>) = items.filterNot { it.thread.id in hiddenIds }
-        val visible = NowView(filter(base.overdue), filter(base.today), filter(base.recent).filter { maxOf(it.thread.seq, it.thread.revision) > ack })
+        val visible = NowView(filter(base.overdue), filter(base.today), filter(base.recent).filter { maxOf(it.thread.seq, it.thread.revision) > ack }
+            .map { it.copy(revised = it.thread.seq <= ack && it.thread.revision > ack) })
         val midnight = now.atZone(current.zone).toLocalDate().plusDays(1).atStartOfDay(current.zone).toInstant()
         val boundary = minOf(midnight, store.nextExpiry(server, current.epoch, now) ?: midnight)
         // Oversized unpaged responses require a server pagination follow-up; avoid automatic error loops.
