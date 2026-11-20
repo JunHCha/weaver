@@ -262,6 +262,29 @@ def test_now_view_overdue_today_and_recent_in_the_configured_zone(tmp_path):
     )
 
 
+def test_now_recent_sorts_by_occurrence_then_seq_without_changing_filters(tmp_path):
+    h = Harness(tmp_path)
+    h.fabric.append(
+        [
+            thread("acknowledged", occurred_at=at("20"), recorded_at=at("18")),
+            thread("newer", occurred_at=at("19"), recorded_at=at("19")),
+            thread("tie", occurred_at=at("19"), recorded_at=at("19")),
+            thread("late", occurred_at=at("06"), recorded_at=at("20")),
+            thread("unseen-old", occurred_at=at("05"), recorded_at=at("18")),
+        ]
+    )
+    model = ReadModel(h.config)
+    initial = model.now(at("20"))
+    assert [e.thread.thread_id for e in initial.recent] == ["tie", "newer", "late"]
+    unseen = model.now(at("20"), after_seq=1, fabric_epoch=initial.fabric_epoch)
+    assert [e.thread.thread_id for e in unseen.recent] == [
+        "tie",
+        "newer",
+        "late",
+        "unseen-old",
+    ]
+
+
 def test_now_endpoint_returns_the_same_shape(tmp_path):
     h = Harness(tmp_path)
     seed(h)

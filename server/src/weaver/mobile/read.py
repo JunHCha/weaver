@@ -489,7 +489,7 @@ class ReadModel:
                     else t.recorded_at.astimezone(zone) >= since
                 )
             ),
-            key=lambda t: (t.recorded_at, t.seq),
+            key=lambda t: (t.occurred_at, t.seq),
             reverse=True,
         )
         return NowView(

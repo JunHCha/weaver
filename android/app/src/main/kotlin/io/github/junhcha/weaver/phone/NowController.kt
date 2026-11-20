@@ -173,7 +173,7 @@ class NowController(val server: String, private val api: () -> MobileApi?, priva
         val base = if (next.online) current.view else {
             val grouped = nowView(PhoneSnapshot(current.threads, emptyList(), emptyList()), now, current.zone)
             val listed = (grouped.overdue + grouped.today).map { it.thread.id }.toSet()
-            grouped.copy(recent = current.threads.filter { it.id !in listed && maxOf(it.seq, it.revision) > ack }.map { NowEntry(it) })
+            grouped.copy(recent = current.threads.filter { it.id !in listed && maxOf(it.seq, it.revision) > ack }.sortedWith(newestFirst).map { NowEntry(it) })
         }
         fun filter(items: List<NowEntry>) = items.filterNot { it.thread.id in hiddenIds }
         val visible = NowView(filter(base.overdue), filter(base.today), filter(base.recent).filter { maxOf(it.thread.seq, it.thread.revision) > ack })

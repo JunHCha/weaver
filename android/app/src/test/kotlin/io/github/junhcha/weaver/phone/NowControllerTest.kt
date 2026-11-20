@@ -72,6 +72,31 @@ class NowControllerTest {
         assertEquals(0L, store.ack("another-server", snap.epoch))
     }
 
+    @Test fun onlineKeepsServerOrderAndOfflineSortsByOccurrenceThenSeq() = runBlocking {
+        val template = raw.getValue("recent").jsonArray.first().jsonObject
+        fun row(id: String, seq: Long, occurred: String, recorded: String) = JsonObject(template.toMutableMap().apply {
+            put("thread", JsonObject(template.getValue("thread").jsonObject.toMutableMap().apply {
+                put("thread_id", JsonPrimitive(id)); put("seq", JsonPrimitive(seq)); put("revision", JsonPrimitive(seq))
+                put("occurred_at", JsonPrimitive(occurred)); put("recorded_at", JsonPrimitive(recorded))
+                put("kind", JsonPrimitive("기록")); put("open", JsonPrimitive(false)); put("field", JsonNull); put("value", JsonNull)
+                put("effective_deadline", JsonNull); put("effective_schedule", JsonNull)
+            }))
+        })
+        change("head" to JsonPrimitive(4), "overdue" to JsonArray(emptyList()), "due_today" to JsonArray(emptyList()),
+            "recent" to JsonArray(listOf(
+                row("late", 3, "2026-11-06T00:00:00Z", "2026-11-20T00:00:00Z"),
+                row("newer", 1, "2026-11-19T00:00:00Z", "2026-11-19T00:00:00Z"),
+                row("tie", 2, "2026-11-19T00:00:00Z", "2026-11-19T00:00:00Z"),
+                row("unseen-old", 4, "2026-11-05T00:00:00Z", "2026-11-05T00:00:00Z"),
+            )))
+        val controller = controller(); controller.refresh()
+        assertEquals(listOf("late", "newer", "tie", "unseen-old"), controller.visible()!!.recent.map { it.thread.id })
+        failRead = true
+        val restarted = controller(); restarted.refresh()
+        assertEquals(listOf("tie", "newer", "late", "unseen-old"), restarted.visible()!!.recent.map { it.thread.id })
+        assertEquals(0L, store.ack(server, restarted.snapshot!!.epoch))
+    }
+
     @Test fun malformedOrUnknownRowPreservesCacheAndCannotAcknowledge() = runBlocking {
         val controller = controller(); controller.refresh()
         val before = controller.snapshot

@@ -37,7 +37,7 @@ private fun PhoneSnapshot.partyNames(): Set<String> =
     tags.filter { it.kind?.isParty == true }.map { it.name }.toSet()
 
 /** Newest first; seq breaks ties like the PC. */
-private val newestFirst = compareByDescending<PhoneThread> { it.occurredAt }.thenByDescending { it.seq }
+internal val newestFirst = compareByDescending<PhoneThread> { it.occurredAt }.thenByDescending { it.seq }
 
 private fun rootTarget(row: PhoneThread, byId: Map<String, PhoneThread>): PhoneThread {
     var current = row
@@ -113,7 +113,7 @@ fun nowView(raw: PhoneSnapshot, now: Instant, zone: ZoneId = SeoulZone): NowView
     val listed = (overdue + dueToday).map { it.thread.id }.toSet()
     val since = today.minusDays(1).atStartOfDay(zone).toInstant()
     val recent = facts.filter { it.id !in listed && !it.recordedAt.isBefore(since) }
-        .sortedWith(compareByDescending<PhoneThread> { it.recordedAt }.thenByDescending { it.seq })
+        .sortedWith(newestFirst)
         .map { NowEntry(it) }
     return NowView(overdue, dueToday, recent)
 }
