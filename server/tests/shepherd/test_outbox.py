@@ -306,6 +306,8 @@ def test_bytes_limit_close_transaction_and_collision_detection(
     with pytest.raises(CapacityError):
         box.close(key, manifest(key, b"body"))
     assert box.get(key.capture_id).state == "buffer"
+    assert box.get(key.capture_id).payload == b"body"
+    assert box.get(key.capture_id).manifest is None
     with pytest.raises(CapacityError):
         box.buffer(key, b"longer", cursor=("fetch", "two"))
     assert box.cursor("fetch") == "one"
@@ -337,3 +339,219 @@ def test_correction_cannot_depend_on_unrelated_bundle(tmp_path: Path) -> None:
         box.close(
             correction, manifest(correction, b"body"), depends_on=original.capture_id
         )
+
+
+def test_revision_two_cannot_skip_pending_revision_one(tmp_path: Path) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    keys = [BundleKey("one", "a", "2026-11-20", 0, revision) for revision in range(3)]
+    for key in keys:
+        box.buffer(key, b"body")
+    box.close(keys[0], manifest(keys[0], b"body"))
+    box.close(keys[1], manifest(keys[1], b"body"), depends_on=keys[0].capture_id)
+    with pytest.raises(ValueError, match="invalid_correction_dependency"):
+        box.close(keys[2], manifest(keys[2], b"body"), depends_on=keys[0].capture_id)
+    box.close(keys[2], manifest(keys[2], b"body"), depends_on=keys[1].capture_id)
+    visited = []
+    allow_one = False
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        identifier = request.url.path.split("/")[-2]
+        visited.append(identifier)
+        if request.method == "GET":
+            if identifier == keys[1].capture_id and not allow_one:
+                return httpx.Response(503)
+            if identifier == keys[2].capture_id:
+                assert (
+                    box.get(keys[1].capture_id, include_payload=False).receipt
+                    is not None
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "schema_version": 1,
+                    "capture_id": identifier,
+                    "sha256": hashlib.sha256(b"body").hexdigest(),
+                    "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "received_at": "2026-11-20T00:00:00Z",
+                },
+            )
+        raise AssertionError("Receipt recovery must avoid uploading")
+
+    client = httpx.Client(
+        base_url="http://test/", transport=httpx.MockTransport(respond)
+    )
+    box.deliver(client)
+    assert visited == [keys[0].capture_id, keys[1].capture_id]
+    allow_one = True
+    box.deliver(client)
+    assert box.get(keys[2].capture_id).state == "received"
+
+
+def test_discarded_revision_is_excluded_from_predecessor(tmp_path: Path) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    keys = [BundleKey("one", "a", "2026-11-20", 0, revision) for revision in range(3)]
+    for key in keys:
+        box.buffer(key, b"body")
+    box.close(keys[0], manifest(keys[0], b"body"))
+    box.close(keys[1], manifest(keys[1], b"body"), depends_on=keys[0].capture_id)
+    box.discard(keys[1].capture_id)
+    with pytest.raises(ValueError, match="invalid_correction_dependency"):
+        box.close(keys[2], manifest(keys[2], b"body"), depends_on=keys[1].capture_id)
+    box.close(keys[2], manifest(keys[2], b"body"), depends_on=keys[0].capture_id)
+
+
+@pytest.mark.parametrize("phase", ["receipt", "payload", "manifest"])
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        (202, "unexpected_response"),
+        (302, "unexpected_redirect"),
+        (400, "invalid_host"),
+        (400, "invalid_headers"),
+        (402, "unknown_error"),
+        (404, "unknown_error"),
+        (405, "unknown_error"),
+        (410, "unknown_error"),
+        (418, "unknown_error"),
+    ],
+)
+def test_unexpected_client_errors_pause_and_notify(
+    tmp_path: Path, phase: str, status: int, code: str
+) -> None:
+    if phase == "receipt" and status == 404:
+        return  # Receipt-not-found is the documented upload/recovery path.
+    notices = []
+    box = Outbox(
+        tmp_path / "outbox.db",
+        "one",
+        OutboxLimits(min_free_bytes=1),
+        notify=notices.append,
+    )
+    key = BundleKey("one", "a", "2026-11-20", 0, 0)
+    box.buffer(key, b"body")
+    box.close(key, manifest(key, b"body"))
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith(phase):
+            return httpx.Response(
+                status,
+                json={"code": code},
+            )
+        return httpx.Response(404 if request.method == "GET" else 201)
+
+    client = httpx.Client(
+        base_url="http://test/", transport=httpx.MockTransport(respond)
+    )
+    box.deliver(client)
+    assert box.paused and notices == ["courier_operator_required"]
+    entry = box.get(key.capture_id)
+    assert (
+        entry.state == "pending"
+        and entry.payload == b"body"
+        and f"http_{status}" in (entry.error or "")
+    )
+    before = len(calls)
+    Outbox(box.path, "one").deliver(client)
+    assert len(calls) == before
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 503])
+def test_transient_errors_remain_retryable(tmp_path: Path, status: int) -> None:
+    notices = []
+    box = Outbox(
+        tmp_path / "outbox.db",
+        "one",
+        OutboxLimits(min_free_bytes=1),
+        notify=notices.append,
+    )
+    key = BundleKey("one", "a", "2026-11-20", 0, 0)
+    box.buffer(key, b"body")
+    box.close(key, manifest(key, b"body"))
+    box.deliver(
+        httpx.Client(
+            base_url="http://test/",
+            transport=httpx.MockTransport(lambda _: httpx.Response(status)),
+        )
+    )
+    assert not box.paused and not notices and box.get(key.capture_id).payload == b"body"
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_receipt_get_409_recovery_or_quarantine(
+    tmp_path: Path, retryable: bool
+) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    key = BundleKey("one", "a", "2026-11-20", 0, 0)
+    box.buffer(key, b"body")
+    box.close(key, manifest(key, b"body"))
+    uploaded = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                409,
+                json={
+                    "code": "payload_missing" if retryable else "capture_conflict",
+                    "retryable": retryable,
+                },
+            )
+        uploaded.append(request.url.path)
+        return httpx.Response(503)  # Leave bytes available for the next replay.
+
+    box.deliver(
+        httpx.Client(base_url="http://test/", transport=httpx.MockTransport(respond))
+    )
+    assert bool(uploaded) == retryable
+    assert box.get(key.capture_id).state == ("pending" if retryable else "quarantine")
+    assert box.get(key.capture_id).payload == b"body"
+
+
+def test_metadata_reads_do_not_load_payload_or_take_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    key = BundleKey("one", "a", "2026-11-20", 0, 0)
+    box.buffer(key, b"body", cursor=("fetch", "page"))
+    box.close(key, manifest(key, b"body"))
+    statements = []
+    connect = sqlite3.connect
+
+    def traced(*args, **kwargs):
+        db = connect(*args, **kwargs)
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    # A RESERVED writer lock must not prevent a metadata reader.
+    with box._write():
+        statements.clear()
+        assert box.get(key.capture_id, include_payload=False).payload is None
+        assert list(box.entries())[0].payload is None
+        assert box.cursor("fetch") == "page"
+        assert not box.paused
+        assert box.counts() == {"pending": 1}
+        assert not any(
+            "BEGIN" in query or "payload" in query.lower() for query in statements
+        )
+
+
+def test_incremental_vacuum_releases_gc_pages(tmp_path: Path) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    key = BundleKey("one", "a", "2026-11-20", 0, 0)
+    body = b"x" * 2**20
+    box.buffer(key, body)
+    box.close(key, manifest(key, body))
+    before = box.path.stat().st_size
+    with box._write() as db:
+        assert db.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+        db.execute(
+            "UPDATE entries SET state='received', receipt=?",
+            (b"durably verified receipt fixture",),
+        )
+    box.collect_garbage()
+    assert box.path.stat().st_size < before // 2
+    assert box.get(key.capture_id).payload is None

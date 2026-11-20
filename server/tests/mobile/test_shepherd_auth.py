@@ -282,3 +282,251 @@ def test_registration_failure_keeps_previous_hash_and_rejects_unsafe_token_path(
         private = PrivateFile(token_file)
         with private.locked() as parent:
             private.read(parent)
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/diagnostics/crashes"),
+        ("GET", "/capabilities"),
+        ("GET", "/operations/op_example"),
+        ("GET", "/changes"),
+        ("POST", "/devices/self/checkpoint"),
+    ],
+)
+def test_loopback_capture_only_allowlist(
+    tmp_path: Path, method: str, path: str
+) -> None:
+    config = write_config(tmp_path)
+    store = MobileStore(config.state_root)
+    token_file = tmp_path / "secrets" / "token"
+    Registry(store).register("one", token_file)
+    headers = {"Authorization": "Bearer " + token_file.read_text().strip()}
+    client = TestClient(
+        create_app(config, None, store=store, local_bind=("127.0.0.1", 8788)),
+        base_url="http://127.0.0.1:8788",
+        client=("127.0.0.1", 1),
+    )
+    response = client.request(method, "/mobile/v1" + path, headers=headers)
+    assert response.status_code == 403 and response.json()["code"] == "scope_denied"
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "::1"])
+def test_real_uvicorn_loopback_scope_matches_listener(
+    tmp_path: Path, bind: str
+) -> None:
+    import socket
+    import threading
+
+    import httpx
+    import uvicorn
+
+    config = write_config(tmp_path)
+    store = MobileStore(config.state_root)
+    token_file = tmp_path / "secrets" / "token"
+    Registry(store).register("one", token_file)
+    try:
+        sock = socket.socket(
+            socket.AF_INET6 if ":" in bind else socket.AF_INET, socket.SOCK_STREAM
+        )
+    except OSError:
+        if bind == "::1":
+            pytest.skip("IPv6 sockets unavailable")
+        raise
+    try:
+        sock.bind((bind, 0))
+    except OSError:
+        sock.close()
+        if bind == "::1":
+            pytest.skip("IPv6 loopback unavailable")
+        raise
+    port = sock.getsockname()[1]
+    app = create_app(config, None, store=store, local_bind=(bind, port))
+    seen = []
+
+    async def observed(scope, receive, send):
+        if scope["type"] == "http":
+            seen.append(tuple(scope["server"]))
+        await app(scope, receive, send)
+
+    ready = threading.Event()
+
+    class Server(uvicorn.Server):
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            ready.set()
+
+    server = Server(
+        uvicorn.Config(
+            observed,
+            host=bind,
+            port=port,
+            proxy_headers=False,
+            access_log=False,
+            log_level="error",
+            ws="none",
+            lifespan="off",
+        )
+    )
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": [sock]}, daemon=True
+    )
+    thread.start()
+    try:
+        assert ready.wait(10), "uvicorn failed to start"
+        host = f"[{bind}]" if ":" in bind else bind
+        with httpx.Client(
+            base_url=f"http://{host}:{port}", trust_env=False, timeout=5
+        ) as client:
+            headers = {"Authorization": "Bearer " + token_file.read_text().strip()}
+            assert (
+                client.get(
+                    f"/mobile/v1/captures/{CAP}/receipt", headers=headers
+                ).status_code
+                == 404
+            )
+            assert (
+                client.get("/mobile/v1/capabilities", headers=headers).status_code
+                == 403
+            )
+        assert seen == [(bind, port), (bind, port)]
+    finally:
+        server.should_exit = True
+        thread.join(10)
+        sock.close()
+        assert not thread.is_alive()
+
+
+def test_registration_commit_failure_instructs_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+    from contextlib import contextmanager
+
+    config = write_config(tmp_path)
+    store = MobileStore(config.state_root)
+    token_file = tmp_path / "secrets" / "token"
+    device = Registry(store).register("one", token_file)
+    previous = token_file.read_text().strip()
+    write = MobileStore._write
+
+    @contextmanager
+    def fail_commit(self):
+        with write(self) as db:
+            yield db
+            raise sqlite3.OperationalError("simulated_commit_failure")
+
+    monkeypatch.setattr(MobileStore, "_write", fail_commit)
+    args = [
+        "shepherd",
+        "register",
+        "one",
+        "--token-file",
+        str(token_file),
+        "--config",
+        str(tmp_path / "config.toml"),
+    ]
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 1 and "rerun register" in result.output
+    assert token_file.read_text().strip() != previous
+    assert store.device_for_token(previous) == device
+    monkeypatch.undo()
+    assert CliRunner().invoke(cli, args).exit_code == 0
+    assert (
+        store.device_for_token(token_file.read_text().strip()).device_id
+        == device.device_id
+    )
+
+
+def test_listener_port_conflicts_are_rejected(tmp_path: Path) -> None:
+    write_config(tmp_path)
+    config_file = tmp_path / "config.toml"
+    original = config_file.read_text()
+    for bind in ("0.0.0.0", "::"):
+        config_file.write_text(
+            original.replace('bind = "127.0.0.1"', f'bind = "{bind}"').replace(
+                "port = 8787", "port = 8788"
+            )
+        )
+        with pytest.raises(ConfigError, match="wildcard"):
+            load_config(config_file)
+    config_file.write_text(original + "\n[shepherds.courier]\nport=8765\n")
+    with pytest.raises(ConfigError, match="default web"):
+        load_config(config_file)
+    config_file.write_text(original)
+    result = CliRunner().invoke(
+        cli, ["web", "--config", str(config_file), "--port", "8788"]
+    )
+    assert result.exit_code == 2 and "conflicts" in result.output
+    result = CliRunner().invoke(
+        cli,
+        ["web", "--config", str(config_file), "--port", "8787", "--host", "localhost"],
+    )
+    assert result.exit_code == 2 and "conflicts" in result.output
+
+
+def test_outbox_subcommands_summary_and_operator_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    from weaver.shepherd.outbox import BundleKey, Outbox
+
+    config = write_config(tmp_path)
+    box = Outbox(config.state_root / "shepherds" / "one" / "outbox.sqlite3", "one")
+    # Private metadata fixture: status/repair must not read or print payload bytes.
+    old = BundleKey("one", "a", "2026-11-20", 0, 0)
+    new = BundleKey("one", "b", "2026-11-20", 0, 0)
+    # Deliberately avoid the production 5 GiB floor on the test volume.
+    box.free_bytes = lambda: 100 * 1024**3
+    box.buffer(old, b"private payload")
+    box.buffer(new, b"private payload")
+    with box._write() as db:
+        db.execute(
+            "UPDATE entries SET state='received', payload=NULL, receipt=? WHERE capture_id=?",
+            (b"receipt fixture", old.capture_id),
+        )
+        db.execute(
+            "UPDATE entries SET state='quarantine', error='http_422' WHERE capture_id=?",
+            (new.capture_id,),
+        )
+        db.execute("INSERT INTO meta VALUES ('auth_paused','http_400')")
+    runner = CliRunner()
+
+    def invoke(command, *extra):
+        result = runner.invoke(
+            cli,
+            [
+                "shepherd",
+                "outbox",
+                command,
+                "one",
+                *extra,
+                "--config",
+                str(tmp_path / "config.toml"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    output = invoke("status")
+    assert "received=1" in output and old.capture_id not in output
+    assert new.capture_id in output and "private payload" not in output
+    assert old.capture_id in invoke("status", "--all")
+    invoke("retry", new.capture_id)
+    assert box.get(new.capture_id).state == "pending"
+    invoke("discard", new.capture_id)
+    assert box.get(new.capture_id).state == "discarded"
+    invoke("resume")
+    assert not box.paused
+    token_file = tmp_path / "secrets" / "token"
+    Registry(MobileStore(config.state_root)).register("one", token_file)
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: real_client(
+            **kwargs, transport=httpx.MockTransport(lambda _: httpx.Response(503))
+        ),
+    )
+    invoke("flush", "--token-file", str(token_file))

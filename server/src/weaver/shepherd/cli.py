@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -10,6 +11,8 @@ import typer
 
 if TYPE_CHECKING:
     from weaver.config import ServerConfig
+
+    from .outbox import Outbox
 
 
 def _load(config: str | None) -> ServerConfig:
@@ -64,6 +67,12 @@ def register(
             node_id=node_id,
             login_name=login_name,
         )
+    except sqlite3.Error:
+        typer.echo(
+            "Error: registration_commit_failed; token may have changed — rerun register with the same instance and token file (등록 명령을 다시 실행하세요).",
+            err=True,
+        )
+        raise typer.Exit(1) from None
     except (ValueError, PrivateFileError, OSError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from None
@@ -106,69 +115,110 @@ def serve(config: ConfigOption = None) -> None:
     )
 
 
-@shepherd_cli.command()
-def outbox(
-    instance_id: str,
-    config: ConfigOption = None,
-    action: Annotated[
-        str, typer.Option("--action", help="status, retry, discard, resume, flush")
-    ] = "status",
-    capture_id: Annotated[str | None, typer.Option("--capture-id")] = None,
-    token_file: Annotated[Path | None, typer.Option("--token-file")] = None,
-) -> None:
-    """Inspect or explicitly repair a private spool; flush targets loopback only.
+outbox_cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+shepherd_cli.add_typer(outbox_cli, name="outbox")
 
-    Retry preserves immutable bytes; new revisions must be enqueued separately.
-    Discard permanently removes only the selected local copy, never source data.
-    Resume after registration repairs auth; Receipt recovery precedes uploads.
-    """
+
+def _outbox(instance_id: str, config: str | None) -> tuple[ServerConfig, Outbox]:
     import re
-
-    import httpx
-
-    from weaver.private import PrivateFile, PrivateFileError
 
     from .outbox import Outbox
 
-    settings = _load(config)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", instance_id):
         raise typer.BadParameter("invalid_instance_id")
+    settings = _load(config)
     box = Outbox(
         settings.state_root / "shepherds" / instance_id / "outbox.sqlite3",
         instance_id,
         settings.shepherds.courier.limits,
     )
+    return settings, box
+
+
+@outbox_cli.command()
+def status(
+    instance_id: str,
+    config: ConfigOption = None,
+    show_all: Annotated[
+        bool, typer.Option("--all", help="Include received capture rows")
+    ] = False,
+) -> None:
+    """Show state counts and unresolved captures; --all includes received IDs."""
+    _, box = _outbox(instance_id, config)
+    typer.echo(f"paused={box.paused}")
+    typer.echo(
+        " ".join(f"{state}={count}" for state, count in sorted(box.counts().items()))
+    )
+    for entry in box.entries(include_received=show_all):
+        typer.echo(
+            f"{entry.capture_id}\t{entry.state}\t{entry.error or '-'}\t{entry.depends_on or '-'}"
+        )
+
+
+def _repair(
+    instance_id: str, config: str | None, action: str, capture_id: str | None = None
+) -> None:
+    _, box = _outbox(instance_id, config)
     try:
-        if action == "status":
-            typer.echo(f"auth_paused={box.paused}")
-            for entry in box.entries():
-                typer.echo(
-                    f"{entry.capture_id}\t{entry.state}\t{entry.error or '-'}\t{entry.depends_on or '-'}"
-                )
-        elif action in ("retry", "discard") and capture_id:
-            getattr(box, action)(capture_id)
-        elif action == "resume":
+        if action == "resume":
             box.resume()
-        elif action == "flush" and token_file:
-            private = PrivateFile(private_path(token_file, settings))
-            with private.locked() as parent:
-                raw = private.read(parent)
-            if raw is None:
-                raise ValueError("token_file_missing")
-            token = raw.decode("ascii").strip()
-            if not token.startswith("wvr_") or any(c.isspace() for c in token):
-                raise ValueError("invalid_token_file")
-            local = settings.shepherds.courier
-            host = f"[{local.bind}]" if ":" in local.bind else local.bind
-            with httpx.Client(
-                base_url=f"http://{host}:{local.port}/mobile/v1/",
-                headers={"Authorization": f"Bearer {token}"},
-                trust_env=False,
-                timeout=30,
-            ) as client:
-                box.deliver(client)
-        else:
-            raise ValueError("invalid_action_or_missing_argument")
+        elif action == "retry" and capture_id:
+            box.retry(capture_id)
+        elif action == "discard" and capture_id:
+            box.discard(capture_id)
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from None
+
+
+@outbox_cli.command()
+def retry(instance_id: str, capture_id: str, config: ConfigOption = None) -> None:
+    """Replay the identical quarantined request after operator diagnosis."""
+    _repair(instance_id, config, "retry", capture_id)
+
+
+@outbox_cli.command()
+def discard(instance_id: str, capture_id: str, config: ConfigOption = None) -> None:
+    """Explicitly discard one local copy; preserve its ID tombstone."""
+    _repair(instance_id, config, "discard", capture_id)
+
+
+@outbox_cli.command()
+def resume(instance_id: str, config: ConfigOption = None) -> None:
+    """Resume after repairing registration or the reported configuration error."""
+    _repair(instance_id, config, "resume")
+
+
+@outbox_cli.command()
+def flush(
+    instance_id: str,
+    token_file: Annotated[Path, typer.Option("--token-file")],
+    config: ConfigOption = None,
+) -> None:
+    """Replay one pass through the configured loopback capture listener."""
+    import httpx
+
+    from weaver.private import PrivateFile, PrivateFileError
+
+    settings, box = _outbox(instance_id, config)
+    try:
+        private = PrivateFile(private_path(token_file, settings))
+        with private.locked() as parent:
+            raw = private.read(parent)
+        if raw is None:
+            raise ValueError("token_file_missing")
+        token = raw.decode("ascii").strip()
+        if not token.startswith("wvr_") or any(c.isspace() for c in token):
+            raise ValueError("invalid_token_file")
+        local = settings.shepherds.courier
+        host = f"[{local.bind}]" if ":" in local.bind else local.bind
+        with httpx.Client(
+            base_url=f"http://{host}:{local.port}/mobile/v1/",
+            headers={"Authorization": f"Bearer {token}"},
+            trust_env=False,
+            timeout=30,
+        ) as client:
+            box.deliver(client)
     except (ValueError, PrivateFileError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from None

@@ -15,6 +15,7 @@ Every refusal is a fixed code. Nothing request-controlled reaches a log.
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -164,6 +165,18 @@ class AuthMiddleware:
         ):
             logger.info("mobile refused: node_mismatch %s", device.device_id)
             await _respond(send, 403, "node_mismatch")
+            return
+        if self.local_bind is not None and not (
+            (
+                scope["method"] == "PUT"
+                and re.fullmatch(r"/mobile/v1/captures/[^/]+/(payload|manifest)", path)
+            )
+            or (
+                scope["method"] == "GET"
+                and re.fullmatch(r"/mobile/v1/captures/[^/]+/receipt", path)
+            )
+        ):
+            await _respond(send, 403, "scope_denied")
             return
         state: dict[str, Any] = scope.setdefault("state", {})
         state["principal"] = Principal(device)

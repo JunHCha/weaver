@@ -706,8 +706,13 @@ def load_config(
     ):
         raise ConfigError("shepherds.webex: secret files must be distinct")
     mobile = _mobile_settings(raw.get("mobile", {}), env, config_file.parent)
-    if mobile.bind == local_courier.bind and mobile.port == local_courier.port:
+    if (
+        mobile.bind in (local_courier.bind, "0.0.0.0", "::")
+        and mobile.port == local_courier.port
+    ):
         raise ConfigError("shepherds.courier: listener must be separate from mobile")
+    if local_courier.port == 8765:
+        raise ConfigError("shepherds.courier: port conflicts with default web listener")
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     privacy = _privacy_settings(raw.get("privacy", {}))
     stt_raw = raw.get("stt", {})

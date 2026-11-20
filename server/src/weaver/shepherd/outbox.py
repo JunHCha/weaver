@@ -92,6 +92,7 @@ class Outbox:
     ) -> None:
         if not instance_id.strip():
             raise ValueError("invalid_instance_id")
+        path = path.absolute()
         self.path, self.instance_id, self.limits = (
             path,
             instance_id,
@@ -118,6 +119,9 @@ class Outbox:
         self.notify = notify or (
             lambda code: logger.warning("Shepherd stopped: %s", code)
         )
+        with self._connect() as db:
+            # Effective immediately for new databases; legacy files need offline VACUUM.
+            db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         with self._write() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -139,21 +143,37 @@ class Outbox:
             )
 
     @contextmanager
-    def _write(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         try:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA fullfsync=ON")
             db.execute("PRAGMA secure_delete=ON")
-            db.execute("BEGIN IMMEDIATE")
             yield db
-            db.execute("COMMIT")
-        except BaseException:
-            if db.in_transaction:
-                db.execute("ROLLBACK")
-            raise
         finally:
             db.close()
+
+    @contextmanager
+    def _read(self) -> Iterator[sqlite3.Connection]:
+        db = sqlite3.connect(
+            self.path.as_uri() + "?mode=ro", uri=True, timeout=10, isolation_level=None
+        )
+        try:
+            yield db
+        finally:
+            db.close()
+
+    @contextmanager
+    def _write(self) -> Iterator[sqlite3.Connection]:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                yield db
+                db.execute("COMMIT")
+            except BaseException:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
 
     def _capacity(
         self,
@@ -204,7 +224,7 @@ class Outbox:
                 db.execute("INSERT OR REPLACE INTO cursors VALUES (?,?)", cursor)
 
     def cursor(self, name: str) -> str | None:
-        with self._write() as db:
+        with self._read() as db:
             row = db.execute(
                 "SELECT value FROM cursors WHERE name=?", (name,)
             ).fetchone()
@@ -253,10 +273,19 @@ class Outbox:
                     raise ValueError("invalid_dependency")
                 if key.revision > 0:
                     prefix = key.encoded[: -(4 + len(str(key.revision).encode()))]
-                    encoded_parent = bytes(parent[0])
+                    previous = db.execute(
+                        "SELECT capture_id, bundle, state FROM entries WHERE substr(bundle,1,?)=? AND capture_id!=? AND state!='discarded'",
+                        (len(prefix), prefix, key.capture_id),
+                    ).fetchall()
+                    earlier = [
+                        (int(bytes(bundle)[len(prefix) + 4 :]), identifier, state)
+                        for identifier, bundle, state in previous
+                        if int(bytes(bundle)[len(prefix) + 4 :]) < key.revision
+                    ]
                     if (
-                        not encoded_parent.startswith(prefix)
-                        or int(encoded_parent[len(prefix) + 4 :]) >= key.revision
+                        not earlier
+                        or max(earlier)[1] != depends_on
+                        or max(earlier)[2] == "buffer"
                     ):
                         raise ValueError("invalid_correction_dependency")
             self._capacity(db, 0, len(raw))
@@ -265,28 +294,40 @@ class Outbox:
                 (raw, depends_on, key.capture_id),
             )
 
-    def get(self, capture_id: str) -> Entry:
-        with self._write() as db:
+    def get(self, capture_id: str, *, include_payload: bool = True) -> Entry:
+        """Read one request; metadata callers explicitly omit the payload BLOB."""
+        payload = "payload" if include_payload else "NULL"
+        with self._read() as db:
             row = db.execute(
-                "SELECT capture_id, state, payload, manifest, receipt, depends_on, error FROM entries WHERE capture_id=?",
+                f"SELECT capture_id, state, {payload}, manifest, receipt, depends_on, error FROM entries WHERE capture_id=?",
                 (capture_id,),
             ).fetchone()
         if row is None:
             raise ValueError("unknown_capture")
         return Entry(*row)
 
-    def entries(self) -> Iterator[Entry]:
-        with self._write() as db:
+    def entries(self, *, include_received: bool = True) -> Iterator[Entry]:
+        """Metadata only: listing never reads payload BLOBs."""
+        with self._read() as db:
             ids = [
                 r[0]
-                for r in db.execute("SELECT capture_id FROM entries ORDER BY rowid")
+                for r in db.execute(
+                    "SELECT capture_id FROM entries WHERE (? OR state!='received') ORDER BY rowid",
+                    (include_received,),
+                )
             ]
         for identifier in ids:
-            yield self.get(identifier)
+            yield self.get(identifier, include_payload=False)
+
+    def counts(self) -> dict[str, int]:
+        with self._read() as db:
+            return dict(
+                db.execute("SELECT state, COUNT(*) FROM entries GROUP BY state")
+            )
 
     @property
     def paused(self) -> bool:
-        with self._write() as db:
+        with self._read() as db:
             return (
                 db.execute("SELECT 1 FROM meta WHERE key='auth_paused'").fetchone()
                 is not None
@@ -313,37 +354,68 @@ class Outbox:
                 (capture_id,),
             ).rowcount:
                 raise ValueError("not_discardable")
+        self._compact()
 
-    def _refused(self, entry: Entry, response: httpx.Response) -> bool:
-        if response.status_code in (401, 403):
-            with self._write() as db:
-                db.execute("INSERT OR REPLACE INTO meta VALUES ('auth_paused', '1')")
-            self.notify("courier_auth_required")
-            return True
-        if response.status_code in (409, 422, 413):
-            try:
-                detail = response.json()
-            except ValueError:
-                detail = {}
-            if (
-                response.status_code == 409
-                and isinstance(detail, dict)
-                and detail.get("code") == "payload_missing"
-                and detail.get("retryable") is True
-            ):
-                return False
-            code = detail.get("code") if isinstance(detail, dict) else None
-            error = f"http_{response.status_code}"
-            if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
-                error += ":" + code
-            with self._write() as db:
+    @staticmethod
+    def _payload_missing(response: httpx.Response) -> bool:
+        if response.status_code != 409:
+            return False
+        try:
+            detail = response.json()
+        except ValueError:
+            return False
+        return (
+            isinstance(detail, dict)
+            and detail.get("code") == "payload_missing"
+            and detail.get("retryable") is True
+        )
+
+    def _refused(
+        self, entry: Entry, response: httpx.Response, *, receipt_probe: bool = False
+    ) -> bool:
+        status = response.status_code
+        if status in (200, 201, 408, 429) or 500 <= status <= 599:
+            return False
+        # A missing Receipt is the one expected 404; uploads must not retry 404.
+        if receipt_probe and status == 404:
+            return False
+        try:
+            detail = response.json()
+        except ValueError:
+            detail = {}
+        if (
+            status == 409
+            and isinstance(detail, dict)
+            and detail.get("code") == "payload_missing"
+            and detail.get("retryable") is True
+        ):
+            return False
+        code = detail.get("code") if isinstance(detail, dict) else None
+        error = f"http_{status}"
+        if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
+            error += ":" + code
+        with self._write() as db:
+            if status in (409, 422, 413):
                 db.execute(
                     "UPDATE entries SET state='quarantine', error=? WHERE capture_id=? AND state='pending'",
                     (error, entry.capture_id),
                 )
-            self.notify("courier_quarantine")
-            return True
-        return False
+            else:
+                db.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('auth_paused', ?)", (error,)
+                )
+                db.execute(
+                    "UPDATE entries SET error=? WHERE capture_id=? AND state='pending'",
+                    (error, entry.capture_id),
+                )
+        self.notify(
+            "courier_quarantine"
+            if status in (409, 422, 413)
+            else "courier_auth_required"
+            if status in (401, 403)
+            else "courier_operator_required"
+        )
+        return True
 
     def _receipt(self, entry: Entry, response: httpx.Response) -> bool:
         if response.status_code not in (200, 201):
@@ -366,7 +438,7 @@ class Outbox:
             return True
         with self._write() as db:
             db.execute(
-                "UPDATE entries SET state='received', receipt=? WHERE capture_id=?",
+                "UPDATE entries SET state='received', receipt=?, error=NULL WHERE capture_id=?",
                 (response.content, entry.capture_id),
             )
         # Separate durable commit: a crash here leaves a recoverable GC task.
@@ -378,6 +450,12 @@ class Outbox:
             db.execute(
                 "UPDATE entries SET payload=NULL WHERE state='received' AND receipt IS NOT NULL"
             )
+
+        self._compact()
+
+    def _compact(self) -> None:
+        with self._connect() as db:
+            db.execute("PRAGMA incremental_vacuum").fetchall()
 
     def deliver(self, client: httpx.Client) -> None:
         """One bounded replay pass; caller schedules backoff and supplies auth/TLS.
@@ -392,16 +470,20 @@ class Outbox:
             if self.paused:
                 break
             if entry.state != "pending" or (
-                entry.depends_on and self.get(entry.depends_on).receipt is None
+                entry.depends_on
+                and self.get(entry.depends_on, include_payload=False).receipt is None
             ):
                 continue
             path = f"captures/{entry.capture_id}"
             try:
                 response = client.get(path + "/receipt", follow_redirects=False)
-                if self._refused(entry, response) or self._receipt(entry, response):
+                if self._refused(entry, response, receipt_probe=True) or self._receipt(
+                    entry, response
+                ):
                     continue
-                if response.status_code != 404:
+                if response.status_code != 404 and not self._payload_missing(response):
                     continue
+                entry = self.get(entry.capture_id)
                 assert entry.payload is not None and entry.manifest is not None
                 manifest = Manifest.model_validate_json(entry.manifest)
                 response = client.put(

@@ -559,6 +559,15 @@ def web(
     from weaver.web import create_app
 
     settings = _load(config)
+    local = settings.shepherds.courier
+    if port == local.port and (host == local.bind or host == "localhost"):
+        raise typer.BadParameter("web port conflicts with shepherds.courier listener")
+    if (
+        settings.mobile.bind is not None
+        and port == settings.mobile.port
+        and (host == "localhost" or settings.mobile.bind in (host, "0.0.0.0", "::"))
+    ):
+        raise typer.BadParameter("web port conflicts with mobile listener")
     if static_dir is None:
         candidate = Path(__file__).resolve().parents[3] / "web" / "out"
         if candidate.is_dir():

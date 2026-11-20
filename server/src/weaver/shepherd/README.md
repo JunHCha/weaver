@@ -4,8 +4,10 @@
 listener, using `[shepherds.courier]` (127.0.0.1:8788 by default; ::1 is also
 supported). It reuses the existing `/mobile/v1/captures` payload PUT, Manifest
 PUT and Receipt GET routes and ArchiveStore journal. Receipt still means
-archive storage, not parsing, LLM permission or review completion. The phone
-HTTPS listener always retains real-peer whois and node/user binding. Local
+archive storage, not parsing, LLM permission or review completion. The loopback
+app allows only the two capture PUTs and Receipt GET; capabilities, diagnostics,
+operations, changes, checkpoint and every other path return 403. The phone HTTPS
+listener always retains real-peer whois and node/user binding. Local
 credentials work only on the dedicated loopback listener; tailnet credentials
 work only on the whois listener. Proxy headers are disabled on both.
 
@@ -41,7 +43,9 @@ the page cursor to the last buffer write. An interrupted partial page is replaye
 with the old cursor. Call `close(key, manifest, depends_on=...)` once to freeze
 payload and Manifest bytes. Retries never regenerate timestamps, sorting or IDs.
 The initial revision is 0; corrections use a higher revision and require a
-closed original/prior capture dependency. Dependencies never become sendable
+closed predecessor dependency: the highest earlier revision of the same bundle,
+excluding explicitly discarded revisions. A pending revision cannot be skipped.
+Dependencies never become sendable
 until the predecessor's verified Receipt is durably committed. Discarded and
 quarantined predecessors keep corrections blocked; unrelated captures continue.
 
@@ -61,29 +65,51 @@ Every buffer/cursor update and close checks capacity inside its transaction.
 `CapacityError` rolls back the cursor and emits a fixed operator notification
 through an injectable callback (warning logger by default). The collector must
 stop fetching when it receives this error. No age-based automatic deletion.
-Private spool bookkeeping/Receipt tombstones remain for deduplication; SQLite
-reuses freed payload pages, and the disk-free floor also protects physical usage.
+Private spool bookkeeping/Receipt tombstones remain for deduplication. New spools
+use `auto_vacuum=INCREMENTAL`; GC and explicit discard run `incremental_vacuum`
+after commit to return unused payload pages to the filesystem. Spools created
+before this setting retain their old vacuum mode: converting those requires an
+offline SQLite `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;` while all collectors and
+CLI users are stopped, with enough free space for the temporary database copy.
+The library does not automatically run a full VACUUM on legacy spools. The disk
+floor protects physical usage in both modes. Metadata queries use read-only
+connections; `entries()` and `get(..., include_payload=False)` omit payload BLOBs,
+and delivery loads payload bytes only after Receipt recovery says upload is needed.
 
 `deliver(httpx.Client)` performs one replay pass. Supply a base URL ending in
 `/mobile/v1/`, private-file bearer credentials, verified TLS for tailnet, and
-`trust_env=False`. The operator's `shepherd outbox INSTANCE --action flush
+`trust_env=False`. The operator's `shepherd outbox flush INSTANCE
 --token-file ...` uses the configured loopback listener only. Delivery queries
 Receipt first, stages the identical payload, and PUTs the identical Manifest.
 Timeout/5xx preserves bytes for the next pass; callers schedule retry/backoff.
 No redirects are followed. Receipt ID and sha must match before durable Receipt
 commit, followed by separate recoverable payload GC. Invalid Receipts preserve
-bytes in quarantine. 401/403 pauses the entire instance durably. After repairing
-registration, `--action resume` allows Receipt-first recovery with the new token.
+bytes in quarantine. 401/403 pauses the entire instance durably. Other unexpected
+4xx (including
+400 invalid_host/invalid_headers and unknown upload 404s) preserve the pending
+request, pause the instance and notify the operator. Only network errors, 5xx,
+408, 429, retryable 409 payload_missing, and the expected Receipt-not-found 404
+continue automatically. Receipt GET payload_missing proceeds to the normal
+payload/Manifest upload path. After repairing registration or configuration,
+`shepherd outbox resume INSTANCE` allows Receipt-first recovery.
 
 Permanent 409/422 (also 413) preserves original bytes, Manifest, ID and error
 code in private quarantine; retryable `409 payload_missing` remains pending.
-Inspect with `shepherd outbox INSTANCE` (IDs/states/codes only). After diagnosis:
+Inspect with `shepherd outbox status INSTANCE` (IDs/states/codes only). Status
+summarizes received rows; `--all` also lists their IDs. After diagnosis:
 
-- `--action retry --capture-id ID` replays the exact immutable request.
+- `shepherd outbox retry INSTANCE ID` replays the exact immutable request.
 - Create a new revision/capture through the collector when content needs repair.
-- `--action discard --capture-id ID` explicitly deletes that local copy and keeps
+- `shepherd outbox discard INSTANCE ID` explicitly deletes that local copy and keeps
   an ID tombstone; it never deletes the user's source or unblocks corrections.
 
 This library does not start Webex polling, set account request budgets, define
 correction-review grouping, or remove the rollback file Courier. The parallel
 Archive Receipt/Loom/progress projection change owns those server projections.
+
+The default web UI port 8765 is reserved against a Shepherd listener collision.
+A custom `web --port ...` rejects overlap with the configured Shepherd/mobile
+listener (including `localhost` resolution); wildcard mobile binds already fail
+configuration validation. Registration CLI reports DB failures with instructions
+to rerun the same instance/token-file command, because token publication can have
+completed before the server hash transaction failed.
