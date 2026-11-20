@@ -185,7 +185,7 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path, caplog):
         )
     )
     now = [0.0]
-    runtime.scanner._clock = lambda: now[0]
+    runtime.scanner.ingest._clock = lambda: now[0]
     for attempt in range(5):
         now[0] += 10000
         runtime._tick(threading.Event())
@@ -204,7 +204,7 @@ def test_capture_stop_recovery_and_committed_wiki_outputs(tmp_path, caplog):
     assert still_stopped.status == "apply_stopped"
     assert still_stopped.revision == stopped_revision
     llm.failing = False
-    restarted.scanner._clock = lambda: 1e12
+    restarted.scanner.ingest._clock = lambda: 1e12
     restarted._tick(threading.Event())
     observed = PipelineItem.model_validate_json(path.read_bytes())
     assert observed.location == "fabric" and observed.status == "done"

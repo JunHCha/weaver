@@ -189,12 +189,14 @@ scope: `read`, `capture`, `review`, `action`(+실행 폰 1대), `edit`. 표시 �
 | 쓰기 | 키 | 공통 journal |
 |---|---|---|
 | capture | `capture_id` + sha | `ArchiveStore.captures`(파일 경로와 동일) |
-| Verdict | `(package_id, revision)` + 정규화 JSON 해시 | 결정 journal(`Courier` 적용 경로) + operations |
+| Verdict | `(package_id, revision)` + 정규화 JSON 해시 | 결정 journal(`VerdictIngest` 적용 경로) + operations |
 | ActionResult | `action_id` | `ActionOutbox` + operations |
 | 편집 | `client_id` + 내용 해시 | operations(결정적 Thread ID) |
 
 HTTP 요청은 durable inbox(operations)만 커밋하고 202를 답한다. 데몬의 `mobile` 유지보수 작업이
-`Courier.apply_external`(파일 경로와 같은 적용·재시도·backoff·`apply_stopped`)과 `ActionCourier.apply_result`로 적용한다.
+`VerdictIngest.apply_external`(파일 Courier와 공유하는 도메인 적용·재시도·backoff·`apply_stopped`)과 `ActionCourier.apply_result`로 적용한다.
+파일 Courier는 같은 서비스의 `apply`를 호출하며 파일 검증·정리만 맡는다. capture의 `/captures` 경로는 기존
+`ArchiveStore.captures` journal과 Receipt 경계를 유지한다. 별도 HTTP 도메인 journal은 만들지 않는다.
 적용 뒤 operation 갱신 전에 종료돼도 도메인 journal이 막아 중복 적용이 없다. 재시작하면 중지된 Verdict를 다시 시도한다.
 
 ## 인증 (서버 설정)

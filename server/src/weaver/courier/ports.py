@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from weaver.schema import Manifest, Verdict
+from weaver.ingest.ports import DecisionStore as DecisionStore
+from weaver.ingest.ports import PackageRevisions as PackageRevisions
+from weaver.schema import Manifest
 
 
 @dataclass(frozen=True)
@@ -63,20 +65,4 @@ class CaptureStore(Protocol):
         Raise ``CaptureConflict`` for a capture_id stored with another sha256.
         Any other exception leaves the files in place for the next scan.
         """
-        ...
-
-
-class PackageRevisions(Protocol):
-    def latest_rev(self, package_id: str) -> int | None:
-        """Return the latest durably recorded package revision, or None if unknown."""
-        ...
-
-
-class DecisionStore(Protocol):
-    def is_applied(self, package_id: str, rev: int) -> bool:
-        """Return whether the verdict for this revision was durably applied."""
-        ...
-
-    def apply(self, verdict: Verdict) -> None:
-        """Apply one validated verdict; raise on failure."""
         ...

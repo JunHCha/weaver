@@ -12,6 +12,7 @@ from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
 from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
 from weaver.fabric import FabricStore
+from weaver.ingest import VerdictIngest
 from weaver.llm import create_client
 from weaver.llm.cli import ClaudeCliClient
 from weaver.llm.types import LlmClient
@@ -95,15 +96,14 @@ def build_runtime(
         context=context,
     )
     adapter = ReviewAdapter(review, summaries, progress)
-    courier = Courier(
-        config.courier,
-        archive,
+    ingest = VerdictIngest(
         adapter,
         adapter,
         retry=config.courier_settings,
         can_apply=lambda: gate.available,
         on_apply_stopped=progress.stopped,
     )
+    courier = Courier(config.courier, archive, adapter, adapter, ingest=ingest)
     ledger = RuntimeLedger(config.state_root / "runtime.sqlite3")
     drafts = SummaryDrafts(
         client, context, config.courier.proposals, state_root=config.state_root
@@ -173,7 +173,7 @@ def build_runtime(
         mobile = MobileRuntime(
             config,
             mobile_store,
-            MobileApplier(mobile_store, courier, action_courier),
+            MobileApplier(mobile_store, ingest, action_courier),
             ReviewService(review.state, mobile_store),
             action_courier,
         )
