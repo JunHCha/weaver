@@ -72,6 +72,62 @@ def _load(
         raise typer.Exit(code=EX_CONFIG) from None
 
 
+@cli.command("policy-backlog")
+def policy_backlog(
+    config: ConfigOption = None,
+    source_ids: Annotated[
+        list[str] | None, typer.Option("--source-id", help="Exact Source IDs to review")
+    ] = None,
+    resume: Annotated[bool, typer.Option("--resume")] = False,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    """Show held scope/count/dates; resume only explicitly selected Sources."""
+    import json
+
+    from weaver.llm.ledger import Ledger
+    from weaver.llm.policy import PolicyBlocked, Provenance
+    from weaver.llm.policy_archive import configured_policy
+
+    settings = _load(config)
+    ledger = Ledger(settings.state_root / "llm.sqlite3")
+    rows = ledger.policy_backlog()
+    selected = set(source_ids or [])
+    reviewed = [(sid, at) for sid, at in rows if not selected or sid in selected]
+    if selected - {sid for sid, _ in rows}:
+        typer.echo("Error: unknown backlog Source ID", err=True)
+        raise typer.Exit(2)
+    typer.echo(
+        json.dumps(
+            {
+                "count": len(reviewed),
+                "first_blocked_at": min((at for _, at in reviewed), default=None),
+                "last_blocked_at": max((at for _, at in reviewed), default=None),
+                "sources": [
+                    {"source_id": sid, "blocked_at": at} for sid, at in reviewed
+                ],
+            }
+        )
+    )
+    if not resume:
+        return
+    if not selected or not reviewed:
+        typer.echo("Error: --resume requires explicit --source-id selection", err=True)
+        raise typer.Exit(2)
+    if not yes and (
+        not sys.stdin.isatty()
+        or not typer.confirm("표시한 출처·기간·건수의 LLM 대기 작업을 재개합니까?")
+    ):
+        raise typer.Exit(2)
+    try:
+        # Approval does not override a closed/unknown channel or excluded Space.
+        configured_policy(settings).check(Provenance(frozenset(selected)))
+        ledger.policy_resume(reviewed)
+    except (PolicyBlocked, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(json.dumps({"resumed": len(reviewed)}))
+
+
 @cli.command("wiki-measure")
 def wiki_measure(
     config: ConfigOption = None,
@@ -294,6 +350,7 @@ def reextract(
     from contextlib import nullcontext
 
     from weaver.llm import create_client
+    from weaver.llm.policy_archive import configured_policy
     from weaver.loom.reextract import (
         apply_report,
         discard_plan,
@@ -359,7 +416,10 @@ def reextract(
                     settings.state_root,
                     wiki_root(settings),
                     create_client(
-                        settings.llm, state_root=settings.state_root, dry_run=True
+                        settings.llm,
+                        state_root=settings.state_root,
+                        dry_run=True,
+                        policy=configured_policy(settings, snapshot=True),
                     ),
                     source=source,
                     timezone=settings.time.timezone,

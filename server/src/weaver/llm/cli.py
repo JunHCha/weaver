@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 from weaver.config import LlmConfig
 from weaver.failures import failure_reason
 
+from . import policy as policy_module
 from .errors import (
     AuthenticationError,
     InvalidJson,
@@ -43,6 +44,7 @@ from .errors import (
     WikiTimeoutBudgetExceeded,
 )
 from .ledger import Ledger
+from .policy import LlmPolicy
 from .types import TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -292,6 +294,7 @@ class ClaudeCliClient:
         state_root: Path,
         runner: Runner = subprocess_runner,
         environ: Mapping[str, str] | None = None,
+        policy: LlmPolicy | None = None,
         deadline_seconds: float | None = None,
     ) -> None:
         if config.backend != self.backend:
@@ -299,6 +302,7 @@ class ClaudeCliClient:
         if deadline_seconds is not None and not 0 < deadline_seconds <= 900:
             raise ValueError("invalid deadline")
         self.config = config
+        self.policy = policy if policy is not None else policy_module.default_policy()
         self.ledger = ledger
         self.runner = runner
         self.environ = os.environ if environ is None else environ
@@ -356,11 +360,13 @@ class ClaudeCliClient:
             or len(task) > 80
         ):
             raise ValueError("task must be a short machine identifier")
-        if task.startswith("wiki.") and not self.wiki_available():
-            raise WikiTimeoutBudgetExceeded()
         stop = _stop_event.get()
         if stop is not None and stop.is_set():
             raise LlmInterrupted()
+        prepared = self.policy.prepare(system, user)
+        system, user = prepared.system, prepared.user
+        if task.startswith("wiki.") and not self.wiki_available():
+            raise WikiTimeoutBudgetExceeded()
         started = time.monotonic()
         record: dict[str, Any] = {
             "task": task,
@@ -376,6 +382,8 @@ class ClaudeCliClient:
             "cost_source": "unavailable",
             "attempt_records": [],
         }
+        # Re-check just before spending anything; a closed gate reserves nothing.
+        self.policy.check(prepared.provenance)
         # Subscription calls carry no dollar charge: the month budget gets 0.
         call_id = self.ledger.reserve(record, 0)
         try:

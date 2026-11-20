@@ -27,6 +27,8 @@ from weaver.llm.cli import RunResult, child_env, cli_status, subprocess_runner
 from weaver.llm.ledger import Ledger
 from weaver.runtime.pipeline import llm_status
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 class Answer(BaseModel):
     count: int

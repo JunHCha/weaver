@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -69,6 +70,51 @@ class Ledger:
                     "AND date(json_extract(record, '$.started_at'), 'localtime') IS NOT NULL "
                     "GROUP BY date(json_extract(record, '$.started_at'), 'localtime')"
                 )
+
+    def policy_block(self, source_ids: frozenset[str]) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._policy_table(db)
+            db.executemany(
+                "INSERT OR IGNORE INTO llm_policy_backlog VALUES (?, ?)",
+                ((sid, datetime.now(UTC).isoformat()) for sid in sorted(source_ids)),
+            )
+
+    @staticmethod
+    def _policy_table(db: sqlite3.Connection) -> None:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS llm_policy_backlog "
+            "(source_id TEXT PRIMARY KEY, blocked_at TEXT NOT NULL)"
+        )
+
+    def policy_backlog(self) -> list[tuple[str, str]]:
+        with self._connect() as db:
+            self._policy_table(db)
+            return [
+                (str(sid), str(at))
+                for sid, at in db.execute(
+                    "SELECT source_id, blocked_at FROM llm_policy_backlog ORDER BY source_id"
+                )
+            ]
+
+    def policy_resume(self, reviewed: list[tuple[str, str]]) -> None:
+        """Resume only the exact reviewed rows; later denied work stays queued."""
+        if not reviewed:
+            raise ValueError("empty policy backlog selection")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._policy_table(db)
+            for sid, at in reviewed:
+                row = db.execute(
+                    "SELECT blocked_at FROM llm_policy_backlog WHERE source_id=?",
+                    (sid,),
+                ).fetchone()
+                if row is None or row[0] != at:
+                    raise ValueError("policy backlog changed; review again")
+            db.executemany(
+                "DELETE FROM llm_policy_backlog WHERE source_id=? AND blocked_at=?",
+                reviewed,
+            )
 
     def _secure_files(self) -> None:
         # Create private BEFORE SQLite opens it, regardless of process umask;
@@ -274,7 +320,8 @@ class MemoryLedger(Ledger):
     """
 
     def __init__(self, path: Path) -> None:
-        self._memory = sqlite3.connect(":memory:")
+        self._memory_lock = RLock()
+        self._memory = sqlite3.connect(":memory:", check_same_thread=False)
         if path.is_file():
             source = connect_snapshot(path)
             try:
@@ -285,5 +332,5 @@ class MemoryLedger(Ledger):
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        with self._memory:
+        with self._memory_lock, self._memory:
             yield self._memory

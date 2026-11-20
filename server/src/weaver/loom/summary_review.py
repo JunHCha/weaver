@@ -14,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
 from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
 from weaver.fabric import ThreadQuery
+from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
-from weaver.llm.webex_guard import require_webex_gate
 from weaver.loom.summary_state import SummaryState, read_source_reference
 from weaver.loom.tagging import (
     FACT_RULES,
@@ -207,7 +207,6 @@ class ApprovalExtractor:
         now: datetime | None,
         replaces: str | None,
     ) -> "Prepared":
-        require_webex_gate(package.source_type)
         timestamp = now or datetime.now(UTC)
         approval = self.approved_at
         if approval is None and self.allow_current_approval_time:
@@ -267,7 +266,13 @@ class ApprovalExtractor:
             if len(open_requests) < 50 and cost + size <= 8000:
                 open_requests.append(hint)
                 cost += size
-        response = self.llm.generate_json(
+        llm = ScopedClient(
+            self.llm,
+            [package.source_id, *(t.source_id for t in all_threads)],
+            shared=True,
+            requester=package.source_id,
+        )
+        response = llm.generate_json(
             "loom.approve",
             (
                 "사람이 작성한 본문에 검토 답과 추가 피드백을 반영하고 사실만 추출한다."
@@ -643,7 +648,6 @@ class SummaryReview(ApprovalExtractor):
         replaces: str | None = None,
     ) -> EventSummary | ReviewPackage | None:
         """Apply one verdict, replaying durable side effects safely after interruption."""
-        require_webex_gate(package.source_type)
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", package.package_id):
             raise ValueError("invalid package id")
         if (package.package_id, package.revision) != (

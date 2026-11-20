@@ -53,6 +53,7 @@ from weaver.llm.errors import (
     UsageLimited,
     WikiTimeoutBudgetExceeded,
 )
+from weaver.llm.policy import PolicyBlocked
 
 from .gate import Interrupted, LlmGate, LlmUnavailable
 from .ledger import Progress, RuntimeLedger
@@ -190,6 +191,7 @@ class Runtime[S: HasSourceId]:
         maintenance: Sequence[MaintenanceTask] = (),
         clock: Callable[[], float] = time.time,
         wait: Callable[[float], bool] | None = None,
+        policy_held: Callable[[frozenset[str]], bool] | None = None,
     ) -> None:
         if not interval > 0:
             raise ValueError("interval must be positive")
@@ -205,6 +207,7 @@ class Runtime[S: HasSourceId]:
         self.maintenance = list(maintenance)
         self.clock = clock
         self._wait = wait
+        self.policy_held = policy_held
         self.resumes = 0
         self.consecutive_failures = 0
         self._last_run: dict[str, float] = {}
@@ -329,6 +332,12 @@ class Runtime[S: HasSourceId]:
             if known is not None:
                 if known.status == "waiting_llm" and not self.gate.available:
                     continue
+                if (
+                    known.status == "waiting_llm"
+                    and self.policy_held is not None
+                    and self.policy_held(frozenset({sid}))
+                ):
+                    continue  # held in the policy backlog until explicitly resumed
                 if known.status == "retry" and (
                     known.next_attempt_at is not None
                     and known.next_attempt_at > self.clock()
@@ -348,6 +357,14 @@ class Runtime[S: HasSourceId]:
             outcome = self.processor.process(source, stop)
         except Interrupted:
             return  # stop requested before the next stage; nothing failed
+        except PolicyBlocked:
+            self.ledger.record(
+                sid,
+                "waiting_llm",
+                attempts=attempts,
+                contract_failures=contract,
+                error_class="PolicyBlocked",
+            )
         except _LLM_OFF as error:
             reason = getattr(error, "code", type(error).__name__)
             if self.gate.available:
@@ -460,6 +477,8 @@ class Runtime[S: HasSourceId]:
                     logger.warning("Wiki timeout; retry in %.0fs", delay)
                 else:
                     logger.warning("maintenance timeout")
+            except PolicyBlocked:
+                logger.warning("maintenance waiting: %s policy_blocked", task.name)
             except WikiTimeoutBudgetExceeded:
                 pass  # The CLI guard logs once per day, before reserving a call.
             except (*_LLM_OFF, RateLimited) as error:

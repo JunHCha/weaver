@@ -719,7 +719,7 @@ def test_wiki_timeout_backoff_only_resets_on_success(tmp_path, other):
 
 
 def test_paused_wiki_skips_compile_reservations_and_warns_once_per_day(
-    tmp_path, monkeypatch, caplog
+    tmp_path, monkeypatch, caplog, transport_policy
 ):
     from dataclasses import replace
     from datetime import datetime as RealDatetime
@@ -808,3 +808,36 @@ def test_runtime_stop_cancels_cli_without_recording_source_failure(tmp_path):
     assert stop.is_set()
     assert runtime.ledger.counts() == {}
     assert Ledger(tmp_path / "llm.sqlite3").records() == []
+
+
+def test_policy_held_source_is_skipped_until_resumed(tmp_path):
+    from weaver.llm.policy import PolicyBlocked
+
+    held = {"src_a"}
+    processor = FakeProcessor({"src_a": PolicyBlocked()})
+    runtime, _, _, _ = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        waits=4,
+        policy_held=lambda ids: bool(ids & held),
+    )
+    stop = threading.Event()
+    runtime.run(stop)
+    assert processor.seen == ["src_a"]  # blocked once, then skipped while held
+    assert counts(tmp_path) == {"waiting_llm": 1}
+
+
+def test_transiently_blocked_source_is_evaluated_again(tmp_path):
+    from weaver.llm.policy import PolicyBlocked
+
+    processor = FakeProcessor({"src_a": PolicyBlocked()})
+    runtime, stop, _, _ = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        waits=3,
+        policy_held=lambda ids: False,
+    )
+    runtime.run(stop)
+    assert len(processor.seen) >= 2

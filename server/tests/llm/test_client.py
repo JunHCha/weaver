@@ -25,6 +25,8 @@ from weaver.llm.client import AnthropicClient
 from weaver.llm.ledger import Ledger
 from weaver.llm.types import BackendReply, Request, TokenUsage
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 class Answer(BaseModel):
     count: int

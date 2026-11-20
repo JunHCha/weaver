@@ -165,14 +165,6 @@ def test_initial_unversioned_database_is_upgraded_without_content_copies(tmp_pat
     assert b"synthetic.pdf" not in path.read_bytes()
 
 
-def test_webex_blocked_before_any_llm_path_and_title_has_no_unknown_counterpart():
-    from weaver.llm.webex_guard import WebexLlmBlocked, require_webex_gate
-
-    with pytest.raises(WebexLlmBlocked, match="webex_policy_gate_not_wired"):
-        require_webex_gate("webex")
-    require_webex_gate("call")
-
-
 def test_webex_review_title_has_no_counterpart_or_channel_placeholder():
     from types import SimpleNamespace
 
@@ -205,12 +197,3 @@ def test_processor_holds_webex_and_never_reaches_drafts(tmp_path):
     processor = SummaryProcessor(spinner, Drafts(), None)  # type: ignore[arg-type]
     assert processor.process(src, threading.Event()) == "waiting_llm"
     assert spun == [src]
-
-
-def test_loom_entry_points_fail_closed_for_webex():
-    from weaver.llm.webex_guard import WebexLlmBlocked
-    from weaver.loom.summary import SummaryDrafts
-
-    drafts = SummaryDrafts.__new__(SummaryDrafts)
-    with pytest.raises(WebexLlmBlocked):
-        drafts.create("src", "text", source_type="webex")

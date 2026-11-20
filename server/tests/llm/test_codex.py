@@ -24,6 +24,8 @@ from weaver.llm.errors import (
 )
 from weaver.llm.ledger import Ledger
 
+pytestmark = pytest.mark.usefixtures("transport_policy")
+
 
 class Answer(BaseModel):
     count: int

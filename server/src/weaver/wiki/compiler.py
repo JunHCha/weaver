@@ -25,6 +25,7 @@ from weaver.context import (
 from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.errors import InvalidJson, MissingOutput, Refusal, SchemaMismatch
+from weaver.llm.policy import provenance_scope
 from weaver.llm.types import LlmClient
 from weaver.loom.tagging import (
     MAX_NEW_ENTRIES,
@@ -52,6 +53,7 @@ from weaver.wiki.document import (
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
+from weaver.wiki.provenance import source_ids as wiki_source_ids
 from weaver.wiki.selection import (
     EvidenceIndex,
     SectionAssignments,
@@ -798,7 +800,15 @@ class Compiler:
         """Collect settled edits and advance only after every page is durable."""
         with self.state_path.with_suffix(".lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            self._run()
+            threads = self.fabric.entries(ThreadQuery())
+            with provenance_scope(
+                {t.source_id for t in threads}
+                | wiki_source_ids(
+                    self.store, {t.thread_id: t.source_id for t in threads}
+                ),
+                shared=True,
+            ):
+                self._run()
 
     def _run(self) -> None:
         self.store.restore_readonly()

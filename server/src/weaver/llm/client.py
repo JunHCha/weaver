@@ -23,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 from weaver.config import LlmConfig
 from weaver.failures import failure_reason
 
+from . import policy as policy_module
 from .anthropic import AnthropicTransport
 from .errors import (
     AuthenticationError,
@@ -40,6 +41,7 @@ from .errors import (
 )
 from .keys import KeyUnavailable, resolve_api_key
 from .ledger import NANO_USD, Ledger
+from .policy import LlmPolicy
 from .types import BackendReply, Request, Transport
 
 MODEL = "claude-sonnet-5-5"
@@ -56,6 +58,7 @@ class AnthropicClient:
         transport: Transport | None = None,
         environ: Mapping[str, str] | None = None,
         max_tokens: int = 16384,
+        policy: LlmPolicy | None = None,
         deadline_seconds: float = 120,
         structured_output: bool = True,
     ) -> None:
@@ -64,6 +67,7 @@ class AnthropicClient:
         if not 1 <= max_tokens <= 64000 or not 0 < deadline_seconds <= 120:
             raise ValueError("invalid output limit or deadline")
         self.config = config
+        self.policy = policy if policy is not None else policy_module.default_policy()
         self.ledger = ledger
         self.transport = transport if transport is not None else AnthropicTransport()
         self.environ = os.environ if environ is None else environ
@@ -87,6 +91,8 @@ class AnthropicClient:
             or len(task) > 80
         ):
             raise ValueError("task must be a short machine identifier")
+        prepared = self.policy.prepare(system, user)
+        system, user = prepared.system, prepared.user
         started = time.monotonic()
         record: dict[str, Any] = {
             "task": task,
@@ -156,6 +162,7 @@ class AnthropicClient:
                 # Includes transport setup, both requests, backoff and cleanup.
                 async with asyncio.timeout(remaining):
                     for attempt in range(2):
+                        self.policy.check(prepared.provenance)
                         record["attempts"] = attempt + 1
                         # Until a billed response proves otherwise this attempt
                         # consumes its reservation, including cancellation.

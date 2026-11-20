@@ -24,6 +24,7 @@ from .errors import (
     UsageLimited,
 )
 from .ledger import Ledger, MemoryLedger
+from .policy import LedgerBacklog, LlmPolicy, default_policy
 from .types import LlmClient
 
 __all__ = [
@@ -50,7 +51,11 @@ __all__ = [
 
 
 def create_client(
-    config: LlmConfig, *, state_root: Path, dry_run: bool = False
+    config: LlmConfig,
+    *,
+    state_root: Path,
+    dry_run: bool = False,
+    policy: LlmPolicy | None = None,
 ) -> LlmClient:
     """Construct without credentials/network; resolve api_key_env per call.
 
@@ -65,11 +70,14 @@ def create_client(
         if dry_run
         else Ledger(state_root / "llm.sqlite3")
     )
+    policy = policy if policy is not None else default_policy()
+    if policy.backlog is None:
+        policy.backlog = LedgerBacklog(ledger)
     if config.backend in ("codex_cli", "claude_cli"):
         client: ClaudeCliClient = (
-            CodexCliClient(config, ledger, state_root=state_root)
+            CodexCliClient(config, ledger, state_root=state_root, policy=policy)
             if config.backend == "codex_cli"
-            else ClaudeCliClient(config, ledger, state_root=state_root)
+            else ClaudeCliClient(config, ledger, state_root=state_root, policy=policy)
         )
         if dry_run:
             # The CLI's own temporary protocol files are intrinsic to that
@@ -80,4 +88,4 @@ def create_client(
         return client
     if config.backend != "anthropic":
         raise UnsupportedBackend()
-    return AnthropicClient(config, ledger)
+    return AnthropicClient(config, ledger, policy=policy)

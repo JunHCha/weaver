@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 from weaver.context import ContextDictionary
 from weaver.courier.atomic import write_json_atomic
+from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
-from weaver.llm.webex_guard import require_webex_gate
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import Question, ReviewPackage, Script
 from weaver.spinner.reviser import (
@@ -104,7 +104,6 @@ class SummaryDrafts:
         is saved. `revised` marks text already corrected upstream, which skips
         the separate polish pass.
         """
-        require_webex_gate(source_type)
         if not script.strip():
             raise ValueError("script must not be empty")
         package_id = package_id or f"pkg_{uuid4().hex}"
@@ -112,8 +111,14 @@ class SummaryDrafts:
             raise ValueError("invalid package id")
         source_text = script
         candidates = self.context.candidates(script, contact_name)
+        llm = ScopedClient(
+            self.llm,
+            [source_id],
+            shared=any(e.source != "contact" for e in candidates),
+            requester=source_id,
+        )
         if len(script) > self.revision_threshold and not revised:
-            script = self.llm.generate_text(
+            script = llm.generate_text(
                 "loom.polish",
                 "녹취를 맥락에 따라 윤문한다.",
                 json.dumps(
@@ -135,7 +140,7 @@ class SummaryDrafts:
         }
         response: DraftResponse
         if call is None:
-            response = self.llm.generate_json(
+            response = llm.generate_json(
                 "loom.summary",
                 SUMMARY_PROMPT,
                 json.dumps(payload, ensure_ascii=False),
@@ -146,7 +151,7 @@ class SummaryDrafts:
                 {"segment_id": s.segment_id, "speaker": s.speaker, "text": s.text}
                 for s in revisable_segments(call)
             ]
-            response = self.llm.generate_json(
+            response = llm.generate_json(
                 "loom.summary",
                 CALL_SUMMARY_PROMPT,
                 json.dumps(payload, ensure_ascii=False),
