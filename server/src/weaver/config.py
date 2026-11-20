@@ -234,6 +234,12 @@ class MobileSettings:
     def transport_for(self, feature: str) -> Transport:
         return dict(self.features).get(feature, self.transport)
 
+    def uses_files(self) -> bool:
+        """Shared Courier projections are needed by any file transport user."""
+        return any(
+            self.transport_for(feature) == "files" for feature in TRANSPORT_FEATURES
+        )
+
 
 def _mobile_settings(
     value: object, env: Mapping[str, str], base: Path
@@ -719,9 +725,7 @@ def load_config(
         channels[name] = resolved
     directories = {**roots, **channels}
     # HTTP does not initialize or require the rollback-only shared folders.
-    shared_optional = all(
-        mobile.transport_for(feature) == "http" for feature in TRANSPORT_FEATURES
-    )
+    shared_optional = not mobile.uses_files()
     optional = {"sync_root", *channels} if shared_optional else set()
     # Check every path and nearest existing ancestor before the first mkdir.
     for field, directory in directories.items():

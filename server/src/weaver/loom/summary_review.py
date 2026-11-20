@@ -731,20 +731,25 @@ class SummaryReview(ApprovalExtractor):
                     "UPDATE reviews SET stage='APPLIED' WHERE id=? AND revision=?",
                     (package.package_id, package.revision),
                 )
-            self._project(package, prepared)
-            return prepared.summary or prepared.package
-
-    def _project(self, package: ReviewPackage, prepared: Prepared) -> None:
-        finished = package.model_copy(
-            update={
-                "stage": "반영",
-                "stage_times": package.stage_times
-                | {"반영": prepared.applied_at or datetime.now(UTC)},
-            }
-        )
-        if prepared.package is not None:
-            self.projection.publish(prepared.package, diff=prepared.diff)
-        self.projection.publish(finished)
+                if self.projection.enabled:
+                    finished = package.model_copy(
+                        update={
+                            "stage": "반영",
+                            "stage_times": package.stage_times
+                            | {"반영": prepared.applied_at or datetime.now(UTC)},
+                        }
+                    )
+                    db.execute(
+                        "INSERT OR REPLACE INTO pending_projections VALUES (?, ?, ?)",
+                        (
+                            package.package_id,
+                            package.revision,
+                            finished.model_dump_json(),
+                        ),
+                    )
+        # Recover takes the journal lock itself; shared I/O must follow its release.
+        self.projection.recover(self.state)
+        return prepared.summary or prepared.package
 
     def republish(self) -> None:
         """Recover unfinished file projections from the durable journal."""

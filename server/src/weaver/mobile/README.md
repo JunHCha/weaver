@@ -234,9 +234,10 @@ node(+로그인 사용자) 결합, scope 분리다.
 Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alerts/pipeline=false`).
 검토 패키지·legacy diff 파일(`proposals/`)은 review transport가 `files`일 때만 선택적으로 게시한다.
 요약 journal과 private archive 및 `pipeline.sqlite3` 관찰이 원천이며 공유 폴더 쓰기 실패는 HTTP durable
-commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 기본 transport가 `files`일 때 유지한다.
+commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 capture/review/action 중 하나라도 `files`일 때 유지한다.
 모든 transport가 HTTP면 설정 로딩·초기화도 공유 Courier 폴더의 존재/쓰기 권한을 요구하거나 폴더를 만들지 않는다.
-private state/archive/vault 경계·권한 검사는 유지한다. 미결 파일 재게시와 명시적 `mobile reconcile`은
+private state/archive/vault 경계·권한 검사는 유지한다. capture를 HTTP에서 files로 복귀하면 archive journal의 Receipt도 다시 게시한다(기존 bytes/수신 시각 유지).
+미결 파일 재게시와 명시적 `mobile reconcile`은
 롤백용이며 I7 관찰 완료 전까지 파일 어댑터를 제거하지 않는다.
 
 

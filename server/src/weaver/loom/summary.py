@@ -190,7 +190,7 @@ class SummaryDrafts:
                 or (call.occurred_at if call else None),
                 source_time_is_fallback=source_time_is_fallback,
             )
-            self.projection.publish(package)
+        self.projection.publish(package)
         return package, response.script
 
     @staticmethod

@@ -102,7 +102,7 @@ def build_runtime(
             config.state_root,
             config.courier.proposals,
             failure_limit=config.courier_settings.max_attempts,
-            publish_files=config.mobile.transport_for("pipeline") == "files",
+            publish_files=config.mobile.uses_files(),
         ),
         archive,
         review.state,

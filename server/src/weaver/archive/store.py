@@ -326,6 +326,21 @@ class ArchiveStore:
             raise SourceNotFound("unknown capture_id")
         self._publish_receipt(capture_id, row[0].encode("utf-8"))
 
+    def republish_receipts(self) -> None:
+        """Explicit HTTP-to-files rollback, including captures whose response was lost."""
+        if self.receipt_publisher is None:
+            raise ValueError("file Receipt publisher is not configured")
+        directory = self.receipt_publisher.directory
+        if directory.is_symlink():
+            raise OSError("Receipt directory is a symlink")
+        directory.mkdir(parents=True, exist_ok=True)
+        with self._read() as conn:
+            captures = conn.execute(
+                "SELECT capture_id FROM captures ORDER BY seq"
+            ).fetchall()
+        for (capture_id,) in captures:
+            self.confirm(capture_id)
+
     def accept(self, capture: VerifiedCapture) -> None:
         self.put(capture.manifest, capture.payload_path)
 

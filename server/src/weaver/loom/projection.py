@@ -47,40 +47,56 @@ class ReviewProjection:
         return changed
 
     def recover(self, state: SummaryState) -> list[str]:
-        """Republish unfinished reviews, including legacy correction diffs.
-
-        Completed files are intentionally cleaned by Courier; recovering them
-        each tick would resurrect already consumed packages indefinitely.
-        """
+        """Publish undecided reviews and retry completed revisions exactly until success."""
         if not self.enabled:
             return []
-        with state.lock():
-            return self._recover_locked(state)
-
-    def _recover_locked(self, state: SummaryState) -> list[str]:
-        with state.connect() as db:
+        # lock() is not reentrant. Snapshot only; no shared-folder I/O under it.
+        with state.lock(), state.connect() as db:
             rows = db.execute(
-                "SELECT p.package FROM packages p"
+                "SELECT p.package, previous.prepared FROM packages p"
                 " JOIN (SELECT id, MAX(revision) AS r FROM packages GROUP BY id) m"
                 " ON p.id=m.id AND p.revision=m.r"
                 " LEFT JOIN reviews v ON v.id=p.id AND v.revision=p.revision"
-                " WHERE v.stage IS NULL OR v.stage!='APPLIED' ORDER BY p.id"
+                " LEFT JOIN reviews previous ON previous.id=p.id"
+                " AND previous.revision=p.revision-1 AND previous.stage='APPLIED'"
+                " WHERE v.verdict IS NULL ORDER BY p.id"
             ).fetchall()
-            prepared = db.execute(
-                "SELECT prepared FROM reviews WHERE stage='APPLIED'"
+            completed = db.execute(
+                "SELECT package FROM pending_projections ORDER BY id, revision"
             ).fetchall()
-        diffs: dict[tuple[str, int], str] = {}
-        for (raw,) in prepared:
-            value = json.loads(raw)
-            if value.get("package") is not None:
-                package = ReviewPackage.model_validate(value["package"])
-                diffs[package.package_id, package.revision] = value.get("diff", "")
-        written = []
-        for (raw,) in rows:
+        publications: list[tuple[ReviewPackage, str | None, bool]] = []
+        for raw, prepared in rows:
             package = ReviewPackage.model_validate_json(raw)
-            if self.publish(
-                package, diff=diffs.get((package.package_id, package.revision))
-            ):
+            diff = None
+            if prepared is not None:
+                value = json.loads(prepared)
+                if value.get("package") is not None:
+                    diff = value.get("diff", "")
+            publications.append((package, diff, False))
+        publications.extend(
+            (ReviewPackage.model_validate_json(raw), None, True) for (raw,) in completed
+        )
+        written = []
+        writer = ReviewProjection(self.directory, strict=True)
+        for package, diff, pending in publications:
+            try:
+                changed = writer.publish(package, diff=diff)
+            except OSError as error:
+                if self.strict:
+                    raise
+                logger.warning(
+                    "review projection unavailable: %s", type(error).__name__
+                )
+                continue
+            if pending:
+                # A matching file is also a successful publication. Keep the marker
+                # on failure/crash, but never resurrect consumed files on later ticks.
+                with state.connect() as db:
+                    db.execute(
+                        "DELETE FROM pending_projections WHERE id=? AND revision=?",
+                        (package.package_id, package.revision),
+                    )
+            if changed:
                 written.append(f"{package.package_id}.r{package.revision}.json")
         return written
 

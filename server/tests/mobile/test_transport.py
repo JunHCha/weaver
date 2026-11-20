@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 
+import pytest
 from typer.testing import CliRunner
 
 from weaver.action import ActionJob
@@ -273,3 +274,50 @@ def test_failed_review_rollback_keeps_recorded_transport_for_retry(
         "review"
     ]
     assert (h.config.courier.proposals / "pkg_a.r1.json").is_file()
+
+
+@pytest.mark.parametrize("stage", ["PREPARED", "apply_stopped"])
+def test_rollback_does_not_republish_a_recorded_verdict(tmp_path, stage):
+    h = Harness(tmp_path, HTTP)
+    h.add_package()
+    with h.summary.connect() as db:
+        db.execute(
+            "INSERT INTO reviews VALUES (?, ?, ?, ?, ?)",
+            ("pkg_a", 1, json.dumps(verdict()), "{}", stage),
+        )
+    assert h.reviews.republish(h.config.courier.proposals) == []
+    assert not (h.config.courier.proposals / "pkg_a.r1.json").exists()
+
+
+def test_capture_rollback_recovers_lost_http_receipt_and_retries_io_failure(
+    tmp_path, monkeypatch
+):
+    from weaver.schema import Receipt
+
+    from .helpers import CAP, put_manifest, upload
+
+    h = Harness(tmp_path, HTTP)
+    headers = h.pair()
+    upload(h, headers)
+    response = put_manifest(h, headers)
+    assert response.status_code == 201
+    path = h.config.courier.receipts / f"{CAP}.json"
+    assert not path.exists()
+    reconcile(h)
+    settings = MobileSettings(transport="http", features=(("capture", "files"),))
+
+    def fail(*args):
+        raise OSError("synthetic receipt publication failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("weaver.archive.store.ReceiptPublisher.publish", fail)
+        with pytest.raises(OSError):
+            reconcile_transports(settings, h.store, h.reviews, h.actions, h.config)
+    assert h.store.recorded_transport("capture") == "http"
+    assert reconcile_transports(settings, h.store, h.reviews, h.actions, h.config) == [
+        "capture"
+    ]
+    assert Receipt.model_validate_json(path.read_bytes()) == Receipt.model_validate(
+        response.json()
+    )
+    assert reconcile_transports(settings, h.store, h.reviews, h.actions, h.config) == []

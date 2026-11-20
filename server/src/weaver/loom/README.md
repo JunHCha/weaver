@@ -35,8 +35,11 @@ The summary journal and private EventSummary archive are authoritative. The runt
 sets `publish_files=false` for HTTP review transport: creating or approving a
 review never requires the shared proposals folder. File publication runs after
 the durable commit and logs an I/O failure without changing an approval to a
-failed operation. File mode retries unfinished packages from the journal each
-tick; completed packages stay consumed by Courier. Legacy correction diffs are
+failed operation. File mode retries undecided packages from the journal each
+tick; a recorded verdict excludes a package from this recovery. A completed revision
+is atomically marked pending with APPLIED and retried until publication succeeds.
+The marker is then removed so Courier-consumed completions stay consumed. Shared
+file I/O runs outside the non-reentrant journal lock. Legacy correction diffs are
 retained in the prepared decision and recovered with the full revised package.
 The explicit HTTP-to-files rollback command propagates publication failures so
 the transport switch can be retried.
