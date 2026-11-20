@@ -109,3 +109,22 @@ max_backoff_seconds = 1800
 # transport = "files"       # "http" moves capture/review/action to the phone API
 # [mobile.features]
 # action = "http"
+
+# Webex OAuth setup (does not start a poller). Keep secret values out of TOML.
+# Paths below are relative to this TOML, outside sync/vault and backup folders.
+# The private directory is created 0700 and credential files use 0600.
+# [shepherds.webex]
+# enabled = true
+# instance_id = "mac-webex-primary"
+# auth = "integration_oauth"
+# credentials_file = "private/webex-oauth.json"
+# courier_token_file = "private/webex-capture.token"
+# exclude_space_ids = [] # New Spaces are included unless their IDs are excluded.
+# poll_interval_seconds = 300
+# initial_backfill_days = 7
+# reconcile_overlap_days = 7
+# bundle = "space_day"
+# timezone = "Asia/Seoul"
+# attachments = "metadata_only"
+# Run `python -m weaver.app webex configure --config ...`, then `webex consent`.
+# `webex revoke` removes local tokens; revoke the remote grant in Authorized Apps.

@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
+from weaver.webex.settings import ShepherdSettings, WebexSettings
+
 Backend = Literal[
     "none", "anthropic", "agent_sdk", "claude_cli", "codex_cli", "openai_compatible"
 ]
@@ -313,6 +315,7 @@ class ServerConfig:
     wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
     courier_settings: CourierSettings = CourierSettings()
     mobile: MobileSettings = dataclass_field(default_factory=MobileSettings)
+    shepherds: ShepherdSettings = dataclass_field(default_factory=ShepherdSettings)
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -515,6 +518,7 @@ def load_config(
         "courier",
         "wiki",
         "mobile",
+        "shepherds",
     }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
@@ -578,6 +582,57 @@ def load_config(
             wiki_values["vault_root"], config_file.parent, env, "wiki.vault_root"
         )
     wiki = WikiSettings(**wiki_values)
+    shepherds_raw = raw.get("shepherds", {})
+    if not isinstance(shepherds_raw, dict) or shepherds_raw.keys() - {"webex"}:
+        raise ConfigError("shepherds: expected webex table")
+    webex_raw = shepherds_raw.get("webex", {})
+    if (
+        not isinstance(webex_raw, dict)
+        or webex_raw.keys() - WebexSettings.__dataclass_fields__.keys()
+    ):
+        raise ConfigError(
+            "shepherds.webex: unknown fields (use secret file references)"
+        )
+    webex_values = dict(webex_raw)
+    for name in ("credentials_file", "courier_token_file"):
+        if name not in webex_values:
+            continue
+        value = webex_values[name]
+        field = f"shepherds.webex.{name}"
+        if not isinstance(value, str):
+            raise ConfigError(f"{field}: expected path string")
+        resolved = _path(value, config_file.parent, env, field)
+        expanded = (
+            value.replace("~", env.get("HOME", ""), 1)
+            if value.startswith("~/")
+            else value
+        )
+        lexical = Path(os.path.abspath(config_file.parent / expanded))
+        if lexical != resolved:
+            raise ConfigError(f"{field}: symbolic links are unsupported")
+        if any(
+            _overlaps(resolved.parent, root)
+            for root in (
+                roots["sync_root"],
+                roots["vault_root"],
+                *([wiki.vault_root] if wiki.vault_root is not None else []),
+            )
+        ):
+            raise ConfigError(f"{field}: parent must be outside sync/vault")
+        webex_values[name] = resolved
+    if "exclude_space_ids" in webex_values:
+        ids = webex_values["exclude_space_ids"]
+        if not isinstance(ids, list):
+            raise ConfigError(
+                "shepherds.webex.exclude_space_ids: expected string array"
+            )
+        webex_values["exclude_space_ids"] = tuple(ids)
+    shepherds = ShepherdSettings(WebexSettings(**webex_values))
+    if (
+        shepherds.webex.credentials_file is not None
+        and shepherds.webex.credentials_file == shepherds.webex.courier_token_file
+    ):
+        raise ConfigError("shepherds.webex: secret files must be distinct")
     mobile = _mobile_settings(raw.get("mobile", {}), env, config_file.parent)
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     stt_raw = raw.get("stt", {})
@@ -639,4 +694,5 @@ def load_config(
         courier_settings=courier_settings,
         wiki=wiki,
         mobile=mobile,
+        shepherds=shepherds,
     )

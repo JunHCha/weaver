@@ -11,6 +11,7 @@ dependencies = [
     "typer>=0.12,<1",
     "cryptography>=43,<48",
     "segno>=1.6,<2",
+    "httpx>=0.28,<1",
 ]
 
 [project.optional-dependencies]
