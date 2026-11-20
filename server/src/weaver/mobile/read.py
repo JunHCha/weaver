@@ -222,6 +222,7 @@ _SOURCE_LABELS = {
     "voice_memo": "메모",
     "kakao": "카카오",
     "share_text": "공유 텍스트",
+    "webex": "Webex",
 }
 
 

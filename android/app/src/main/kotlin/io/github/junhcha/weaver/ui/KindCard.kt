@@ -131,6 +131,7 @@ internal fun FabricCardInfo(
     val source = when (item.sourceType) {
         "call" -> "통화 녹음"
         "voice_memo" -> "음성 메모"
+        "webex" -> "Webex"
         "kakao" -> "카카오톡"
         "wiki_edit" -> "Wiki 수정"
         else -> "공유 텍스트"

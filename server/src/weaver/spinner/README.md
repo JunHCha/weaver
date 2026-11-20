@@ -6,6 +6,8 @@ and SHA-256, and decodes UTF-8 without newline conversion.
 
 - `text/kakao`: existing `parse_kakao` adapter, no revision.
 - `text/share_text`: original complete text and one Segment, no revision.
+- `text/webex`: versioned internal JSON bundle, deterministic message ordering and
+  one Segment per message, no LLM/revision. See [Webex bundle contract](webex.md).
 - `text/call`: uses the built-in `GalaxyCallParser` for Galaxy scripts (#56), then, only when the text is longer than
   `revision_threshold` (default 0 = always; runtime: Loom's 30000), an
   injected `Reviser` (production: `LlmReviser(client)`). The manifest's

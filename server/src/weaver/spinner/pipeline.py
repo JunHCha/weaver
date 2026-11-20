@@ -32,6 +32,7 @@ from weaver.spinner.reviser import (
     revision_to_thread,
 )
 from weaver.spinner.text import PARSER_VERSION, SourceLocator, text_to_thread
+from weaver.spinner.webex import WebexParser, WebexProvenanceStore
 
 _LOG = logging.getLogger(__name__)
 
@@ -78,7 +79,10 @@ class Spinner:
         self.path = (state_root / "spinner.sqlite3").resolve()
         self._store = store
         self._timezone = timezone or ZoneInfo("Asia/Seoul")
-        self._parsers: dict[str, TextParser] = {"call": GalaxyCallParser()}
+        self._parsers: dict[str, TextParser] = {
+            "call": GalaxyCallParser(),
+            "webex": WebexParser(WebexProvenanceStore(state_root)),
+        }
         self._parsers.update(parsers or {})
         self._reviser = reviser
         # Calls at most this long skip revision here: Loom corrects them while
@@ -290,7 +294,7 @@ class Spinner:
     def _parse(self, source: Source) -> Script:
         if source.kind != "text":
             raise SpinnerError("unsupported_kind: fleece STT is deferred")
-        if source.channel not in {"kakao", "share_text", "call"}:
+        if source.channel not in {"kakao", "share_text", "call", "webex"}:
             raise SpinnerError("unsupported_text_channel")
         if source.channel == "call" and source.channel not in self._parsers:
             raise SpinnerError("call_parser_not_configured")

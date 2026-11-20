@@ -594,3 +594,11 @@ def test_counterpart_tracks_dictionary_rename_without_rewriting_fabric(tmp_path)
     row = client.get("/api/threads").json()[0]
     assert row["counterpart"] == "새 이름" and row["tags"] == ["새 이름"]
     assert store.entries(ThreadQuery())[0].counterpart == "원래 이름"
+
+
+def test_webex_source_label(setup):
+    config, client = setup
+    observation(config, source_type="webex")
+    item = client.get("/api/sources?stage=spinner").json()[0]
+    assert item["kind"] == "Webex"
+    assert "NEVER" not in str(item)

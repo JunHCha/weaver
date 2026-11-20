@@ -199,11 +199,13 @@ class HomeMapNavigationTest {
         compose.onNodeWithText("#미분류").performScrollTo().assertHasNoClickAction()
         compose.onNodeWithText("#없는사람").performScrollTo().assertHasNoClickAction()
         compose.onNodeWithText("#검색").performScrollTo().assertHasClickAction().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("timeline-screen").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         compose.onNodeWithText("검색", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("뒤로").performClick()
         compose.onNodeWithText("내 데이터 흐름").assertIsDisplayed()
         compose.onNodeWithText("상대 민수").performScrollTo().assertHasClickAction().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("timeline-screen").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         // Recreated MainActivity schedules background work: keep every worker synthetic too.
         val factory = object : androidx.work.WorkerFactory() {
@@ -216,7 +218,7 @@ class HomeMapNavigationTest {
             androidx.work.Configuration.Builder().setExecutor(androidx.work.testing.SynchronousExecutor()).setWorkerFactory(factory).build())
         initializedWorkManager = true
         compose.activityRule.scenario.recreate()
-        compose.waitUntil(10_000) { compose.onNodeWithTag("timeline-screen").isDisplayed() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("timeline-screen").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithText("내 데이터 흐름").assertIsDisplayed()

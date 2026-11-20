@@ -5,7 +5,8 @@
         "call",
         "voice_memo",
         "kakao",
-        "share_text"
+        "share_text",
+        "webex"
       ],
       "type": "string"
     },
