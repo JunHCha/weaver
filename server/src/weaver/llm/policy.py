@@ -102,7 +102,7 @@ class LlmPolicy:
         shared_sources: Callable[[], Iterable[str]] | None = None,
         backlog: Backlog | None = None,
         webex_present: Callable[[], bool] | None = None,
-        normalize_source: Callable[[str], str] | None = None,
+        normalize_sources: Callable[[frozenset[str]], dict[str, str]] | None = None,
     ) -> None:
         self.resolver = resolver
         self.settings = settings if settings is not None else PrivacySettings()
@@ -113,7 +113,7 @@ class LlmPolicy:
         # Reports whether the archive holds any Webex Source. Without it,
         # unknown lineage always fails closed.
         self.webex_present = webex_present
-        self.normalize_source = normalize_source
+        self.normalize_sources = normalize_sources
 
     def prepare(self, system: str, user: str) -> PreparedInput:
         provenance = _current.get()
@@ -176,11 +176,15 @@ class LlmPolicy:
     def _evaluate(self, provenance: Provenance, *, allow_empty: bool) -> None:
         ids = provenance.source_ids
         requester = provenance.requester
-        if self.normalize_source is not None:
+        if self.normalize_sources is not None:
             try:
-                ids = frozenset(self.normalize_source(sid) for sid in ids)
+                # One read of the origin sets per evaluation, including requester.
+                aliases = self.normalize_sources(
+                    ids | ({requester} if requester else set())
+                )
+                ids = frozenset(aliases.get(sid, sid) for sid in ids)
                 if requester is not None:
-                    requester = self.normalize_source(requester)
+                    requester = aliases.get(requester, requester)
             except Exception:
                 raise PolicyBlocked() from None
         if not ids:

@@ -60,8 +60,7 @@ class ArchiveProvenanceResolver:
         return value.space_id
 
     def has_webex_source(self) -> bool:
-        if not self.index.is_file():
-            return False
+        # A missing/unreadable index is unknown, never proof of no Webex.
         with closing(self._connect()) as db:
             return (
                 db.execute(
@@ -78,43 +77,37 @@ class ArchiveProvenanceResolver:
         # never initializes the archive, sweeps payloads or publishes Receipts.
         return sqlite3.connect(f"{self.index.resolve().as_uri()}?mode=ro", uri=True)
 
-    def normalize_source(self, source_id: str) -> str:
+    def normalize_sources(self, source_ids: frozenset[str]) -> dict[str, str]:
         """Human-only Fabric IDs without an archived Source have unknown lineage.
 
         Wiki observations and phone decisions predate any origin marker. Inspect
         all references rather than guessing from IDs or trusting one human row.
         An archived Source always retains its original policy classification.
         """
-        if source_id in UNKNOWN_LINEAGE:
-            return source_id
-        if self.index.is_file():
-            with closing(self._connect()) as db:
-                if db.execute(
-                    "SELECT 1 FROM sources WHERE source_id=?", (source_id,)
-                ).fetchone():
-                    return source_id
+        # These sets live for this evaluation only. Missing/read-failed archive
+        # state must raise, before any human ID can be treated as non-Webex.
+        with closing(self._connect()) as db:
+            archived = {sid for (sid,) in db.execute("SELECT source_id FROM sources")}
         if self.state_root is None:
-            return source_id
+            return {}
         path = self.state_root / "fabric.sqlite3"
         if not path.is_file():
-            return source_id
+            return {}
         db = (
             connect_snapshot(path)
             if self.snapshot
             else sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         )
+        human: set[str] = set()
+        nonhuman: set[str] = set()
         with closing(db):
-            references = [
-                ThreadDraft.model_validate_json(raw)
-                for (raw,) in db.execute(
-                    "SELECT payload FROM threads "
-                    "WHERE json_extract(payload, '$.source_id')=?",
-                    (source_id,),
-                )
-            ]
-        if references and all(t.actor == "human" for t in references):
-            return UNKNOWN_WIKI_SOURCE
-        return source_id
+            for (raw,) in db.execute("SELECT payload FROM threads"):
+                thread = ThreadDraft.model_validate_json(raw)
+                (human if thread.actor == "human" else nonhuman).add(thread.source_id)
+        return {
+            sid: UNKNOWN_WIKI_SOURCE
+            for sid in source_ids & (human - nonhuman - archived - UNKNOWN_LINEAGE)
+        }
 
     def resolve(self, source_id: str) -> tuple[str, str | None] | None:
         if not self.index.is_file():
@@ -202,5 +195,5 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
         excluded_space_ids=frozenset(config.shepherds.webex.exclude_space_ids),
         shared_sources=shared_sources,
         webex_present=resolver.has_webex_source,
-        normalize_source=resolver.normalize_source,
+        normalize_sources=resolver.normalize_sources,
     )

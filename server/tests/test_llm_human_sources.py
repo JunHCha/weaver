@@ -1,5 +1,8 @@
 """Human-generated lineage over temporary stores, without user data or models."""
 
+import sqlite3
+from contextlib import closing
+
 import pytest
 
 from weaver.context import ContextDictionary
@@ -164,7 +167,7 @@ def test_blocked_human_lineage_records_only_archived_requester(human_source):
 
 
 @pytest.mark.parametrize("snapshot", [False, True])
-def test_human_source_without_archive_index(tmp_path, snapshot):
+def test_human_source_without_archive_index_fails_closed(tmp_path, snapshot):
     from weaver.config import load_config
 
     from .test_config import write_config
@@ -175,8 +178,138 @@ def test_human_source_without_archive_index(tmp_path, snapshot):
         [draft("wiki:synthetic", source_id=source_id)]
     )
     assert not (config.archive_root / "index.sqlite3").exists()
+    policy = configured_policy(config, snapshot=snapshot)
+    ledger = Ledger(config.state_root / "llm.sqlite3")
+    policy.backlog = LedgerBacklog(ledger)
     with provenance_scope([source_id], shared=True):
-        assert (
-            configured_policy(config, snapshot=snapshot).prepare("s", "u").user == "u"
-        )
+        with pytest.raises(PolicyBlocked):
+            policy.prepare("s", "u")
+    # Even an existing unknown-lineage sentinel must not infer no Webex from
+    # a missing index, independently of normalization.
+    from weaver.llm.policy import UNKNOWN_WIKI_SOURCE, LlmPolicy
+    from weaver.llm.policy_archive import ArchiveProvenanceResolver
+
+    probe = LlmPolicy(
+        webex_present=ArchiveProvenanceResolver(
+            config.archive_root, snapshot=snapshot
+        ).has_webex_source,
+        backlog=LedgerBacklog(ledger),
+    )
+    with pytest.raises(PolicyBlocked):
+        probe.check(Provenance(frozenset({UNKNOWN_WIKI_SOURCE})))
+    assert ledger.policy_backlog() == []
     assert not (config.archive_root / "index.sqlite3").exists()
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_normalization_reads_each_id_set_once(tmp_path, monkeypatch, snapshot):
+    config, _, _ = make_vault(tmp_path, webex=False)
+    ids = frozenset(f"src_{i:026d}" for i in range(40))
+    FabricStore.from_config(config).append(
+        [draft(f"wiki:{i}", source_id=sid) for i, sid in enumerate(sorted(ids))]
+    )
+    statements = []
+    connect = sqlite3.connect
+
+    def traced(*args, **kwargs):
+        db = connect(*args, **kwargs)
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    policy = configured_policy(config, snapshot=snapshot)
+    for _ in range(2):
+        statements.clear()
+        policy.check(Provenance(ids, requester=min(ids)))
+        assert sum("FROM threads" in sql for sql in statements) == 1
+        assert sum("SELECT source_id FROM sources" in sql for sql in statements) == 1
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+@pytest.mark.parametrize("fault", ["archive_open", "archive_read", "fabric_open"])
+def test_normalization_database_fault_is_transient(
+    human_source, monkeypatch, snapshot, fault
+):
+    config, fabric, source_id = human_source
+    index = config.archive_root / "index.sqlite3"
+    if fault == "archive_read":
+        with closing(sqlite3.connect(index)) as db:
+            db.execute("ALTER TABLE sources RENAME TO unavailable_sources")
+            db.commit()
+    else:
+        connect = sqlite3.connect
+        broken = index if fault == "archive_open" else fabric.path
+
+        def fail_open(database, *args, **kwargs):
+            if str(database).startswith(broken.resolve().as_uri()):
+                raise sqlite3.OperationalError("synthetic private DB error")
+            return connect(database, *args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, "connect", fail_open)
+    policy = configured_policy(config, snapshot=snapshot)
+    ledger = Ledger(config.state_root / "llm.sqlite3")
+    policy.backlog = LedgerBacklog(ledger)
+    with pytest.raises(PolicyBlocked, match="^policy_blocked$"):
+        policy.check(Provenance(frozenset({source_id}), requester=source_id))
+    if fault.startswith("archive_"):
+        from weaver.llm.policy import UNKNOWN_WIKI_SOURCE, LlmPolicy
+        from weaver.llm.policy_archive import ArchiveProvenanceResolver
+
+        probe = LlmPolicy(
+            webex_present=ArchiveProvenanceResolver(
+                config.archive_root, snapshot=snapshot
+            ).has_webex_source,
+            backlog=LedgerBacklog(ledger),
+        )
+        with pytest.raises(PolicyBlocked, match="^policy_blocked$"):
+            probe.check(Provenance(frozenset({UNKNOWN_WIKI_SOURCE})))
+    assert ledger.policy_backlog() == []
+    if fault == "archive_read":
+        with closing(sqlite3.connect(index)) as db:
+            db.execute("ALTER TABLE unavailable_sources RENAME TO sources")
+            db.commit()
+    else:
+        monkeypatch.setattr(sqlite3, "connect", connect)
+    # The same policy retries the read instead of leaving a permanent hold.
+    policy.check(Provenance(frozenset({source_id}), requester=source_id))
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+@pytest.mark.parametrize(
+    "payload", ["not json", '{"source_id":"other","actor":"human"}']
+)
+def test_unrelated_corrupt_fabric_payload_fails_closed(human_source, snapshot, payload):
+    config, fabric, source_id = human_source
+    # FabricStore creates the real format; inject corruption only in this
+    # temporary DB to exercise the reader's failure path.
+    with closing(sqlite3.connect(fabric.path)) as db:
+        db.execute(
+            "INSERT INTO threads(thread_id, payload) VALUES (?, ?)",
+            ("corrupt", payload),
+        )
+        db.commit()
+    policy = configured_policy(config, snapshot=snapshot)
+    ledger = Ledger(config.state_root / "llm.sqlite3")
+    policy.backlog = LedgerBacklog(ledger)
+    with pytest.raises(PolicyBlocked, match="^policy_blocked$"):
+        policy.check(Provenance(frozenset({source_id}), requester=source_id))
+    assert ledger.policy_backlog() == []
+
+
+@pytest.mark.parametrize("database", ["archive", "fabric"])
+def test_snapshot_normalization_rejects_active_wal(human_source, database):
+    config, fabric, source_id = human_source
+    path = (
+        config.archive_root / "index.sqlite3" if database == "archive" else fabric.path
+    )
+    policy = configured_policy(config, snapshot=True)
+    ledger = Ledger(config.state_root / "llm.sqlite3")
+    policy.backlog = LedgerBacklog(ledger)
+    with closing(sqlite3.connect(path)) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE snapshot_guard (value TEXT)")
+        writer.commit()
+        with pytest.raises(PolicyBlocked, match="^policy_blocked$"):
+            policy.check(Provenance(frozenset({source_id}), requester=source_id))
+        assert ledger.policy_backlog() == []
+    policy.check(Provenance(frozenset({source_id}), requester=source_id))
