@@ -361,6 +361,62 @@ def make_vault(tmp_path, *, webex):
     return config, source.source_id, configured_policy(config)
 
 
+@pytest.fixture(params=[False, True], ids=["live", "snapshot"])
+def fabric_policy(tmp_path, request):
+    from weaver.fabric import FabricStore
+    from weaver.llm.policy_archive import configured_policy
+
+    from .fabric.test_store import draft
+
+    config, source_id, _ = make_vault(tmp_path, webex=True)
+    other = archive_webex(config, 2, "SPACE_OPEN")
+    fabric = FabricStore.from_config(config)
+    fabric.append(
+        [
+            draft("one", source_id=source_id),
+            draft("two", source_id=other),
+            draft("three", source_id=source_id),
+        ]
+    )
+    return (
+        config,
+        fabric,
+        source_id,
+        other,
+        configured_policy(config, snapshot=request.param),
+    )
+
+
+def test_shared_sources_reads_fabric_draft_payloads(fabric_policy):
+    _, _, source_id, other, policy = fabric_policy
+    assert policy.shared_sources() == tuple(sorted({source_id, other}))
+
+
+def test_shared_call_passes_with_fabric_draft_payloads(fabric_policy):
+    _, _, _, _, policy = fabric_policy
+
+    class Fake:
+        def generate_text(self, task, system, user):
+            assert (task, system, user) == ("wiki", "s", "u")
+            return "synthetic response"
+
+    client = PolicyClient(Fake(), policy)
+    # Wiki maintenance may have no requester and rely entirely on shared lineage.
+    with provenance_scope([], shared=True):
+        assert client.generate_text("wiki", "s", "u") == "synthetic response"
+
+
+def test_shared_fabric_sources_still_enforce_exclusions(fabric_policy):
+    from .fabric.test_store import draft
+
+    config, fabric, source_id, _, policy = fabric_policy
+    excluded = archive_webex(config, 3, "SPACE_PRIVATE")
+    fabric.append([draft("private", source_id=excluded)])
+    policy.excluded_space_ids = frozenset({"SPACE_PRIVATE"})
+    with provenance_scope([source_id], shared=True), pytest.raises(PolicyBlocked):
+        policy.prepare("s", "u")
+
+
 def test_non_webex_vault_first_summary_and_wiki_are_not_blocked(tmp_path):
     config, source_id, policy = make_vault(tmp_path, webex=False)
     # A dictionary with entries but no approved lineage yet: first summary.

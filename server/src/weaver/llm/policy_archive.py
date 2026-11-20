@@ -12,10 +12,16 @@ from pathlib import Path
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
 from weaver.readonly import connect_snapshot
-from weaver.schema import Manifest, ReviewPackage, Source, Thread
+from weaver.schema import Manifest, ReviewPackage, Source, ThreadDraft
 from weaver.spinner.webex import WebexProvenanceStore
 
-from .policy import ALLOWED_CHANNELS, UNKNOWN_DICTIONARY_SOURCE, LlmPolicy
+from .policy import (
+    ALLOWED_CHANNELS,
+    UNKNOWN_DICTIONARY_SOURCE,
+    UNKNOWN_LINEAGE,
+    UNKNOWN_WIKI_SOURCE,
+    LlmPolicy,
+)
 
 
 class ArchiveProvenanceResolver:
@@ -54,8 +60,7 @@ class ArchiveProvenanceResolver:
         return value.space_id
 
     def has_webex_source(self) -> bool:
-        if not self.index.is_file():
-            return False
+        # A missing/unreadable index is unknown, never proof of no Webex.
         with closing(self._connect()) as db:
             return (
                 db.execute(
@@ -71,6 +76,38 @@ class ArchiveProvenanceResolver:
         # A live daemon must consume committed WAL contents. Opening mode=ro
         # never initializes the archive, sweeps payloads or publishes Receipts.
         return sqlite3.connect(f"{self.index.resolve().as_uri()}?mode=ro", uri=True)
+
+    def normalize_sources(self, source_ids: frozenset[str]) -> dict[str, str]:
+        """Human-only Fabric IDs without an archived Source have unknown lineage.
+
+        Wiki observations and phone decisions predate any origin marker. Inspect
+        all references rather than guessing from IDs or trusting one human row.
+        An archived Source always retains its original policy classification.
+        """
+        # These sets live for this evaluation only. Missing/read-failed archive
+        # state must raise, before any human ID can be treated as non-Webex.
+        with closing(self._connect()) as db:
+            archived = {sid for (sid,) in db.execute("SELECT source_id FROM sources")}
+        if self.state_root is None:
+            return {}
+        path = self.state_root / "fabric.sqlite3"
+        if not path.is_file():
+            return {}
+        db = (
+            connect_snapshot(path)
+            if self.snapshot
+            else sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        )
+        human: set[str] = set()
+        nonhuman: set[str] = set()
+        with closing(db):
+            for (raw,) in db.execute("SELECT payload FROM threads"):
+                thread = ThreadDraft.model_validate_json(raw)
+                (human if thread.actor == "human" else nonhuman).add(thread.source_id)
+        return {
+            sid: UNKNOWN_WIKI_SOURCE
+            for sid in source_ids & (human - nonhuman - archived - UNKNOWN_LINEAGE)
+        }
 
     def resolve(self, source_id: str) -> tuple[str, str | None] | None:
         if not self.index.is_file():
@@ -122,8 +159,9 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
                 else sqlite3.connect(f"{fabric.resolve().as_uri()}?mode=ro", uri=True)
             )
             with closing(db):
+                # Fabric stores drafts; the append sequence lives in its own column.
                 ids.update(
-                    Thread.model_validate_json(raw).source_id
+                    ThreadDraft.model_validate_json(raw).source_id
                     for (raw,) in db.execute("SELECT payload FROM threads")
                 )
         reviews = config.state_root / "summary.sqlite3"
@@ -157,4 +195,5 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
         excluded_space_ids=frozenset(config.shepherds.webex.exclude_space_ids),
         shared_sources=shared_sources,
         webex_present=resolver.has_webex_source,
+        normalize_sources=resolver.normalize_sources,
     )
