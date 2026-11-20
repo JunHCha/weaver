@@ -576,3 +576,16 @@ def test_progress_recovers_all_distinct_capture_hosts(open_store, dirs, tmp_path
         (tmp_path / "proposals" / "pipeline" / f"{source.source_id}.json").read_text()
     )
     assert data["capture_hosts"] == ["mac", "phone", "unknown"]
+
+
+def test_commit_without_a_receipt_adapter_keeps_the_original_journal(dirs, clock):
+    archive = store_module.ArchiveStore(dirs["archive"], clock=clock)
+    m = manifest()
+    payload = outbox_file(dirs["outbox"], m, TEXT)
+    source = archive.commit(m, payload)
+    first = archive.stored_capture(CAP)
+    payload.unlink()
+    restarted = store_module.ArchiveStore(dirs["archive"], clock=clock)
+    assert restarted.commit(m, payload) == source
+    assert restarted.stored_capture(CAP) == first
+    assert list(dirs["receipts"].iterdir()) == []

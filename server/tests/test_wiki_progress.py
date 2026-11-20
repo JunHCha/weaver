@@ -88,8 +88,19 @@ def setup(tmp_path):
     return clock, store, fabric, client, compiler, journal, publisher
 
 
-def test_wait_record_publish_and_restart_preserve_reverse_history(tmp_path):
+@pytest.mark.parametrize("projection_failure", [False, True])
+def test_wait_record_publish_and_restart_preserve_reverse_history(
+    tmp_path, monkeypatch, projection_failure
+):
     clock, store, fabric, client, compiler, journal, publisher = setup(tmp_path)
+    if projection_failure:
+
+        def fail(*args):
+            raise OSError("synthetic projection failure")
+
+        monkeypatch.setattr(
+            "weaver.runtime.pipeline_projection.write_bytes_atomic", fail
+        )
     page = store.root / "pages/운영.md"
     page.write_text(
         page.read_text()
@@ -132,6 +143,7 @@ def test_wait_record_publish_and_restart_preserve_reverse_history(tmp_path):
     assert complete.counterpart is None
     assert all(t.content for t in complete.threads)
     assert len(fabric.entries(ThreadQuery())) == 2
+    monkeypatch.undo()
     restarted = WikiEditPublisher(
         PipelineJournal(tmp_path / "state", tmp_path / "proposals"),
         store,

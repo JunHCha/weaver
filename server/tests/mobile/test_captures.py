@@ -281,3 +281,37 @@ def test_legacy_call_without_occurrence_replays_its_original_receipt(tmp_path):
     assert replay.status_code == 200
     assert Receipt.model_validate_json(replay.text) == original[1]
     assert len(h.archive.sources()) == 1
+
+
+@pytest.mark.parametrize("failure", ["missing", "not_directory", "io_error"])
+def test_http_receipt_never_requires_file_publication(tmp_path, monkeypatch, failure):
+    import shutil
+
+    h = Harness(tmp_path)
+    headers = h.pair()
+    receipts = h.config.courier.receipts
+    shutil.rmtree(h.config.sync_root)
+    if failure == "not_directory":
+        receipts.parent.mkdir()
+        receipts.write_bytes(b"unavailable shared folder")
+    elif failure == "io_error":
+
+        def fail(*args):
+            raise OSError("synthetic shared-folder write failure")
+
+        monkeypatch.setattr(h.archive.receipt_publisher, "publish", fail)
+    assert upload(h, headers).status_code == 201
+    first = put_manifest(h, headers)
+    assert first.status_code == 201
+    assert receipt_of(h, headers).json() == first.json()
+    assert put_manifest(h, headers).json() == first.json()
+    assert not receipts.is_dir()
+    # The file adapter can later publish the same committed Receipt for rollback.
+    if failure == "not_directory":
+        receipts.unlink()
+    receipts.mkdir(parents=True)
+    monkeypatch.undo()
+    h.archive.confirm(CAP)
+    assert Receipt.model_validate_json(
+        (receipts / f"{CAP}.json").read_bytes()
+    ) == Receipt.model_validate(first.json())

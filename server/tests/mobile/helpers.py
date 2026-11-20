@@ -101,6 +101,9 @@ def write_config(root: Path, mobile: str = "") -> ServerConfig:
 class Harness:
     def __init__(self, tmp_path: Path, mobile: str = "", clock: Any = None) -> None:
         self.config = write_config(tmp_path, mobile)
+        # These fixtures also exercise explicit rollback/file replay in HTTP mode.
+        for directory in ("outbox", "receipts", "proposals", "decisions"):
+            (self.config.sync_root / directory).mkdir(parents=True, exist_ok=True)
         self.whois = FakeWhois()
         self.store = MobileStore(self.config.state_root)
         self.archive = ArchiveStore.from_config(self.config)

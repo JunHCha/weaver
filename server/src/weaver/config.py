@@ -234,6 +234,12 @@ class MobileSettings:
     def transport_for(self, feature: str) -> Transport:
         return dict(self.features).get(feature, self.transport)
 
+    def uses_files(self) -> bool:
+        """Shared Courier projections are needed by any file transport user."""
+        return any(
+            self.transport_for(feature) == "files" for feature in TRANSPORT_FEATURES
+        )
+
 
 def _mobile_settings(
     value: object, env: Mapping[str, str], base: Path
@@ -519,7 +525,9 @@ def _check_boundaries(roots: dict[str, Path]) -> None:
                 raise ConfigError(f"{public} and {other}: paths overlap")
 
 
-def _check_directory(path: Path, field: str, allow_missing: bool) -> None:
+def _check_directory(
+    path: Path, field: str, allow_missing: bool, *, require_writable: bool = True
+) -> None:
     try:
         probe = path
         if not allow_missing and not probe.exists():
@@ -528,7 +536,7 @@ def _check_directory(path: Path, field: str, allow_missing: bool) -> None:
             probe = probe.parent
         if not probe.is_dir():
             raise ConfigError(f"{field}: expected directory")
-        if not os.access(probe, os.W_OK | os.X_OK):
+        if require_writable and not os.access(probe, os.W_OK | os.X_OK):
             raise ConfigError(f"{field}: directory must be writable and searchable")
     except OSError:
         raise ConfigError(f"{field}: cannot inspect directory") from None
@@ -544,7 +552,8 @@ def load_config(
 
     Selection: argument > WEAVER_CONFIG > XDG_CONFIG_HOME/weaver/config.toml >
     ~/.config/weaver/config.toml. No file merging or per-field env overrides.
-    All roots and Courier children must exist unless init_directories is true.
+    Private roots must exist unless init_directories is true. Courier shared
+    folders are optional when every transport uses HTTP.
     Initialization creates directories only and never overwrites existing data.
     """
     env = os.environ if environ is None else environ
@@ -715,11 +724,21 @@ def load_config(
             raise ConfigError("courier: child directory must not redirect elsewhere")
         channels[name] = resolved
     directories = {**roots, **channels}
+    # HTTP does not initialize or require the rollback-only shared folders.
+    shared_optional = not mobile.uses_files()
+    optional = {"sync_root", *channels} if shared_optional else set()
     # Check every path and nearest existing ancestor before the first mkdir.
     for field, directory in directories.items():
-        _check_directory(directory, field, init_directories)
+        _check_directory(
+            directory,
+            field,
+            init_directories or field in optional,
+            require_writable=field not in optional,
+        )
     if init_directories:
         for field, directory in directories.items():
+            if field in optional:
+                continue
             try:
                 directory.mkdir(parents=True, exist_ok=True)
             except OSError:

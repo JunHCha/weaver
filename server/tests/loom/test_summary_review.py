@@ -556,7 +556,10 @@ def test_unverified_corrections_are_dropped_not_fatal(tmp_path: Path) -> None:
     assert context.candidates("원문에 없음") == []
 
 
-def test_prepared_legacy_feedback_is_recovered_without_llm(tmp_path: Path) -> None:
+@pytest.mark.parametrize("projection", ["enabled", "disabled", "io_error"])
+def test_prepared_legacy_feedback_is_recovered_without_llm(
+    tmp_path: Path, monkeypatch, projection
+) -> None:
     import json
 
     from weaver.runtime.summary import ReviewAdapter
@@ -573,6 +576,7 @@ def test_prepared_legacy_feedback_is_recovered_without_llm(tmp_path: Path) -> No
         FakeSink(),
         tmp_path / "archive",
         state_root=tmp_path / "state",
+        publish_files=projection != "disabled",
     )
     old = package()
     revised = old.model_copy(update={"revision": 2, "draft_body": "수정된 본문"})
@@ -596,9 +600,34 @@ def test_prepared_legacy_feedback_is_recovered_without_llm(tmp_path: Path) -> No
             "INSERT INTO reviews VALUES (?, ?, ?, ?, 'PREPARED')",
             ("pkg", 1, json.dumps(verdict), json.dumps(prepared)),
         )
+    if projection == "io_error":
+
+        def fail(*args):
+            raise OSError("synthetic projection failure")
+
+        monkeypatch.setattr("weaver.loom.projection.write_bytes_atomic", fail)
+        monkeypatch.setattr("weaver.loom.projection.write_json_atomic", fail)
     ReviewAdapter(review, None)  # type: ignore[arg-type]
     assert review.state.load_package("pkg", 2) == (revised, "원문")
+    if projection == "enabled":
+        assert (review.proposals / "pkg.r2.diff").read_text() == "diff"
+    else:
+        assert not (review.proposals / "pkg.r2.diff").exists()
+    # HTTP's full revision body is independent of the optional legacy diff.
+    from weaver.mobile.reviews import ReviewService
+    from weaver.mobile.store import MobileStore
+
+    service = ReviewService(review.state, MobileStore(tmp_path / "state"))
+    assert service.package("pkg", 2) == revised
+    monkeypatch.undo()
+    service.republish(review.proposals)
     assert (review.proposals / "pkg.r2.diff").read_text() == "diff"
+    assert (
+        ReviewPackage.model_validate_json(
+            (review.proposals / "pkg.r2.json").read_bytes()
+        )
+        == revised
+    )
     with review.state.connect() as db:
         assert db.execute("SELECT stage FROM reviews").fetchone()[0] == "APPLIED"
 

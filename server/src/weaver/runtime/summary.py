@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Protocol
 
 from weaver.archive import ArchiveStore
-from weaver.courier.atomic import write_json_atomic
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.llm.policy import LlmPolicy, Provenance
 from weaver.loom.summary import SummaryDrafts
@@ -167,10 +166,7 @@ class SummaryProcessor:
                 if not applied:
                     if self.progress is not None:
                         self.progress.observe_package(package)
-                    self.drafts.proposals.mkdir(parents=True, exist_ok=True)
-                    write_json_atomic(
-                        self.drafts.proposals / f"{package.package_id}.r1.json", package
-                    )
+                    self.drafts.projection.recover(self.drafts.state)
                 return "done"
         if not self.gate.available:
             return "waiting_llm"

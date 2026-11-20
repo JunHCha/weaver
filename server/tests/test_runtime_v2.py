@@ -3,6 +3,7 @@
 import threading
 from pathlib import Path
 
+import pytest
 from server.tests.fake_responses import edit_response, fixture_response
 
 from weaver.config import load_config
@@ -177,7 +178,7 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
     import hashlib
     import json
 
-    import weaver.loom.summary_review as review_module
+    import weaver.loom.projection as review_module
     from weaver.schema import EventSummary, ReviewPackage
 
     config_file = tmp_path / "server.toml"
@@ -240,7 +241,10 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
 
     monkeypatch.setattr(review_module, "write_json_atomic", fail_publication)
     runtime._tick(threading.Event())
-    assert len(list(config.courier.decisions.glob("*.json"))) == 1
+    # A committed decision is cleaned even when its file projection fails.
+    assert not list(config.courier.decisions.glob("*.json"))
+    second_path = config.courier.proposals / f"{second.package_id}.r1.json"
+    assert not second_path.exists()  # Courier cleaned the committed review
     monkeypatch.setattr(review_module, "write_json_atomic", write)
     runtime = build_runtime(
         config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
@@ -255,9 +259,11 @@ def test_replacement_and_interrupted_review_replay(tmp_path, monkeypatch):
         item for item in summaries if item.summary_id != original.summary_id
     )
     assert replacement.replaces == original.summary_id
+    assert ReviewPackage.model_validate_json(second_path.read_bytes()).stage == "반영"
     assert not list(config.courier.decisions.glob("*.json"))
     runtime._tick(threading.Event())
     assert len(list((config.archive_root / "summaries").glob("*/*.json"))) == 2
+    assert not second_path.exists()  # successful retry marker was consumed
 
 
 def test_wiki_configuration_and_runtime_wiring(tmp_path):
@@ -757,3 +763,78 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
     path.unlink()
     runtime._tick(threading.Event())
     assert alerts() == []
+
+
+@pytest.mark.parametrize(
+    "mobile, files",
+    [
+        ('transport = "http"', False),
+        (
+            'transport = "files"\n[mobile.features]\ncapture = "http"\nreview = "http"\naction = "http"',
+            False,
+        ),
+        *[
+            (f'transport = "http"\n[mobile.features]\n{feature} = "files"', True)
+            for feature in ("capture", "review", "action")
+        ],
+    ],
+)
+def test_http_runtime_processes_capture_without_shared_folders(tmp_path, mobile, files):
+    import hashlib
+
+    from weaver.archive import ArchiveStore
+    from weaver.loom.summary_state import SummaryState
+    from weaver.runtime.progress import PipelineJournal
+    from weaver.schema import Manifest
+
+    config_file = tmp_path / "server.toml"
+    config_file.write_text(
+        "\n".join(
+            f'{key}_root = "{key}"'
+            for key in ("sync", "archive", "vault", "state", "log")
+        )
+        + "\n[mobile]\n"
+        + mobile
+        + "\n"
+    )
+    config = load_config(config_file, init_directories=True)
+    assert config.sync_root.exists() == files
+    data = b"synthetic text"
+    payload = tmp_path / "payload.txt"
+    payload.write_bytes(data)
+    manifest = Manifest.model_validate(
+        {
+            "schema_version": 1,
+            "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "kind": "text",
+            "channel": "share_text",
+            "captured_at": "2026-01-01T00:00:00Z",
+            "occurred_at": None,
+            "payload": "cap_01ARZ3NDEKTSV4RRFFQ69G5FAV.txt",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+            "hints": {"counterpart": None},
+        }
+    )
+    source = ArchiveStore.from_config(config).commit(manifest, payload)
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
+    runtime._tick(threading.Event())
+    state = SummaryState(config.state_root)
+    with state.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM packages").fetchone()[0] == 1
+    item = PipelineJournal(
+        config.state_root, config.courier.proposals, publish_files=False
+    ).get(source.source_id)
+    assert item.location == "user" and item.status == "review"
+    assert (
+        config.courier.proposals / "pipeline" / f"{source.source_id}.json"
+    ).exists() == files
+    assert config.sync_root.exists() == files
+    # A restart recovers the same journal, without publishing duplicate files.
+    runtime = build_runtime(
+        config, plugins=Plugins(client=FakeLlm(), policy=open_policy())
+    )
+    runtime._tick(threading.Event())
+    assert config.sync_root.exists() == files

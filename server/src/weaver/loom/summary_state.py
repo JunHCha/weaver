@@ -54,8 +54,15 @@ class SummaryState:
                 "CREATE TABLE IF NOT EXISTS reviews (id TEXT, revision INTEGER, verdict TEXT NOT NULL, prepared TEXT NOT NULL, stage TEXT NOT NULL, PRIMARY KEY(id, revision))"
             )
 
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS pending_projections ("
+                "id TEXT, revision INTEGER, package TEXT NOT NULL, "
+                "PRIMARY KEY(id, revision))"
+            )
+
     @contextmanager
     def lock(self) -> Iterator[None]:
+        # flock is not reentrant: never call a lock-taking helper under this lock.
         fd = os.open(self.path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)

@@ -122,8 +122,10 @@ and **You**. Tap a node for its items or open **You** for pending approvals. Lan
 windows keep the map beside a right panel; portrait windows use a bottom sheet.
 The map replays changes since the last visit once, with no live movement loop.
 
-The server publishes additive progress observations under `proposals/pipeline/`;
-existing archive receipts confirm Mac arrival. Today's Thread results, wiki pages
+The server keeps additive progress observations in private `pipeline.sqlite3` and
+optionally projects them under `proposals/pipeline/` in file mode. Archive receipts
+confirm Mac arrival; HTTP returns the journaled Receipt without a shared-folder write.
+Today's Thread results, wiki pages
 and Digest link back to each item. Select the phone's synchronized local vault and
 enter its Obsidian name to enable page links after matching file bytes arrive.
 See [the data flow map](docs/pipeline-map.md) for state and synchronization rules.

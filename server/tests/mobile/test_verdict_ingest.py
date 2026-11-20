@@ -203,3 +203,30 @@ def test_file_and_http_keys_keep_separate_retry_counters():
     assert _apply_code(ingest, file_key, model) == "apply_stopped"
     assert _apply_code(ingest, http_key, model) == "apply_stopped"
     assert stores.apply_calls == 4
+
+
+def test_http_approval_commits_with_failed_projection_and_replays_once(
+    tmp_path, monkeypatch
+):
+    h = Harness(tmp_path, 'transport = "http"\n')
+    headers = h.pair()
+    h.add_package()
+    queued = submit(h, headers)
+    llm = ScheduleLlm()
+    adapter, _, applier = wire_domain(h, llm)
+
+    def fail(*args):
+        raise OSError("synthetic shared-folder failure")
+
+    monkeypatch.setattr("weaver.loom.projection.write_json_atomic", fail)
+    applier.run()
+    assert operation(h, headers, queued)["state"] == "applied"
+    assert adapter.is_applied("pkg_a", 1)
+    threads = h.fabric.entries(ThreadQuery(include_executions=True))
+    assert len(threads) == llm.calls == 1
+    adapter, _, applier = wire_domain(h, llm)
+    applier.recover()
+    applier.run()
+    assert h.fabric.entries(ThreadQuery(include_executions=True)) == threads
+    assert llm.calls == 1
+    assert len(list((h.config.archive_root / "summaries").glob("*/*.json"))) == 1

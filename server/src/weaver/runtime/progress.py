@@ -18,7 +18,6 @@ from typing import Any
 
 from weaver.archive import ArchiveStore
 from weaver.context import ContextDictionary, DictionarySnapshot
-from weaver.courier.atomic import write_bytes_atomic
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.loom.summary_review import Prepared
 from weaver.loom.summary_state import SummaryState
@@ -33,6 +32,8 @@ from weaver.schema import (
     Verdict,
 )
 from weaver.wiki.store import WikiStore
+
+from .pipeline_projection import PipelineProjection
 
 logger = logging.getLogger(__name__)
 
@@ -123,13 +124,21 @@ def observation[**P](operation: Callable[P, None]) -> Callable[P, None]:
 
 
 class PipelineJournal:
-    def __init__(self, state: Path, proposals: Path, *, failure_limit: int = 5) -> None:
+    def __init__(
+        self,
+        state: Path,
+        proposals: Path,
+        *,
+        failure_limit: int = 5,
+        publish_files: bool = True,
+    ) -> None:
         if failure_limit < 1:
             raise ValueError("pipeline failure limit must be positive")
         self.failure_limit = failure_limit
         state.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = state / "pipeline.sqlite3"
         self.directory = proposals / "pipeline"
+        self.projection = PipelineProjection(self.directory) if publish_files else None
         with sqlite3.connect(self.path) as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS items (source_id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
@@ -227,26 +236,12 @@ class PipelineJournal:
         return item
 
     def _write(self, item: PipelineItem) -> None:
-        if self.directory.is_symlink():
-            raise OSError("pipeline projection directory is a symlink")
-        self.directory.mkdir(parents=True, exist_ok=True)
-        final = self.directory / f"{item.source_id}.json"
-        payload = item.model_dump(mode="json")
-        if not item.capture_hosts or set(item.capture_hosts) == {"unknown"}:
-            payload.pop("capture_hosts", None)
-        # Omitted card keys mean their defaults, so older readers never see them.
-        if not item.summary:
-            payload.pop("summary", None)
-        if item.counterpart is None:
-            payload.pop("counterpart", None)
-        if not item.related_tags:
-            payload.pop("related_tags", None)
-        if item.wiki_edit is None:
-            # Omit the Wiki-only extension for ordinary capture observations.
-            payload.pop("wiki_edit", None)
-        data = json.dumps(payload, ensure_ascii=False).encode()
-        if final.is_symlink() or not final.is_file() or final.read_bytes() != data:
-            write_bytes_atomic(final, data)
+        if self.projection is None:
+            return
+        try:
+            self.projection.publish(item)
+        except OSError as error:
+            logger.warning("pipeline projection unavailable: %s", type(error).__name__)
 
     def publish(self) -> None:
         with sqlite3.connect(self.path) as db:

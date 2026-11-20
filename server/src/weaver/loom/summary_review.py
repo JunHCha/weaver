@@ -12,10 +12,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
-from weaver.courier.atomic import write_bytes_atomic, write_json_atomic
+from weaver.courier.atomic import write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
+from weaver.loom.projection import ReviewProjection
 from weaver.loom.summary_state import SummaryState, read_source_reference
 from weaver.loom.tagging import (
     FACT_RULES,
@@ -614,6 +615,7 @@ class SummaryReview(ApprovalExtractor):
         *,
         state_root: Path,
         proposals: Path | None = None,
+        publish_files: bool = True,
         timezone: str = "Asia/Seoul",
     ) -> None:
         super().__init__(llm, context, sink, timezone=timezone)
@@ -621,6 +623,7 @@ class SummaryReview(ApprovalExtractor):
         self.archive = archive
         self.state = SummaryState(state_root)
         self.proposals = proposals or state_root / "proposals"
+        self.projection = ReviewProjection(self.proposals, enabled=publish_files)
 
     def approve(
         self,
@@ -721,37 +724,36 @@ class SummaryReview(ApprovalExtractor):
                 self.context.learn(
                     correction.observed, correction.canonical, correction.kind
                 )
-            self.proposals.mkdir(parents=True, exist_ok=True)
-            finished = package.model_copy(
-                update={
-                    "stage": "반영",
-                    "stage_times": package.stage_times
-                    | {"반영": prepared.applied_at or datetime.now(UTC)},
-                }
-            )
-            # Use the journaled time for deterministic publication on replay.
             if prepared.package is not None:
                 self.state.save_package(prepared.package, script)
-                write_bytes_atomic(
-                    self.proposals
-                    / f"{package.package_id}.r{prepared.package.revision}.diff",
-                    prepared.diff.encode(),
-                )
-                write_json_atomic(
-                    self.proposals
-                    / f"{package.package_id}.r{prepared.package.revision}.json",
-                    prepared.package,
-                )
-            write_json_atomic(
-                self.proposals / f"{package.package_id}.r{package.revision}.json",
-                finished,
-            )
             with self.state.connect() as db:
                 db.execute(
                     "UPDATE reviews SET stage='APPLIED' WHERE id=? AND revision=?",
                     (package.package_id, package.revision),
                 )
-            return prepared.summary or prepared.package
+                if self.projection.enabled:
+                    finished = package.model_copy(
+                        update={
+                            "stage": "반영",
+                            "stage_times": package.stage_times
+                            | {"반영": prepared.applied_at or datetime.now(UTC)},
+                        }
+                    )
+                    db.execute(
+                        "INSERT OR REPLACE INTO pending_projections VALUES (?, ?, ?)",
+                        (
+                            package.package_id,
+                            package.revision,
+                            finished.model_dump_json(),
+                        ),
+                    )
+        # Recover takes the journal lock itself; shared I/O must follow its release.
+        self.projection.recover(self.state)
+        return prepared.summary or prepared.package
+
+    def republish(self) -> None:
+        """Recover unfinished file projections from the durable journal."""
+        self.projection.recover(self.state)
 
     def _prepare_action(
         self,

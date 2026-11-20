@@ -10,6 +10,7 @@ applied over HTTP are blocked from running twice by the shared journals.
 import logging
 
 from weaver.action.courier import ActionCourier
+from weaver.archive import ArchiveStore
 from weaver.config import TRANSPORT_FEATURES, MobileSettings, ServerConfig
 
 from .applier import MobileApplier
@@ -34,7 +35,9 @@ def reconcile_transports(
         if before == wanted:
             continue
         if before == "http" and wanted == "files":
-            if feature == "review":
+            if feature == "capture":
+                ArchiveStore.from_config(config).republish_receipts()
+            elif feature == "review":
                 reviews.republish(config.courier.proposals)
             elif feature == "action":
                 actions.publish()

@@ -266,3 +266,38 @@ def test_already_revised_long_script_skips_polish(tmp_path: Path) -> None:
         "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "긴 원문", revised=True, package_id="pkg"
     )
     assert [call[0] for call in llm.calls] == ["loom.summary"]
+
+
+@pytest.mark.parametrize("publish_files", [False, True])
+def test_durable_draft_survives_projection_failure_and_recovers(
+    tmp_path, monkeypatch, publish_files
+):
+    from weaver.loom.projection import ReviewProjection
+    from weaver.loom.summary_state import SummaryState
+
+    proposals = tmp_path / "proposals"
+    service = SummaryDrafts(
+        FakeLlm(0),
+        ContextDictionary(tmp_path / "state"),
+        proposals,
+        state_root=tmp_path / "state",
+        publish_files=publish_files,
+    )
+
+    def fail(*args):
+        raise OSError("synthetic projection failure")
+
+    monkeypatch.setattr("weaver.loom.projection.write_json_atomic", fail)
+    package, script = service.create(
+        "src_01ARZ3NDEKTSV4RRFFQ69G5FAV", "원문", package_id="pkg"
+    )
+    restarted = SummaryState(tmp_path / "state")
+    assert restarted.load_package("pkg", 1) == (package, script)
+    assert not (proposals / "pkg.r1.json").exists()
+    monkeypatch.undo()
+    assert ReviewProjection(proposals).recover(restarted) == ["pkg.r1.json"]
+    assert (
+        ReviewPackage.model_validate_json((proposals / "pkg.r1.json").read_bytes())
+        == package
+    )
+    assert ReviewProjection(proposals).recover(restarted) == []

@@ -12,9 +12,9 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from weaver.context import ContextDictionary
-from weaver.courier.atomic import write_json_atomic
 from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
+from weaver.loom.projection import ReviewProjection
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import Question, ReviewPackage, Script
 from weaver.spinner.reviser import (
@@ -61,7 +61,7 @@ class CallDraftResponse(DraftResponse):
 
 
 class SummaryDrafts:
-    """Generate and publish a review package from a complete Script."""
+    """Durably generate a review package, with an optional file projection."""
 
     def __init__(
         self,
@@ -71,6 +71,7 @@ class SummaryDrafts:
         *,
         state_root: Path,
         revision_threshold: int = 30000,
+        publish_files: bool = True,
     ) -> None:
         if revision_threshold < 1:
             raise ValueError("revision_threshold must be positive")
@@ -78,6 +79,7 @@ class SummaryDrafts:
         self.llm = llm
         self.context = context
         self.proposals = proposals
+        self.projection = ReviewProjection(proposals, enabled=publish_files)
         self.state = SummaryState(state_root)
 
     def create(
@@ -95,7 +97,7 @@ class SummaryDrafts:
         revised: bool = False,
         on_revised: Callable[[Script], None] | None = None,
     ) -> tuple[ReviewPackage, str]:
-        """Return the package and revised Script after atomically publishing it.
+        """Return the package and revised Script after committing to SummaryState.
 
         `call` is a parsed call Script whose text equals `script`: its speech
         segments are corrected in the same LLM call as the summary. An invalid
@@ -188,8 +190,7 @@ class SummaryDrafts:
                 or (call.occurred_at if call else None),
                 source_time_is_fallback=source_time_is_fallback,
             )
-        self.proposals.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(self.proposals / f"{package_id}.r1.json", package)
+        self.projection.publish(package)
         return package, response.script
 
     @staticmethod
