@@ -7,6 +7,7 @@ import textwrap
 from weaver.archive import ArchiveStore
 from weaver.config import CourierPaths, load_config
 from weaver.courier import Courier
+from weaver.ingest import VerdictIngest
 from weaver.schema import Receipt
 
 from .conftest import CAP, CAP2, TEXT, manifest
@@ -49,7 +50,13 @@ def test_courier_round_trip_with_archive(tmp_path):
     archive = tmp_path / "archive"
     archive.mkdir()
     store = ArchiveStore(archive, paths.receipts)
-    courier = Courier(paths, store, NoRevisions(), NoDecisions())
+    courier = Courier(
+        paths,
+        store,
+        NoRevisions(),
+        NoDecisions(),
+        ingest=VerdictIngest(NoRevisions(), NoDecisions()),
+    )
 
     m1, m2 = manifest(CAP), manifest(CAP2, channel="kakao")
     shepherd(paths.outbox, m1, TEXT)
@@ -87,7 +94,13 @@ def test_courier_reports_conflict_and_keeps_original(tmp_path):
     archive = tmp_path / "archive"
     archive.mkdir()
     store = ArchiveStore(archive, paths.receipts)
-    courier = Courier(paths, store, NoRevisions(), NoDecisions())
+    courier = Courier(
+        paths,
+        store,
+        NoRevisions(),
+        NoDecisions(),
+        ingest=VerdictIngest(NoRevisions(), NoDecisions()),
+    )
     shepherd(paths.outbox, manifest(), TEXT)
     courier.scan_once()
     before = (paths.receipts / f"{CAP}.json").read_bytes()

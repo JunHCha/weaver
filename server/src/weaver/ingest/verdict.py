@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,26 +12,11 @@ from weaver.schema import Verdict
 
 from .errors import CourierFileError
 from .ports import DecisionStore, PackageRevisions
+from .queries import ask as _ask
 
 # Preserve existing safe diagnostics across both transport adapters.
 logger = logging.getLogger("weaver.courier")
-SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 EXTERNAL_PREFIX = "external:"
-
-
-def _ask[**P, T](query: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
-    """Run an injected store query; its failure is a per-input, retryable code."""
-    try:
-        return query(*args, **kwargs)
-    except Exception as exc:
-        # Only validated opaque IDs/revisions are supplied by these query ports.
-        safe_args = tuple(
-            a
-            for a in args
-            if isinstance(a, int) or (isinstance(a, str) and SAFE_ID.fullmatch(a))
-        )
-        logger.warning("courier query failed: %s %s", type(exc).__name__, safe_args)
-        raise CourierFileError("store_failed") from None
 
 
 @dataclass

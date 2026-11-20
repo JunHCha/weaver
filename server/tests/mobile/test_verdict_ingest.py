@@ -5,13 +5,15 @@ import json
 import pytest
 
 from weaver.action import ActionJob
+from weaver.config import CourierSettings
 from weaver.context import ContextDictionary
 from weaver.courier import Courier
 from weaver.fabric import ThreadQuery
-from weaver.ingest import VerdictIngest
+from weaver.ingest import CourierFileError, VerdictIngest
 from weaver.loom.summary_review import SummaryReview
 from weaver.mobile.applier import MobileApplier
 from weaver.runtime.summary import ReviewAdapter, SummaryLookup
+from weaver.schema import Verdict
 
 from .helpers import NOW, Harness, verdict
 from .test_reviews import operation, submit
@@ -145,3 +147,59 @@ def test_real_file_approval_then_http_replay_uses_same_journal(tmp_path):
     assert operation(h, headers, queued)["state"] == "applied"
     assert h.fabric.entries(ThreadQuery(include_executions=True)) == before
     assert len(before) == llm.calls == 1
+
+
+class FailingStores:
+    """Revision and decision ports whose apply always fails (nothing applied)."""
+
+    def __init__(self):
+        self.apply_calls = 0
+
+    def latest_rev(self, package_id):
+        return 1
+
+    def is_applied(self, package_id, revision):
+        return False
+
+    def apply(self, verdict):
+        self.apply_calls += 1
+        raise RuntimeError("synthetic apply failure")
+
+
+def _apply_code(ingest, key, verdict_model):
+    with pytest.raises(CourierFileError) as caught:
+        ingest.apply(key, verdict_model)
+    return caught.value.code
+
+
+def test_file_and_http_keys_keep_separate_retry_counters():
+    """Characterization: one revision retried via a file key and an HTTP key."""
+    stores = FailingStores()
+    clock = [0.0]
+    ingest = VerdictIngest(
+        stores,
+        stores,
+        retry=CourierSettings(
+            max_attempts=2, backoff_seconds=10, max_backoff_seconds=10
+        ),
+        clock=lambda: clock[0],
+    )
+    model = Verdict.model_validate(verdict())
+    file_key, http_key = "pkg_a.r1.json", "external:op_1"
+
+    assert _apply_code(ingest, file_key, model) == "apply_failed"
+    assert _apply_code(ingest, file_key, model) == "apply_backoff"
+    # The HTTP key is not in backoff: its counter starts at its own first attempt.
+    assert _apply_code(ingest, http_key, model) == "apply_failed"
+    assert _apply_code(ingest, http_key, model) == "apply_backoff"
+    assert stores.apply_calls == 2
+
+    clock[0] = 10.0
+    assert _apply_code(ingest, file_key, model) == "apply_stopped"
+    assert stores.apply_calls == 3
+    # Stopping the file path does not consume the HTTP path's second attempt.
+    assert _apply_code(ingest, http_key, model) == "apply_stopped"
+    assert stores.apply_calls == 4
+    assert _apply_code(ingest, file_key, model) == "apply_stopped"
+    assert _apply_code(ingest, http_key, model) == "apply_stopped"
+    assert stores.apply_calls == 4

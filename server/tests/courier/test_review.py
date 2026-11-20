@@ -11,6 +11,7 @@ import pytest
 
 from weaver.courier import Courier, write_json_atomic
 from weaver.courier.atomic import temporary_name
+from weaver.ingest import VerdictIngest
 from weaver.schema import Receipt
 
 from .conftest import (
@@ -187,7 +188,9 @@ def test_fifo_payload_does_not_block_scan(paths):
         "p = CourierPaths(*(root / n for n in "
         "('outbox','receipts','proposals','decisions')))\n"
         "s = S()\n"
-        "print(Courier(p, s, s, s).scan_once().problems)\n"
+        "from weaver.ingest import VerdictIngest\n"
+        "print(Courier(p, s, s, s, ingest=VerdictIngest(s, s))"
+        ".scan_once().problems)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script, str(paths.outbox.parent)],
@@ -276,7 +279,13 @@ def test_cleanup_io_error_is_reported_and_retried(
     assert names(paths.proposals) == [] and decision.exists()
     monkeypatch.setattr(Path, "unlink", real_unlink)
 
-    restarted = Courier(paths, courier._captures, revisions, decisions)
+    restarted = Courier(
+        paths,
+        courier._captures,
+        revisions,
+        decisions,
+        ingest=VerdictIngest(revisions, decisions),
+    )
     report = restarted.scan_once()
     assert report.cleaned == [decision.name] and report.problems == {}
     assert decisions.calls == [(PKG, 1, "approve")]  # applied exactly once

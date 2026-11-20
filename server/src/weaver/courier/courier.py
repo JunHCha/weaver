@@ -10,16 +10,16 @@ file name and an error code.
 import hashlib
 import logging
 import os
-import re
 import stat
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from weaver.config import CourierPaths, CourierSettings
+from weaver.config import CourierPaths
 from weaver.ingest import VerdictIngest
+from weaver.ingest.queries import ask as _ask
 from weaver.schema import Alert, Manifest, ReviewPackage, Verdict
 
 from .atomic import write_json_atomic
@@ -48,7 +48,6 @@ SCAN_INTERVAL_SECONDS = 5.0
 # Own atomic-write temporaries older than this are crash leftovers.
 STALE_TEMPORARY_SECONDS = 600.0
 _HASH_CHUNK = 1 << 20
-SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Codes for conditions that normally resolve on their own (late sync arrival).
 _PENDING = {
@@ -83,21 +82,6 @@ _WARNING = {
 }
 
 
-def _ask[**P, T](query: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
-    """Run an injected store query; its failure is a per-file, retryable code."""
-    try:
-        return query(*args, **kwargs)
-    except Exception as exc:
-        # Only validated opaque IDs/revisions are supplied by these query ports.
-        safe_args = tuple(
-            a
-            for a in args
-            if isinstance(a, int) or (isinstance(a, str) and SAFE_ID.fullmatch(a))
-        )
-        logger.warning("courier query failed: %s %s", type(exc).__name__, safe_args)
-        raise CourierFileError("store_failed") from None
-
-
 @dataclass
 class ScanReport:
     accepted: list[str] = field(default_factory=list)
@@ -117,20 +101,10 @@ class Courier:
         revisions: PackageRevisions,
         decisions: DecisionStore,
         *,
-        ingest: VerdictIngest | None = None,
-        retry: CourierSettings | None = None,
-        clock: Callable[[], float] = time.monotonic,
-        can_apply: Callable[[], bool] | None = None,
-        on_apply_stopped: Callable[[Verdict], None] | None = None,
+        ingest: VerdictIngest,
     ) -> None:
-        self.ingest = ingest or VerdictIngest(
-            revisions,
-            decisions,
-            retry=retry,
-            clock=clock,
-            can_apply=can_apply,
-            on_apply_stopped=on_apply_stopped,
-        )
+        # Required so file and HTTP transports provably share one retry state.
+        self.ingest = ingest
         self.paths = paths
         self._captures = captures
         self._revisions = revisions
