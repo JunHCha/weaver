@@ -123,6 +123,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         if (prefs.getString(SERVER_ID, null) != pairing.serverId) {
             TransportFeature.entries.forEach { edit.remove(routeKey(it)) }
             ServerFeature.entries.forEach { edit.remove(featureKey(it)) }
+            edit.remove(PIPELINE_HTTP).remove(FEED_KINDS)
         }
         edit.commit()
     }
@@ -133,8 +134,19 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
             .remove(NEEDS_REPAIR).remove(LAST_ERROR).remove(READ_ERROR).remove(WIKI_ERROR)
         TransportFeature.entries.forEach { edit.remove(routeKey(it)) }
         ServerFeature.entries.forEach { edit.remove(featureKey(it)) }
+        edit.remove(PIPELINE_HTTP).remove(FEED_KINDS)
         edit.commit()
     }
+
+    /**
+     * The server serves the map over `/read/pipeline` and the phone may read it there. Independent of review: the map's
+     * route is its own capability (`schema_versions.pipeline` = 2, `transports.pipeline` = http, `features.pipeline`).
+     */
+    val pipelineHttp: Boolean get() = paired && prefs.getBoolean(PIPELINE_HTTP, false)
+
+    /** `capabilities.feed_kinds`: what the server serves on `/changes` for this device right now. Empty = no feed. */
+    val feedKinds: Set<String> get() =
+        if (!paired) emptySet() else prefs.getString(FEED_KINDS, "").orEmpty().split(',').filter { it.isNotEmpty() }.toSet()
 
     /** The route the server announced for [feature]; Syncthing until the server says otherwise. */
     fun route(feature: TransportFeature): TransportRoute =
@@ -162,11 +174,21 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         ServerFeature.entries.forEach { f ->
             edit.putBoolean(featureKey(f), (features?.get(f.wire) as? JsonPrimitive)?.contentOrNull == "true")
         }
+        val versions = capabilities["schema_versions"] as? JsonObject
+        edit.putBoolean(PIPELINE_HTTP, (transports?.get("pipeline") as? JsonPrimitive)?.contentOrNull == "http" &&
+            (versions?.get("pipeline") as? JsonPrimitive)?.contentOrNull == "2" &&
+            (features?.get("pipeline") as? JsonPrimitive)?.contentOrNull == "true")
+        val kinds = (capabilities["feed_kinds"] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+        edit.putString(FEED_KINDS, kinds.sorted().joinToString(","))
         edit.commit()
         return changed
     }
 
     val anyHttp: Boolean get() = TransportFeature.entries.any { route(it) == TransportRoute.HTTP }
+
+    /** Something to exchange with the server: a Courier feature over HTTP, or the HTTP map cache. */
+    val anyExchange: Boolean get() = anyHttp || pipelineHttp
 
     /** The server rejected the token (401) or the node (`node_mismatch`), or the token can no longer be read. */
     var needsRepair: Boolean
@@ -208,6 +230,8 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
         private const val WIKI_ERROR = "wiki_error"
         private const val READ_ERROR = "read_error"
         private const val LAST_ERROR = "last_error"
+        private const val PIPELINE_HTTP = "pipeline_http"
+        private const val FEED_KINDS = "feed_kinds"
 
         fun of(context: Context): TransportSettings = TransportSettings(
             context.applicationContext.getSharedPreferences("transport", Context.MODE_PRIVATE), KeystoreSecretBox(),

@@ -19,8 +19,13 @@ class ExchangeSummary {
     var errorCode: String? = null
     /** Items the server refused for good with a code the person must be able to see: item key to code. */
     val rejected = linkedMapOf<String, String>()
-    internal fun fail(code: String, retry: Boolean) { errorCode = errorCode ?: code; if (retry) this.retry = true }
+    /** Counts every recorded failure, so a caller can tell whether a block of work failed on any of its items. */
+    internal var failures = 0
+    internal fun fail(code: String, retry: Boolean) { failures++; errorCode = errorCode ?: code; if (retry) this.retry = true }
 }
+
+/** What the feed client works with for one server: its position, the pipeline cache and the kinds routed over HTTP. */
+class FeedSession(val store: FeedStore, val cache: io.github.junhcha.weaver.pipeline.PipelineCache, val requested: Set<String>)
 
 data class QueueCounts(val captures: Int, val verdicts: Int, val results: Int, val blocked: Int) {
     val total: Int get() = captures + verdicts + results
@@ -39,6 +44,7 @@ class HttpExchange(
     private val route: (TransportFeature) -> TransportRoute,
     private val offered: (ServerFeature) -> Boolean = { false },
     private val alertLedger: AlertLedger? = null,
+    private val feed: FeedSession? = null,
 ) {
     val summary = ExchangeSummary()
     private class Abort : RuntimeException()
@@ -47,13 +53,38 @@ class HttpExchange(
     private fun http(feature: TransportFeature) = route(feature) == TransportRoute.HTTP
 
     fun pull(): ExchangeSummary = guarded {
-        if (http(TransportFeature.VERDICT)) {
-            item(TransportFeature.VERDICT, "list:reviews", ::pullReviews)
-            // The map still follows review; Alerts have an independent route below.
-            if (offered(ServerFeature.PIPELINE)) item(TransportFeature.VERDICT, "list:pipeline", ::pullPipeline)
+        // The feed says which lists changed. Only a run that reached the end of it may skip the full lists of the kinds
+        // it carries; otherwise (no feed offered, a failed or stopped feed) every list runs as before, so one feed
+        // problem never holds back review, action or alert handling.
+        // A kind the feed does not carry (the server does not serve it, or it is not requested) is always pulled in full.
+        val covered = if (feed != null && runFeed(feed) == FeedOutcome.COMPLETE) feed.requested else emptySet()
+        if ("review" !in covered && http(TransportFeature.VERDICT)) item(TransportFeature.VERDICT, "list:reviews", ::pullReviews)
+        if ("alert" !in covered && http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "list:alerts", ::pullAlerts)
+        if ("action" !in covered && http(TransportFeature.ACTION_RESULT)) item(TransportFeature.ACTION_RESULT, "list:actions", ::pullActions)
+        // The Syncthing-file map keeps following review through the legacy list; the HTTP cache is filled by the feed.
+        if (http(TransportFeature.VERDICT) && offered(ServerFeature.PIPELINE)) item(TransportFeature.VERDICT, "list:pipeline", ::pullPipeline)
+    }
+
+    /** The full-list refresh a feed entry of [kind] asks for, with the same error handling as a scheduled pull. */
+    private fun refreshList(kind: String): Boolean {
+        val before = summary.failures
+        when (kind) {
+            "review" -> if (http(TransportFeature.VERDICT)) item(TransportFeature.VERDICT, "list:reviews", ::pullReviews)
+            "alert" -> if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "list:alerts", ::pullAlerts)
+            "action" -> if (http(TransportFeature.ACTION_RESULT)) item(TransportFeature.ACTION_RESULT, "list:actions", ::pullActions)
         }
-        if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "list:alerts", ::pullAlerts)
-        if (http(TransportFeature.ACTION_RESULT)) item(TransportFeature.ACTION_RESULT, "list:actions", ::pullActions)
+        // A list can finish while single items inside it failed (they are isolated): the entry is not done then.
+        return summary.failures == before
+    }
+
+    /** Null when the feed ran into a problem that is already recorded in [summary]; never aborts review/action/alert. */
+    private fun runFeed(session: FeedSession): FeedOutcome? {
+        var outcome: FeedOutcome? = null
+        val sync = FeedSync(api, session.store, session.cache, session.requested, ::refreshList,
+            { key, block -> item(null, key, block) },
+            { key, code -> summary.rejected[key] = code })
+        item(null, "feed:changes") { outcome = sync.run() }
+        return outcome
     }
 
     fun push(): ExchangeSummary = guarded {
@@ -74,15 +105,18 @@ class HttpExchange(
      * the run without asking for a new pairing; 409/412/413/422 block the item; 429/5xx (including 503 `whois_unavailable`)
      * and lost connections are retried with backoff.
      */
-    private fun item(feature: TransportFeature, key: String, block: () -> Unit) {
+    private fun item(feature: TransportFeature?, key: String, block: () -> Unit): Boolean {
         val data = state.load()
-        if (key in data.blocked || feature.wire in data.blockedFeatures) return
+        val wire = feature?.wire ?: "pipeline"
+        // Blocked on purpose: "retry now" clears the block (and restarts the feed), so this is not a failure to report.
+        if (key in data.blocked || wire in data.blockedFeatures) return true
+        val failuresBefore = summary.failures
         try { block() }
         catch (error: ApiException) {
             when {
                 error.status == 401 || error.code == "node_mismatch" -> { summary.needsRepair = true; summary.fail(error.code, false); throw Abort() }
                 error.status == 403 && error.code in featureDenials -> {
-                    state.update { it.copy(blockedFeatures = it.blockedFeatures + (feature.wire to error.code)) }
+                    state.update { it.copy(blockedFeatures = it.blockedFeatures + (wire to error.code)) }
                     summary.fail(error.code, false)
                 }
                 error.status == 403 -> { summary.fail(error.code, false); throw Abort() }
@@ -95,11 +129,16 @@ class HttpExchange(
                 }
             }
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false); throw Abort()
-        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); if (feature != TransportFeature.ALERT) throw Abort()
+        } catch (error: InvalidResponseException) {
+            summary.fail("invalid_read_response", false)
+            // Alerts and the feed are independent paths: a bad envelope there must not stop review, action or capture.
+            if (feature != null && feature != TransportFeature.ALERT) throw Abort()
         } catch (error: UnreachableException) { summary.unreachable = true; summary.fail("unreachable", true); throw Abort()
         } catch (error: SecurityException) { throw error
+        } catch (error: Abort) { throw error // from a nested item: already recorded, and not this item's failure
         } catch (_: android.database.sqlite.SQLiteException) { summary.fail("alert_store_unavailable", true)
         } catch (error: Exception) { blockItem(key, CourierClient.errorCode(error)); summary.fail(CourierClient.errorCode(error), false) }
+        return summary.failures == failuresBefore
     }
 
     private fun blockItem(key: String, code: String) { state.update { it.copy(blocked = it.blocked + (key to code)) } }

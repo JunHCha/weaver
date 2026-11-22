@@ -9,6 +9,9 @@ import io.github.junhcha.weaver.courier.*
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.schema.*
+import io.github.junhcha.weaver.transport.TransportFeature
+import io.github.junhcha.weaver.transport.TransportRoute
+import io.github.junhcha.weaver.transport.TransportRuntime
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
@@ -122,7 +125,15 @@ object PipelineRuntime {
             "%02x".format(it)
         }
 
-    private fun identity(context: Context) = CourierRuntime.tree(context)?.toString().orEmpty()
+    /**
+     * The identity [observe] stores under: the HTTP spool while review runs over HTTP (no Syncthing folder needed),
+     * otherwise the selected folder. Read without touching the folder, so it is safe wherever the map is read.
+     */
+    private fun identity(context: Context): String {
+        val settings = TransportRuntime.settings(context)
+        return if (settings.route(TransportFeature.VERDICT) == TransportRoute.HTTP) TransportRuntime.spool(context, settings).identity
+        else CourierRuntime.tree(context)?.toString().orEmpty()
+    }
 
     fun observe(context: Context, identity: String, inbox: CourierClient.Inbox) {
         PipelineStore(directory(context)).merge(identity, inbox.pipeline)

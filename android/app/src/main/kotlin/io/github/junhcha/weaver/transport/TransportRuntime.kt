@@ -59,10 +59,38 @@ object TransportRuntime {
     /** Null when nothing is routed over HTTP, there is no pairing, or the phone must pair again. */
     fun exchange(context: Context): HttpExchange? {
         val settings = settings(context)
-        if (!settings.anyHttp || settings.needsRepair) return null
+        if (!settings.anyExchange || settings.needsRepair) return null
         val pairing = settings.pairing() ?: return null
         return HttpExchange(apiFactory(pairing), spool(context, settings), state(context, settings), settings::route, { feature -> settings.feature(feature) && (feature != ServerFeature.ALERTS || settings.alertError == null) },
-            inboxAlertLedger(context, pairing.serverId, pairing.deviceId))
+            inboxAlertLedger(context, pairing.serverId, pairing.deviceId), feedSession(context, settings))
+    }
+
+    /** This server's feed position. It survives unpairing with the rest of the server's private data. */
+    fun feedStore(context: Context, settings: TransportSettings = settings(context)) = FeedStore(File(serverDir(context, settings), "feed.json"))
+
+    /** The HTTP copy of the map for this server (data layer; the map screen does not read it yet). */
+    fun pipelineCache(context: Context, settings: TransportSettings = settings(context)) =
+        io.github.junhcha.weaver.pipeline.PipelineCache(File(serverDir(context, settings), "pipeline-cache"))
+
+    /**
+     * The kinds this phone consumes over HTTP right now: a kind whose route is files is left out (the server also hides
+     * it), so one flow is never handled by both paths. Fabric and wiki hints only tell the read model to refetch,
+     * which it does on its own, so they are not requested.
+     */
+    internal fun requestedFeedKinds(settings: TransportSettings): Set<String> {
+        val served = settings.feedKinds
+        val wanted = buildSet {
+            if (settings.route(TransportFeature.VERDICT) == TransportRoute.HTTP) add("review")
+            if (settings.route(TransportFeature.ACTION_RESULT) == TransportRoute.HTTP) add("action")
+            if (settings.route(TransportFeature.ALERT) == TransportRoute.HTTP && settings.feature(ServerFeature.ALERTS) && settings.alertError == null) add("alert")
+            if (settings.pipelineHttp) add("pipeline")
+        }
+        return wanted.filter { it in served && it in SUPPORTED_FEED_KINDS }.toSet()
+    }
+
+    private fun feedSession(context: Context, settings: TransportSettings): FeedSession? {
+        val requested = requestedFeedKinds(settings)
+        return if (requested.isEmpty()) null else FeedSession(feedStore(context, settings), pipelineCache(context, settings), requested)
     }
 
     internal fun inboxAlertLedger(context: Context, serverId: String, deviceId: String): AlertLedger = object : AlertLedger {
@@ -230,6 +258,8 @@ object TransportRuntime {
         synchronized(CourierRuntime.lock) {
             val settings = settings(context)
             state(context, settings).update { it.copy(blocked = emptyMap(), blockedFeatures = emptyMap()) }
+            // The feed may have moved past entries whose work was blocked: take a new snapshot so they run again.
+            feedStore(context, settings).reset()
         }
         kick(context)
     }

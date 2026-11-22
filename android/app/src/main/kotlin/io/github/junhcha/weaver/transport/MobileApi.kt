@@ -18,7 +18,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 /** The server answered with an error. [code] is the server's fixed error code; nothing else is ever logged. */
 class ApiException(val status: Int, val code: String, val retryable: Boolean, val retryAfterSeconds: Long? = null) :
@@ -97,6 +99,14 @@ interface MobileApi {
     fun actions(): List<JsonElement>
     fun putActionResult(actionId: String, result: ByteArray): String
     fun pipeline(cursor: String?, limit: Int): Page
+    /** `GET /changes` for [kinds] (always named, so the server never falls back to the legacy kind set). */
+    fun changes(cursor: String?, kinds: Set<String>, limit: Int): FeedEnvelope = throw UnsupportedOperationException()
+    /** `PUT /devices/self/checkpoint`: tells the server how far this device durably applied the feed. */
+    fun putCheckpoint(cursor: String): Unit = throw UnsupportedOperationException()
+    /** `GET /read/pipeline` (scope read). A 410 means the list changed under the cursor: start over without one. */
+    fun readPipeline(cursor: String?, limit: Int): Page = throw UnsupportedOperationException()
+    /** One map item with its ETag, or null when [etag] is still current (304). A 404 `pipeline_not_found` is an [ApiException]. */
+    fun readPipelineItem(sourceId: String, etag: String?): Versioned? = throw UnsupportedOperationException()
     fun threads(cursor: String?, limit: Int): Page
     fun now(afterSeq: Long? = null, fabricEpoch: String? = null): JsonObject = throw UnsupportedOperationException()
     fun tags(): List<JsonElement>
@@ -270,6 +280,30 @@ class HttpsMobileApi(
         operationId(call("PUT", "/actions/$actionId/result", mapOf("Content-Type" to "application/json"), result))
 
     override fun pipeline(cursor: String?, limit: Int) = page(call("GET", cursor("/pipeline", cursor, limit), limit = MAX_PAGE))
+    override fun changes(cursor: String?, kinds: Set<String>, limit: Int): FeedEnvelope {
+        val query = "?limit=$limit&kinds=" + java.net.URLEncoder.encode(kinds.sorted().joinToString(","), "UTF-8") +
+            (if (cursor == null) "" else "&cursor=" + java.net.URLEncoder.encode(cursor, "UTF-8"))
+        val reply = call("GET", "/changes$query", limit = MAX_PAGE)
+        // Lenient on purpose: an additive field must not stop the feed. Contract tests decode the fixtures strictly.
+        return try { feedJson.decodeFromString<FeedEnvelope>(reply.body.decodeToString()) }
+        catch (_: Exception) { throw InvalidResponseException() }
+    }
+
+    override fun putCheckpoint(cursor: String) {
+        val body = buildJsonObject { put("cursor", cursor) }.toString().toByteArray()
+        val reply = obj(call("PUT", "/devices/self/checkpoint", mapOf("Content-Type" to "application/json"), body))
+        if ((reply["cursor"] as? JsonPrimitive)?.contentOrNull != cursor) throw InvalidResponseException()
+    }
+
+    override fun readPipeline(cursor: String?, limit: Int) = page(call("GET", cursor("/read/pipeline", cursor, limit), limit = MAX_PAGE))
+
+    override fun readPipelineItem(sourceId: String, etag: String?): Versioned? {
+        if (!sourceId.matches(Regex("[A-Za-z0-9_-]+"))) throw InvalidResponseException()
+        val reply = call("GET", "/read/pipeline/$sourceId", if (etag != null) mapOf("If-None-Match" to etag) else emptyMap(), limit = MAX_DOCUMENT)
+        if (reply.status == 304) return null
+        return Versioned(reply.body, reply.headers["etag"])
+    }
+
     override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/read/threads", cursor, limit), limit = MAX_PAGE))
     override fun now(afterSeq: Long?, fabricEpoch: String?): JsonObject {
         require(afterSeq == null || fabricEpoch != null)

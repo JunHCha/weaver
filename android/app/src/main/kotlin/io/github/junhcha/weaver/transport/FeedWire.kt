@@ -32,3 +32,23 @@ data class FeedEntry(
 
 /** Kinds every phone build understands. A phone asks for newer kinds with `?kinds=`; without it the server sends only these. */
 val LEGACY_FEED_KINDS: Set<String> = setOf("review", "action", "fabric")
+
+/** Tolerates additive fields in the feed envelope (the strict hand-written models are checked against fixtures in tests). */
+internal val feedJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** Kinds this build can apply. A kind outside this set stops the checkpoint at its entry. */
+val SUPPORTED_FEED_KINDS: Set<String> = setOf("review", "action", "fabric", "alert", "pipeline", "wiki")
+
+/** `<epoch>.<seq>.<pin>`: opaque to everything except the one place that must stop short of an entry. */
+object FeedCursor {
+    private val shape = Regex("^(ep_[0-9a-f]{32})\\.(\\d+)(?:\\.([0-9a-f]{8}))?$")
+
+    fun epoch(cursor: String): String? = shape.matchEntire(cursor)?.groupValues?.get(1)
+
+    /** The same cursor moved back to [seq] (inclusive: entries up to it were applied), or null if the cursor has another shape. */
+    fun upTo(cursor: String, seq: Long): String? {
+        val match = shape.matchEntire(cursor) ?: return null
+        val pin = match.groupValues[3]
+        return match.groupValues[1] + "." + seq + (if (pin.isEmpty()) "" else ".$pin")
+    }
+}

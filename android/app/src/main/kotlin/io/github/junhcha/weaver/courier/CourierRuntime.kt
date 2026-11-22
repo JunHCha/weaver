@@ -222,7 +222,7 @@ class CourierWorker(context: Context, params: WorkerParameters) : Worker(context
             // The server decides the routes: read them first (when the network is allowed), then move any unsent items a
             // switch left behind, then run the pass.
             val refresh = if (network) TransportRuntime.refresh(context) else null
-            if (CourierRuntime.stopped(context) && !settings.anyHttp) return@synchronized Result.success()
+            if (CourierRuntime.stopped(context) && !settings.anyExchange) return@synchronized Result.success()
             TransportRuntime.migrateOrphans(context, CourierRuntime.files(context))
             val folder = CourierRuntime.routed(context)
             val exchange = if (network) TransportRuntime.exchange(context) else null
