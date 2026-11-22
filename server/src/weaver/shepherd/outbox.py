@@ -38,6 +38,16 @@ class BundleKey:
     part: int
     revision: int
 
+    @classmethod
+    def decode(cls, encoded: bytes) -> "BundleKey":
+        fields: list[str] = []
+        while encoded:
+            size = int.from_bytes(encoded[:4], "big")
+            fields.append(encoded[4 : 4 + size].decode())
+            encoded = encoded[4 + size :]
+        instance, space, day, part, revision = fields
+        return cls(instance, space, day, int(part), int(revision))
+
     @property
     def encoded(self) -> bytes:
         if not self.instance_id.strip() or not self.space.strip():
@@ -55,6 +65,11 @@ class BundleKey:
         )
         encoded = [unicodedata.normalize("NFC", v).encode("utf-8") for v in values]
         return b"".join(len(v).to_bytes(4, "big") + v for v in encoded)
+
+    @property
+    def day_prefix(self) -> bytes:
+        """Encoded instance/space/day: the shared prefix of every part and revision."""
+        return self.encoded[: -(8 + len(str(self.part)) + len(str(self.revision)))]
 
     @property
     def capture_id(self) -> str:
@@ -253,74 +268,156 @@ class Outbox:
         """Stage 7 must consult the durable collection exclusion before close."""
         return space in json.loads(self.cursor("webex.excluded_spaces.v1") or "[]")
 
+    def bundle_keys(self) -> list[tuple[BundleKey, str]]:
+        """Private identity metadata, including Receipt/GC tombstones."""
+        with self._read() as db:
+            return [
+                (BundleKey.decode(bytes(bundle)), state)
+                for bundle, state in db.execute("SELECT bundle,state FROM entries")
+            ]
+
+    def freeze_parts(
+        self,
+        original: BundleKey,
+        expected: bytes,
+        parts: list[tuple[BundleKey, bytes, Manifest, str | None]],
+    ) -> None:
+        """Replace one open buffer with all frozen parts in one durable commit.
+
+        Validation/capacity failure preserves the exact unsplit open buffer.
+        Caller holds the account's poll.lock throughout collection and close.
+        """
+        if not parts or parts[0][0] != original:
+            raise ValueError("invalid_parts")
+        with self._write() as db:
+            row = db.execute(
+                "SELECT state,payload FROM entries WHERE capture_id=?",
+                (original.capture_id,),
+            ).fetchone()
+            if row != ("buffer", expected):
+                raise ValueError("buffer_changed")
+            for number, (key, body, manifest, dependency) in enumerate(parts):
+                if key != BundleKey(
+                    original.instance_id,
+                    original.space,
+                    original.day,
+                    number,
+                    original.revision,
+                ):
+                    raise ValueError("invalid_parts")
+                if number:
+                    db.execute(
+                        "INSERT INTO entries VALUES (?,?,'buffer',?,NULL,NULL,NULL,NULL)",
+                        (key.capture_id, key.encoded, body),
+                    )
+                else:
+                    db.execute(
+                        "UPDATE entries SET payload=? WHERE capture_id=?",
+                        (body, key.capture_id),
+                    )
+                self._close(db, key, manifest, depends_on=dependency)
+            self._capacity(db, 0, 0)
+
     def close(
         self, key: BundleKey, manifest: Manifest, *, depends_on: str | None = None
     ) -> None:
+        with self._write() as db:
+            self._close(db, key, manifest, depends_on=depends_on)
+
+    def _close(
+        self,
+        db: sqlite3.Connection,
+        key: BundleKey,
+        manifest: Manifest,
+        *,
+        depends_on: str | None = None,
+    ) -> None:
         raw = manifest.model_dump_json().encode()
         manifest = Manifest.model_validate_json(raw)
-        with self._write() as db:
-            excluded = db.execute(
-                "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+        excluded = db.execute(
+            "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+        ).fetchone()
+        if excluded and key.space in json.loads(excluded[0]):
+            raise ValueError("excluded_space")
+        row = db.execute(
+            "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
+            (key.capture_id,),
+        ).fetchone()
+        if key.instance_id != self.instance_id or row is None or row[0] != key.encoded:
+            raise ValueError("unknown_bundle")
+        if row[1] != "buffer":
+            if row[3] == raw and row[4] == depends_on:
+                return
+            raise ValueError("immutable_capture")
+        body = bytes(row[2])
+        if (
+            manifest.capture_id != key.capture_id
+            or manifest.size != len(body)
+            or manifest.sha256 != hashlib.sha256(body).hexdigest()
+            or len(body) > 64 * 1024**2
+            or len(raw) > 64 * 1024
+            or not manifest.payload.startswith(key.capture_id + ".")
+            or "/" in manifest.payload
+            or manifest.payload.endswith(".json")
+        ):
+            raise ValueError("invalid_frozen_request")
+        if key.revision > 0 and depends_on is None:
+            raise ValueError("correction_requires_dependency")
+        if depends_on:
+            parent = db.execute(
+                "SELECT bundle FROM entries WHERE capture_id=? AND state != 'buffer'",
+                (depends_on,),
             ).fetchone()
-            if excluded and key.space in json.loads(excluded[0]):
-                raise ValueError("excluded_space")
-            row = db.execute(
-                "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
-                (key.capture_id,),
-            ).fetchone()
-            if (
-                key.instance_id != self.instance_id
-                or row is None
-                or row[0] != key.encoded
-            ):
-                raise ValueError("unknown_bundle")
-            if row[1] != "buffer":
-                if row[3] == raw and row[4] == depends_on:
-                    return
-                raise ValueError("immutable_capture")
-            body = bytes(row[2])
-            if (
-                manifest.capture_id != key.capture_id
-                or manifest.size != len(body)
-                or manifest.sha256 != hashlib.sha256(body).hexdigest()
-                or len(body) > 64 * 1024**2
-                or len(raw) > 64 * 1024
-                or not manifest.payload.startswith(key.capture_id + ".")
-                or "/" in manifest.payload
-                or manifest.payload.endswith(".json")
-            ):
-                raise ValueError("invalid_frozen_request")
-            if key.revision > 0 and depends_on is None:
-                raise ValueError("correction_requires_dependency")
-            if depends_on:
-                parent = db.execute(
-                    "SELECT bundle FROM entries WHERE capture_id=? AND state != 'buffer'",
-                    (depends_on,),
-                ).fetchone()
-                if depends_on == key.capture_id or parent is None:
-                    raise ValueError("invalid_dependency")
-                if key.revision > 0:
-                    prefix = key.encoded[: -(4 + len(str(key.revision).encode()))]
-                    previous = db.execute(
-                        "SELECT capture_id, bundle, state FROM entries WHERE substr(bundle,1,?)=? AND capture_id!=? AND state!='discarded'",
-                        (len(prefix), prefix, key.capture_id),
-                    ).fetchall()
-                    earlier = [
-                        (int(bytes(bundle)[len(prefix) + 4 :]), identifier, state)
-                        for identifier, bundle, state in previous
-                        if int(bytes(bundle)[len(prefix) + 4 :]) < key.revision
-                    ]
-                    if (
-                        not earlier
-                        or max(earlier)[1] != depends_on
-                        or max(earlier)[2] == "buffer"
-                    ):
-                        raise ValueError("invalid_correction_dependency")
-            self._capacity(db, 0, len(raw))
-            db.execute(
-                "UPDATE entries SET state='pending', manifest=?, depends_on=? WHERE capture_id=?",
-                (raw, depends_on, key.capture_id),
-            )
+            if depends_on == key.capture_id or parent is None:
+                raise ValueError("invalid_dependency")
+            if key.revision > 0:
+                previous = self._predecessor(db, key)
+                if (
+                    previous is None
+                    or previous[0] != depends_on
+                    or previous[1] == "buffer"
+                ):
+                    raise ValueError("invalid_correction_dependency")
+        self._capacity(db, 0, len(raw))
+        db.execute(
+            "UPDATE entries SET state='pending', manifest=?, depends_on=? WHERE capture_id=?",
+            (raw, depends_on, key.capture_id),
+        )
+
+    @staticmethod
+    def _predecessor(db: sqlite3.Connection, key: BundleKey) -> tuple[str, str] | None:
+        """Chain link for a correction: highest earlier, non-discarded revision.
+
+        Within that revision the same part is used; a part the earlier revision
+        did not have (a correction can split differently) follows its part 0.
+        """
+        prefix = key.day_prefix
+        earlier: list[tuple[int, int, str, str]] = []
+        for capture_id, bundle, state in db.execute(
+            "SELECT capture_id, bundle, state FROM entries"
+            " WHERE substr(bundle,1,?)=? AND capture_id!=? AND state!='discarded'",
+            (len(prefix), prefix, key.capture_id),
+        ):
+            other = BundleKey.decode(bytes(bundle))
+            if other.revision < key.revision:
+                earlier.append((other.revision, other.part, capture_id, state))
+        if not earlier:
+            return None
+        newest = max(revision for revision, *_ in earlier)
+        parts = {
+            part: (cid, state)
+            for revision, part, cid, state in earlier
+            if revision == newest
+        }
+        return parts.get(key.part) or parts.get(0)
+
+    def correction_parent(self, key: BundleKey) -> str | None:
+        """Capture ID a correction of this key must depend on (None for revision 0)."""
+        if key.revision == 0:
+            return None
+        with self._read() as db:
+            link = self._predecessor(db, key)
+        return None if link is None else link[0]
 
     def get(self, capture_id: str, *, include_payload: bool = True) -> Entry:
         """Read one request; metadata callers explicitly omit the payload BLOB."""

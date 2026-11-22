@@ -2,7 +2,8 @@
 
 REST fixtures assume descending creation order and reply inclusion. These remain
 pilot acceptance checks; an HTTP error or invalid page never proves deletion.
-The next stage closes these durable B4 buffers into immutable capture requests.
+Closing the durable B4 buffers into immutable capture requests (stage 7) lives in
+bundler.py and runs at the end of each tick.
 """
 
 import hashlib
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 from weaver.shepherd.outbox import BundleKey, Outbox
 from weaver.spinner.webex import WebexAttachment, WebexBundle, WebexMessage
 
+from .bundler import MAX_PAYLOAD_BYTES, close_ready
 from .settings import WebexSettings
 
 API = "https://webexapis.com/v1"
@@ -67,6 +69,11 @@ class Space(BaseModel):
     overlap: Scan | None = None
     incremental_at: datetime | None = None
     overlap_at: datetime | None = None
+    # Upper bound of the last completed incremental scan: every message created
+    # before it was observed. Stage 7 closes a day only once this passes midnight.
+    synced_through: datetime | None = None
+    # "day#revision" -> fixed code for buffers stage 7 could not close.
+    holds: dict[str, str] = Field(default_factory=dict)
     status: str = "ready"
     gap_since: datetime | None = None
     last_status: int | None = None
@@ -123,7 +130,9 @@ class Poller:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         jitter: Callable[[], float] = random.random,
+        max_payload_bytes: int = MAX_PAYLOAD_BYTES,
     ) -> None:
+        self.max_payload_bytes = max_payload_bytes
         self.settings, self.outbox, self.tokens, self.client = (
             settings,
             outbox,
@@ -482,6 +491,9 @@ class Poller:
                 if scan.top is not None:
                     space.high_water = max(space.high_water or scan.top, scan.top)
                 space.incremental_at = now
+                space.synced_through = max(
+                    space.synced_through or scan.ceiling, scan.ceiling
+                )
             else:
                 for mid, seen in space.seen.items():
                     if (
@@ -576,6 +588,34 @@ class Poller:
                 del space.candidates[mid]
             self._save()
 
+    def _can_close(self, sid: str, day_end: datetime) -> bool:
+        space = self.state.spaces.get(sid)
+        return (
+            space is not None
+            and not space.excluded
+            and sid not in self.settings.exclude_space_ids
+            and space.status == "ready"
+            and space.incremental is None
+            and space.overlap is None
+            and space.synced_through is not None
+            and space.synced_through >= day_end
+        )
+
+    def _close_bundles(self) -> None:
+        """Stage 7: freeze finished Space-days (and late corrections) for delivery."""
+        result = close_ready(
+            self.outbox,
+            timezone=self.settings.timezone,
+            now=self.clock(),
+            eligible=self._can_close,
+            max_payload_bytes=self.max_payload_bytes,
+        )
+        holds: dict[str, dict[str, str]] = {}
+        for (sid, day, revision), code in result.held.items():
+            holds.setdefault(sid, {})[f"{day}#{revision}"] = code
+        for sid, space in self.state.spaces.items():
+            space.holds = holds.get(sid, {})
+
     def _discover_safely(self) -> None:
         if self.state.rooms_retry_at and self.clock() < self.state.rooms_retry_at:
             return
@@ -614,6 +654,7 @@ class Poller:
                     space.high_water = None
                     space.incremental = space.overlap = None
                     space.incremental_at = space.overlap_at = None
+                    space.synced_through = None
                     space.status = "ready"
             self.state.exclusions = excluded
             # Stage 7 must check this durable marker before closing open buffers.
@@ -638,6 +679,7 @@ class Poller:
             self._round("overlap")
             self._deletions()
             self._prune_seen()
+            self._close_bundles()
             self._save()
             if self.state.stopped:
                 raise PollError("account_stopped")

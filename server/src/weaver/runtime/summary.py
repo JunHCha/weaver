@@ -15,6 +15,12 @@ from weaver.loom.summary_review import Prepared, SummaryReview
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import Alert, EventSummary, ReviewPackage, Source, Thread, Verdict
 from weaver.spinner import Spinner
+from weaver.spinner.webex import WebexProvenanceStore
+from weaver.webex.review_rule import (
+    CorrectionCase,
+    CorrectionReviewRule,
+    ReviewEveryCorrection,
+)
 from weaver.wiki.compiler import Summary
 
 from .gate import Interrupted, LlmGate
@@ -27,9 +33,15 @@ logger = logging.getLogger(__name__)
 class SummaryLookup:
     """Resolve the latest archived summary and its source-copy title."""
 
-    def __init__(self, archive: Path, sources: ArchiveStore) -> None:
+    def __init__(
+        self,
+        archive: Path,
+        sources: ArchiveStore,
+        webex: WebexProvenanceStore | None = None,
+    ) -> None:
         self.archive = archive
         self.sources = sources
+        self.webex = webex
 
     def latest(self, source_id: str) -> EventSummary | None:
         items = []
@@ -47,7 +59,14 @@ class SummaryLookup:
         source = self.sources.get(source_id)
         date = (source.occurred_at or source.captured_at).date().isoformat()
         if source.channel == "webex":
-            return f"{date} Webex 대화"
+            title = f"{date} Webex 대화"
+            value = self.webex.get(source_id) if self.webex is not None else None
+            if value is not None:
+                if value.part_count > 1:
+                    title += f" ({value.part + 1}/{value.part_count})"
+                if value.revision > 0:
+                    title += f" 정정 {value.revision}"
+            return title
         counterpart = source.hints.counterpart or "알 수 없음"
         return f"{date} {counterpart} {source.channel}"
 
@@ -131,10 +150,29 @@ class SummaryProcessor:
         progress: PipelinePublisher | None = None,
         *,
         policy: LlmPolicy | None = None,
+        webex: WebexProvenanceStore | None = None,
+        correction_rule: CorrectionReviewRule | None = None,
     ) -> None:
         self.policy = policy
+        self.webex = webex
+        self.correction_rule = correction_rule or ReviewEveryCorrection()
         self.spinner, self.drafts, self.gate = spinner, drafts, gate
         self.progress = progress
+
+    def _correction_review_wanted(self, source: Source) -> bool:
+        value = self.webex.get(source.source_id) if self.webex is not None else None
+        if value is None or value.revision == 0:
+            return True
+        return self.correction_rule.create_review(
+            CorrectionCase(
+                source_id=source.source_id,
+                space_id=value.space_id,
+                day=value.day,
+                part=value.part,
+                revision=value.revision,
+                corrects_capture_id=value.corrects_capture_id,
+            )
+        )
 
     def process(self, source: Source, stop: threading.Event) -> Outcome:
         if self.progress is not None:
@@ -147,6 +185,8 @@ class SummaryProcessor:
                 self.progress.organized(source)
             if self.policy is None:
                 return "waiting_llm"  # fail closed without a policy gate
+            if not self._correction_review_wanted(source):
+                return "done"
         # Observe holds even while credentials/backend availability are off,
         # so enabling them later cannot silently release a denied backlog.
         if self.policy is not None:

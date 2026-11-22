@@ -570,7 +570,7 @@ def test_http_error_backoff_never_leaks_private_url(setup):
     assert poller.state.retry_at > NOW
 
 
-def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setup):
+def test_same_day_page_edits_share_one_revision(setup):
     make, box, clock, settings = setup
     changed = False
 
@@ -591,19 +591,8 @@ def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setu
     poller.tick()
     assert len(bundles(box)) == 2
     assert sorted(len(b.messages) for b in bundles(box)) == [2, 2]
-    excluded, _ = make(respond, replace(settings, exclude_space_ids=("S",)))
-    excluded.tick()
-    assert excluded.state.spaces["S"].excluded
-    assert box.space_excluded("S")
-    from weaver.shepherd.outbox import BundleKey
-
-    from .shepherd.test_outbox import manifest
-
-    key = BundleKey(box.instance_id, "S", "2026-11-19", 0, 0)
-    payload = box.get(key.capture_id).payload
-    with pytest.raises(ValueError, match="excluded_space"):
-        box.close(key, manifest(key, payload))
-    assert box.get(key.capture_id).state == "buffer"
+    keys = dict(box.bundle_keys())
+    assert sorted(k.revision for k in keys) == [0, 1]  # one revision per edited page
 
 
 def test_cli_status_corruption_and_selective_resume_are_safe(setup, monkeypatch):

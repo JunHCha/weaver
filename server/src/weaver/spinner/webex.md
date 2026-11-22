@@ -36,4 +36,9 @@ is not external-LLM authorization.
 Deploy the updated APK before emitting `webex` Sources, PipelineItems or Scripts;
 older strict enums reject the new channel. No shared field was added and existing
 schema versions stay unchanged. OAuth, grouping dates/parts/revisions, capture IDs,
-polling, correction review policy and LLM gates belong to later/separate work.
+polling and LLM gates belong to later/separate work.
+
+Closed Space-day bundles (webex stage 7) additionally carry optional `day`, `part`,
+`part_count`, `revision` and `corrects_capture_id`; collector buffers omit them
+(defaults). They are copied into private `WebexProvenance` only, never into the
+Script, and review titles show `(n/m)` for parts and `정정 N` for corrections.

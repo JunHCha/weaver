@@ -265,7 +265,9 @@ def poll(
             err=True,
         )
         raise typer.Exit(1) from None
-    typer.echo("Webex polling round persisted; buffers await bundle finalization.")
+    typer.echo(
+        "Webex polling round persisted; finished Space-days are frozen for delivery."
+    )
 
 
 @webex_cli.command("poll-status")
@@ -298,6 +300,7 @@ def poll_status(config: ConfigOption = None) -> None:
                     "pending_overlap": sum(
                         s.overlap is not None for s in state.spaces.values()
                     ),
+                    "held_buffers": sum(len(s.holds) for s in state.spaces.values()),
                     "deletion_candidates": sum(
                         len(s.candidates) for s in state.spaces.values()
                     ),

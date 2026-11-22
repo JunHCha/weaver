@@ -216,3 +216,35 @@ an unrelated unknown dictionary entry. No public schema/Kotlin changes are neede
 Policy basis: `docs/domain/decisions/046-central-llm-policy-gate.md` and the W3-B5
 coordinator decision; implementations are `context/__init__.py:263`,
 `context/__init__.py:481`, `context/__init__.py:518`, `llm/policy_archive.py:185`.
+
+## Stage 7: Space-day close, parts and corrections
+
+At the end of every `webex poll` tick, `bundler.close_ready` freezes open
+buffers whose local day (settings time zone) has ended. A day closes only after
+the Space completed an incremental scan whose upper bound passed that midnight
+(`synced_through`), with no scan in flight and a `ready` status. Excluded Spaces
+(`exclude_space_ids` or the durable `webex.excluded_spaces.v1` marker) are never
+closed and keep their bytes. Closing one revision is a single Outbox commit:
+
+- messages are split greedily at message boundaries into parts of at most 64 MiB
+  (`MAX_PAYLOAD_BYTES`); every part is its own capture, Source and Loom page;
+- payload and Manifest bytes are frozen once (`captured_at` = close time,
+  `occurred_at` = local midnight of the day, `channel=webex`, `kind=text`);
+- the payload names `day`, `part`, `part_count`, `revision` and, for a
+  correction, `corrects_capture_id` (private provenance, never Script text);
+- a capacity failure rolls everything back and keeps the exact unsplit buffer;
+- a single message above the part limit is kept as is and recorded in
+  `Space.holds` with `message_too_large` plus an operator notice (shown as
+  `held_buffers` by `webex poll-status`).
+
+A message edited or arriving after its day closed lands in a new revision of
+that day, closed on the next quiet tick and linked to the previous revision
+(`depends_on`), so Courier delivers it only after the earlier Receipt. Original
+Source requests are never rewritten and a correction never touches an approved
+Thread: it only gets its own review page. A message missing from a list stays a
+private observation (`unverified`); no deletion Source is ever produced.
+
+Correction review burden is one replaceable point,
+`review_rule.CorrectionReviewRule`, passed to `SummaryProcessor(correction_rule=)`.
+The default (`ReviewEveryCorrection`) keeps the document baseline of one page per
+correction Source.
