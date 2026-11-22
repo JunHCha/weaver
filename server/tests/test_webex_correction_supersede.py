@@ -281,3 +281,32 @@ def test_file_projection_stops_offering_a_superseded_review(
     assert world.state.supersede(sid(1), sid(2))
     projection.recover(world.state)
     assert {p.name for p in folder.glob("*.json")} == {f"pkg_{sid(2)}.r1.json"}
+
+
+def test_superseded_review_follows_the_feed_transport_rules(
+    world: World,
+) -> None:
+    from weaver.mobile.feed import FeedProducer, FeedSources
+
+    http = [True]
+    feed = FeedProducer(
+        world.store,
+        world.reviews,
+        None,
+        lambda: 0,
+        sources=FeedSources(review_http=lambda: http[0]),
+    )
+    world.add(provenance(1, ["m1"]))
+    world.add(provenance(2, ["m1"]))
+    feed.reconcile()
+    reviews = lambda: {  # noqa: E731
+        k[1]: v.op for k, v in world.store.feed_current().items() if k[0] == "review"
+    }
+    assert reviews() == {"pkg_" + sid(1): "upsert", "pkg_" + sid(2): "upsert"}
+    http[0] = False  # review back on files: the kind is dropped, nothing tombstoned
+    assert world.state.supersede(sid(1), sid(2))
+    feed.reconcile()
+    assert reviews()["pkg_" + sid(1)] == "upsert"
+    http[0] = True  # returns to http: the retired review is a tombstone
+    feed.reconcile()
+    assert reviews() == {"pkg_" + sid(1): "tombstone", "pkg_" + sid(2): "upsert"}
