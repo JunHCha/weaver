@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import webbrowser
+from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socket import socket
 from typing import TYPE_CHECKING, Annotated
@@ -270,6 +271,26 @@ def poll(
     )
 
 
+HOLD_ACTIONS = {
+    "message_too_large": (
+        "message_too_large: one message exceeds the 64 MiB part limit; "
+        "the buffer is kept unchanged, inspect it before discarding"
+    ),
+    "missing_correction_parent": (
+        "missing_correction_parent: the revision this correction follows is gone "
+        "or discarded; restore it or discard the held correction buffer"
+    ),
+    "*": "invalid buffer: stop the poller and inspect the Outbox before discarding",
+}
+
+
+def _count(values: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 @webex_cli.command("poll-status")
 def poll_status(config: ConfigOption = None) -> None:
     """Report only counts and deadlines; no Space/message names or IDs."""
@@ -301,6 +322,21 @@ def poll_status(config: ConfigOption = None) -> None:
                         s.overlap is not None for s in state.spaces.values()
                     ),
                     "held_buffers": sum(len(s.holds) for s in state.spaces.values()),
+                    "hold_reasons": _count(
+                        code for s in state.spaces.values() for code in s.holds.values()
+                    ),
+                    "operator_actions": sorted(
+                        {
+                            HOLD_ACTIONS.get(code, HOLD_ACTIONS["*"])
+                            for s in state.spaces.values()
+                            for code in s.holds.values()
+                        }
+                    ),
+                    "days_waiting_to_close": _count(
+                        reason
+                        for s in state.spaces.values()
+                        for reason in s.close_waiting.values()
+                    ),
                     "deletion_candidates": sum(
                         len(s.candidates) for s in state.spaces.values()
                     ),

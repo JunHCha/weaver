@@ -359,12 +359,17 @@ class PipelinePublisher:
                 (p for p in packages if p.source_id == source.source_id), None
             )
             if package is None:
+                if source.source_id in self.state.superseded_sources():
+                    self.journal.update(
+                        source.source_id, location="fabric", status="rejected"
+                    )
                 return
             review = db.execute(
                 "SELECT stage, verdict, prepared FROM reviews WHERE id=? AND revision=?",
                 (package.package_id, package.revision),
             ).fetchone()
         current = self.journal.get(source.source_id)
+        superseded = self.state.superseded_sources()
         values: dict[str, Any] = {
             "package_id": package.package_id,
             "package_revision": package.revision,
@@ -421,6 +426,10 @@ class PipelinePublisher:
                 values["counterpart"] = next(iter(counterparts))
             if current.location == "wiki":
                 values["location"] = "wiki"
+        elif source.source_id in superseded:
+            # Replaced by a newer correction: closed like a decided review (no new
+            # pipeline status exists), without a summary or Thread.
+            values.update(location="fabric", status="rejected", summary="")
         elif (
             current.status in {"apply_stopped", "applying"}
             and current.package_revision == package.revision

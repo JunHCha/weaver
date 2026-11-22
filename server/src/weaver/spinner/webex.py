@@ -235,6 +235,13 @@ class WebexProvenanceStore:
             ).fetchone()
         return self._decode(row[0]) if row else None
 
+    def siblings(self, space_id: str, day: str) -> list[WebexProvenance]:
+        """Every known Source of one Space-day (all parts and revisions)."""
+        with closing(sqlite3.connect(self.path)) as db, db:
+            rows = db.execute("SELECT body FROM provenance").fetchall()
+        found = [self._decode(body) for (body,) in rows]
+        return [v for v in found if v.space_id == space_id and v.day == day]
+
     def resolve(self, source_id: str) -> tuple[str, str] | None:
         value = self.get(source_id)
         return ("webex", value.space_id) if value is not None else None

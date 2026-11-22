@@ -10,16 +10,15 @@ are never closed. Nothing here touches the network or an approved Thread.
 import hashlib
 import re
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from weaver.schema import Manifest
-from weaver.shepherd.outbox import BundleKey, Outbox
+from weaver.shepherd.outbox import MAX_PAYLOAD_BYTES, BundleKey, CapacityError, Outbox
 from weaver.spinner.webex import WebexBundle, WebexMessage
 
-MAX_PAYLOAD_BYTES = 64 * 1024**2
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
@@ -32,6 +31,11 @@ class CloseResult:
     closed: list[str] = field(default_factory=list)
     # (space, day, revision) -> fixed operator code; the buffer bytes stay intact.
     held: dict[tuple[str, str, int], str] = field(default_factory=dict)
+    # (space, day) whose local day ended but whose Space was not ready to close
+    # (excluded Spaces are intentionally absent: not closing them is by design).
+    waiting: list[tuple[str, str]] = field(default_factory=list)
+    # Some Space hit the Outbox capacity limit; the others were still closed.
+    capacity: bool = False
 
 
 def _ordered(messages: list[WebexMessage]) -> list[WebexMessage]:
@@ -160,13 +164,17 @@ def close_ready(
     now: datetime,
     eligible: Callable[[str, datetime], bool],
     max_payload_bytes: int = MAX_PAYLOAD_BYTES,
+    known_holds: Collection[tuple[str, str, int]] = (),
 ) -> CloseResult:
     """Freeze every open buffer whose local day ended and whose Space is synced.
 
     `eligible(space, day_end)` is the poller's proof that the Space completed a
     successful incremental poll covering `day_end`. An excluded Space is left
-    untouched (bytes preserved, nothing held). A buffer that cannot close is
-    held with a fixed code and blocks only the later revisions of its own day.
+    untouched (bytes preserved, nothing held); a Space that is not ready is
+    listed in `waiting`. A buffer that cannot close is held with a fixed code and
+    blocks only the later revisions of its own day. `known_holds` are holds
+    already reported by an earlier tick: the operator notice fires once, when a
+    hold first appears. A capacity failure stops only its own Space.
     """
     tz = ZoneInfo(timezone)
     groups: dict[tuple[str, str], list[BundleKey]] = defaultdict(list)
@@ -178,25 +186,46 @@ def close_ready(
         ):
             groups[(key.space, key.day)].append(key)
     result = CloseResult()
+    stopped: set[str] = set()  # Spaces that hit the capacity limit this pass
+
+    def hold(space: str, day: str, revision: int, code: str, notice: str) -> None:
+        slot = (space, day, revision)
+        result.held[slot] = code
+        if slot not in known_holds:
+            outbox.notify(notice)
+
     for (space, day), keys in sorted(groups.items()):
         end = datetime.combine(
             date.fromisoformat(day) + timedelta(days=1), time.min, tzinfo=tz
         )
-        if outbox.space_excluded(space) or not eligible(space, end):
+        if outbox.space_excluded(space):
+            continue
+        if space in stopped:
+            continue
+        if not eligible(space, end):
+            result.waiting.append((space, day))
             continue
         for key in sorted(keys, key=lambda k: k.revision):
             try:
                 result.closed.extend(_freeze(outbox, key, tz, now, max_payload_bytes))
+            except CapacityError:
+                stopped.add(space)
+                result.capacity = True
+                break
             except MessageTooLarge:
-                outbox.notify("webex_message_too_large")
-                result.held[(space, day, key.revision)] = "message_too_large"
+                hold(
+                    space,
+                    day,
+                    key.revision,
+                    "message_too_large",
+                    "webex_message_too_large",
+                )
                 break
             except ValueError as error:
                 if str(error) == "excluded_space":
                     break
                 code = str(error)
-                result.held[(space, day, key.revision)] = (
-                    code if _SAFE_CODE.fullmatch(code) else "invalid_buffer"
-                )
+                code = code if _SAFE_CODE.fullmatch(code) else "invalid_buffer"
+                hold(space, day, key.revision, code, f"webex_{code}")
                 break
     return result

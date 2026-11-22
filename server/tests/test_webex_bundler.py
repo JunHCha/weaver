@@ -281,7 +281,11 @@ def test_correction_rule_is_one_replaceable_point():
 
     from weaver.runtime.summary import SummaryProcessor
     from weaver.spinner.webex import WebexProvenance
-    from weaver.webex.review_rule import CorrectionCase, ReviewEveryCorrection
+    from weaver.webex.review_rule import (
+        CorrectionCase,
+        ReviewDecision,
+        ReviewEveryCorrection,
+    )
 
     value = WebexProvenance(
         source_id="src_X",
@@ -297,27 +301,69 @@ def test_correction_rule_is_one_replaceable_point():
     source = SimpleNamespace(source_id="src_X")
     default = SummaryProcessor(None, None, None, webex=provenance)  # type: ignore[arg-type]
     assert isinstance(default.correction_rule, ReviewEveryCorrection)
-    assert default._correction_review_wanted(source)  # type: ignore[arg-type]
+    assert default._correction_decision(source).action == "review"  # type: ignore[arg-type]
     seen: list[CorrectionCase] = []
 
-    class Quiet:
-        def create_review(self, case: CorrectionCase) -> bool:
+    class Supersede:
+        def decide(self, case: CorrectionCase) -> ReviewDecision:
             seen.append(case)
-            return False
+            return ReviewDecision("supersede", ("src_OLD",))
 
     custom = SummaryProcessor(
         None,
         None,
         None,  # type: ignore[arg-type]
         webex=provenance,  # type: ignore[arg-type]
-        correction_rule=Quiet(),
+        correction_rule=Supersede(),
     )
-    assert not custom._correction_review_wanted(source)  # type: ignore[arg-type]
+    decision = custom._correction_decision(source)  # type: ignore[arg-type]
+    assert (decision.action, decision.supersedes) == ("supersede", ("src_OLD",))
     assert seen[0].revision == 2 and seen[0].corrects_capture_id == "cap_prev"
     # Originals are never offered to the rule.
     value.revision = 0
-    assert custom._correction_review_wanted(source)  # type: ignore[arg-type]
+    assert custom._correction_decision(source).action == "review"  # type: ignore[arg-type]
     assert len(seen) == 1
+
+
+def test_policy_runs_before_the_rule_and_a_skip_is_never_final():
+    from types import SimpleNamespace
+
+    from weaver.runtime.summary import SummaryProcessor
+    from weaver.spinner.webex import WebexProvenance
+    from weaver.webex.review_rule import ReviewDecision
+
+    value = WebexProvenance(
+        source_id="src_X",
+        sha256="0" * 64,
+        instance_id="i",
+        space_id="S",
+        messages=[],
+        day="2026-11-19",
+        revision=1,
+    )
+    order: list[str] = []
+    spinner = SimpleNamespace(spin=lambda source: order.append("spin"))
+    policy = SimpleNamespace(check=lambda provenance: order.append("policy"))
+
+    class Skip:
+        def decide(self, case):
+            order.append("rule")
+            return ReviewDecision("skip")
+
+    processor = SummaryProcessor(
+        spinner,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        policy=policy,  # type: ignore[arg-type]
+        webex=SimpleNamespace(get=lambda _: value),  # type: ignore[arg-type]
+        correction_rule=Skip(),
+    )
+    source = SimpleNamespace(source_id="src_X", channel="webex")
+    # "waiting_llm" is the loop's re-evaluable state; "done" would be permanent.
+    assert processor.process(source, threading.Event()) == "waiting_llm"  # type: ignore[arg-type]
+    assert order == ["spin", "policy", "rule"]
+    assert processor.process(source, threading.Event()) == "waiting_llm"  # type: ignore[arg-type]
+    assert order.count("rule") == 2  # asked again, not remembered as done
 
 
 def test_integration_parts_corrections_receipt_loss_and_one_review_per_source(
@@ -473,8 +519,14 @@ def test_integration_parts_corrections_receipt_loss_and_one_review_per_source(
     for source in new:
         assert processor.process(source, threading.Event()) == "done"
     lookup = SummaryLookup(tmp_path / "summaries", archive, provenance)
-    assert "정정 1" in lookup.title(new[0].source_id)
-    assert "(1/" in lookup.title(sources()[0].source_id)
+    # Wiki titles (and paths) carry only the date; the suffix is Loom-review only.
+    for source in (*new, *sources()):
+        assert lookup.title(source.source_id).endswith("Webex 대화")
+    review_titles = [
+        json.loads(p.read_bytes())["title"] for p in drafts.proposals.glob("*.r1.json")
+    ]
+    assert any("정정 1" in t for t in review_titles)
+    assert any(" (1/" in t for t in review_titles)
     # One page per Source; the approved page and its review state are untouched.
     after = sorted(drafts.proposals.glob("*.r1.json"))
     assert len(after) == len(original) + len(corrections)
@@ -488,3 +540,248 @@ def test_integration_parts_corrections_receipt_loss_and_one_review_per_source(
     # Processing the same Source again never makes a second page.
     assert processor.process(new[0], threading.Event()) == "done"
     assert len(list(drafts.proposals.glob("*.r1.json"))) == len(after)
+
+
+def test_open_day_edits_merge_into_one_rev0_and_only_a_closed_day_gets_rev1(setup):  # noqa: F811
+    make, box, clock, _ = setup
+    items = [msg("m1", at(19, 10), "v1"), msg("m2", at(19, 12), "other")]
+    clock.now = at(19, 20)
+    poller, _ = make(feed(items))
+    poller.tick()
+    items[0] = msg("m1", at(19, 10), "v2", updated=at(19, 21).isoformat())
+    items.append(msg("m3", at(19, 15), "late but same open day"))
+    clock.now = at(19, 22)
+    poller, _ = make(feed(items))
+    poller.tick()
+    items[0] = msg("m1", at(19, 10), "v3", updated=at(19, 23).isoformat())
+    clock.now = at(19, 23, 30)
+    poller, _ = make(feed(items))
+    poller.tick()
+    assert states(box) == {("2026-11-19", 0, 0): "buffer"}  # no new revision yet
+    # The next day closes one page with the latest content.
+    clock.now = at(20, 1)
+    poller, _ = make(feed(items))
+    poller.tick()
+    assert states(box) == {("2026-11-19", 0, 0): "pending"}
+    bundle, _ = frozen(box, key(box, "2026-11-19"))
+    assert {m.message_id: m.text for m in bundle.messages} == {
+        "m1": "v3",
+        "m2": "other",
+        "m3": "late but same open day",
+    }
+    assert bundle.revision == 0 and bundle.corrects_capture_id is None
+    # Only an observation after close is a correction (revision 1).
+    items[0] = msg("m1", at(19, 10), "v4", updated=at(20, 2).isoformat())
+    clock.now = at(20, 2, 30)
+    poller, _ = make(feed(items))
+    poller.tick()
+    assert states(box) == {
+        ("2026-11-19", 0, 0): "pending",
+        ("2026-11-19", 0, 1): "pending",
+    }
+    correction, _ = frozen(box, key(box, "2026-11-19", revision=1))
+    assert [(m.message_id, m.text) for m in correction.messages] == [("m1", "v4")]
+    assert correction.corrects_capture_id == key(box, "2026-11-19").capture_id
+
+
+def _ny_settings(settings):
+    return replace(settings, timezone="America/New_York")
+
+
+def _utc(*args: int) -> datetime:
+    return datetime(*args, tzinfo=UTC)
+
+
+def test_dst_end_day_is_25_hours_and_exact_midnight_belongs_to_the_new_day(setup):  # noqa: F811
+    make, box, clock, settings = setup
+    ny = ZoneInfo("America/New_York")
+    items = [
+        msg("before", _utc(2026, 11, 1, 3, 59, 59), "Oct 31 23:59:59 EDT"),
+        msg("midnight", _utc(2026, 11, 1, 4, 0, 0), "Nov 1 00:00:00 EDT, exactly"),
+        msg("first-1am", _utc(2026, 11, 1, 5, 30), "01:30 EDT"),
+        msg("second-1am", _utc(2026, 11, 1, 6, 30), "01:30 EST, repeated hour"),
+        msg("last", _utc(2026, 11, 2, 4, 59, 59), "Nov 1 23:59:59 EST"),
+        msg("next", _utc(2026, 11, 2, 5, 0, 0), "Nov 2 00:00:00 EST, exactly"),
+    ]
+    clock.now = _utc(2026, 11, 3, 12)
+    poller, _ = make(feed(items), _ny_settings(settings))
+    poller.tick()
+    keys = {k.day: k for k, _ in box.bundle_keys()}
+    assert sorted(keys) == ["2026-10-31", "2026-11-01", "2026-11-02"]
+    ids = {
+        day: [m.message_id for m in frozen(box, k)[0].messages]
+        for day, k in keys.items()
+    }
+    assert ids["2026-10-31"] == ["before"]
+    assert ids["2026-11-01"] == ["midnight", "first-1am", "second-1am", "last"]
+    assert ids["2026-11-02"] == ["next"]
+    manifest = frozen(box, keys["2026-11-01"])[1]
+    assert manifest.occurred_at == datetime(2026, 11, 1, tzinfo=ny)
+    assert manifest.occurred_at.astimezone(UTC) == _utc(2026, 11, 1, 4)
+
+
+def test_dst_start_day_is_23_hours_and_day_closes_only_after_local_midnight(setup):  # noqa: F811
+    make, box, clock, settings = setup
+    ny = ZoneInfo("America/New_York")
+    items = [
+        msg("est", _utc(2026, 3, 8, 6, 59), "01:59 EST"),
+        msg("edt", _utc(2026, 3, 8, 7, 0), "03:00 EDT (02:00 never exists)"),
+        msg("last", _utc(2026, 3, 9, 3, 59, 59), "Mar 8 23:59:59 EDT"),
+        msg("next", _utc(2026, 3, 9, 4, 0, 0), "Mar 9 00:00:00 EDT, exactly"),
+    ]
+    clock.now = _utc(2026, 3, 9, 3, 59, 59)  # one second before local midnight
+    poller, _ = make(feed(items[:2]), _ny_settings(settings))
+    poller.tick()
+    assert states(box) == {("2026-03-08", 0, 0): "buffer"}
+    clock.now = _utc(2026, 3, 9, 5, 0, 1)
+    poller, _ = make(feed(items), _ny_settings(settings))
+    poller.tick()
+    got = states(box)
+    assert got[("2026-03-08", 0, 0)] == "pending"
+    assert got[("2026-03-09", 0, 0)] == "buffer"  # that day has not ended
+    bundle, manifest = frozen(box, key(box, "2026-03-08"))
+    assert [m.message_id for m in bundle.messages] == ["est", "edt", "last"]
+    assert manifest.occurred_at == datetime(2026, 3, 8, tzinfo=ny)
+    assert manifest.occurred_at.astimezone(UTC) == _utc(2026, 3, 8, 5)
+
+
+def test_capacity_error_stops_only_its_own_space_and_notice_fires_once(setup):  # noqa: F811
+    from weaver.shepherd.outbox import Outbox
+
+    _, box, clock, _ = setup
+    notices: list[str] = []
+    box.notify = notices.append
+    for space in ("A", "B"):
+        k = BundleKey(box.instance_id, space, "2026-11-19", 0, 0)
+        payload = WebexBundle(
+            format="weaver.webex.bundle.v1",
+            instance_id=box.instance_id,
+            space_id=space,
+            messages=[
+                {
+                    "message_id": f"m-{space}",
+                    "created_at": at(19, 10),
+                    "author_display": None,
+                    "text": "x",
+                }
+            ],
+        )
+        box.buffer(k, payload.model_dump_json().encode())
+    real = Outbox.freeze_parts
+
+    def failing(self, original, expected, parts):
+        if original.space == "A":
+            self.notify("outbox_capacity")
+            raise CapacityError("outbox_capacity")
+        return real(self, original, expected, parts)
+
+    Outbox.freeze_parts = failing  # type: ignore[method-assign]
+    try:
+        result = close_ready(
+            box, timezone="Asia/Seoul", now=at(20, 1), eligible=lambda *_: True
+        )
+    finally:
+        Outbox.freeze_parts = real  # type: ignore[method-assign]
+    assert result.capacity
+    assert len(result.closed) == 1  # Space B still closed
+    got = {k.space: state for k, state in box.bundle_keys()}
+    assert got == {"A": "buffer", "B": "pending"}
+
+
+def test_hold_notice_fires_once_names_the_cause_and_status_explains_it(setup):  # noqa: F811
+    from typer.testing import CliRunner
+
+    from weaver.webex.cli import webex_cli
+
+    make, box, clock, _ = setup
+    notices: list[str] = []
+    box.notify = notices.append
+    items = [msg("big", at(19, 9), "가" * 400)]
+    clock.now = at(20, 0, 10)
+    for minute in range(3):  # three ticks, one notice
+        clock.now = at(20, 0, 10 + 10 * minute)
+        poller, _ = make(feed(items))
+        poller.max_payload_bytes = 500
+        poller.tick()
+    assert poller.state.spaces["S"].holds == {"2026-11-19#0": "message_too_large"}
+    assert notices == ["webex_message_too_large"]
+    # The default log text no longer claims the Shepherd stopped.
+    import logging
+
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = logging.getLogger("weaver.shepherd")
+    logger.addHandler(handler)
+    try:
+        from weaver.shepherd.outbox import Outbox
+
+        Outbox._log_notice("webex_message_too_large")
+        Outbox._log_notice("outbox_capacity")
+    finally:
+        logger.removeHandler(handler)
+    text = [r.getMessage() for r in records]
+    assert "stopped" not in text[0] and "webex_message_too_large" in text[0]
+    assert text[1] == "Shepherd stopped: outbox_capacity"
+    del CliRunner, webex_cli
+
+
+def test_missing_correction_parent_is_held_notified_once_and_shown(setup, monkeypatch):  # noqa: F811
+    import json as jsonlib
+
+    from typer.testing import CliRunner
+
+    from weaver.webex import cli as webex_cli_module
+
+    make, box, clock, settings = setup
+    notices: list[str] = []
+    box.notify = notices.append
+    items = [msg("m1", at(19, 10), "first"), msg("m2", at(20, 20))]
+    clock.now = at(20, 21)
+    poller, _ = make(feed(items))
+    poller.tick()
+    original = key(box, "2026-11-19")
+    box.discard(original.capture_id)  # operator disposed the revision it follows
+    items[0] = msg("m1", at(19, 10), "edited", updated=at(20, 22).isoformat())
+    for minute in (22, 23):
+        clock.now = at(20, minute)
+        poller, _ = make(feed(items))
+        poller.tick()
+    assert poller.state.spaces["S"].holds == {
+        "2026-11-19#1": "missing_correction_parent"
+    }
+    assert notices == ["webex_missing_correction_parent"]
+    from weaver import app
+    from weaver.config import load_config
+    from weaver.shepherd import cli as shepherd_cli
+
+    from .test_config import write_config
+
+    config = load_config(write_config(box.path.parent), environ={})
+    monkeypatch.setattr(app, "_load", lambda _: config)
+    monkeypatch.setattr(shepherd_cli, "_outbox", lambda *args: (config, box))
+    result = CliRunner().invoke(webex_cli_module.webex_cli, ["poll-status"])
+    status = jsonlib.loads(result.stdout)
+    assert status["held_buffers"] == 1
+    assert status["hold_reasons"] == {"missing_correction_parent": 1}
+    assert "discard" in status["operator_actions"][0]
+
+
+def test_space_not_ready_to_close_is_reported_with_its_reason(setup):  # noqa: F811
+    make, box, clock, _ = setup
+    items = [msg("m1", at(19, 10))]
+    clock.now = at(19, 21)
+    poller, _ = make(feed(items))
+    poller.tick()
+    clock.now = at(20, 0, 10)
+
+    def gap(req):
+        if req.url.path == "/v1/rooms":
+            return page([{"id": "S"}])
+        return httpx.Response(403)
+
+    poller, _ = make(gap)
+    poller.tick()
+    assert states(box) == {("2026-11-19", 0, 0): "buffer"}
+    waiting = poller.state.spaces["S"].close_waiting
+    assert waiting == {"2026-11-19": "space_access_gap"}

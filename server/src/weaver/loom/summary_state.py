@@ -54,6 +54,11 @@ class SummaryState:
                 "CREATE TABLE IF NOT EXISTS reviews (id TEXT, revision INTEGER, verdict TEXT NOT NULL, prepared TEXT NOT NULL, stage TEXT NOT NULL, PRIMARY KEY(id, revision))"
             )
 
+            # Review-state only ("대체됨"): never deletes a Source, package or Thread.
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS superseded ("
+                "source_id TEXT PRIMARY KEY, by_source_id TEXT NOT NULL)"
+            )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS pending_projections ("
                 "id TEXT, revision INTEGER, package TEXT NOT NULL, "
@@ -146,6 +151,40 @@ class SummaryState:
         if row is None:
             raise ValueError("unknown package revision")
         return ReviewPackage.model_validate_json(row[0]), str(row[1])
+
+    def review_received(self, source_id: str) -> bool:
+        """True once a Verdict was accepted for any package of this Source."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT p.package FROM packages p JOIN reviews r"
+                " ON r.id=p.id AND r.revision=p.revision"
+            ).fetchall()
+        return any(
+            ReviewPackage.model_validate_json(raw).source_id == source_id
+            for (raw,) in rows
+        )
+
+    def superseded_sources(self) -> dict[str, str]:
+        """Source ID -> the Source that replaced its pending review (persistent)."""
+        with self.connect() as db:
+            return dict(db.execute("SELECT source_id, by_source_id FROM superseded"))
+
+    def supersede(self, source_id: str, by_source_id: str) -> bool:
+        """Take a not-yet-decided review out of the waiting list.
+
+        Refused (False) once a Verdict was received, so an approved or in-flight
+        review is never replaced. Idempotent; the Source, its package and the
+        archive stay untouched.
+        """
+        with self.lock():
+            if self.review_received(source_id):
+                return False
+            with self.connect() as db:
+                db.execute(
+                    "INSERT OR IGNORE INTO superseded VALUES (?, ?)",
+                    (source_id, by_source_id),
+                )
+        return True
 
     def contact_name(self, package_id: str, source_id: str) -> str | None:
         return read_contact_name(self.path.parent, package_id, source_id)

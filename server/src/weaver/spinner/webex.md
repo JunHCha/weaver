@@ -41,4 +41,4 @@ polling and LLM gates belong to later/separate work.
 Closed Space-day bundles (webex stage 7) additionally carry optional `day`, `part`,
 `part_count`, `revision` and `corrects_capture_id`; collector buffers omit them
 (defaults). They are copied into private `WebexProvenance` only, never into the
-Script, and review titles show `(n/m)` for parts and `정정 N` for corrections.
+Script. The Loom review title (only) gets `(n/m)` for parts and `정정 N` for corrections.

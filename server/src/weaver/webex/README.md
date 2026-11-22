@@ -237,14 +237,51 @@ closed and keep their bytes. Closing one revision is a single Outbox commit:
   `Space.holds` with `message_too_large` plus an operator notice (shown as
   `held_buffers` by `webex poll-status`).
 
-A message edited or arriving after its day closed lands in a new revision of
-that day, closed on the next quiet tick and linked to the previous revision
-(`depends_on`), so Courier delivers it only after the earlier Receipt. Original
+Before close a buffer is not an immutable Source yet: edits and late messages of
+a still-open Space-day update that one buffer in place, so the next-day close
+yields one revision-0 page with the latest content. Only an observation made
+after its day closed (a late update, an overlap correction) creates the next
+revision of that day. A correction is closed on the next quiet tick and linked
+to its predecessor revision: `depends_on` names the first remaining
+(non-discarded) part of that revision, and Courier delivers every part of the
+correction only after **every** part of the predecessor revision has a Receipt
+(`Outbox._dependency_ready`, decided by revision, so part counts may change
+2 to 1, 1 to 2, 1 to 2 to 1; a quarantined predecessor part blocks it). Original
 Source requests are never rewritten and a correction never touches an approved
 Thread: it only gets its own review page. A message missing from a list stays a
 private observation (`unverified`); no deletion Source is ever produced.
 
+Review titles: `(n/m)` for parts and `정정 N` for corrections are appended to the
+Loom review title only. Wiki summary titles and paths stay `<date> Webex 대화`.
+
+Holds and `webex poll-status`: a buffer that cannot close (`message_too_large`,
+`missing_correction_parent`, `invalid_buffer`) keeps its bytes and is held. The
+operator notice (`webex_<code>`) is logged once, when the hold first appears.
+`poll-status` shows `held_buffers`, `hold_reasons` and `operator_actions`. A
+finished day whose Space is not `ready` (`space_access_gap`, `space_page_error`,
+`scan_in_progress`, `not_synced`) is not closed; `days_waiting_to_close` counts
+those days by reason, and the day closes by itself once the Space recovers
+(`poll-resume` after an access gap). An outbox capacity error stops only the
+Space that hit it; other Spaces still close, then the tick reports the error.
+
 Correction review burden is one replaceable point,
-`review_rule.CorrectionReviewRule`, passed to `SummaryProcessor(correction_rule=)`.
-The default (`ReviewEveryCorrection`) keeps the document baseline of one page per
-correction Source.
+`review_rule.CorrectionReviewRule.decide`, which returns a `ReviewDecision`
+(`review` with the older Sources it supersedes, `supersede` for the Source
+itself, or `skip`) and is passed to `SummaryProcessor(correction_rule=)`. The LLM
+policy check always runs first. `skip` creates no page and leaves the Source
+re-evaluable (`waiting_llm`, never a permanent `done`).
+
+Default (user decision 2026-11-22, option A, `SupersedeUnreviewedCorrections`):
+among the correction Sources (revision > 0) of one Space-day only the newest
+undecided revision stays in the waiting list; older undecided ones become
+"superseded". Superseded is a persisted review state (`superseded` table of the
+Loom summary journal), not a deletion: Source, archive, provenance, package and
+Thread stay. A correction whose Verdict was received, an approved one, and every
+original (revision 0) are never superseded. A superseded review drops out of
+`/reviews` and the review file projection, and the phone feed turns it into a
+`review` tombstone; the pipeline card closes as `rejected` (no new schema status),
+and a Verdict submitted for it gets `409 review_superseded`. Because a correction
+carries only the messages that changed, an older correction is superseded only
+when its messages are all carried again by the newer ones
+(`require_coverage=True`); otherwise both stay. `ReviewEveryCorrection` is the
+document baseline of one page per correction.
