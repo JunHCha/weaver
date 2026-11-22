@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -55,6 +56,47 @@ class ContractFixturesTest {
             assertEquals("alert_body_expired", error.code)
             assertFalse(error.retryable)
         }
+    }
+
+    @Test fun feedFixturesMatchTheHandWrittenEnvelopeAndNegotiateKinds() {
+        fun feed(name: String) = WeaverCodec.json.decodeFromString<FeedEnvelope>(Fx.json(name).toString())
+        listOf("changes.snapshot", "changes.incremental", "changes.up_to_date", "changes.tombstone").forEach { feed(it) }
+        // An older build names no kinds and only ever receives the kinds it shipped with.
+        assertTrue(feed("changes_kinds.legacy_snapshot").items.all { it.kind in LEGACY_FEED_KINDS })
+        val all = feed("changes_kinds.negotiated_snapshot")
+        assertEquals(setOf("alert", "fabric", "pipeline", "wiki"), all.items.map { it.kind }.toSet())
+        assertTrue(all.items.none { it.removed })
+        // Hints carry no Alert body; pipeline/wiki hints carry the ETag of the body to fetch.
+        assertNull(all.items.first { it.kind == "alert" }.body)
+        listOf("pipeline", "wiki").forEach { kind ->
+            val body = all.items.first { it.kind == kind }.body!!.jsonObject
+            assertTrue(body["etag"].toString().startsWith("\""))
+        }
+        assertEquals("tombstone", feed("changes_kinds.alert_body_expired").items.single().op)
+        val offered = (Fx.json("pipeline.enabled_capabilities")["feed_kinds"] as JsonArray).map { it.jsonPrimitive.content }
+        // Review runs over files in that scenario, so the review kind is not offered (and never tombstoned).
+        assertEquals(listOf("fabric", "pipeline", "wiki"), offered)
+        val onFiles = feed("changes_kinds.review_on_files")
+        assertEquals(listOf("fabric"), onFiles.items.map { it.kind })
+        assertTrue(onFiles.items.none { it.removed })
+        // A cursor cut for one kind set is refused (410) for another: restart with a new snapshot.
+        assertEquals(410, ContractFixtures["changes_kinds.kinds_changed_cursor"].status)
+        assertEquals("cursor_expired", Fx.json("changes_kinds.kinds_changed_cursor")["code"]!!.jsonPrimitive.content)
+        // The older APK path serves the same list as /read/pipeline.
+        assertEquals(Fx.json("pipeline.list"), Fx.json("pipeline.older_apk_list"))
+    }
+
+    @Test fun pipelineFixturesDecodeAsPipelineItemsWithDefaultKeysOmitted() {
+        val list = Fx.json("pipeline.list")["items"] as JsonArray
+        assertEquals(1, list.size)
+        val item = CourierClient.decoded<PipelineItem>(list[0].toString())
+        assertEquals(1, item.revision)
+        assertFalse(list[0].jsonObject.containsKey("capture_hosts"))
+        assertFalse(list[0].jsonObject.containsKey("summary"))
+        assertEquals(item, CourierClient.decoded<PipelineItem>(Fx.json("pipeline.item").toString()))
+        assertEquals(304, ContractFixtures["pipeline.item_not_modified"].status)
+        assertEquals("transport_files", Fx.json("pipeline.files_route")["code"]!!.jsonPrimitive.content)
+        assertEquals("cursor_expired", Fx.json("pipeline.stale_cursor")["code"]!!.jsonPrimitive.content)
     }
 
     @Test fun alertEnvelopesAcksAndErrorsRejectUnknownKeys() {

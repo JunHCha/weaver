@@ -47,6 +47,10 @@
             "alerts": false,
             "pipeline": false
           },
+          "feed_kinds": [
+            "fabric",
+            "wiki"
+          ],
           "feed_epoch": "ep_00000000000000000000000000000001",
           "device": {
             "device_id": "dev_00000000000000000000000000000001",

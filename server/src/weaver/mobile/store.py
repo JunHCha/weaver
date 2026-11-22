@@ -460,6 +460,21 @@ class MobileStore:
             for r in rows
         }
 
+    def feed_hidden(self) -> frozenset[str]:
+        """Kinds the producer last found handed back to files (not served)."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value FROM meta WHERE key='feed_hidden'"
+            ).fetchone()
+        return frozenset(filter(None, str(row[0]).split(","))) if row else frozenset()
+
+    def set_feed_hidden(self, kinds: frozenset[str]) -> None:
+        with self._write() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO meta VALUES ('feed_hidden', ?)",
+                (",".join(sorted(kinds)),),
+            )
+
     def feed_record(self, items: list[FeedItem]) -> None:
         """Replace the latest entry of each resource in one transaction.
 

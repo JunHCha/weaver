@@ -53,6 +53,10 @@ def reconcile_transports(
                     result.published,
                     result.expired,
                 )
+            elif feature == "pipeline":
+                from weaver.runtime.progress import PipelineJournal
+
+                PipelineJournal(config.state_root, config.courier.proposals).publish()
             republished.append(feature)
             logger.info("mobile transport %s: http -> files, republished", feature)
         store.record_transport(feature, wanted)

@@ -366,7 +366,7 @@ def actions_files(tmp: Path) -> Recorder:
 
 
 def changes(tmp: Path) -> Recorder:
-    h = Harness(tmp, clock=lambda: NOW)
+    h = Harness(tmp, '[mobile.features]\nreview = "http"\n', clock=lambda: NOW)
     headers = h.pair("read", "review")
     r = Recorder(
         h, "changes", "Change feed (epoch.seq cursor, compacted) and device checkpoint."
@@ -957,6 +957,165 @@ def alerts(tmp: Path) -> Recorder:
     return r
 
 
+def changes_kinds(tmp: Path) -> Recorder:
+    from weaver.alert import AlertHistory
+    from weaver.schema import Alert
+
+    from .helpers import receive_pipeline
+
+    h = Harness(
+        tmp,
+        '[mobile.features]\nreview = "http"\nalert = "http"\npipeline = "http"\n',
+        clock=lambda: NOW,
+    )
+    headers = h.pair("read", "review")
+    body = Alert(
+        schema_version=2,
+        alert_id="alt_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+        package_id="pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+        thread_id="thr_2",
+        message="합성 일정 알림",
+        created_at=NOW,
+    )
+    history = AlertHistory(h.config.state_root / "alerts.sqlite3")
+    history.stage(body, "thr_1")
+    history.projected(body.alert_id)
+    receive_pipeline(h, at=NOW)
+    store = WikiStore(
+        h.config.vault_root, h.config.state_root, wiki_root=h.config.wiki.folder
+    )
+    store.write("pages/네트워크.md", {"kind": "area"}, "사내망 영역", None)
+    r = Recorder(
+        h,
+        "changes_kinds",
+        "Feed kinds added after the first phone build: alert, pipeline, wiki. "
+        "A phone must name them with ?kinds=; without it only review/action/fabric arrive.",
+    )
+    r.call(
+        "legacy_snapshot",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        note="An older build sends no kinds and never sees alert/pipeline/wiki, "
+        "even when the server routes them over HTTP.",
+    )
+    snapshot = r.call(
+        "negotiated_snapshot",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        params={"kinds": "review,action,alert,pipeline,wiki,fabric"},
+        note="Alert/pipeline/wiki entries are hints: fetch the body from /alerts, "
+        "/read/pipeline or /read/wiki. alert needs review scope; pipeline, wiki and fabric need read.",
+    )
+    r.call(
+        "unknown_kind_ignored",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        params={"kinds": "fabric,hologram"},
+        note="Kinds the server does not know are ignored so a newer phone still works.",
+    )
+    r.call(
+        "kinds_changed_cursor",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        params={"kinds": "fabric", "cursor": snapshot.json()["next_cursor"]},
+        note="The cursor carries a digest of the kinds it was cut for. Continuing it with "
+        "another set would skip the new kinds' older entries, so the server answers 410: "
+        "drop the cursor and take a new snapshot for the new set.",
+    )
+    history.ack(h.device.device_id, body.alert_id, NOW)
+    history.collect(30, [h.device.device_id], NOW + timedelta(days=31))
+    r.call(
+        "alert_body_expired",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        params={
+            "kinds": "review,action,alert,pipeline,wiki,fabric",
+            "cursor": snapshot.json()["next_cursor"],
+        },
+        note="Expiry of a retained body tombstones the alert hint. Leaving a route back to "
+        "files never writes a tombstone: the kind just disappears from the feed.",
+    )
+    files = Harness(tmp / "files", clock=lambda: NOW)
+    other = files.pair("read", "review")
+    r.h = files
+    r.call(
+        "review_on_files",
+        "GET",
+        f"{BASE}/changes",
+        headers=other,
+        params={"kinds": "review,fabric"},
+        note="While review runs over files the review kind leaves the feed (and "
+        "capabilities.feed_kinds) without a tombstone; read proposals/ instead. When it "
+        "returns to http every current review entry is announced again under new seq values.",
+    )
+    return r
+
+
+def pipeline(tmp: Path) -> Recorder:
+    from .helpers import receive_pipeline
+
+    h = Harness(tmp, '[mobile.features]\npipeline = "http"\n', clock=lambda: NOW)
+    headers = h.pair("read")
+    receive_pipeline(h, at=NOW)
+    files = Harness(tmp / "files", clock=lambda: NOW)
+    r = Recorder(
+        h,
+        "pipeline",
+        "Pipeline map (PipelineItem v2) over HTTP, outside Courier. Default-valued keys are omitted.",
+    )
+    r.call("enabled_capabilities", "GET", f"{BASE}/capabilities", headers=headers)
+    listing = r.call("list", "GET", f"{BASE}/read/pipeline", headers=headers)
+    source_id = listing.json()["items"][0]["source_id"]
+    detail = r.call("item", "GET", f"{BASE}/read/pipeline/{source_id}", headers=headers)
+    r.call(
+        "item_not_modified",
+        "GET",
+        f"{BASE}/read/pipeline/{source_id}",
+        headers=auth(headers, **{"If-None-Match": detail.headers["etag"]}),
+    )
+    r.call("item_not_found", "GET", f"{BASE}/read/pipeline/missing", headers=headers)
+    reviewer = h.pair("review", label="older APK")
+    r.call(
+        "older_apk_list",
+        "GET",
+        f"{BASE}/pipeline",
+        headers=reviewer,
+        note="APKs before the feed client (features.pipeline true) pull this path with "
+        "review scope. The body is the same list as /read/pipeline; not for new clients.",
+    )
+    r.call(
+        "stale_cursor",
+        "GET",
+        f"{BASE}/read/pipeline",
+        headers=headers,
+        params={"cursor": "0" * 64 + ":1"},
+        note="The cursor pins the exact list; a changed list answers 410. The client must "
+        "restart the whole list without a cursor and replace what it holds with the new list.",
+    )
+    r.call(
+        "invalid_cursor",
+        "GET",
+        f"{BASE}/read/pipeline",
+        headers=headers,
+        params={"cursor": "x"},
+    )
+    other = files.pair("read")
+    r.h = files
+    r.call(
+        "files_route",
+        "GET",
+        f"{BASE}/read/pipeline",
+        headers=other,
+        note="While pipeline is on files the HTTP body is closed; keep reading proposals/pipeline.",
+    )
+    return r
+
+
 GROUPS = [
     alerts,
     request_handling,
@@ -967,6 +1126,8 @@ GROUPS = [
     actions,
     actions_files,
     changes,
+    changes_kinds,
+    pipeline,
     read,
     wiki,
     edits,

@@ -298,3 +298,31 @@ def result(
     }
     data.update(changes)
     return data
+
+
+def receive_pipeline(
+    h: Harness, source_id: str = SID, capture_id: str = CAP, *, at: datetime = NOW
+) -> Any:
+    """One synthetic pipeline observation in the harness's progress journal."""
+    from weaver.runtime.progress import PipelineJournal
+    from weaver.schema import Source
+
+    journal = PipelineJournal(
+        h.config.state_root, h.config.courier.proposals, publish_files=False
+    )
+    source = Source.model_validate(
+        {
+            "schema_version": 1,
+            "source_id": source_id,
+            "capture_id": capture_id,
+            "kind": "text",
+            "channel": "share_text",
+            "captured_at": "2026-11-07T00:00:00Z",
+            "occurred_at": None,
+            "sha256": "a" * 64,
+            "hints": {"counterpart": None},
+            "payload_ref": "payloads/example.txt",
+        }
+    )
+    journal.receive(source, at)
+    return journal

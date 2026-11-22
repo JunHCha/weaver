@@ -1,0 +1,286 @@
+{
+  "contract_version": 1,
+  "group": "pipeline",
+  "description": "Pipeline map (PipelineItem v2) over HTTP, outside Courier. Default-valued keys are omitted.",
+  "cases": [
+    {
+      "name": "enabled_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/capabilities",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "server_id": "srv_00000000000000000000000000000001",
+          "transport_version": 1,
+          "schema_versions": {
+            "manifest": 1,
+            "receipt": 1,
+            "review_package": 2,
+            "verdict": 2,
+            "action": 2,
+            "action_result": 2,
+            "pipeline": 2
+          },
+          "transports": {
+            "capture": "files",
+            "review": "files",
+            "action": "files",
+            "pipeline": "http"
+          },
+          "limits": {
+            "max_payload_bytes": 67108864,
+            "max_json_bytes": 1048576,
+            "max_feed_items": 100,
+            "max_feed_bytes": 4194304
+          },
+          "features": {
+            "capture": true,
+            "review": true,
+            "action": true,
+            "read": true,
+            "dictionary": true,
+            "edits": true,
+            "thread_handling": true,
+            "alerts": false,
+            "pipeline": true
+          },
+          "feed_kinds": [
+            "fabric",
+            "pipeline",
+            "wiki"
+          ],
+          "feed_epoch": "ep_00000000000000000000000000000001",
+          "device": {
+            "device_id": "dev_00000000000000000000000000000001",
+            "scopes": [
+              "read"
+            ],
+            "executor": false
+          }
+        }
+      }
+    },
+    {
+      "name": "list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "schema_version": 2,
+              "revision": 1,
+              "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+              "source_id": "src_00000000000000000000000001",
+              "package_id": null,
+              "package_revision": null,
+              "source_type": "share_text",
+              "title": "수확한 데이터",
+              "location": "spinner",
+              "status": "working",
+              "apply_failure_limit": 5,
+              "stage_times": {
+                "수집": "2026-11-07T00:00:00Z",
+                "전송": "2026-11-11T23:00:00Z"
+              },
+              "history": [
+                "spinner"
+              ],
+              "threads": [],
+              "pages": [],
+              "digest": null,
+              "updated_at": "2026-11-11T23:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "item",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline/src_00000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "etag": "\"cc8ffec9b70426e3bb2c71eaa3dea8fd42c5804c0f8d1bda790106919129844d\""
+        },
+        "body": {
+          "schema_version": 2,
+          "revision": 1,
+          "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+          "source_id": "src_00000000000000000000000001",
+          "package_id": null,
+          "package_revision": null,
+          "source_type": "share_text",
+          "title": "수확한 데이터",
+          "location": "spinner",
+          "status": "working",
+          "apply_failure_limit": 5,
+          "stage_times": {
+            "수집": "2026-11-07T00:00:00Z",
+            "전송": "2026-11-11T23:00:00Z"
+          },
+          "history": [
+            "spinner"
+          ],
+          "threads": [],
+          "pages": [],
+          "digest": null,
+          "updated_at": "2026-11-11T23:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "item_not_modified",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline/src_00000000000000000000000001",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "etag": "\"cc8ffec9b70426e3bb2c71eaa3dea8fd42c5804c0f8d1bda790106919129844d\""
+        }
+      }
+    },
+    {
+      "name": "item_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline/missing",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "pipeline_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "older_apk_list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/pipeline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "schema_version": 2,
+              "revision": 1,
+              "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+              "source_id": "src_00000000000000000000000001",
+              "package_id": null,
+              "package_revision": null,
+              "source_type": "share_text",
+              "title": "수확한 데이터",
+              "location": "spinner",
+              "status": "working",
+              "apply_failure_limit": 5,
+              "stage_times": {
+                "수집": "2026-11-07T00:00:00Z",
+                "전송": "2026-11-11T23:00:00Z"
+              },
+              "history": [
+                "spinner"
+              ],
+              "threads": [],
+              "pages": [],
+              "digest": null,
+              "updated_at": "2026-11-11T23:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "note": "APKs before the feed client (features.pipeline true) pull this path with review scope. The body is the same list as /read/pipeline; not for new clients."
+    },
+    {
+      "name": "stale_cursor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline",
+        "query": {
+          "cursor": "0000000000000000000000000000000000000000000000000000000000000000:1"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "code": "cursor_expired",
+          "retryable": false
+        }
+      },
+      "note": "The cursor pins the exact list; a changed list answers 410. The client must restart the whole list without a cursor and replace what it holds with the new list."
+    },
+    {
+      "name": "invalid_cursor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline",
+        "query": {
+          "cursor": "x"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_cursor",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "files_route",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/pipeline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "transport_files",
+          "retryable": false
+        }
+      },
+      "note": "While pipeline is on files the HTTP body is closed; keep reading proposals/pipeline."
+    }
+  ]
+}

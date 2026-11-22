@@ -179,7 +179,7 @@ class CourierSettings:
 
 
 Transport = Literal["files", "http"]
-TRANSPORT_FEATURES = ("capture", "review", "action", "alert")
+TRANSPORT_FEATURES = ("capture", "review", "action", "alert", "pipeline")
 _TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
 _TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
@@ -239,17 +239,39 @@ class MobileSettings:
             raise ConfigError("mobile.alert_body_days: expected positive integer")
 
     def transport_for(self, feature: str) -> Transport:
-        # Alert HTTP requires the phone's new receipt/dismiss ledger. Existing
-        # global HTTP installs must keep their file alerts until APK rollout.
+        # Alert and pipeline HTTP need the phone's new ledger/read client. Existing
+        # global HTTP installs keep their files until the APK rollout.
         return dict(self.features).get(
-            feature, "files" if feature == "alert" else self.transport
+            feature,
+            "files" if feature in ("alert", "pipeline") else self.transport,
         )
 
+    def pipeline_explicit(self) -> bool:
+        """Whether ``pipeline`` was chosen in ``[mobile.features]``."""
+        return "pipeline" in dict(self.features)
+
     def uses_files(self) -> bool:
-        """Shared Courier projections are needed by any file transport user."""
+        """Shared Courier projections are needed by any file transport user.
+
+        An unset ``pipeline`` is not counted: it only defaults to files so the
+        feed stays off, and must not turn an existing all-http install back into
+        a files install.
+        """
         return any(
-            self.transport_for(feature) == "files" for feature in TRANSPORT_FEATURES
+            self.transport_for(feature) == "files"
+            for feature in TRANSPORT_FEATURES
+            if feature != "pipeline" or self.pipeline_explicit()
         )
+
+    def publishes_pipeline_files(self) -> bool:
+        """Whether the rollback-only pipeline file projection is written.
+
+        An explicit ``pipeline`` decides alone. Unset keeps the #199 rule: the
+        projection is published while any other feature still uses files.
+        """
+        if self.pipeline_explicit():
+            return self.transport_for("pipeline") == "files"
+        return self.uses_files()
 
 
 def _mobile_settings(

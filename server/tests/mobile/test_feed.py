@@ -5,6 +5,7 @@ from weaver.action import ActionJob
 from .helpers import Harness, result, schedule, verdict
 
 FEED = "/mobile/v1/changes"
+REVIEW_HTTP = '[mobile.features]\nreview = "http"\n'
 
 
 def pull(h, headers, cursor=None, limit=100):
@@ -19,7 +20,7 @@ def kinds(response):
 
 
 def test_feed_reports_reviews_and_tombstones_them_when_applied(tmp_path):
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     headers = h.pair("read", "review")
     first = pull(h, headers)
     assert kinds(first) == [("fabric", "threads", "upsert")]
@@ -50,7 +51,7 @@ def test_feed_reports_reviews_and_tombstones_them_when_applied(tmp_path):
 
 
 def test_feed_is_compacted_and_from_cursor_zero_is_a_snapshot(tmp_path):
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     headers = h.pair("read", "review")
     for revision in (1, 2, 3):
         h.add_package("pkg_a", revision)
@@ -69,7 +70,7 @@ def test_feed_is_compacted_and_from_cursor_zero_is_a_snapshot(tmp_path):
 
 
 def test_pagination_and_scope_filtering_do_not_stall_the_cursor(tmp_path):
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     for index in range(5):
         h.add_package(f"pkg_{index}")
     reader = h.pair("read")  # no review scope: sees only the fabric hint
@@ -98,7 +99,7 @@ def test_pagination_and_scope_filtering_do_not_stall_the_cursor(tmp_path):
 
 
 def test_unknown_epoch_future_cursor_and_garbage_cursor(tmp_path):
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     headers = h.pair("read")
     good = pull(h, headers).json()["next_cursor"]
     epoch = good.split(".")[0]
@@ -111,17 +112,19 @@ def test_unknown_epoch_future_cursor_and_garbage_cursor(tmp_path):
 
 
 def test_server_restore_changes_the_epoch_so_phones_resync(tmp_path):
-    first = Harness(tmp_path / "a")
+    first = Harness(tmp_path / "a", REVIEW_HTTP)
     headers = first.pair("read")
     cursor = pull(first, headers).json()["next_cursor"]
-    second = Harness(tmp_path / "b")  # a fresh state directory: a new feed epoch
+    second = Harness(
+        tmp_path / "b", REVIEW_HTTP
+    )  # a fresh state directory: a new feed epoch
     headers = second.pair("read")
     assert pull(second, headers, cursor).status_code == 410
     assert first.store.feed_epoch != second.store.feed_epoch
 
 
 def test_checkpoint_is_monotonic_and_validated_and_never_trusts_a_body_device(tmp_path):
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     headers = h.pair("read")
     h.add_package("pkg_a")
     cursor = pull(h, headers).json()["next_cursor"]
@@ -129,7 +132,7 @@ def test_checkpoint_is_monotonic_and_validated_and_never_trusts_a_body_device(tm
         "/mobile/v1/devices/self/checkpoint", json={"cursor": cursor}, headers=headers
     )
     assert ok.status_code == 200
-    epoch, seq = cursor.split(".")
+    epoch, seq, _pin = cursor.split(".")
     h.client.put(
         "/mobile/v1/devices/self/checkpoint",
         json={"cursor": f"{epoch}.0"},
@@ -184,7 +187,7 @@ def test_actions_enter_the_feed_without_leaking_content(tmp_path):
 def test_feed_survives_a_restart_without_losing_or_repeating_changes(tmp_path):
     from weaver.mobile.store import MobileStore
 
-    h = Harness(tmp_path)
+    h = Harness(tmp_path, REVIEW_HTTP)
     headers = h.pair("read", "review")
     h.add_package("pkg_a")
     page = pull(h, headers)

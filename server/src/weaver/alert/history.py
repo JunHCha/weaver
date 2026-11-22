@@ -145,6 +145,17 @@ class AlertHistory:
             raise AlertBodyExpired(alert_id)
         return None if row is None else Alert.model_validate_json(row[0])
 
+    def delivery_ids(self) -> tuple[list[str], list[str]]:
+        """Alert IDs whose body is retained, and those whose body has expired."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT alert_id, body IS NULL FROM alert_delivery ORDER BY alert_id"
+            ).fetchall()
+        return (
+            [str(i) for i, expired in rows if not expired],
+            [str(i) for i, expired in rows if expired],
+        )
+
     def expired_count(self) -> int:
         with self._connect() as db:
             return int(

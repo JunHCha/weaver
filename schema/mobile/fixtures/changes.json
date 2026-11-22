@@ -26,7 +26,7 @@
               "body": null
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.1",
+          "next_cursor": "ep_00000000000000000000000000000001.1.2fb8b948",
           "has_more": false
         }
       },
@@ -38,7 +38,7 @@
         "method": "GET",
         "path": "/mobile/v1/changes",
         "query": {
-          "cursor": "ep_00000000000000000000000000000001.1",
+          "cursor": "ep_00000000000000000000000000000001.1.2fb8b948",
           "limit": "100"
         },
         "headers": {
@@ -62,7 +62,7 @@
               }
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.2",
+          "next_cursor": "ep_00000000000000000000000000000001.2.2fb8b948",
           "has_more": false
         }
       }
@@ -73,7 +73,7 @@
         "method": "GET",
         "path": "/mobile/v1/changes",
         "query": {
-          "cursor": "ep_00000000000000000000000000000001.2"
+          "cursor": "ep_00000000000000000000000000000001.2.2fb8b948"
         },
         "headers": {
           "authorization": "Bearer <token>"
@@ -84,7 +84,7 @@
         "body": {
           "feed_epoch": "ep_00000000000000000000000000000001",
           "items": [],
-          "next_cursor": "ep_00000000000000000000000000000001.2",
+          "next_cursor": "ep_00000000000000000000000000000001.2.2fb8b948",
           "has_more": false
         }
       }
@@ -98,13 +98,13 @@
           "authorization": "Bearer <token>"
         },
         "body": {
-          "cursor": "ep_00000000000000000000000000000001.2"
+          "cursor": "ep_00000000000000000000000000000001.2.2fb8b948"
         }
       },
       "response": {
         "status": 200,
         "body": {
-          "cursor": "ep_00000000000000000000000000000001.2"
+          "cursor": "ep_00000000000000000000000000000001.2.2fb8b948"
         }
       }
     },
@@ -114,7 +114,7 @@
         "method": "GET",
         "path": "/mobile/v1/changes",
         "query": {
-          "cursor": "ep_00000000000000000000000000000001.2"
+          "cursor": "ep_00000000000000000000000000000001.2.2fb8b948"
         },
         "headers": {
           "authorization": "Bearer <token>"
@@ -134,7 +134,7 @@
               "body": null
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.3",
+          "next_cursor": "ep_00000000000000000000000000000001.3.2fb8b948",
           "has_more": false
         }
       }
