@@ -38,7 +38,8 @@ from .edits import (
     MobileTagEdit,
 )
 from .errors import ApiError
-from .feed import FeedProducer
+from .feed import KIND_SCOPES, LEGACY_KINDS, FeedProducer, FeedSources
+from .pipeline import PipelineReadModel
 from .read import ReadModel
 from .requests import DeadlineEdit, RequestEdit, RequestEditService, UndoEdit
 from .reviews import ReviewEntry, ReviewService, etag
@@ -48,6 +49,7 @@ from .whois import Whois
 logger = logging.getLogger("weaver.mobile")
 MAX_JSON_BYTES = 1 << 20
 MAX_FEED_PAGE = 100
+MAX_FEED_BYTES = 4 * 1024 * 1024
 CURSOR = re.compile(r"^(ep_[0-9a-f]{32})\.(\d+)$")
 TRANSPORT_VERSION = 1
 
@@ -139,6 +141,7 @@ def create_app(
     archive = archive or ArchiveStore.from_config(config)
     summary = summary or SummaryState(config.state_root)
     alerts = AlertDelivery(config).history
+    pipeline = PipelineReadModel(config.state_root)
     reviews = ReviewService(summary, store)
     captures = CaptureService(
         archive,
@@ -156,6 +159,13 @@ def create_app(
         actions,
         read.head,
         action_dispatch=lambda: mobile.transport_for("action") == "http",
+        sources=FeedSources(
+            alerts=alerts,
+            alerts_http=lambda: mobile.transport_for("alert") == "http",
+            pipeline=pipeline,
+            pipeline_http=lambda: mobile.transport_for("pipeline") == "http",
+            wiki_hints=read.wiki_hints,
+        ),
     )
 
     app = FastAPI(
@@ -249,17 +259,23 @@ def create_app(
                     "action": 2,
                     "action_result": 2,
                     **({"alert": 2} if mobile.transport_for("alert") == "http" else {}),
+                    **(
+                        {"pipeline": 2}
+                        if mobile.transport_for("pipeline") == "http"
+                        else {}
+                    ),
                 },
                 "transports": {
                     feature: mobile.transport_for(feature)
-                    for feature in ("capture", "review", "action", "alert")
-                    if feature != "alert" or mobile.transport_for(feature) != "files"
+                    for feature in ("capture", "review", "action", "alert", "pipeline")
+                    if feature not in ("alert", "pipeline")
+                    or mobile.transport_for(feature) != "files"
                 },
                 "limits": {
                     "max_payload_bytes": mobile.max_payload_bytes,
                     "max_json_bytes": MAX_JSON_BYTES,
                     "max_feed_items": MAX_FEED_PAGE,
-                    "max_feed_bytes": 4 * 1024 * 1024,
+                    "max_feed_bytes": MAX_FEED_BYTES,
                 },
                 "features": {
                     "capture": True,
@@ -270,8 +286,9 @@ def create_app(
                     "edits": True,
                     "thread_handling": True,
                     "alerts": mobile.transport_for("alert") == "http",
-                    "pipeline": False,
+                    "pipeline": mobile.transport_for("pipeline") == "http",
                 },
+                "feed_kinds": sorted(feed.served_kinds()),
                 "feed_epoch": store.feed_epoch,
                 "device": {
                     "device_id": who.device.device_id,
@@ -468,6 +485,7 @@ def create_app(
         who: Anyone,
         cursor: str | None = None,
         limit: Annotated[int, Query(ge=1, le=MAX_FEED_PAGE)] = MAX_FEED_PAGE,
+        kinds: str | None = None,
     ) -> JSONResponse:
         feed.reconcile()
         epoch = store.feed_epoch
@@ -479,21 +497,40 @@ def create_app(
             if match.group(1) != epoch or int(match.group(2)) > store.feed_head():
                 raise ApiError(410, "cursor_expired")
             after = int(match.group(2))
-        visible = {"review": "review", "action": "action", "fabric": "read"}
+        # A phone that does not name its kinds is an older build: it never sees a
+        # kind added after it shipped. Kinds a feature handed back to files, or a
+        # scope the device lacks, are hidden, not deleted (no tombstone).
+        asked = (
+            LEGACY_KINDS
+            if kinds is None
+            else frozenset(k for k in kinds.split(",") if k in KIND_SCOPES)
+        )
+        allowed = {
+            kind
+            for kind in asked & feed.served_kinds()
+            if KIND_SCOPES[kind] in who.device.scopes
+        }
         items, more = store.feed_page(after, limit)
-        shown = [
-            {
-                "seq": item.seq,
-                "kind": item.kind,
-                "id": item.resource_id,
-                "revision": item.revision,
-                "op": item.op,
-                "body": None if item.body is None else json.loads(item.body),
-            }
-            for item in items
-            if visible.get(item.kind) in who.device.scopes
-        ]
-        last = items[-1].seq if items else after
+        shown: list[dict[str, object]] = []
+        size = 0
+        last = after
+        for item in items:
+            if item.kind in allowed:
+                entry = {
+                    "seq": item.seq,
+                    "kind": item.kind,
+                    "id": item.resource_id,
+                    "revision": item.revision,
+                    "op": item.op,
+                    "body": None if item.body is None else json.loads(item.body),
+                }
+                size += len(canonical(entry))
+                if shown and size > MAX_FEED_BYTES:
+                    # Page break: resume right after the last item that was sent.
+                    more = True
+                    break
+                shown.append(entry)
+            last = item.seq
         return json_response(
             {
                 "feed_epoch": epoch,
@@ -575,6 +612,30 @@ def create_app(
     @router.get("/read/dictionary")
     def read_dictionary(_who: ReadScope) -> JSONResponse:
         return json_response({"items": read.dictionary(), "next_cursor": None})
+
+    def pipeline_http() -> None:
+        if mobile.transport_for("pipeline") != "http":
+            raise ApiError(409, "transport_files")
+
+    @router.get("/read/pipeline")
+    def read_pipeline(
+        _who: ReadScope,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 500,
+    ) -> JSONResponse:
+        pipeline_http()
+        return json_response(pipeline.page(cursor, limit))
+
+    @router.get("/read/pipeline/{source_id}")
+    def read_pipeline_item(
+        source_id: str, request: Request, _who: ReadScope
+    ) -> Response:
+        pipeline_http()
+        entry = pipeline.get(source_id)
+        tag = f'"{entry.etag}"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"ETag": tag})
+        return json_response(entry.payload, headers={"ETag": tag})
 
     @router.get("/read/wiki/pages")
     def read_wiki_pages(_who: ReadScope) -> JSONResponse:

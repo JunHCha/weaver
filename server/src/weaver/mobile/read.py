@@ -9,6 +9,7 @@ the web cannot drift apart.
 import hashlib
 import json
 import os
+import sqlite3
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -239,6 +240,7 @@ class ReadModel:
         self._lock = threading.Lock()
         self._snapshot_cache: Snapshot | None = None
         self._labels: dict[str, str] = {}
+        self._wiki_cache: tuple[tuple[int, ...], dict[str, str]] | None = None
 
     # ---- Fabric ----------------------------------------------------------------
 
@@ -597,6 +599,34 @@ class ReadModel:
             ),
             key=lambda p: p.title,
         )
+
+    def wiki_hints(self) -> dict[str, str] | None:
+        """Page ID -> content sha256, or None while the Wiki baseline is unreadable.
+
+        Cached on the database's stat so a polled feed does not rehash every page.
+        None must never be read as "all pages were removed".
+        """
+        path = self.config.state_root / "wiki.sqlite3"
+        if not path.is_file():
+            return None
+        key: list[int] = []
+        for suffix in ("", "-wal"):
+            try:
+                info = os.stat(str(path) + suffix)
+                key += [info.st_mtime_ns, info.st_size, info.st_ino]
+            except OSError:
+                key += [0, 0, 0]
+        with self._lock:
+            cached = self._wiki_cache
+            if cached is not None and cached[0] == tuple(key):
+                return cached[1]
+        try:
+            hints = {page.id: page.sha256 for _, page in self._pages()}
+        except (OSError, sqlite3.Error):
+            return None
+        with self._lock:
+            self._wiki_cache = (tuple(key), hints)
+        return hints
 
     def wiki_page(self, page_id: str) -> WikiPage:
         for _, page in self._pages():

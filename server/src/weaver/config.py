@@ -179,7 +179,7 @@ class CourierSettings:
 
 
 Transport = Literal["files", "http"]
-TRANSPORT_FEATURES = ("capture", "review", "action", "alert")
+TRANSPORT_FEATURES = ("capture", "review", "action", "alert", "pipeline")
 _TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
 _TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
@@ -239,10 +239,11 @@ class MobileSettings:
             raise ConfigError("mobile.alert_body_days: expected positive integer")
 
     def transport_for(self, feature: str) -> Transport:
-        # Alert HTTP requires the phone's new receipt/dismiss ledger. Existing
-        # global HTTP installs must keep their file alerts until APK rollout.
+        # Alert and pipeline HTTP need the phone's new ledger/read client. Existing
+        # global HTTP installs keep their files until the APK rollout.
         return dict(self.features).get(
-            feature, "files" if feature == "alert" else self.transport
+            feature,
+            "files" if feature in ("alert", "pipeline") else self.transport,
         )
 
     def uses_files(self) -> bool:
