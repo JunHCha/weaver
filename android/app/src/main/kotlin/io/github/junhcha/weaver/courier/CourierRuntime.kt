@@ -58,17 +58,32 @@ object CourierRuntime {
             val old = tree(context)
             prefs(context).edit().putString("tree", uri.toString()).putBoolean("stopped", false)
                 .putString("status", report.joinToString("\n")).commit()
-            if (old != null && old != uri) runCatching {
-                context.contentResolver.releasePersistableUriPermission(old, grant)
-            }
+            if (old != null && old != uri) releaseOwnGrant(context, old, grant)
             schedule(context)
             report
         } catch (error: Exception) {
             CourierDatabase(context).use { it.diagnostic("courier", "selection", CourierClient.errorCode(error)) }
-            if (tree(context) != uri) runCatching {
-                context.contentResolver.releasePersistableUriPermission(uri, grant)
-            }
+            if (tree(context) != uri) releaseOwnGrant(context, uri, grant)
             throw error
+        }
+    }
+
+    /**
+     * Persisted grants are keyed by the Uri value, so comparing the Uri strings is the same identity Android
+     * uses for its grant table. When the phone vault holds the same Uri, only Courier's own write access is
+     * released and the vault's read access stays; otherwise the whole grant goes (W5-A6 / I6).
+     * Runs under [lock] (select), as does VaultAccess.select, so the vault value read here cannot change midway.
+     */
+    private fun releaseOwnGrant(context: Context, uri: Uri, grant: Int) {
+        val shared = io.github.junhcha.weaver.pipeline.VaultAccess.tree(context) == uri
+        val flags = if (shared) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else grant
+        try {
+            context.contentResolver.releasePersistableUriPermission(uri, flags)
+        } catch (error: Exception) {
+            // A leftover grant is harmless to correctness but must stay visible.
+            runCatching {
+                CourierDatabase(context).use { it.diagnostic("courier", "release_grant", CourierClient.errorCode(error)) }
+            }
         }
     }
 
