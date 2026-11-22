@@ -76,10 +76,9 @@ object MissingFolder : CourierFolder {
 /**
  * One [CourierFolder] over two backends: each Courier directory belongs to a feature, and the feature's route
  * (the server's `capabilities.transports`) decides whether it lives in the Syncthing folder or in the HTTP [spool].
- * `proposals/` mixes three kinds of files: review packages follow the review route, alert files and `proposals/pipeline`
- * follow it only while the server offers those features over HTTP; otherwise they keep coming from the Syncthing folder,
- * so switching verdicts to HTTP never silences notifications or the map. [identity] is the verdict route's (bound to the
- * server ID for HTTP), because review records and the inbox are keyed by it.
+ * `proposals/` mixes review packages and Alert files. Alerts follow their own explicit route; the map
+ * follows review only while offered. [identity] is the review route's; [alertSource] independently
+ * selects the phone's durable Alert ledger via the fixed SAF identity -> server association.
  */
 class RoutedFolder(
     private val files: CourierFolder,
@@ -96,7 +95,7 @@ class RoutedFolder(
     }
 
     private fun reviewHttp() = route(TransportFeature.VERDICT) == TransportRoute.HTTP
-    private fun alertsHttp() = reviewHttp() && offered(ServerFeature.ALERTS)
+    private fun alertsHttp() = http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)
     private fun pipelineHttp() = reviewHttp() && offered(ServerFeature.PIPELINE)
     private fun http(feature: TransportFeature) = route(feature) == TransportRoute.HTTP
 
@@ -113,6 +112,7 @@ class RoutedFolder(
         else -> throw IllegalArgumentException("unknown_folder")
     }
 
+    val alertSource: String get() = if (alertsHttp() || files === MissingFolder) httpIdentity else files.identity
     override val identity: String get() = if (reviewHttp()) httpIdentity else files.identity
     override fun created(folder: String): Boolean =
         if (folder == "proposals") !(reviewHttp() && alertsHttp()) && files.created(folder)
@@ -121,7 +121,7 @@ class RoutedFolder(
     override fun list(folder: String): List<CourierEntry> {
         if (folder != "proposals") return target(folder).list(folder)
         val fromFiles = files.list(folder).filter { e -> target(folder, e.name) === files }
-        val fromSpool = if (reviewHttp()) spool.list(folder).filter { e -> kind(e.name) != Kind.OTHER && target(folder, e.name) === spool } else emptyList()
+        val fromSpool = if (reviewHttp() || alertsHttp()) spool.list(folder).filter { e -> kind(e.name) != Kind.OTHER && target(folder, e.name) === spool } else emptyList()
         return fromFiles + fromSpool
     }
     override fun read(folder: String, name: String) = target(folder, name).read(folder, name)

@@ -9,17 +9,9 @@ import io.github.junhcha.weaver.schema.Alert
 import io.github.junhcha.weaver.schema.ReviewPackage
 import java.io.File
 
-/**
- * Local list of review packages and change alerts shared by notifications and the widget.
- * Rows are never deleted: their states are the per-ID notification history that keeps resynced
- * or restarted scans from notifying twice. Only the first summary line and the alert message are
- * stored; the full package stays in the Courier folder for the review screen.
- *
- * Deleting an alert file is irreversible (Syncthing propagates it to the PC), so it happens only for
- * DISMISSED alerts and for alerts RESOLVED in this very run, and only on a trusted listing.
- */
+/** Review index and durable phone-owned Alert ledger; synchronous calls belong on an IO thread. */
 class InboxDatabase(context: Context) : SQLiteOpenHelper(
-    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 3,
+    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 4,
 ), java.io.Closeable {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -28,6 +20,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             stage TEXT NOT NULL, revised INTEGER NOT NULL, state TEXT NOT NULL,
             first_seen INTEGER NOT NULL, changed_at INTEGER NOT NULL,
             notified_revision INTEGER NOT NULL DEFAULT 0, absent_scans INTEGER NOT NULL DEFAULT 0)""")
+        AlertLedgerStore(db).create()
         // Verdicts this app queued; such a revision is never revived by a resynced copy.
         db.execSQL("CREATE TABLE submitted (package_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
         db.execSQL("""CREATE TABLE alerts (
@@ -36,10 +29,58 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             delete_pending INTEGER NOT NULL DEFAULT 0, first_seen INTEGER NOT NULL,
             changed_at INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0)""")
     }
-    /** Older lists described another contract and are not migrated: the list starts empty. */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        listOf("proposals", "submitted", "alerts").forEach { db.execSQL("DROP TABLE IF EXISTS $it") }
-        onCreate(db)
+        if (oldVersion < 3) {
+            listOf("proposals", "reviews", "submitted", "alerts").forEach { db.execSQL("DROP TABLE IF EXISTS $it") }
+            onCreate(db)
+            return
+        }
+        val ledger = AlertLedgerStore(db)
+        ledger.create()
+        val source = db.rawQuery("SELECT value FROM settings WHERE key=?", arrayOf("tree")).use { if (it.moveToFirst()) it.getString(0) else "legacy" }
+        val server = if (source.startsWith("http:")) source.removePrefix("http:") else "files:$source"
+        ledger.bind(source, server)
+        db.rawQuery("SELECT alert_id, package_id, thread_id, message, created_at, state, first_seen, notified, changed_at FROM alerts", null).use { c ->
+            while (c.moveToNext()) {
+                val alert = Alert(2, c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4))
+                ledger.receive(server, alert, c.getLong(6))
+                if (c.getString(5) in setOf(DISMISSED, RESOLVED)) ledger.close(server, alert.alertId, c.getLong(8))
+                if (c.getInt(7) == 1) db.execSQL("UPDATE alert_ledger SET posted=1 WHERE server_id=? AND alert_id=?", arrayOf(server, alert.alertId))
+            }
+        }
+        db.execSQL("INSERT OR REPLACE INTO settings VALUES(?, ?)", arrayOf("alert_server", server))
+    }
+
+    private fun ledger() = AlertLedgerStore(writableDatabase)
+    internal fun alertServer(): String = setting("alert_server") ?: "legacy"
+
+    /** Called on IO, in the same transaction as receipt reconciliation when used by a scan. */
+    fun selectAlertSource(source: String, serverId: String? = null): String {
+        val store = ledger()
+        val server = serverId ?: store.mapped(source) ?: if (source.startsWith("http:")) source.removePrefix("http:") else "files:$source"
+        store.bind(source, server)
+        setting("alert_server", server)
+        return server
+    }
+
+    fun bindAlertSource(source: String, serverId: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val old = ledger().mapped(source)
+            ledger().bind(source, serverId)
+            if (old != null && alertServer() == old) setting("alert_server", serverId)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    fun receiveAlert(serverId: String, alert: Alert, now: Long) = ledger().receive(serverId, alert, now)
+    fun pendingAlertAcks(serverId: String, deviceId: String): List<String> = ledger().pending(serverId, deviceId)
+    fun alertAcknowledged(serverId: String, deviceId: String, alertId: String) = ledger().acknowledged(serverId, deviceId, alertId)
+    fun alertBodies(serverId: String): List<Alert> = ledger().bodies(serverId)
+
+    fun markAlertRead(serverId: String, alertId: String, now: Long) {
+        writableDatabase.execSQL("UPDATE alert_ledger SET read_at=COALESCE(read_at, ?) WHERE server_id=? AND alert_id=?", arrayOf<Any>(now, serverId, alertId))
     }
 
     data class ReviewItem(
@@ -48,7 +89,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
     )
     data class AlertItem(
         val alertId: String, val packageId: String, val threadId: String,
-        val message: String, val createdAt: String, val notified: Boolean,
+        val message: String, val createdAt: String, val notified: Boolean, val serverId: String = "legacy",
     )
 
     internal fun setting(key: String): String? = readableDatabase.rawQuery(
@@ -60,27 +101,15 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    /**
-     * Apply one complete folder listing from [source] (the selected tree). Returns alert file names to delete.
-     *
-     * The listing is *trusted* only when [source] equals the previous run's tree and proposals/ was not just
-     * created ([rebuilt]). An untrusted listing only adds or updates (a different or new folder proves nothing
-     * about absence). On a trusted listing:
-     * - an absent package leaves the list (GONE) and counts consecutive absent scans; alerts of a package
-     *   that reaches [RESOLVE_AFTER] absent scans in this run are RESOLVED (a feedback revision can briefly
-     *   show neither revision);
-     * - an absent alert becomes ABSENT (hidden, never deleted) and returns to ACTIVE when its file reappears.
-     * A file that is present but [unreadable] counts as present. A revision never moves backwards; a GONE
-     * package reappearing returns silently unless this app submitted a verdict for that revision.
-     */
+    /** Reconcile review absence only; Alert absence never closes or removes a cached body. */
     fun reconcile(packages: List<ReviewPackage>, alerts: List<Alert>, unreadable: Set<String>, now: Long,
-                  source: String, rebuilt: Boolean): List<String> {
+                  source: String, rebuilt: Boolean, alertSource: String = source, serverId: String? = null): List<String> {
         val db = writableDatabase
         db.beginTransaction()
         try {
+            val alertServer = selectAlertSource(alertSource, serverId)
             val trusted = setting("tree") == source && !rebuilt
             val heldPackages = unreadable.mapNotNull { CourierRules.revision.matchEntire(it)?.groupValues?.get(1) }.toSet()
-            val heldAlerts = unreadable.mapNotNull { CourierRules.alert.matchEntire(it)?.groupValues?.get(1) }.toSet()
             for (p in packages) {
                 val old = db.rawQuery("SELECT revision, state FROM reviews WHERE package_id=?", arrayOf(p.packageId))
                     .use { if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null }
@@ -103,19 +132,8 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
                     // Older revision resynced, or one this app already decided: keep the row as is.
                 }
             }
-            for (a in alerts) {
-                db.insertWithOnConflict("alerts", null, ContentValues().apply {
-                    put("alert_id", a.alertId); put("package_id", a.packageId); put("thread_id", a.threadId)
-                    put("message", a.message); put("created_at", a.createdAt); put("state", ACTIVE)
-                    put("first_seen", now); put("changed_at", now)
-                }, SQLiteDatabase.CONFLICT_IGNORE)
-            }
-            val alertFiles = alerts.map { it.alertId }.toSet() + heldAlerts
-            ids(db, "SELECT alert_id FROM alerts WHERE state='$ABSENT'").filter { it in alertFiles }.forEach {
-                db.update("alerts", ContentValues().apply { put("state", ACTIVE); put("changed_at", now) },
-                    "alert_id=?", arrayOf(it))
-            }
-            var delete = emptyList<String>()
+            for (a in alerts) ledger().receive(alertServer, a, now)
+            val delete: List<String>
             if (trusted) {
                 val present = packages.map { it.packageId }.toSet() + heldPackages
                 db.execSQL("UPDATE reviews SET absent_scans=0 WHERE package_id IN (${marks(present)})", present.toTypedArray())
@@ -125,43 +143,15 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
                         arrayOf<Any>(now, it))
                     db.execSQL("UPDATE reviews SET state='$GONE' WHERE package_id=? AND state='$ACTIVE'", arrayOf(it))
                 }
-                // Only packages crossing the threshold in this run resolve alerts; long-gone ones never do.
-                val vanished = ids(db, "SELECT package_id FROM reviews WHERE absent_scans=$RESOLVE_AFTER")
-                    .filter { it in missing }
-                ids(db, "SELECT alert_id FROM alerts WHERE state='$ACTIVE' AND package_id IN (${marks(vanished)})",
-                    vanished.toTypedArray()).filter { it in alertFiles }.forEach {
-                    db.update("alerts", ContentValues().apply {
-                        put("state", RESOLVED); put("delete_pending", 1); put("changed_at", now)
-                    }, "alert_id=?", arrayOf(it))
-                }
-                ids(db, "SELECT alert_id FROM alerts WHERE state='$ACTIVE'").filter { it !in alertFiles }.forEach {
-                    db.update("alerts", ContentValues().apply { put("state", ABSENT); put("changed_at", now) },
-                        "alert_id=?", arrayOf(it))
-                }
-                // A RESOLVED alert is deleted only while its resolving listing still shows it. A DISMISSED
-                // alert stays pending: the user closed that ID, so its file is deleted wherever it is listed.
-                ids(db, "SELECT alert_id FROM alerts WHERE delete_pending=1 AND state='$RESOLVED'")
-                    .filter { it !in alertFiles }.forEach {
-                        db.execSQL("UPDATE alerts SET delete_pending=0 WHERE alert_id=?", arrayOf(it))
-                    }
-                delete = ids(db, "SELECT alert_id FROM alerts WHERE delete_pending=1")
-                    .filter { it in alertFiles }.map { "alert_$it.json" }
             }
+            // Adapter cleanup is driven only by a committed local close. Repeat on resync or crash.
+            val closed = ledger().closedIds(alertServer)
+            delete = alerts.filter { it.alertId in closed }.map { "alert_${it.alertId}.json" }
             setting("tree", source)
             setting("last_scan_at", now.toString())
             db.setTransactionSuccessful()
             return delete
         } finally { db.endTransaction() }
-    }
-
-    /** Record successful deletions so a resynced copy of a resolved alert is not deleted again. */
-    fun deleted(names: List<String>) {
-        names.forEach { name ->
-            CourierRules.alert.matchEntire(name)?.groupValues?.get(1)?.let {
-                writableDatabase.execSQL("UPDATE alerts SET delete_pending=0 WHERE alert_id=? AND state='$RESOLVED'",
-                    arrayOf(it))
-            }
-        }
     }
 
     /** This app queued a verdict for [revision]; that revision is never revived. */
@@ -170,10 +160,8 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             ON CONFLICT(package_id) DO UPDATE SET revision=MAX(revision, excluded.revision)""", arrayOf<Any>(packageId, revision))
     }
 
-    /** The user closes an alert; its file is deleted on the next trusted scan that lists it. */
-    fun dismiss(alertId: String, now: Long): Boolean = writableDatabase.update("alerts",
-        ContentValues().apply { put("state", DISMISSED); put("delete_pending", 1); put("changed_at", now) },
-        "alert_id=? AND state='$ACTIVE'", arrayOf(alertId)) == 1
+    /** Close only locally; the ledger keeps the body and replays adapter cleanup. */
+    fun dismiss(alertId: String, now: Long, serverId: String = alertServer()): Boolean = ledger().close(serverId, alertId, now)
 
     fun reviews(newestRevisionFirst: Boolean = false): List<ReviewItem> = readableDatabase.rawQuery(
         """SELECT package_id, revision, summary, stage, revised, notified_revision FROM reviews
@@ -183,19 +171,27 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             c.getInt(4) == 1, c.getLong(5)))
     } }
 
-    fun alerts(): List<AlertItem> = readableDatabase.rawQuery(
-        """SELECT alert_id, package_id, thread_id, message, created_at, notified FROM alerts
-            WHERE state='$ACTIVE' ORDER BY first_seen DESC, alert_id DESC""", null,
-    ).use { c -> buildList {
-        while (c.moveToNext()) add(AlertItem(c.getString(0), c.getString(1), c.getString(2), c.getString(3),
-            c.getString(4), c.getInt(5) == 1))
-    } }
+    fun alerts(): List<AlertItem> {
+        val server = alertServer()
+        return ledger().bodies(server).map { a -> AlertItem(a.alertId, a.packageId, a.threadId, a.message,
+            a.createdAt, ledger().posted(server, a.alertId), server) }
+    }
 
     internal fun markReviewsNotified() {
         writableDatabase.execSQL("UPDATE reviews SET notified_revision=revision WHERE state='$ACTIVE'")
     }
+    internal fun prepareAlertsNotification(signature: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            setting("alert_pending", signature)
+            markAlertsNotified()
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     internal fun markAlertsNotified() {
-        writableDatabase.execSQL("UPDATE alerts SET notified=1 WHERE state='$ACTIVE'")
+        writableDatabase.execSQL("UPDATE alert_ledger SET posted=1 WHERE server_id=? AND closed_at IS NULL", arrayOf(alertServer()))
     }
 
     fun lastScanAt(): Long? = setting("last_scan_at")?.toLongOrNull()
@@ -210,7 +206,5 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         const val DISMISSED = "DISMISSED"
         const val RESOLVED = "RESOLVED"
         const val ABSENT = "ABSENT"
-        /** Consecutive trusted scans without the evidence package before its alerts resolve. */
-        const val RESOLVE_AFTER = 2
     }
 }

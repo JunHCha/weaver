@@ -15,6 +15,10 @@ import io.github.junhcha.weaver.courier.CourierFolder
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.shepherd.ShepherdRuntime
 import io.github.junhcha.weaver.ui.Feature
+import io.github.junhcha.weaver.transport.RoutedFolder
+import io.github.junhcha.weaver.transport.TransportRuntime
+import io.github.junhcha.weaver.transport.TransportFeature
+import io.github.junhcha.weaver.transport.TransportRoute
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.time.Instant
@@ -48,21 +52,20 @@ object InboxRuntime {
               now: Long = System.currentTimeMillis()): Boolean {
         val delete = synchronized(lock) {
             InboxDatabase(context).use {
-                it.reconcile(inbox.packages, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"))
+                val source = (folder as? RoutedFolder)?.alertSource ?: folder.identity
+                val server = TransportRuntime.settings(context).serverId
+                val closed = it.reconcile(inbox.packages, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"), source, server)
+                val http = TransportRuntime.settings(context).route(TransportFeature.ALERT) == TransportRoute.HTTP
+                (closed + if (http) inbox.alerts.map { a -> "alert_${a.alertId}.json" } else emptyList()).distinct()
             }
         }
         var successful = true
-        val done = mutableListOf<String>()
-        try {
-            delete.forEach { name ->
-                try { folder.delete("proposals", name); done.add(name)
-                } catch (error: SecurityException) { throw error
-                } catch (error: Exception) {
-                    diagnostics.diagnostic("proposals", name, CourierClient.errorCode(error)); successful = false
-                }
+        delete.forEach { name ->
+            try { folder.delete("proposals", name)
+            } catch (error: SecurityException) { throw error
+            } catch (error: Exception) {
+                diagnostics.diagnostic("proposals", name, CourierClient.errorCode(error)); successful = false
             }
-        } finally {
-            if (done.isNotEmpty()) synchronized(lock) { InboxDatabase(context).use { it.deleted(done) } }
         }
         refresh(context, now)
         return successful
@@ -82,11 +85,10 @@ object InboxRuntime {
     }
 
     /** User closes an alert: it leaves the list now, and the next Courier run deletes its file. */
-    fun dismissAlert(context: Context, alertId: String, now: Long = System.currentTimeMillis()): Boolean {
-        val changed = synchronized(lock) { InboxDatabase(context).use { it.dismiss(alertId, now) } }
+    fun dismissAlert(context: Context, alertId: String, now: Long = System.currentTimeMillis(), serverId: String? = null): Boolean {
+        val changed = runCatching { synchronized(lock) { InboxDatabase(context).use { it.dismiss(alertId, now, serverId ?: it.alertServer()) } } }.getOrDefault(false)
         if (changed) {
-            refresh(context, now)
-            CourierRuntime.kick(context)
+            runCatching { refresh(context, now); CourierRuntime.kick(context) }
         }
         return changed
     }
@@ -167,17 +169,28 @@ object InboxRuntime {
             if (added) db.setting("alert_blocked", "true")
             return
         }
-        val signature = items.joinToString("\n") { it.alertId }
+        val signature = items.joinToString("\n") { "${it.serverId}:${it.alertId}" }
+        val recovering = db.setting("alert_pending") == signature
         val visible = manager.activeNotifications.any { it.id == ALERT_NOTIFICATION }
-        if (!added && !(visible && signature != db.setting("alert_signature"))) {
+        if (recovering && manager.activeNotifications.any {
+                it.id == ALERT_NOTIFICATION && it.notification.extras.getString("weaver_alert_signature") == signature
+            }) {
+            db.setting("alert_pending", "")
+            db.setting("alert_signature", signature)
+            db.setting("alert_blocked", "false")
+            return
+        }
+        if (!added && !recovering && !(visible && signature != db.setting("alert_signature"))) {
             db.setting("alert_signature", signature)
             return
         }
         val blocked = db.setting("alert_blocked") == "true"
         val lines = items.map { it.message.take(80) }
+        // Durable intent precedes Android notification side effects; recovery uses the same ID silently.
+        db.prepareAlertsNotification(signature)
         if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, "일정 변경 가능 ${items.size}건", lines,
-                silent = blocked || !added)) {
-            db.markAlertsNotified()
+                silent = blocked || !added || recovering, signature = signature)) {
+            db.setting("alert_pending", "")
             db.setting("alert_signature", signature)
             db.setting("alert_blocked", "false")
         }
@@ -189,7 +202,7 @@ object InboxRuntime {
      */
     @Suppress("MissingPermission") // allowed() checks permission and channel immediately before notify.
     private fun post(context: Context, manager: NotificationManager, id: Int, channel: String, title: String,
-                     lines: List<String>, silent: Boolean): Boolean {
+                     lines: List<String>, silent: Boolean, signature: String? = null): Boolean {
         val intent = PendingIntent.getActivity(context, id,
             Intent(context, MainActivity::class.java).setAction(OPEN_INBOX)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -202,6 +215,7 @@ object InboxRuntime {
         return try {
             manager.notify(id, NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground).setContentTitle(title).setContentText(lines.first())
+                .addExtras(android.os.Bundle().apply { if (signature != null) putString("weaver_alert_signature", signature) })
                 .setStyle(style).setNumber(lines.size)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(public).setLocalOnly(true)
                 .setContentIntent(intent).setAutoCancel(true).setSilent(silent).build())

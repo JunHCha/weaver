@@ -28,7 +28,29 @@ class ContractFixturesTest {
         val caps = Fx.json("capabilities.capabilities")
         assertEquals(setOf("capture", "review", "action"), (caps["transports"] as JsonObject).keys)
         assertEquals(false, (caps["features"] as JsonObject)["alerts"].toString().toBoolean())
-        assertEquals(TransportFeature.entries.map { it.wire }.toSet(), (caps["transports"] as JsonObject).keys)
+        assertEquals(TransportFeature.entries.filter { it != TransportFeature.ALERT }.map { it.wire }.toSet(), (caps["transports"] as JsonObject).keys)
+    }
+
+    @Test fun alertFixturesMatchHandWrittenWireModels() {
+        val caps = alertWireJson.decodeFromString<AlertCapabilities>(Fx.json("alerts.enabled_capabilities").toString())
+        assertTrue(caps.http)
+        listOf("list", "received_list", "other_device_list").forEach { name ->
+            val envelope = alertWireJson.decodeFromString<AlertEnvelope>(Fx.json("alerts.$name").toString())
+            assertNull(envelope.nextCursor)
+            envelope.items.forEach { CourierClient.decoded<Alert>(WeaverCodec.encode(it)) }
+        }
+        listOf("body", "body_after_receipt").forEach { CourierClient.decoded<Alert>(Fx.json("alerts.$it").toString()) }
+        listOf("receipt", "receipt_retry").forEach {
+            val ack = alertWireJson.decodeFromString<AlertAck>(Fx.json("alerts.$it").toString())
+            assertEquals("received", ack.state)
+            assertEquals(CourierClient.decoded<Alert>(Fx.json("alerts.body").toString()).alertId, ack.alertId)
+        }
+        listOf("expired_body", "expired_ack").forEach {
+            assertEquals(410, ContractFixtures["alerts.$it"].status)
+            val error = alertWireJson.decodeFromString<AlertError>(Fx.json("alerts.$it").toString())
+            assertEquals("alert_body_expired", error.code)
+            assertFalse(error.retryable)
+        }
     }
 
     @Test fun everyReadFixtureThreadParsesAndKeepsTheServersOwnFlags() {

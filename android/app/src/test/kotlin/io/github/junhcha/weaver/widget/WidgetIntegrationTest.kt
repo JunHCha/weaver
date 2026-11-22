@@ -91,8 +91,8 @@ class WidgetIntegrationTest {
         WorkManager.getInstance(context).getWorkInfosForUniqueWork("review-widget-refresh").get()
         assertTrue(snapshots.values.all { it.pendingCount == 0 && it.rows.single().submitted })
         reconcile(emptyList())
-        assertTrue(snapshots.values.all { it.rows.isEmpty() && it.alertMessages.isEmpty() })
-        // A process restart/new reader still sees the durable local deletion.
+        assertTrue(snapshots.values.all { it.rows.isEmpty() && it.alertMessages == listOf(alert.message) })
+        // Review absence leaves the cached Alert body intact across a restart.
         assertTrue(WidgetModel.load(context, now).rows.isEmpty())
     }
     @Test fun revisionArrivalSortAndFreshWaitingDelayedErrorStates() {

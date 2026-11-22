@@ -16,6 +16,9 @@ import io.github.junhcha.weaver.courier.CourierRules
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierWorker
 import io.github.junhcha.weaver.storage.AppStorage
+import io.github.junhcha.weaver.inbox.InboxDatabase
+import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.schema.Alert
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonPrimitive
@@ -58,7 +61,16 @@ object TransportRuntime {
         val settings = settings(context)
         if (!settings.anyHttp || settings.needsRepair) return null
         val pairing = settings.pairing() ?: return null
-        return HttpExchange(apiFactory(pairing), spool(context, settings), state(context, settings), settings::route, settings::feature)
+        return HttpExchange(apiFactory(pairing), spool(context, settings), state(context, settings), settings::route, settings::feature,
+            inboxAlertLedger(context, pairing.serverId, pairing.deviceId))
+    }
+
+    internal fun inboxAlertLedger(context: Context, serverId: String, deviceId: String): AlertLedger = object : AlertLedger {
+        private fun <T> local(block: (InboxDatabase) -> T): T =
+            synchronized(InboxRuntime.lock) { InboxDatabase(context).use(block) }
+        override fun receive(alert: Alert) { local { it.receiveAlert(serverId, alert, System.currentTimeMillis()) } }
+        override fun pending(): List<String> = local { it.pendingAlertAcks(serverId, deviceId) }
+        override fun acknowledged(alertId: String) { local { it.alertAcknowledged(serverId, deviceId, alertId) } }
     }
 
     /** The paired server's API for reads and tag edits, or null when this phone is not paired (or must pair again). */
@@ -91,9 +103,14 @@ object TransportRuntime {
         try {
             val capabilities = apiFactory(pairing).capabilities()
             val identityBefore = routed(context, MissingFolder).identity
+            val files = CourierRuntime.files(context)
+            if (files !== MissingFolder) synchronized(InboxRuntime.lock) {
+                InboxDatabase(context).use { it.bindAlertSource(files.identity, pairing.serverId) }
+            }
             settings.applyCapabilities(capabilities)
             val after = routed(context, MissingFolder).identity
             if (identityBefore != after) io.github.junhcha.weaver.review.ReviewRuntime.retarget(context, identityBefore, after)
+        } catch (error: IllegalStateException) { summary.fail(error.message ?: "alert_source_conflict", false)
         } catch (error: ApiException) {
             if (error.status == 401 || error.code == "node_mismatch") summary.needsRepair = true
             summary.fail(error.code, error.retryable)
@@ -114,6 +131,13 @@ object TransportRuntime {
         if (reported != pairing.serverId) throw PairingException("서버가 코드의 서버와 달라요")
         val settings = settings(context)
         synchronized(CourierRuntime.lock) {
+            val files = CourierRuntime.files(context)
+            if (files !== MissingFolder) synchronized(InboxRuntime.lock) {
+                InboxDatabase(context).use { db ->
+                    try { db.bindAlertSource(files.identity, pairing.serverId) }
+                    catch (_: IllegalStateException) { throw PairingException("Courier 폴더가 다른 서버에 연결되어 있어요. 서버별 폴더를 선택하세요.") }
+                }
+            }
             settings.pair(pairing)
             settings.applyCapabilities(capabilities)
             context.getSharedPreferences("transport-last", Context.MODE_PRIVATE).edit().putString("server_id", pairing.serverId).commit()
@@ -166,6 +190,7 @@ object TransportRuntime {
                     TransportFeature.CAPTURE -> "outbox"
                     TransportFeature.VERDICT -> "decisions"
                     TransportFeature.ACTION_RESULT -> CourierRules.ACTION_RESULTS
+                    TransportFeature.ALERT -> return@forEach
                 }
                 val entries = spool.list(folder).filter { it.regular && !CourierRules.ignored(it.name) }
                 // Payloads first, manifests (.json) last, so a crash between the two never exposes a manifest without its body.

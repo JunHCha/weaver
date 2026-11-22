@@ -61,6 +61,13 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             }
         }
     }
+    LaunchedEffect(alerts.map { it.serverId to it.alertId }) {
+        withContext(Dispatchers.IO) {
+            runCatching { synchronized(InboxRuntime.lock) { InboxDatabase(context).use { db ->
+                alerts.forEach { db.markAlertRead(it.serverId, it.alertId, System.currentTimeMillis()) }
+            } } }
+        }
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (openedFromNotification) "알림에서 연 검토 대기 목록" else "검토 대기 문서 ${reviews.size}건")
@@ -96,7 +103,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
                         Text("확인할 일정 변경", style = MaterialTheme.typography.titleSmall)
                         Text(alert.message)
                         OutlinedButton(onClick = {
-                            scope.launch(Dispatchers.IO) { InboxRuntime.dismissAlert(context, alert.alertId) }
+                            scope.launch(Dispatchers.IO) { InboxRuntime.dismissAlert(context, alert.alertId, serverId = alert.serverId) }
                         }) { Text("확인했어요") }
                     }
                 }

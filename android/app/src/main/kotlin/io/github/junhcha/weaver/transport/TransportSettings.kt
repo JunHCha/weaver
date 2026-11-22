@@ -18,6 +18,7 @@ enum class TransportFeature(val wire: String, val label: String) {
     CAPTURE("capture", "수집"),
     VERDICT("review", "검토 판정"),
     ACTION_RESULT("action", "실행 결과"),
+    ALERT("alert", "변경 경고"),
 }
 
 enum class TransportRoute(val label: String) { FILES("Syncthing"), HTTP("HTTP") }
@@ -143,11 +144,15 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     fun applyCapabilities(capabilities: JsonObject): List<TransportFeature> {
         val transports = capabilities["transports"] as? JsonObject
         val features = capabilities["features"] as? JsonObject
+        val alertHttp = runCatching {
+            alertWireJson.decodeFromString<AlertCapabilities>(capabilities.toString()).http
+        }.getOrDefault(false)
         val changed = mutableListOf<TransportFeature>()
         val edit = prefs.edit()
         TransportFeature.entries.forEach { f ->
             val wire = (transports?.get(f.wire) as? JsonPrimitive)?.contentOrNull
-            val next = if (wire == "http") TransportRoute.HTTP else TransportRoute.FILES
+            val enabled = f != TransportFeature.ALERT || alertHttp
+            val next = if (wire == "http" && enabled) TransportRoute.HTTP else TransportRoute.FILES
             if (route(f) != next) changed += f
             edit.putString(routeKey(f), next.name)
         }

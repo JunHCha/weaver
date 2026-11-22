@@ -91,6 +91,8 @@ interface MobileApi {
     fun operation(id: String): Operation
     fun alerts(): List<JsonElement>
     fun ackAlert(alertId: String)
+    /** 410 alert_body_expired preserves the callers local cache. */
+    fun alert(alertId: String): ByteArray = throw UnsupportedOperationException()
     fun actions(): List<JsonElement>
     fun putActionResult(actionId: String, result: ByteArray): String
     fun pipeline(cursor: String?, limit: Int): Page
@@ -248,8 +250,19 @@ class HttpsMobileApi(
             (o["code"] as? JsonPrimitive)?.contentOrNull, (o["kind"] as? JsonPrimitive)?.contentOrNull, o["result"] as? JsonObject)
     }
 
-    override fun alerts() = items(call("GET", "/alerts"))
-    override fun ackAlert(alertId: String) { call("PUT", "/alerts/$alertId/ack") }
+    override fun alerts(): List<JsonElement> {
+        val body = call("GET", "/alerts")
+        try { alertWireJson.decodeFromString<AlertEnvelope>(body.body.decodeToString()) }
+        catch (_: Exception) { throw InvalidResponseException() }
+        return items(body)
+    }
+    override fun ackAlert(alertId: String) {
+        val body = call("PUT", "/alerts/$alertId/ack").body.decodeToString()
+        val ack = try { alertWireJson.decodeFromString<AlertAck>(body) }
+        catch (_: Exception) { throw InvalidResponseException() }
+        if (ack.alertId != alertId) throw InvalidResponseException()
+    }
+    override fun alert(alertId: String): ByteArray = call("GET", "/alerts/$alertId").body
     override fun actions() = items(call("GET", "/actions"))
 
     override fun putActionResult(actionId: String, result: ByteArray): String =

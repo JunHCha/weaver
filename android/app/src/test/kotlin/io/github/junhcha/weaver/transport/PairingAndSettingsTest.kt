@@ -116,7 +116,7 @@ class PairingAndSettingsTest {
     }
 
     @Test fun featureNamesMatchTheServerCapabilitiesKeys() {
-        assertEquals(listOf("capture", "review", "action"), TransportFeature.entries.map { it.wire })
+        assertEquals(listOf("capture", "review", "action", "alert"), TransportFeature.entries.map { it.wire })
     }
 
     @Test fun manifestKeepsTokensOutOfBackupsAndRequestsInternet() {
