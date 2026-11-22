@@ -119,6 +119,9 @@ class FakeMobileServer(
         })
     }
 
+    /** Serve a whole capabilities fixture case (e.g. `pipeline.enabled_capabilities`) instead of the default one. */
+    fun capabilitiesFrom(name: String) { capabilityOverride = ContractFixtures[name].responseBody as JsonObject }
+
     init {
         val store = pki.leaf(leaf)
         val keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, TestPki.PASSWORD.toCharArray()) }
