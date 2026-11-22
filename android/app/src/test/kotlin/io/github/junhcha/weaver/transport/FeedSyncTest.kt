@@ -219,7 +219,109 @@ class FeedSyncTest {
         assertEquals(FeedOutcome.COMPLETE, sync("alert").run())
         assertEquals(listOf<String?>(cursor(1), cursor(2)), api.askedCursors)
         assertEquals(cursor(3), store.load().cursor)
-        assertEquals(listOf("alert", "alert"), refreshed)
+        assertEquals("the list is refreshed once, after the last page", listOf("alert"), refreshed)
+    }
+
+    @Test fun aSecondExpiryInARowIsRetryableNotAFailureAndTheNextRunStartsOver() {
+        store.update { FeedData(cursor = cursor(9), kinds = "alert") }
+        api.changeErrors += ApiException(410, "cursor_expired", false)
+        api.changeErrors += ApiException(410, "cursor_expired", false)
+        val error = runCatching { sync("alert").run() }.exceptionOrNull() as ApiException
+        assertTrue("the restart budget is spent, not the server's refusal", error.retryable)
+        assertEquals("cursor_expired", error.code)
+        assertNull(store.load().cursor)
+        api.feed += page(next = 1)
+        assertEquals(FeedOutcome.COMPLETE, sync("alert").run())
+        assertEquals(cursor(1), store.load().cursor)
+    }
+
+    @Test fun aChangedEpochRestartsFromASnapshotAndThePipelineListIsReplaced() {
+        cache.put("src_gone", revision(1, "src_gone"), null, 1)
+        store.update { FeedData(cursor = cursor(5), kinds = "pipeline") }
+        val other = "ep_00000000000000000000000000000002"
+        api.feed += FeedEnvelope(other, emptyList(), "$other.1.728c5870", false)
+        api.list = listOf(item)
+        api.feed += FeedEnvelope(other, emptyList(), "$other.1.728c5870", false)
+        assertEquals(FeedOutcome.COMPLETE, sync("pipeline").run())
+        assertEquals(listOf<String?>(cursor(5), null), api.askedCursors)
+        assertEquals(listOf(sourceId), cache.items().map { it.sourceId })
+        assertEquals("$other.1.728c5870", store.load().cursor)
+    }
+
+    @Test fun aFirstPageThatStopsDoesNotRewriteThePipelineListAtEveryRun() {
+        api.list = listOf(item)
+        api.feed += page(entry(1, "hologram", "h1"), next = 2)
+        assertEquals(FeedOutcome.STOPPED, sync("pipeline").run())
+        api.feed += page(entry(1, "hologram", "h1"), next = 2)
+        assertEquals(FeedOutcome.STOPPED, sync("pipeline").run())
+        assertEquals("the list of this snapshot is already in the cache", 1, api.listCalls)
+        // A new snapshot (the cursor was dropped) reads the list again.
+        store.reset()
+        api.feed += page(next = 2)
+        sync("pipeline").run()
+        assertEquals(2, api.listCalls)
+    }
+
+    @Test fun theListEtagsSurviveAReplacementWhenTheBodyIsUnchanged() {
+        cache.put(sourceId, item, etag, 1)
+        api.list = listOf(item)
+        api.feed += page(next = 1)
+        sync("pipeline").run()
+        assertEquals(etag, cache.cached(sourceId)!!.etag)
+    }
+
+    @Test fun aMiddlePageThatStopsKeepsWhatEarlierPagesAppliedAndRefreshesOnce() {
+        cache.put(sourceId, item, etag, 1)
+        store.update { FeedData(cursor = cursor(1), kinds = "alert,pipeline") }
+        api.feed += page(entry(2, "pipeline", sourceId, "tombstone"), more = true)
+        api.feed += page(entry(3, "alert", "alt_1"), entry(4, "hologram", "h1"), next = 5)
+        assertEquals(FeedOutcome.STOPPED, sync("alert", "pipeline").run())
+        assertTrue("page one committed before the stop", cache.items().isEmpty())
+        assertEquals("through the last applied entry, before the unknown one", cursor(3), store.load().cursor)
+        assertEquals(listOf("alert"), refreshed)
+        assertEquals(listOf(cursor(3)), api.checkpoints)
+    }
+
+    @Test fun aListRefreshThatFailsAfterLaterPagesPullsTheCursorBackBehindItsFirstEntry() {
+        store.update { FeedData(cursor = cursor(1), kinds = "alert,pipeline") }
+        failRefresh += "alert"
+        api.feed += page(entry(2, "alert", "alt_1"), more = true)
+        api.feed += page(entry(3, "pipeline", sourceId, "tombstone"), next = 4)
+        assertEquals(FeedOutcome.STOPPED, sync("alert", "pipeline").run())
+        assertEquals("the alert entry was not done, so nothing after it is checkpointed", cursor(1), store.load().cursor)
+        assertEquals("feed_refresh_failed", store.load().stopped)
+    }
+
+    @Test fun aCursorIsNotCommittedPastAnEntryWhoseListRefreshIsStillDue() {
+        store.update { FeedData(cursor = cursor(1), kinds = "alert,pipeline") }
+        api.feed += page(entry(2, "alert", "alt_1"), more = true)
+        api.feed += page(entry(3, "pipeline", sourceId, "tombstone"), more = true)
+        api.feed += page(next = 5)
+        // Killed while reading the last page: the stored cursor must still be before the alert entry.
+        val killed = object : RuntimeException() {}
+        api.afterPages = { if (api.askedCursors.size == 3) throw killed }
+        assertTrue(runCatching { sync("alert", "pipeline").run() }.exceptionOrNull() === killed)
+        assertEquals(cursor(1), store.load().cursor)
+    }
+
+    @Test fun aDamagedFeedFileStartsANewSnapshotAndNeverFails() {
+        File(tmp.root, "feed/feed.json").writeText("{ not json")
+        api.list = listOf(item)
+        api.feed += page(next = 2)
+        assertEquals(FeedOutcome.COMPLETE, sync("pipeline").run())
+        assertEquals(listOf<String?>(null), api.askedCursors)
+        assertEquals(cursor(2), store.load().cursor)
+    }
+
+    @Test fun anInvalidItemIsReportedOnceEvenAcrossSnapshots() {
+        val bad = JsonObject(mapOf("source_id" to JsonPrimitive(sourceId)))
+        api.list = listOf(bad)
+        api.feed += page(next = 1)
+        sync("pipeline").run()
+        store.reset()
+        api.feed += page(next = 1)
+        sync("pipeline").run()
+        assertEquals(listOf("pipeline:$sourceId"), invalid)
     }
 
     @Test fun theFeedStateIsItsOwnFileAndNeverReadsOrWritesTheNowAfterSeqOrTheActionCursor() {
@@ -236,6 +338,7 @@ class FeedSyncTest {
         val listErrors = ArrayDeque<ApiException>()
         var list: List<JsonObject> = emptyList()
         var listCalls = 0
+        var afterPages: () -> Unit = {}
         var item: Versioned? = null
         var itemFor: ((String) -> Versioned?)? = null
         val itemCalls = mutableListOf<Pair<String, String?>>()
@@ -246,6 +349,7 @@ class FeedSyncTest {
 
         override fun changes(cursor: String?, kinds: Set<String>, limit: Int): FeedEnvelope {
             askedCursors += cursor; askedKinds += kinds
+            afterPages()
             changeErrors.removeFirstOrNull()?.let { throw it }
             return feed.removeFirstOrNull() ?: error("no scripted page")
         }

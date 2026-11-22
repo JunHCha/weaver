@@ -116,8 +116,14 @@ class PipelineCache(private val directory: File) {
         val live = mutableSetOf<String>()
         listed.forEach { (id, raw, etag) ->
             if (!ID.matches(id) || decode(id, raw) == null) return@forEach
-            write(file(id), json.encodeToString(CacheEntry(etag, raw)).toByteArray())
             live += id
+            // The row carries no ETag of its own: an unchanged body keeps the one it was fetched with (so the next
+            // hint costs a 304, not a download), and an unchanged file is not rewritten.
+            val current = entry(id)?.first
+            val same = current != null && current.item == raw
+            val kept = etag ?: if (same) current?.etag else null
+            if (same && current?.etag == kept) return@forEach
+            write(file(id), json.encodeToString(CacheEntry(kept, raw)).toByteArray())
         }
         live += unreadable
         val gone = ids().filter { it !in live }

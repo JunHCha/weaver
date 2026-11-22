@@ -113,6 +113,25 @@ class FeedExchangeTest {
         assertEquals(sourceId, PipelineRuntime.snapshot(context).single { it.server != null }.server!!.sourceId)
     }
 
+    @Test fun theMapIdentityStaysTheSelectedFolderWhileReviewRunsOverFiles() {
+        server.capabilitiesFrom("pipeline.enabled_capabilities")
+        context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit().putString("tree", "content://test/root").commit()
+        pair()
+        assertEquals(TransportRoute.FILES, TransportRuntime.settings(context).route(TransportFeature.VERDICT))
+        assertEquals("the existing tree identity, so the stored map and its .seen keep their name", "content://test/root", PipelineRuntime.identity(context))
+    }
+
+    @Test fun theMapIdentityIsTheSpoolWithPipelineAndReviewOverHttpAndNoFolderPermission() {
+        server.capabilitiesFrom("pipeline.enabled_capabilities")
+        server.capabilities(mapOf("review" to "http"))
+        pair()
+        assertNull("no Courier folder was ever selected", io.github.junhcha.weaver.courier.CourierRuntime.tree(context))
+        assertTrue(TransportRuntime.settings(context).pipelineHttp)
+        val identity = PipelineRuntime.identity(context)
+        assertEquals(TransportRuntime.spool(context).identity, identity)
+        assertTrue(identity.isNotEmpty())
+    }
+
     @Test fun unpairingKeepsTheFeedPositionTheCachedMapAndTheQueuedItemsAndSendsNothing() {
         server.capabilitiesFrom("pipeline.enabled_capabilities")
         server.serve("pipeline.list", "changes_kinds.negotiated_snapshot")

@@ -81,7 +81,8 @@ class HttpExchange(
     private fun runFeed(session: FeedSession): FeedOutcome? {
         var outcome: FeedOutcome? = null
         val sync = FeedSync(api, session.store, session.cache, session.requested, ::refreshList,
-            { key, block -> item(null, key, block) },
+            // A blocked key holds the feed (STOPPED) instead of reading as done, so the cursor never passes work that was not done.
+            { key, block -> classified(null, key, true, block) },
             { key, code -> summary.rejected[key] = code })
         item(null, "feed:changes") { outcome = sync.run() }
         return outcome
@@ -105,11 +106,15 @@ class HttpExchange(
      * the run without asking for a new pairing; 409/412/413/422 block the item; 429/5xx (including 503 `whois_unavailable`)
      * and lost connections are retried with backoff.
      */
-    private fun item(feature: TransportFeature?, key: String, block: () -> Unit): Boolean {
+    private fun item(feature: TransportFeature?, key: String, block: () -> Unit): Boolean = classified(feature, key, false, block)
+
+    private fun classified(feature: TransportFeature?, key: String, blockedHolds: Boolean, block: () -> Unit): Boolean {
         val data = state.load()
-        val wire = feature?.wire ?: "pipeline"
+        // Work outside any feature (the feed) has its own wire, so a feature block never mixes with the review path.
+        val wire = feature?.wire ?: "feed"
         // Blocked on purpose: "retry now" clears the block (and restarts the feed), so this is not a failure to report.
-        if (key in data.blocked || wire in data.blockedFeatures) return true
+        // The feed asks for [blockedHolds]: it must not read a skipped entry as applied.
+        if (key in data.blocked || wire in data.blockedFeatures) return !blockedHolds
         val failuresBefore = summary.failures
         try { block() }
         catch (error: ApiException) {
@@ -121,6 +126,8 @@ class HttpExchange(
                 }
                 error.status == 403 -> { summary.fail(error.code, false); throw Abort() }
                 error.status == 409 && error.code == "transport_files" -> Unit // the server switched this feature back; the next capabilities read follows it
+                // The feed or its list moved under the cursor: start over on the next run, never a permanent block.
+                error.status == 410 && error.code == "cursor_expired" -> summary.fail(error.code, true)
                 error.retryable -> summary.fail(error.code, true)
                 else -> {
                     blockItem(key, error.code)
@@ -137,7 +144,12 @@ class HttpExchange(
         } catch (error: SecurityException) { throw error
         } catch (error: Abort) { throw error // from a nested item: already recorded, and not this item's failure
         } catch (_: android.database.sqlite.SQLiteException) { summary.fail("alert_store_unavailable", true)
-        } catch (error: Exception) { blockItem(key, CourierClient.errorCode(error)); summary.fail(CourierClient.errorCode(error), false) }
+        } catch (error: Exception) {
+            val code = CourierClient.errorCode(error)
+            // Storage that failed to write (disk full, a lost rename) may work next time; anything else is the item's own fault.
+            if (error is java.io.IOException || (error is IllegalStateException && error.message in RETRYABLE_STATE)) summary.fail(code, true)
+            else { blockItem(key, code); summary.fail(code, false) }
+        }
         return summary.failures == failuresBefore
     }
 
@@ -366,6 +378,7 @@ class HttpExchange(
 
     companion object {
         const val CALL_TIME_REQUIRED = "call_occurred_at_required"
+        private val RETRYABLE_STATE = setOf("cache_unavailable", "feed_state_write_failed")
 
         fun queue(spool: SpoolFolder, state: TransportState): QueueCounts {
             val receipts = spool.list("receipts").map { it.name }.toSet()

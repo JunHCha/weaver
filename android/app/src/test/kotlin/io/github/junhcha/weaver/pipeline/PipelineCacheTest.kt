@@ -77,4 +77,29 @@ class PipelineCacheTest {
         assertNull(PipelineCache.idOf(JsonObject(mapOf("source_id" to JsonPrimitive("../x")))))
         assertNull(PipelineCache.idOf(JsonObject(emptyMap())))
     }
+
+    @Test fun aReplacementKeepsTheEtagOfAnUnchangedBodyAndDropsItWhenTheBodyChanged() {
+        cache.put(a, body(a), "\"1\"", 1); cache.put(b, body(b), "\"1\"", 1)
+        cache.replaceAll(listOf(Triple(a, body(a), null), Triple(b, body(b, 2), null)), emptySet(), 2)
+        assertEquals("\"1\"", cache.cached(a)!!.etag)
+        assertNull("a changed row has an ETag nobody fetched", cache.cached(b)!!.etag)
+        assertEquals(2L, cache.cached(b)!!.revision)
+    }
+
+    @Test fun aDamagedMetaFileIsReadAsEmptyAndTheItemsStayAvailable() {
+        cache.put(a, body(a), null, 1)
+        cache.markApplying(b)
+        File(dir, "meta.json").writeText("{ broken")
+        assertEquals(PipelineCacheStatus(1, emptySet(), null), cache.status())
+        assertEquals(listOf(a), cache.items().map { it.sourceId })
+        cache.markApplying(b)
+        assertEquals(setOf(b), cache.status().applying)
+    }
+
+    @Test fun aDamagedItemFileIsSkippedWithoutHidingTheOthers() {
+        cache.put(a, body(a), null, 1); cache.put(b, body(b), null, 1)
+        File(dir, "items/$a.json").writeText("garbage")
+        assertEquals(listOf(b), cache.items().map { it.sourceId })
+        assertNull(cache.cached(a))
+    }
 }

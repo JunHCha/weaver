@@ -129,7 +129,7 @@ object PipelineRuntime {
      * The identity [observe] stores under: the HTTP spool while review runs over HTTP (no Syncthing folder needed),
      * otherwise the selected folder. Read without touching the folder, so it is safe wherever the map is read.
      */
-    private fun identity(context: Context): String {
+    internal fun identity(context: Context): String {
         val settings = TransportRuntime.settings(context)
         return if (settings.route(TransportFeature.VERDICT) == TransportRoute.HTTP) TransportRuntime.spool(context, settings).identity
         else CourierRuntime.tree(context)?.toString().orEmpty()

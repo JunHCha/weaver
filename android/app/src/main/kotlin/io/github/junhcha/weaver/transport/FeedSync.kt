@@ -23,6 +23,10 @@ data class FeedData(
     val checkpointed: String? = null,
     /** Fixed code of the entry the feed stopped at, until a run completes. */
     val stopped: String? = null,
+    /** The pipeline list of the snapshot in progress is already in the cache, so a run that stopped early does not rewrite it. */
+    val listed: Boolean = false,
+    /** Invalid items already reported (`key|code`): the same item is reported once, not at every snapshot. */
+    val reported: Set<String> = emptySet(),
 )
 
 class FeedStore(private val file: File) {
@@ -42,7 +46,7 @@ class FeedStore(private val file: File) {
     }
 
     /** Forget the position: the next run takes a new snapshot. The cached bodies stay. */
-    fun reset() { update { FeedData() } }
+    fun reset() { update { FeedData(reported = it.reported) } }
 }
 
 enum class FeedOutcome {
@@ -86,62 +90,84 @@ class FeedSync(
         while (true) {
             val outcome = try { once() } catch (error: ApiException) {
                 // 410 cursor_expired: the position (or the pipeline list under it) is gone. Take a new snapshot.
-                if (((error.status == 410 && error.code == "cursor_expired") || (error.status == 422 && error.code == "invalid_cursor")) && restarts++ < 1) { store.reset(); continue }
-                throw error
-            } catch (_: Restart) { if (restarts++ < 1) { store.reset(); continue } else throw ApiException(410, "cursor_expired", false) }
+                if (!((error.status == 410 && error.code == "cursor_expired") || (error.status == 422 && error.code == "invalid_cursor"))) throw error
+                if (restarts++ < 1) { store.reset(); continue }
+                throw expired()
+            } catch (_: Restart) {
+                if (restarts++ < 1) { store.reset(); continue }
+                throw expired()
+            }
             flushCheckpoint()
             return outcome
         }
     }
 
+    /** The restart budget is spent: not a refusal but a moving target, so the next scheduled run starts over. */
+    private fun expired(): ApiException { store.reset(); return ApiException(410, "cursor_expired", true) }
+
+    private fun report(key: String, code: String) {
+        val mark = "$key|$code"
+        val data = store.load()
+        if (mark in data.reported || data.reported.size >= MAX_REPORTED) return
+        onInvalid(key, code)
+        store.update { it.copy(reported = it.reported + mark) }
+    }
+
     private fun once(): FeedOutcome {
         val kindsKey = requested.sorted().joinToString(",")
         var data = store.load()
-        if (data.kinds != kindsKey) data = store.update { FeedData(kinds = kindsKey) }
-        var cursor = data.cursor
-        // The first page of a snapshot also refreshes every list kind and replaces the pipeline list.
+        if (data.kinds != kindsKey) data = store.update { FeedData(kinds = kindsKey, reported = it.reported) }
+        // What is durably committed, and where the next page is read from (it runs ahead while list refreshes wait).
+        var committed = data.cursor
+        var fetch = data.cursor
+        // The first page of a snapshot also refreshes every list kind and replaces the pipeline list (once per snapshot).
         val pending = linkedMapOf<String, Long>()
-        if (cursor == null) {
-            if ("pipeline" in requested && !replacePipeline()) return stop("feed_pipeline_list_failed")
+        if (committed == null) {
+            if ("pipeline" in requested && !data.listed) {
+                if (!replacePipeline()) return stop("feed_pipeline_list_failed")
+                store.update { it.copy(listed = true) }
+            }
             listOf("review", "action", "alert").filter { it in requested }.forEach { pending[it] = 0L }
         }
         var limit = LIMIT
         var pages = 0
         while (true) {
-            val page = try { api.changes(cursor, requested, limit) } catch (error: ApiException) {
+            val page = try { api.changes(fetch, requested, limit) } catch (error: ApiException) {
                 if (error.code == "response_too_large" && limit > MIN_LIMIT) { limit = maxOf(MIN_LIMIT, limit / 2); continue }
                 throw error
             }
-            if (cursor != null && FeedCursor.epoch(cursor)?.let { it != page.feedEpoch } == true) throw Restart()
+            if (fetch != null && FeedCursor.epoch(fetch)?.let { it != page.feedEpoch } == true) throw Restart()
             check(++pages <= MAX_PAGES) { "too_many_pages" }
             var stopSeq: Long? = null
             var stopCode: String? = null
-            val appliedSeqs = mutableListOf<Long>()
             for (entry in page.items) {
                 val code = apply(entry, pending)
                 if (code != null) { stopSeq = entry.seq; stopCode = code; break }
-                appliedSeqs += entry.seq
             }
-            // Refresh the list kinds this page (or the snapshot) touched; a failed kind holds the cursor before its
-            // first entry, and the other kinds still ran.
-            for (kind in pending.keys.toList()) {
-                val first = pending.getValue(kind)
-                pending.remove(kind)
-                if (refresh(kind)) continue
-                val current = stopSeq
-                if (current == null || first < current) { stopSeq = first; stopCode = "feed_refresh_failed" }
+            // The list kinds are refreshed once, after the last page (or where the feed stops): a refresh is a full list
+            // read, so doing it per page would repeat it. A failed kind holds the cursor before its first entry, and the
+            // other kinds still ran.
+            if (!page.hasMore || stopSeq != null) {
+                for (kind in pending.keys.toList()) {
+                    val first = pending.getValue(kind)
+                    pending.remove(kind)
+                    if (refresh(kind)) continue
+                    val current = stopSeq
+                    if (current == null || first < current) { stopSeq = first; stopCode = "feed_refresh_failed" }
+                }
             }
-            val stoppedAt = stopSeq
-            // Stopping at an entry keeps everything before it: the cursor goes back to the last applied entry below it.
-            val applied = if (stoppedAt == null) null else appliedSeqs.lastOrNull { it < stoppedAt }
-            val commit = when {
-                stoppedAt == null -> page.nextCursor
-                applied != null -> FeedCursor.upTo(page.nextCursor, applied)
-                else -> null // nothing of this page was applied before the stop: keep the old cursor
+            // The cursor never passes an entry that was not applied or whose list refresh is still due: it is cut right
+            // before it (and may go back behind pages committed earlier, which are then simply delivered again).
+            val bound = listOfNotNull(stopSeq, pending.values.minOrNull()).minOrNull()
+            val target = when {
+                bound == null -> page.nextCursor
+                bound <= 0 -> null
+                else -> FeedCursor.upTo(page.nextCursor, bound - 1) ?: committed // an unreadable shape keeps the old cursor
             }
-            if (commit != null && commit != cursor) { store.update { it.copy(cursor = commit, kinds = kindsKey, stopped = null) }; cursor = commit }
-            if (stoppedAt != null) return stop(stopCode ?: "feed_stopped")
+            if (target != committed) { store.update { it.copy(cursor = target, kinds = kindsKey, stopped = null) }; committed = target }
+            if (stopSeq != null) return stop(stopCode ?: "feed_stopped")
             if (!page.hasMore) { store.update { it.copy(stopped = null) }; return FeedOutcome.COMPLETE }
+            fetch = page.nextCursor
         }
     }
 
@@ -163,7 +189,7 @@ class FeedSync(
 
     private fun pipeline(entry: FeedEntry): String? {
         val id = entry.id
-        if (!PipelineCache.ID.matches(id)) return null.also { onInvalid("pipeline:invalid", "invalid_pipeline_id") }
+        if (!PipelineCache.ID.matches(id)) return null.also { report("pipeline:invalid", "invalid_pipeline_id") }
         if (entry.removed) { cache.remove(id, now()); return null }
         val cached = cache.cached(id)
         val hintEtag = (entry.body as? JsonObject)?.get("etag")?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
@@ -172,7 +198,7 @@ class FeedSync(
             (hintEtag != null && cached.etag != null && hintEtag != cached.etag)
         if (!needed) return null
         cache.markApplying(id)
-        return if (guard("pipeline:$id") { fetch(id, cached?.etag) }) null else "feed_pipeline_failed"
+        return if (guard("feed:pipeline:$id") { fetch(id, cached?.etag) }) null else "feed_pipeline_failed"
     }
 
     private fun fetch(id: String, etag: String?) {
@@ -184,7 +210,7 @@ class FeedSync(
         if (reply == null) { cache.settled(id); return }
         val raw = try { feedJson.parseToJsonElement(reply.body.decodeToString()) as? JsonObject } catch (_: Exception) { null }
         // One bad body is isolated: it is reported and skipped so it cannot hold the feed (or the other items) back.
-        if (raw == null || !cache.put(id, raw, reply.etag, now())) { onInvalid("pipeline:$id", "invalid_pipeline_item"); cache.settled(id) }
+        if (raw == null || !cache.put(id, raw, reply.etag, now())) { report("pipeline:$id", "invalid_pipeline_item"); cache.settled(id) }
     }
 
     /** Full list into the cache. False when it failed for a reason the caller classified; 410 is thrown for a restart. */
@@ -203,7 +229,7 @@ class FeedSync(
                     val raw = element as? JsonObject ?: return@forEach
                     val id = PipelineCache.idOf(raw) ?: return@forEach
                     val valid = runCatching { CourierClient.decoded<PipelineItem>(raw.toString()) }.getOrNull()?.takeIf { it.sourceId == id }
-                    if (valid == null) { unreadable += id; onInvalid("pipeline:$id", "invalid_pipeline_item") } else listed += Triple(id, raw, null)
+                    if (valid == null) { unreadable += id; report("pipeline:$id", "invalid_pipeline_item") } else listed += Triple(id, raw, null)
                 }
                 cache.replaceAll(listed, unreadable, now())
                 ok = true
@@ -233,5 +259,6 @@ class FeedSync(
         const val LIMIT = 100
         const val MIN_LIMIT = 5
         const val MAX_PAGES = 5000
+        const val MAX_REPORTED = 1000
     }
 }
