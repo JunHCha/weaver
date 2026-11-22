@@ -683,3 +683,88 @@ def test_compiler_dictionary_pages_include_page_and_section_sources(tmp_path):
     source = archive_webex(config, 2, "OPEN")
     with provenance_scope([source], shared=True):
         assert configured_policy(config).prepare("s", "u").user == "u"
+
+
+def _private_vault(tmp_path):
+    extra = '[shepherds.webex]\nexclude_space_ids = ["SPACE_PRIVATE"]\n'
+    config = load_config(write_config(tmp_path, extra), environ={})
+    private = archive_webex(config, 0, "SPACE_PRIVATE")
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    return config, private, dictionary
+
+
+def _assert_blocked(config):
+    from weaver.llm.policy_archive import configured_policy
+
+    with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+@pytest.mark.parametrize("dirty_is_source", [True, False])
+def test_merge_keeps_excluded_webex_origin_from_either_side(tmp_path, dirty_is_source):
+    from weaver.web.editing import MergeEdit, merge
+
+    config, private, dictionary = _private_vault(tmp_path)
+    dictionary.add_entry("Private derived", "topic", source_ids=(private,))
+    dictionary.add_entry("Clean human", "topic", source_ids=(HUMAN_DICTIONARY_SOURCE,))
+    entry, target = (
+        ("Private derived", "Clean human")
+        if dirty_is_source
+        else ("Clean human", "Private derived")
+    )
+    merge(config, MergeEdit(entry=entry, target=target))
+    ids, _ = dictionary.policy_origins()
+    assert {private, HUMAN_DICTIONARY_SOURCE} <= ids
+    _assert_blocked(config)
+
+
+@pytest.mark.parametrize("unknown_is_source", [True, False])
+def test_merge_keeps_unknown_flag_from_either_side(tmp_path, unknown_is_source):
+    from weaver.web.editing import MergeEdit, merge
+
+    config, _, _ = make_vault(tmp_path, webex=True)
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Auto unknown", "topic", human_edited=False)
+    dictionary.add_entry("Clean human", "topic", source_ids=(HUMAN_DICTIONARY_SOURCE,))
+    entry, target = (
+        ("Auto unknown", "Clean human")
+        if unknown_is_source
+        else ("Clean human", "Auto unknown")
+    )
+    merge(config, MergeEdit(entry=entry, target=target))
+    assert dictionary.policy_origins()[1]
+    _assert_blocked(config)
+
+
+def test_rename_keeps_excluded_webex_origin(tmp_path):
+    from weaver.web.editing import EntryEdit, edit_entry
+
+    config, private, dictionary = _private_vault(tmp_path)
+    dictionary.add_entry("Private derived", "topic", source_ids=(private,))
+    edit_entry(config, EntryEdit(entry="Private derived", name="Renamed"))
+    assert private in dictionary.policy_origins()[0]
+    _assert_blocked(config)
+
+
+def test_automatic_paths_cannot_claim_the_human_source(tmp_path):
+    config, _, _ = make_vault(tmp_path, webex=False)
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    human = (HUMAN_DICTIONARY_SOURCE,)
+    with pytest.raises(ValueError):
+        dictionary.add_entry("X", "topic", human_edited=False, source_ids=human)
+    with pytest.raises(ValueError):
+        dictionary.learn("obs", "합성 프로젝트", "project", source_ids=human)
+    with pytest.raises(ValueError):
+        dictionary.rename("합성 프로젝트", "Y", human_edited=False, source_ids=human)
+    with pytest.raises(ValueError):
+        dictionary.add_alias("합성 프로젝트", "z", human_edited=False, source_ids=human)
+
+
+def test_existing_entry_source_attach_does_not_add_human(tmp_path):
+    config, _, _ = make_vault(tmp_path, webex=False)
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry(
+        "합성 프로젝트", "project", source_ids=(HUMAN_DICTIONARY_SOURCE, "src-1")
+    )
+    ids, _ = dictionary.policy_origins()
+    assert "src-1" in ids and HUMAN_DICTIONARY_SOURCE not in ids

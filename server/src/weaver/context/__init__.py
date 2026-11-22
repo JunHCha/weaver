@@ -457,7 +457,14 @@ class ContextDictionary:
         self,
         source_ids: tuple[str, ...] = (),
         page_origins: dict[str, tuple[str, ...]] | None = None,
+        *,
+        human: bool = False,
     ) -> Iterator[tuple[sqlite3.Connection, DictionarySnapshot, dict[str, _Edit]]]:
+        from weaver.llm.policy import HUMAN_DICTIONARY_SOURCE
+
+        claimed = set(source_ids).union(*(page_origins or {}).values())
+        if HUMAN_DICTIONARY_SOURCE in claimed and not human:
+            raise ValueError("human dictionary source requires a human edit")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             snapshot, edits = self._load(db)
@@ -629,16 +636,20 @@ class ContextDictionary:
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         """Idempotent creation; automatic approval can discard racing alias conflicts."""
+        from weaver.llm.policy import HUMAN_DICTIONARY_SOURCE
+
         _validate(name, kind)
-        with self._writing(source_ids) as (db, snapshot, _):
+        with self._writing(source_ids, human=human_edited) as (db, snapshot, _):
             existing = snapshot.resolve(name)
             if existing:
                 if require_new:
                     raise EntryAlreadyExists(existing.name)
                 if drop_conflicting_aliases and _key(existing.name) != _key(name):
                     logger.warning("skipped conflicting dictionary proposal")
-                if source_ids:
-                    self._record_origin(db, existing.name, source_ids)
+                # Attaching sources to an existing entry is not a human edit.
+                carried = tuple(s for s in source_ids if s != HUMAN_DICTIONARY_SOURCE)
+                if carried:
+                    self._record_origin(db, existing.name, carried)
                 return existing
             normalized = tuple(sorted({_nfc(a) for a in aliases}))
             if drop_conflicting_aliases:
@@ -688,7 +699,7 @@ class ContextDictionary:
         human_edited: bool = True,
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing(source_ids) as (db, snapshot, edits):
+        with self._writing(source_ids, human=human_edited) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             origin = db.execute(
                 "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
@@ -756,7 +767,7 @@ class ContextDictionary:
     def set_kind(
         self, name: str, kind: Kind, *, source_ids: tuple[str, ...] = ()
     ) -> ContextEntry:
-        with self._writing(source_ids) as (db, snapshot, edits):
+        with self._writing(source_ids, human=True) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             return self._save(
                 db,
@@ -772,7 +783,7 @@ class ContextDictionary:
         human_edited: bool = True,
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing(source_ids) as (db, snapshot, edits):
+        with self._writing(source_ids, human=human_edited) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             edit = self._edit_for(entry, edits)
             if not human_edited:
@@ -809,7 +820,7 @@ class ContextDictionary:
     def remove_alias(
         self, name: str, alias: str, *, source_ids: tuple[str, ...] = ()
     ) -> ContextEntry:
-        with self._writing(source_ids) as (db, snapshot, edits):
+        with self._writing(source_ids, human=True) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             edit = self._edit_for(entry, edits)
             edit = replace(
@@ -828,11 +839,31 @@ class ContextDictionary:
         kind: Kind | None = None,
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing(source_ids) as (db, snapshot, edits):
+        with self._writing(source_ids, human=True) as (db, snapshot, edits):
             a, b = self._require(snapshot, source), self._require(snapshot, target)
             if a.name == b.name:
                 return b
             source_edit, edit = self._edit_for(a, edits), self._edit_for(b, edits)
+            # Lineage follows the content: the target inherits the source's
+            # origins and unknown flag, as rename does.
+            rows = [
+                db.execute(
+                    "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
+                    (_key(entry.name),),
+                ).fetchone()
+                for entry in (a, b)
+            ]
+            if any(rows):
+                merged = set().union(*(json.loads(r[0]) for r in rows if r))
+                flags = [r[1] for r in rows if r and r[1] is not None]
+                db.execute(
+                    "INSERT OR REPLACE INTO entry_origins (name, source_ids, unknown_webex) VALUES (?, ?, ?)",
+                    (
+                        _key(b.name),
+                        json.dumps(sorted(merged)),
+                        max(flags) if flags else None,
+                    ),
+                )
             edit = replace(
                 edit,
                 bases=tuple(dict.fromkeys((*edit.bases, *source_edit.bases))),
