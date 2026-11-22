@@ -1094,6 +1094,7 @@ def _apply(root: Path, fabric: FabricStore, plan: SourcePlan) -> None:
             tuple(entry.aliases),
             human_edited=False,
             drop_conflicting_aliases=True,
+            source_ids=(plan.source_id,),
         )
         for alias in entry.aliases:
             context.add_alias(actual.name, alias, human_edited=False)

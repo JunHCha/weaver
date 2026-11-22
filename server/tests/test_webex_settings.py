@@ -97,3 +97,50 @@ def test_default_is_inert(tmp_path: Path) -> None:
     assert config.shepherds.webex.exclude_space_ids == ()
     assert config.shepherds.webex.credentials_file is None
     assert not config.shepherds.webex.enabled
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "request_budget_total = 10",
+        "request_budget_total = 10\nrequest_budget_incremental = 5\nrequest_budget_overlap = 4\nrequest_budget_deletion = 2",
+        "request_budget_deletion = -1",
+        "request_budget_total = 10\nrequest_budget_incremental = 11\nrequest_budget_overlap = 2\nrequest_budget_deletion = 1",
+        "request_budget_total = true\nrequest_budget_incremental = 1\nrequest_budget_overlap = 1\nrequest_budget_deletion = 1",
+        "request_budget_total = 10\nrequest_budget_incremental = 2\nrequest_budget_overlap = 0\nrequest_budget_deletion = 1",
+    ],
+)
+def test_request_budget_validation(tmp_path, extra):
+    with pytest.raises(ConfigError, match="request_budget"):
+        load_config(config_file(tmp_path, "[shepherds.webex]\n" + extra), environ={})
+
+
+def test_request_budget_toml(tmp_path):
+    config = load_config(
+        config_file(
+            tmp_path,
+            "[shepherds.webex]\nrequest_budget_total = 20\nrequest_budget_incremental = 10\nrequest_budget_overlap = 5\nrequest_budget_deletion = 2",
+        ),
+        init_directories=True,
+        environ={},
+    )
+    assert config.shepherds.webex.request_budget_total == 20
+
+
+def test_request_budget_defaults_and_partial_override(tmp_path: Path) -> None:
+    settings = load_config(
+        config_file(tmp_path, ""), init_directories=True, environ={}
+    ).shepherds.webex
+    assert settings.poll_interval_seconds == 300
+    assert (
+        settings.request_budget_total,
+        settings.request_budget_incremental,
+        settings.request_budget_overlap,
+        settings.request_budget_deletion,
+    ) == (300, 200, 80, 20)
+    settings = load_config(
+        config_file(tmp_path, "[shepherds.webex]\nrequest_budget_overlap = 40"),
+        environ={},
+    ).shepherds.webex
+    assert settings.request_budget_overlap == 40
+    assert settings.request_budget_total == 300

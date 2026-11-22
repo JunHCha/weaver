@@ -7,6 +7,7 @@ not shared context. Wiki also supplies its private page/section origins.
 
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
 from weaver.config import ServerConfig
@@ -182,8 +183,21 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
                     )
                 )
         dictionary = config.state_root / "context.sqlite3"
-        if not ids and dictionary.is_file():
-            if ContextDictionary.open_readonly(dictionary).snapshot().entries:
+        if dictionary.is_file():
+            with closing(resolver._connect()) as db:
+                row = db.execute(
+                    "SELECT MIN(json_extract(c.receipt_json, '$.received_at')) FROM captures c JOIN sources s USING(source_id) WHERE json_extract(s.source_json, '$.channel')='webex'"
+                ).fetchone()
+            first = (
+                datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+                if row[0]
+                else None
+            )
+            origins, unknown = ContextDictionary.open_readonly(
+                dictionary
+            ).policy_origins(first)
+            ids.update(origins)
+            if unknown:
                 ids.add(UNKNOWN_DICTIONARY_SOURCE)
         return tuple(sorted(ids))
 

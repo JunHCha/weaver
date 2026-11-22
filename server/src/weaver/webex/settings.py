@@ -18,6 +18,10 @@ class WebexSettings:
     poll_interval_seconds: int = 300
     initial_backfill_days: int = 7
     reconcile_overlap_days: int = 7
+    request_budget_total: int = 300
+    request_budget_incremental: int = 200
+    request_budget_overlap: int = 80
+    request_budget_deletion: int = 20
     bundle: str = "space_day"
     timezone: str = "Asia/Seoul"
     attachments: str = "metadata_only"
@@ -51,6 +55,20 @@ class WebexSettings:
         ):
             raise ConfigError(
                 "shepherds.webex.exclude_space_ids: expected string array"
+            )
+        budgets = (
+            self.request_budget_total,
+            self.request_budget_incremental,
+            self.request_budget_overlap,
+            self.request_budget_deletion,
+        )
+        if any(type(v) is not int or v <= 0 for v in budgets):
+            raise ConfigError(
+                "shepherds.webex.request_budget: expected positive integers"
+            )
+        if sum(budgets[1:]) > self.request_budget_total:
+            raise ConfigError(
+                "shepherds.webex.request_budget: task sum exceeds account cap"
             )
         try:
             ZoneInfo(self.timezone)

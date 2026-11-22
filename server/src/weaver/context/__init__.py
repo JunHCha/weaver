@@ -14,6 +14,7 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -246,6 +247,16 @@ class ContextDictionary:
                 db.execute(
                     "ALTER TABLE project_lifecycle ADD COLUMN reverted INTEGER NOT NULL DEFAULT 0"
                 )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS entry_origins (name TEXT PRIMARY KEY, source_ids TEXT NOT NULL, unknown_at TEXT)"
+            )
+            # Existing rows have no creation timestamps. Observation now is a
+            # conservative upper bound, never backdated from filesystem mtimes.
+            for entry in self._load(db)[0].entries:
+                db.execute(
+                    "INSERT OR IGNORE INTO entry_origins VALUES (?, '[]', ?)",
+                    (_key(entry.name), datetime.now(UTC).isoformat()),
+                )
         with self._path.open("rb") as file:
             os.fchmod(file.fileno(), 0o600)
 
@@ -427,11 +438,65 @@ class ContextDictionary:
     @contextmanager
     def _writing(
         self,
+        source_ids: tuple[str, ...] = (),
     ) -> Iterator[tuple[sqlite3.Connection, DictionarySnapshot, dict[str, _Edit]]]:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             snapshot, edits = self._load(db)
             yield db, snapshot, edits
+            before = {_key(e.name): e for e in snapshot.entries}
+            for entry in self._load(db)[0].entries:
+                if before.get(_key(entry.name)) != entry:
+                    self._record_origin(db, entry.name, source_ids)
+
+    @staticmethod
+    def _record_origin(
+        db: sqlite3.Connection, name: str, source_ids: tuple[str, ...]
+    ) -> None:
+        row = db.execute(
+            "SELECT source_ids, unknown_at FROM entry_origins WHERE name=?",
+            (_key(name),),
+        ).fetchone()
+        origins = set(json.loads(row[0])) if row else set()
+        origins.update(source_ids)
+        unknown = row[1] if row else None
+        if not source_ids:
+            unknown = datetime.now(UTC).isoformat()
+        db.execute(
+            "INSERT OR REPLACE INTO entry_origins VALUES (?, ?, ?)",
+            (_key(name), json.dumps(sorted(origins)), unknown),
+        )
+
+    def policy_origins(self, first_webex: datetime | None) -> tuple[set[str], bool]:
+        """Unknown content is safe only when observed before any Webex capture."""
+        ids: set[str] = set()
+        unknown = False
+        with self._connect() as db:
+            db.execute("BEGIN")
+            entries = self._load(db)[0].entries
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='entry_origins'"
+            ).fetchone()
+            for entry in entries:
+                row = (
+                    db.execute(
+                        "SELECT source_ids, unknown_at FROM entry_origins WHERE name=?",
+                        (_key(entry.name),),
+                    ).fetchone()
+                    if exists
+                    else None
+                )
+                if row:
+                    ids.update(json.loads(row[0]))
+                if row is None or (
+                    row[1] is not None
+                    and (
+                        first_webex is None
+                        or datetime.fromisoformat(row[1]) >= first_webex
+                    )
+                ):
+                    unknown = True
+        return ids, unknown
 
     @staticmethod
     def _require(snapshot: DictionarySnapshot, name: str) -> ContextEntry:
@@ -516,16 +581,19 @@ class ContextDictionary:
         human_edited: bool = True,
         drop_conflicting_aliases: bool = False,
         require_new: bool = False,
+        source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         """Idempotent creation; automatic approval can discard racing alias conflicts."""
         _validate(name, kind)
-        with self._writing() as (db, snapshot, _):
+        with self._writing(source_ids) as (db, snapshot, _):
             existing = snapshot.resolve(name)
             if existing:
                 if require_new:
                     raise EntryAlreadyExists(existing.name)
                 if drop_conflicting_aliases and _key(existing.name) != _key(name):
                     logger.warning("skipped conflicting dictionary proposal")
+                if source_ids:
+                    self._record_origin(db, existing.name, source_ids)
                 return existing
             normalized = tuple(sorted({_nfc(a) for a in aliases}))
             if drop_conflicting_aliases:
@@ -713,12 +781,19 @@ class ContextDictionary:
             )
             db.execute("INSERT OR IGNORE INTO dismissed_tag_pairs VALUES (?,?)", pair)
 
-    def learn(self, observed: str, canonical: str, kind: Kind) -> None:
+    def learn(
+        self,
+        observed: str,
+        canonical: str,
+        kind: Kind,
+        *,
+        source_ids: tuple[str, ...] = (),
+    ) -> None:
         observed, canonical = _nfc(observed), _nfc(canonical)
         _validate(canonical, kind)
         if not observed.strip():
             raise ValueError("observed must be nonempty")
-        with self._writing() as (db, snapshot, _):
+        with self._writing(source_ids) as (db, snapshot, _):
             resolved = snapshot.resolve(canonical)
             canonical = resolved.name if resolved else canonical
             db.execute(

@@ -205,3 +205,130 @@ def revoke(config: ConfigOption = None) -> None:
     typer.echo(
         "Local tokens and pending consent removed; reauthentication required. To revoke the remote grant, open Webex Authorized Apps and remove this Integration. Courier credentials and queued work are retained."
     )
+
+
+@webex_cli.command()
+def poll(
+    config: ConfigOption = None,
+    once: Annotated[
+        bool, typer.Option("--once", help="Run one budgeted polling round")
+    ] = False,
+) -> None:
+    """Poll every five minutes into the shared private Shepherd outbox buffers."""
+    import sqlite3
+
+    import httpx
+
+    from weaver.app import _load
+    from weaver.runtime.loop import AlreadyRunning, InstanceLock
+    from weaver.shepherd.cli import _outbox
+    from weaver.shepherd.outbox import CapacityError
+
+    from .oauth import OAuth
+    from .poller import Poller, PollError
+
+    settings = _load(config)
+    webex = settings.shepherds.webex
+    if not webex.enabled or webex.credentials_file is None:
+        typer.echo("Error: webex_not_enabled", err=True)
+        raise typer.Exit(78)
+    _, outbox = _outbox(webex.instance_id, config)
+    try:
+        with (
+            InstanceLock(outbox.path.parent / "poll.lock"),
+            httpx.Client(timeout=20) as client,
+        ):
+            poller = Poller(webex, outbox, OAuth(webex.credentials_file), client)
+            while True:
+                poller.tick()
+                if any(s.status == "access_gap" for s in poller.state.spaces.values()):
+                    typer.echo(
+                        "Webex access gap: affected Spaces are isolated; inspect poll-status.",
+                        err=True,
+                    )
+                if once:
+                    break
+                time.sleep(webex.poll_interval_seconds)
+    except (
+        PollError,
+        OAuthError,
+        ValueError,
+        OSError,
+        sqlite3.Error,
+        AlreadyRunning,
+        CapacityError,
+    ):
+        # IDs, response bodies, URLs, and credential paths never enter diagnostics.
+        typer.echo(
+            "Error: webex_poll_stopped; inspect settings, authentication and outbox capacity",
+            err=True,
+        )
+        raise typer.Exit(1) from None
+    typer.echo("Webex polling round persisted; buffers await bundle finalization.")
+
+
+@webex_cli.command("poll-status")
+def poll_status(config: ConfigOption = None) -> None:
+    """Report only counts and deadlines; no Space/message names or IDs."""
+    import json
+
+    from weaver.app import _load
+    from weaver.shepherd.cli import _outbox
+
+    from .poller import CURSOR, State
+
+    settings = _load(config)
+    _, outbox = _outbox(settings.shepherds.webex.instance_id, config)
+    raw = outbox.cursor(CURSOR)
+    state = State.model_validate_json(raw) if raw else State()
+    typer.echo(
+        json.dumps(
+            {
+                "spaces": len(state.spaces),
+                "access_gaps": sum(
+                    s.status == "access_gap" for s in state.spaces.values()
+                ),
+                "pending_incremental": sum(
+                    s.incremental is not None for s in state.spaces.values()
+                ),
+                "pending_overlap": sum(
+                    s.overlap is not None for s in state.spaces.values()
+                ),
+                "deletion_candidates": sum(
+                    len(s.candidates) for s in state.spaces.values()
+                ),
+                "requests_used": state.used,
+                "retry_at": state.retry_at.isoformat() if state.retry_at else None,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@webex_cli.command("poll-resume")
+def poll_resume(config: ConfigOption = None) -> None:
+    """After checking account access, retry isolated Spaces from saved cursors."""
+    from weaver.app import _load
+    from weaver.runtime.loop import AlreadyRunning, InstanceLock
+    from weaver.shepherd.cli import _outbox
+    from weaver.shepherd.outbox import CapacityError
+
+    from .poller import CURSOR, State
+
+    settings = _load(config)
+    _, outbox = _outbox(settings.shepherds.webex.instance_id, config)
+    try:
+        with InstanceLock(outbox.path.parent / "poll.lock"):
+            raw = outbox.cursor(CURSOR)
+            state = State.model_validate_json(raw) if raw else State()
+            for space in state.spaces.values():
+                if space.status == "access_gap":
+                    space.status = "ready"
+            outbox.buffer_page([], cursor=(CURSOR, state.model_dump_json()))
+    except (ValueError, OSError, AlreadyRunning, CapacityError):
+        typer.echo(
+            "Error: webex_resume_failed; stop the poller and inspect outbox capacity",
+            err=True,
+        )
+        raise typer.Exit(1) from None
+    typer.echo("Webex isolated Spaces resumed from saved source cursors.")

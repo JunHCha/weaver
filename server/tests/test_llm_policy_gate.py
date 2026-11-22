@@ -429,8 +429,90 @@ def test_non_webex_vault_first_summary_and_wiki_are_not_blocked(tmp_path):
 
 def test_webex_in_archive_blocks_unknown_lineage_but_not_known_open_input(tmp_path):
     config, source_id, policy = make_vault(tmp_path, webex=True)
+    from weaver.context import ContextDictionary
+
+    ContextDictionary(config.state_root).add_entry("After Webex", "topic")
     with provenance_scope([source_id], shared=True, requester=source_id):
         with pytest.raises(PolicyBlocked):  # dictionary lineage is unknown
             policy.prepare("s", "u")
     with provenance_scope([source_id]):
         assert policy.prepare("s", "u").user == "u"
+
+
+def test_dictionary_created_before_first_webex_does_not_block_first_summary(tmp_path):
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    ContextDictionary(config.state_root).add_entry("Earlier", "topic")
+    source = archive_webex(config, 0, "OPEN")
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_dictionary_sources_are_checked_even_with_existing_approved_context(
+    tmp_path, snapshot
+):
+    from weaver.context import ContextDictionary
+    from weaver.fabric import FabricStore
+    from weaver.llm.policy_archive import configured_policy
+
+    from .fabric.test_store import draft
+
+    config = load_config(write_config(tmp_path), environ={})
+    open_id = archive_webex(config, 0, "OPEN")
+    closed_id = archive_webex(config, 1, "PRIVATE")
+    FabricStore(config.state_root / "fabric.sqlite3").append(
+        [draft("open", source_id=open_id)]
+    )
+    dictionary = ContextDictionary(config.state_root)
+    dictionary.add_entry("Private-derived", "topic", source_ids=(closed_id,))
+    policy = configured_policy(config, snapshot=snapshot)
+    policy.excluded_space_ids = frozenset({"PRIVATE"})
+    assert closed_id in policy.shared_sources()
+    with provenance_scope([open_id], shared=True), pytest.raises(PolicyBlocked):
+        policy.prepare("s", "u")
+
+
+def test_dictionary_known_open_source_allows_first_summary_and_unknown_stays_closed(
+    tmp_path,
+):
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    source = archive_webex(config, 0, "OPEN")
+    dictionary = ContextDictionary(config.state_root)
+    dictionary.add_entry("Known", "topic", source_ids=(source,))
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+    dictionary.add_entry("Unknown", "topic")
+    with provenance_scope([source], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+def test_dictionary_legacy_without_timestamp_fails_closed_and_exact_boundary_is_not_proof(
+    tmp_path,
+):
+    import sqlite3
+
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    dictionary = ContextDictionary(config.state_root)
+    dictionary.add_entry("Legacy", "topic")
+    source = archive_webex(config, 0, "OPEN")
+    with sqlite3.connect(config.archive_root / "index.sqlite3") as db:
+        first = db.execute(
+            "SELECT json_extract(receipt_json, '$.received_at') FROM captures LIMIT 1"
+        ).fetchone()[0]
+    with sqlite3.connect(config.state_root / "context.sqlite3") as db:
+        db.execute("UPDATE entry_origins SET unknown_at=?", (first,))
+    with provenance_scope([source], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+    with sqlite3.connect(config.state_root / "context.sqlite3") as db:
+        db.execute("DROP TABLE entry_origins")
+    with provenance_scope([source], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
