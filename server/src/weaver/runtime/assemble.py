@@ -85,7 +85,7 @@ def build_runtime(
         gate = LlmGate(lambda: llm_status(config.llm, env))
     client = GatedLlm(real, gate)
     archive = ArchiveStore.from_config(config)
-    context = ContextDictionary(config.state_root)
+    context = ContextDictionary(config.state_root, archive_root=config.archive_root)
     fabric = FabricStore.from_config(config)
     summaries = SummaryLookup(config.archive_root / "summaries", archive)
     review = SummaryReview(

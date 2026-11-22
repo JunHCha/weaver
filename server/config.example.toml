@@ -127,7 +127,9 @@ max_backoff_seconds = 1800
 # poll_interval_seconds = 300
 # initial_backfill_days = 7
 # reconcile_overlap_days = 7
-# Messaging API attempt caps per poll interval (default 300 seconds).
+# reconcile_interval_seconds = 21600 # Per-Space overlap restart, at least poll interval.
+# request_budget_window_seconds = 300 # Sliding window, independent of poll interval.
+# Messaging API attempt caps per sliding window (default 300 seconds).
 # All values must be positive; task caps together must fit the account cap.
 # request_budget_total = 300
 # request_budget_incremental = 200 # Includes Space discovery and retries.

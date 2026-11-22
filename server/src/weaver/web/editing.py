@@ -130,7 +130,7 @@ def writable_dictionary(config: ServerConfig) -> Iterator[ContextDictionary]:
     )
     try:
         with lock:
-            yield ContextDictionary(config.state_root)
+            yield ContextDictionary(config.state_root, archive_root=config.archive_root)
     except AlreadyRunning:
         raise HTTPException(
             503,

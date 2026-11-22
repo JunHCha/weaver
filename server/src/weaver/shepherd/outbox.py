@@ -5,6 +5,7 @@ allows payload GC; quarantine and authentication failures retain original bytes.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -208,9 +209,15 @@ class Outbox:
         buffers: list[tuple[BundleKey, bytes]],
         *,
         cursor: tuple[str, str] | None = None,
+        exclusions: tuple[str, ...] | None = None,
     ) -> None:
         """Commit every bundle touched by one source page with its source cursor."""
         with self._write() as db:
+            if exclusions is not None:
+                db.execute(
+                    "INSERT OR REPLACE INTO cursors VALUES (?,?)",
+                    ("webex.excluded_spaces.v1", json.dumps(exclusions)),
+                )
             for key, payload in buffers:
                 if key.instance_id != self.instance_id:
                     raise ValueError("outbox_instance_mismatch")
@@ -242,12 +249,21 @@ class Outbox:
             ).fetchone()
         return None if row is None else str(row[0])
 
+    def space_excluded(self, space: str) -> bool:
+        """Stage 7 must consult the durable collection exclusion before close."""
+        return space in json.loads(self.cursor("webex.excluded_spaces.v1") or "[]")
+
     def close(
         self, key: BundleKey, manifest: Manifest, *, depends_on: str | None = None
     ) -> None:
         raw = manifest.model_dump_json().encode()
         manifest = Manifest.model_validate_json(raw)
         with self._write() as db:
+            excluded = db.execute(
+                "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+            ).fetchone()
+            if excluded and key.space in json.loads(excluded[0]):
+                raise ValueError("excluded_space")
             row = db.execute(
                 "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
                 (key.capture_id,),

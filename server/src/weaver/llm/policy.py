@@ -140,6 +140,11 @@ class LlmPolicy:
         """IDs that are closed or unknown now; a transient fault blocks this call."""
         closed: set[str] = set()
         for source_id in sorted(ids):
+            if source_id == UNKNOWN_DICTIONARY_SOURCE:
+                # The dictionary's persisted write-time flag already established
+                # uncertainty. Removing a Source/Receipt cannot erase that fact.
+                closed.add(source_id)
+                continue
             if source_id in UNKNOWN_LINEAGE:
                 # Unknown lineage is proven non-Webex only while the archive
                 # holds no Webex Source at all (ADR-046: unknown is not sent).

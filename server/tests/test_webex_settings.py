@@ -52,6 +52,10 @@ attachments = "metadata_only"
         "enabled = 1",
         "poll_interval_seconds = true",
         "initial_backfill_days = 0",
+        "reconcile_interval_seconds = 0",
+        "reconcile_interval_seconds = 299",
+        "request_budget_window_seconds = 0",
+        "request_budget_window_seconds = true",
         'timezone = "fake-sensitive"',
         'auth = "fake-sensitive"',
         "credentials_file = 42",
@@ -132,6 +136,8 @@ def test_request_budget_defaults_and_partial_override(tmp_path: Path) -> None:
         config_file(tmp_path, ""), init_directories=True, environ={}
     ).shepherds.webex
     assert settings.poll_interval_seconds == 300
+    assert settings.reconcile_interval_seconds == 21600
+    assert settings.request_budget_window_seconds == 300
     assert (
         settings.request_budget_total,
         settings.request_budget_incremental,

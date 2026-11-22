@@ -113,15 +113,20 @@ real account Integration permissions and API behavior remain deployment checks.
 (default 300); `--once` runs one budgeted round. The account worker takes a
 nonblocking process lock beside its private B4 outbox. `webex poll-status`
 reports only counts, usage and retry deadlines. No Space titles, IDs or message
-bodies are logged. A 403/404 isolates that Space as `access_gap`, preserving its
-cursor; it never establishes deletion. Other invalid pages stop with a fixed
-operator error. After investigating access, stop the worker and run `webex poll-resume` to
-retry isolated Spaces from their original saved cursors.
+bodies are logged. A 403 or three consecutive 404s isolate that Space as
+`access_gap`, recording `gap_since`, `last_status` and a safe reason. A transient
+404 waits one poll interval. Invalid pages (400/410, malformed messages, room
+mismatches, unsafe links or ordering) isolate only that Space as `page_error`.
+Other Spaces continue and the failed page cursor never advances. Discovery
+errors back off discovery independently of known Spaces. Stop the worker and
+run `webex poll-resume --space-id <id>` (repeatable) after investigating; omitting
+the selection resumes all isolated Spaces from their saved cursors.
 
 Optionally override the four `request_budget_*` integers in `[shepherds.webex]`: `total`,
 `incremental`, `overlap`, and `deletion` (full names use that prefix). The
-account ceiling and each task ceiling count Messaging API attempts in a fixed
-`poll_interval_seconds` UTC window, including room discovery, retries and
+account ceiling and each task ceiling count Messaging API attempts in a sliding
+`request_budget_window_seconds` window (default 300), independently of polling,
+including room discovery, retries and
 401 resource retries. All caps must be positive and the task caps together must
 fit the account cap. Defaults are total 300, incremental 200, overlap 80 and
 deletion 20 per 300-second interval (60 total attempts per minute on average).
@@ -137,26 +142,38 @@ Incremental scans descend from a fixed upper timestamp to the previous
 created-time/message-ID high-water, including timestamp ties. Only the first
 scan starts at seven days; catch-up after longer downtime reaches the saved
 high-water. Overlap has its own seven-day floor, pagination, completion time and
-round-robin Space position, and uses only its own cap plus remaining account
+round-robin Space position. A completed Space waits `reconcile_interval_seconds`
+(default 21600, six hours) before starting another overlap; unfinished scans
+continue in later polling rounds. The interval must be positive and at least
+the poll interval. Overlap uses only its own cap plus remaining account
 budget. It never changes the incremental high-water. A response page's observed
 payloads, hashes, scan position and completed high-water commit together via
 `Outbox.buffer_page`; a failed commit or full spool advances none of them.
-All source state uses `webex.poll.v1`, independently of Courier `/changes`.
+Source state uses `webex.poll.v1`, independently of Courier `/changes`. Request
+timestamps use the separate `webex.budget.v1` key, so reserving attempts does not
+rewrite the large source state. Legacy counters carry forward conservatively.
+Hashes outside the overlap window are pruned, retaining any active scan range.
 
 Empty pages with a Link `next` continue. Links must remain HTTPS on the exact
 Webex API origin and endpoint; message links must keep the same room ID.
-Cycles and unexpected ordering/ranges stop rather than silently skipping data.
+Cycles and unexpected ordering/ranges isolate that Space without skipping data.
 Metadata contains attachment URLs already present in message JSON; attachment
 bytes, file metadata endpoints, OCR and People lookup are never requested.
 Message author display is optional; private email/ID is not substituted.
-429 honors numeric or HTTP-date Retry-After with jitter, and transport/5xx
-failures back off. Retry deadlines and attempt usage survive reboot. A resource
+429 honors numeric or HTTP-date Retry-After with proportional ±20% jitter, never
+earlier than Retry-After and never beyond one day. A Retry-After above one day
+persists an account stop visible in `poll-status`; investigate and explicitly
+use `poll-resume --account` to clear it. All HTTP errors and 5xx failures back
+off with safe diagnostics. Retry deadlines and attempt usage survive reboot. A resource
 401 refreshes once, including when budget exhaustion defers that retry.
 
 Missing overlap IDs become persistent unverified candidates. Single-message
-checks run only following that Space's successful overlap in the same run and
-within both budgets. A 403/404 remains unverified because retention or access
-loss is ambiguous. No automatic deletion or completeness claim is made.
+checks require a successful message list for that Space in the same round and
+both budgets. They rotate account-wide by oldest check time, skip checks newer
+than the reconciliation interval, and remove `present` results from the queue.
+The missing-list observation and later check result/time remain in private
+observations. A 403/404 remains unverified because retention or access loss is
+ambiguous. No automatic deletion or completeness claim is made.
 
 This stage writes B4 **open buffers**, retaining earlier observed message
 versions in distinct revisions. Stage 7 owns next-day closure, deterministic
@@ -165,6 +182,10 @@ publication and review integration. `poll` does not close bundles or send
 unfinished current-day data to the Archive. Existing B4 flush remains unchanged;
 there is no second active Courier path. Before enabling publication, deploy the
 Webex-capable APK first (the existing enum compatibility requirement).
+Edits to the same day's messages on one page share one revision. Exclusion
+changes persist a marker beside the open buffers (`webex.excluded_spaces.v1`);
+`Outbox.space_excluded` exposes it and B4 close rejects excluded Spaces. Stage 7
+must honor this marker before closing/publishing, retaining original bytes.
 
 REST fixtures explicitly assume descending `created` order, `before` filtering,
 Link continuation and inclusion of replies. These are synthetic assumptions,
@@ -180,14 +201,18 @@ Design basis: `docs/domain/architecture/webex-shepherd-pilot.md:30` (polling),
 
 The pre-fix regression test reproduces a first-summary `policy_blocked` after
 Webex enters an archive containing a dictionary. Dictionary changes now record
-origin Source IDs and an observation timestamp for unknown content in private
-SQLite. Summary approval and re-extraction supply their originating Source ID.
-Unknown content observed strictly before the first Webex archive Receipt is
-proven non-Webex; equal/later timestamps and missing legacy timestamps remain
-closed. Migration records the current observation time, never a guessed
-filesystem creation time. Shared Fabric origins cannot hide an unrelated
-unknown dictionary entry. No public schema or Kotlin model changes are needed.
+origin Source IDs and a durable flag recording whether Webex existed in the
+bound archive at an unknown-origin write. False proves non-Webex; true remains
+closed even after clock rollback or removal of archive Receipts/Sources.
+Migration records archive presence at upgrade, replacing timestamp comparisons.
+Runtime and web editing bind the configured archive; re-extraction reuses that
+binding or receives it from the CLI. An unavailable binding fails closed.
+Summary approval, Wiki promotion, compiler page/section metadata and re-extraction
+rename/alias writes supply their actual Source IDs. Human web edits deliberately
+remain unknown and closed once Webex exists (the conservative #198 rule); any
+broader permission is a follow-up decision. Shared Fabric origins cannot hide
+an unrelated unknown dictionary entry. No public schema/Kotlin changes are needed.
 
 Policy basis: `docs/domain/decisions/046-central-llm-policy-gate.md` and the W3-B5
-coordinator decision; implementations are `context/__init__.py:251`,
-`context/__init__.py:470`, `llm/policy_archive.py:185`.
+coordinator decision; implementations are `context/__init__.py:263`,
+`context/__init__.py:481`, `context/__init__.py:518`, `llm/policy_archive.py:185`.

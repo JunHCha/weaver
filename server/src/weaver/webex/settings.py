@@ -18,6 +18,8 @@ class WebexSettings:
     poll_interval_seconds: int = 300
     initial_backfill_days: int = 7
     reconcile_overlap_days: int = 7
+    reconcile_interval_seconds: int = 21600
+    request_budget_window_seconds: int = 300
     request_budget_total: int = 300
     request_budget_incremental: int = 200
     request_budget_overlap: int = 80
@@ -46,9 +48,15 @@ class WebexSettings:
             "poll_interval_seconds",
             "initial_backfill_days",
             "reconcile_overlap_days",
+            "reconcile_interval_seconds",
+            "request_budget_window_seconds",
         ):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise ConfigError(f"shepherds.webex.{name}: expected positive integer")
+        if self.reconcile_interval_seconds < self.poll_interval_seconds:
+            raise ConfigError(
+                "shepherds.webex.reconcile_interval_seconds: must be at least poll_interval_seconds"
+            )
         if not isinstance(self.exclude_space_ids, tuple) or any(
             not isinstance(item, str) or not item.strip()
             for item in self.exclude_space_ids

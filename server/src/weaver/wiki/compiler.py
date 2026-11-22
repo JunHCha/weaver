@@ -53,6 +53,7 @@ from weaver.wiki.document import (
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
 from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
+from weaver.wiki.provenance import page_source_ids
 from weaver.wiki.provenance import source_ids as wiki_source_ids
 from weaver.wiki.selection import (
     EvidenceIndex,
@@ -694,6 +695,17 @@ class Compiler:
                 tuple(entry.aliases),
                 human_edited=False,
                 drop_conflicting_aliases=True,
+                source_ids=tuple(
+                    sorted(
+                        page_source_ids(
+                            self.store.metadata(edit.path),
+                            {
+                                t.thread_id: t.source_id
+                                for t in self.fabric.entries(ThreadQuery())
+                            },
+                        )
+                    )
+                ),
             )
         appended = self.fabric.append(
             [ThreadDraft.model_validate(d) for d in json.loads(payload)]
@@ -936,6 +948,17 @@ class Compiler:
                             if isinstance(aliases, list)
                             else (),
                             str(props.get("summary") or body.split("\n")[0]),
+                            tuple(
+                                sorted(
+                                    page_source_ids(
+                                        self.store.metadata(f"pages/{page_path.name}"),
+                                        {
+                                            t.thread_id: t.source_id
+                                            for t in self.fabric.entries(ThreadQuery())
+                                        },
+                                    )
+                                )
+                            ),
                         )
                     )
         self.context.sync_from_pages(pages)

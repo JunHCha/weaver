@@ -61,6 +61,7 @@ def setup(tmp_path):
         request_budget_incremental=10,
         request_budget_overlap=5,
         request_budget_deletion=2,
+        reconcile_interval_seconds=300,
     )
     box = Outbox(
         tmp_path / "private" / "outbox.sqlite3",
@@ -252,7 +253,7 @@ def test_backoff_persisted_across_reboot_and_counts_retries(setup, status):
     clock.now = restarted.state.retry_at + timedelta(seconds=1)
     restarted.tick()
     assert len(calls) == 1
-    assert sum(restarted.state.used.values()) == 2
+    assert sum(restarted.budget.used.values()) == 2
 
 
 def test_retry_after_http_date(setup):
@@ -289,7 +290,7 @@ def test_401_refresh_once_and_every_request_uses_budget(setup):
         poller.tick()
     assert len(calls) == 2
     assert tokens.refreshes == [False, True]
-    assert poller.state.used["incremental"] == 2
+    assert poller.budget.used["incremental"] == 2
 
 
 @pytest.mark.parametrize(
@@ -311,8 +312,9 @@ def test_unsafe_message_links_never_receive_tokens_or_advance(setup, next_url):
         )
 
     poller, _ = make(respond)
-    with pytest.raises(PollError, match="unsafe_pagination"):
-        poller.tick()
+    poller.tick()
+    assert poller.state.spaces["S"].status == "page_error"
+    assert poller.state.spaces["S"].reason == "unsafe_pagination"
     assert bundles(box) == []
     assert poller.state.spaces["S"].high_water is None
 
@@ -328,13 +330,14 @@ def test_cycle_link_is_rejected(setup):
         )
 
     poller, _ = make(respond)
-    with pytest.raises(PollError, match="pagination_cycle"):
-        poller.tick()
+    poller.tick()
+    assert poller.state.spaces["S"].status == "page_error"
+    assert poller.state.spaces["S"].reason == "pagination_cycle"
 
 
 @pytest.mark.parametrize("status", [403, 404])
 def test_space_access_gap_isolated_not_deleted_or_advanced(setup, status):
-    make, _, _, _ = setup
+    make, _, clock, _ = setup
 
     def respond(req):
         if req.url.path == "/v1/rooms":
@@ -347,6 +350,11 @@ def test_space_access_gap_isolated_not_deleted_or_advanced(setup, status):
 
     poller, _ = make(respond)
     poller.tick()
+    if status == 404:
+        assert poller.state.spaces["S"].status == "ready"
+        for _ in range(2):
+            clock.now += timedelta(minutes=5)
+            poller.tick()
     assert poller.state.spaces["S"].status == "access_gap"
     assert poller.state.spaces["S"].high_water is None
     assert poller.state.spaces["OTHER"].high_water is not None
@@ -371,7 +379,7 @@ def test_round_robin_separate_overlap_and_account_budget(setup):
     poller, calls = make(respond, settings)
     poller.tick()
     assert len(calls) == 4
-    assert poller.state.used == {"incremental": 2, "overlap": 2}
+    assert poller.budget.used == {"incremental": 2, "overlap": 2}
     assert poller.state.spaces["A"].incremental_at is not None
     assert poller.state.spaces["B"].incremental_at is None
     clock.now += timedelta(minutes=5)
@@ -413,7 +421,242 @@ def test_default_budget_starts_poller(setup):
     poller, calls = make(lambda req: page([]), WebexSettings())
     poller.tick()
     assert len(calls) == 1
-    assert poller.state.used == {"incremental": 1}
+    assert poller.budget.used == {"incremental": 1}
+
+
+@pytest.mark.parametrize("kind", ["400", "410", "id", "created", "room", "order"])
+def test_bad_space_page_isolated_and_other_space_continues(setup, kind):
+    make, box, _, _ = setup
+
+    def respond(req):
+        if req.url.path == "/v1/rooms":
+            return page([{"id": "BAD"}, {"id": "GOOD"}])
+        if req.url.params["roomId"] == "GOOD":
+            return page([message(space="GOOD")])
+        if kind in ("400", "410"):
+            return httpx.Response(int(kind))
+        bad = message(space="BAD")
+        if kind in ("id", "created"):
+            del bad[kind]
+        elif kind == "room":
+            bad["roomId"] = "OTHER"
+        elif kind == "order":
+            return page([message("old", days=2, space="BAD"), bad])
+        return page([bad])
+
+    poller, _ = make(respond)
+    poller.tick()
+    assert poller.state.spaces["BAD"].status == "page_error"
+    assert poller.state.spaces["BAD"].high_water is None
+    assert poller.state.spaces["BAD"].incremental.floor == NOW - timedelta(days=7)
+    assert poller.state.spaces["BAD"].incremental.ceiling == NOW
+    assert poller.state.spaces["GOOD"].high_water is not None
+    assert all(b.space_id == "GOOD" for b in bundles(box))
+
+
+def test_overlap_waits_six_hours_while_incremental_continues(setup):
+    make, _, clock, settings = setup
+    settings = replace(settings, reconcile_interval_seconds=21600)
+
+    def respond(req):
+        return page([{"id": "S"}]) if req.url.path == "/v1/rooms" else page([])
+
+    poller, _ = make(respond, settings)
+    poller.tick()
+    first = poller.state.spaces["S"].overlap_at
+    clock.now += timedelta(minutes=5)
+    poller.tick()
+    assert poller.state.spaces["S"].incremental_at == clock.now
+    assert poller.state.spaces["S"].overlap_at == first
+    clock.now = first + timedelta(hours=6)
+    poller.tick()
+    assert poller.state.spaces["S"].overlap_at == clock.now
+
+
+def test_sliding_budget_blocks_boundary_burst_and_survives_restart(setup):
+    from weaver.webex.poller import BUDGET
+
+    make, box, clock, settings = setup
+    clock.now = NOW + timedelta(seconds=299)
+    settings = replace(
+        settings,
+        poll_interval_seconds=30,
+        request_budget_incremental=2,
+        request_budget_window_seconds=300,
+    )
+    poller, _ = make(lambda req: page([]), settings)
+    assert poller._reserve("incremental")
+    assert poller._reserve("incremental")
+    # No large State serialization accompanies request accounting.
+    assert box.cursor(CURSOR) is None
+    assert box.cursor(BUDGET)
+    clock.now += timedelta(seconds=2)
+    restarted, _ = make(lambda req: page([]), settings)
+    assert not restarted._reserve("incremental")
+    clock.now -= timedelta(days=1)
+    assert not restarted._reserve("incremental")
+    clock.now = NOW + timedelta(seconds=600)
+    assert restarted._reserve("incremental")
+
+
+def test_deletion_candidates_rotate_over_twenty_and_present_is_removed(setup):
+    from weaver.webex.poller import Candidate, Seen, Space
+
+    make, _, clock, settings = setup
+    settings = replace(
+        settings,
+        request_budget_total=300,
+        request_budget_incremental=200,
+        request_budget_overlap=80,
+        request_budget_deletion=20,
+        reconcile_interval_seconds=21600,
+    )
+    checked = []
+
+    def respond(req):
+        if req.url.path.startswith("/v1/messages/"):
+            checked.append(req.url.path.rsplit("/", 1)[-1])
+            return httpx.Response(200 if checked[-1] == "00" else 404)
+        return page([])
+
+    poller, _ = make(respond, settings)
+    poller.state.spaces["S"] = Space(
+        overlap_at=NOW,
+        candidates={f"{i:02}": Candidate(missing_at=NOW) for i in range(45)},
+        seen={"old": Seen(digest="fake", created=NOW - timedelta(days=8))},
+    )
+    poller._save()
+    for _ in range(3):
+        poller.tick()
+        clock.now += timedelta(minutes=5)
+    assert len(checked) == 45
+    assert len(set(checked)) == 45
+    assert "00" not in poller.state.spaces["S"].candidates
+    assert poller.state.spaces["S"].observations["00"].result == "present"
+    assert poller.state.spaces["S"].observations["00"].missing_at == NOW
+    assert "old" not in poller.state.spaces["S"].seen
+
+
+def test_retry_after_above_day_persists_account_stop(setup):
+    make, _, _, _ = setup
+    poller, _ = make(lambda req: httpx.Response(429, headers={"Retry-After": "86401"}))
+    with pytest.raises(PollError, match="account_stopped"):
+        poller.tick()
+    restarted, calls = make(lambda req: pytest.fail("stopped account"))
+    with pytest.raises(PollError, match="account_stopped"):
+        restarted.tick()
+    assert not calls
+
+
+def test_proportional_jitter_respects_retry_after(setup):
+    make, _, _, _ = setup
+    poller, _ = make(lambda req: page([]))
+    poller.jitter = lambda: 1.0
+    poller._backoff(httpx.Response(429, headers={"Retry-After": "1000"}))
+    assert poller.state.retry_at == NOW + timedelta(seconds=1200)
+    poller.jitter = lambda: 0.0
+    poller._backoff(httpx.Response(429, headers={"Retry-After": "1000"}))
+    assert poller.state.retry_at == NOW + timedelta(seconds=1000)
+
+
+def test_http_error_backoff_never_leaks_private_url(setup):
+    make, _, _, _ = setup
+
+    def respond(req):
+        raise httpx.DecodingError("https://private.invalid/?roomId=secret")
+
+    poller, _ = make(respond)
+    poller.tick()
+    assert poller.state.retry_at > NOW
+
+
+def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setup):
+    make, box, clock, settings = setup
+    changed = False
+
+    def respond(req):
+        if req.url.path == "/v1/rooms":
+            return page([{"id": "S"}])
+        return page(
+            [
+                message("a", text="changed" if changed else "first"),
+                message("b", text="changed" if changed else "first"),
+            ]
+        )
+
+    poller, _ = make(respond)
+    poller.tick()
+    changed = True
+    clock.now += timedelta(minutes=5)
+    poller.tick()
+    assert len(bundles(box)) == 2
+    assert sorted(len(b.messages) for b in bundles(box)) == [2, 2]
+    excluded, _ = make(respond, replace(settings, exclude_space_ids=("S",)))
+    excluded.tick()
+    assert excluded.state.spaces["S"].excluded
+    assert box.space_excluded("S")
+    from weaver.shepherd.outbox import BundleKey
+
+    from .shepherd.test_outbox import manifest
+
+    key = BundleKey(box.instance_id, "S", "2026-11-19", 0, 0)
+    payload = box.get(key.capture_id).payload
+    with pytest.raises(ValueError, match="excluded_space"):
+        box.close(key, manifest(key, payload))
+    assert box.get(key.capture_id).state == "buffer"
+
+
+def test_cli_status_corruption_and_selective_resume_are_safe(setup, monkeypatch):
+    from typer.testing import CliRunner
+
+    from weaver import app
+    from weaver.config import load_config
+    from weaver.shepherd import cli as shepherd_cli
+    from weaver.webex.cli import webex_cli
+    from weaver.webex.poller import Space
+
+    from .test_config import write_config
+
+    _, box, _, _ = setup
+    config = load_config(write_config(box.path.parent), environ={})
+    monkeypatch.setattr(app, "_load", lambda _: config)
+    monkeypatch.setattr(shepherd_cli, "_outbox", lambda *args: (config, box))
+    runner = CliRunner()
+    box.buffer_page([], cursor=(CURSOR, '{"spaces":{"private-room":42}}'))
+    result = runner.invoke(webex_cli, ["poll-status"])
+    assert result.exit_code == 1
+    assert "private-room" not in result.output
+    assert "status_unavailable" in result.output
+    state = State(
+        stopped="retry_after_exceeds_one_day",
+        spaces={"A": Space(status="page_error"), "B": Space(status="access_gap")},
+    )
+    box.buffer_page([], cursor=(CURSOR, state.model_dump_json()))
+    result = runner.invoke(webex_cli, ["poll-resume", "--space-id", "A"])
+    assert result.exit_code == 0, result.output
+    saved = State.model_validate_json(box.cursor(CURSOR))
+    assert saved.spaces["A"].status == "ready"
+    assert saved.spaces["B"].status == "access_gap"
+    assert saved.stopped
+    result = runner.invoke(webex_cli, ["poll-resume", "--account"])
+    assert result.exit_code == 0
+    assert State.model_validate_json(box.cursor(CURSOR)).stopped is None
+
+
+def test_bad_discovery_page_does_not_block_known_spaces(setup):
+    from weaver.webex.poller import Space
+
+    make, _, _, _ = setup
+
+    def respond(req):
+        return httpx.Response(410) if req.url.path == "/v1/rooms" else page([message()])
+
+    poller, _ = make(respond)
+    poller.state.spaces["S"] = Space()
+    poller._save()
+    poller.tick()
+    assert poller.state.rooms_error == "webex_request_failed"
+    assert poller.state.spaces["S"].high_water
 
 
 def test_small_budget_does_not_starve_incremental_behind_discovery(setup):
@@ -476,8 +719,9 @@ def test_invalid_page_does_not_commit_partial_content(setup):
         )
 
     poller, _ = make(respond)
-    with pytest.raises(PollError, match="invalid_webex_message"):
-        poller.tick()
+    poller.tick()
+    assert poller.state.spaces["S"].status == "page_error"
+    assert poller.state.spaces["S"].reason == "invalid_webex_message"
     assert bundles(box) == []
     assert poller.state.spaces["S"].high_water is None
 

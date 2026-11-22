@@ -25,6 +25,7 @@ from .settings import WebexSettings
 
 API = "https://webexapis.com/v1"
 CURSOR = "webex.poll.v1"
+BUDGET = "webex.budget.v1"
 type Work = Literal["incremental", "overlap", "deletion"]
 
 
@@ -34,6 +35,10 @@ class Tokens(Protocol):
 
 class PollError(ValueError):
     """Safe operator code, never a response body, URL, or private identifier."""
+
+    def __init__(self, code: str, *, status: int | None = None) -> None:
+        super().__init__(code)
+        self.status = status
 
 
 class Scan(BaseModel):
@@ -51,6 +56,7 @@ class Seen(BaseModel):
 
 
 class Candidate(BaseModel):
+    missing_at: datetime | None = None
     checked_at: datetime | None = None
     result: str = "unverified"
 
@@ -62,20 +68,41 @@ class Space(BaseModel):
     incremental_at: datetime | None = None
     overlap_at: datetime | None = None
     status: str = "ready"
+    gap_since: datetime | None = None
+    last_status: int | None = None
+    reason: str | None = None
+    not_found_count: int = 0
+    retry_at: datetime | None = None
+    excluded: bool = False
     seen: dict[str, Seen] = Field(default_factory=dict)
     revisions: dict[str, int] = Field(default_factory=dict)
     candidates: dict[str, Candidate] = Field(default_factory=dict)
+    observations: dict[str, Candidate] = Field(default_factory=dict)
+
+
+class RequestBudget(BaseModel):
+    attempts: list[tuple[datetime, Work]] = Field(default_factory=list)
+    last_at: datetime | None = None
+
+    @property
+    def used(self) -> dict[str, int]:
+        return {
+            work: sum(w == work for _, w in self.attempts)
+            for work in ("incremental", "overlap", "deletion")
+            if any(w == work for _, w in self.attempts)
+        }
 
 
 class State(BaseModel):
     spaces: dict[str, Space] = Field(default_factory=dict)
     rooms_url: str | None = None
     rooms_at: datetime | None = None
+    rooms_retry_at: datetime | None = None
+    rooms_error: str | None = None
     rooms_visited: list[str] = Field(default_factory=list)
     turn_incremental: int = 0
     turn_overlap: int = 0
-    window: int = -1
-    used: dict[str, int] = Field(default_factory=dict)
+    stopped: str | None = None
     retry_at: datetime | None = None
     refresh_url: str | None = None
     failures: int = 0
@@ -104,17 +131,39 @@ class Poller:
             client,
         )
         self.clock, self.jitter = clock, jitter
-        self.completed_overlap: set[str] = set()
+        self.accessible_spaces: set[str] = set()
         raw = outbox.cursor(CURSOR)
         self.state = State.model_validate_json(raw) if raw else State()
+        raw_budget = outbox.cursor(BUDGET)
+        self.budget = (
+            RequestBudget.model_validate_json(raw_budget)
+            if raw_budget
+            else RequestBudget()
+        )
+        if raw and not raw_budget:
+            # Conservatively carry old fixed-window counters into a full new window.
+            import json
+
+            for work, count in json.loads(raw).get("used", {}).items():
+                if work in ("incremental", "overlap", "deletion"):
+                    self.budget.attempts.extend((clock(), work) for _ in range(count))
+            self._save_budget()
+
+    def _save_budget(self) -> None:
+        self.outbox.buffer_page([], cursor=(BUDGET, self.budget.model_dump_json()))
 
     def _save(self, buffers: list[tuple[BundleKey, bytes]] | None = None) -> None:
         self.outbox.buffer_page(
-            buffers or [], cursor=(CURSOR, self.state.model_dump_json())
+            buffers or [],
+            cursor=(CURSOR, self.state.model_dump_json()),
+            exclusions=tuple(sorted(self.state.exclusions)),
         )
 
     def _safe_url(self, url: str, path: str, space: str | None = None) -> str:
-        parsed = urlsplit(url)
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            raise PollError("unsafe_pagination") from None
         if (parsed.scheme, parsed.netloc, parsed.path) != (
             "https",
             "webexapis.com",
@@ -126,22 +175,22 @@ class Poller:
         return url
 
     def _reserve(self, work: Work) -> bool:
-        window = int(self.clock().timestamp()) // self.settings.poll_interval_seconds
-        if self.state.window != window:
-            self.state.window, self.state.used = window, {}
+        now = max(self.clock(), self.budget.last_at or self.clock())
+        self.budget.last_at = now
+        floor = now - timedelta(seconds=self.settings.request_budget_window_seconds)
+        self.budget.attempts = [(at, w) for at, w in self.budget.attempts if at > floor]
         total = self.settings.request_budget_total
         cap = getattr(self.settings, f"request_budget_{work}")
-        if (
-            sum(self.state.used.values()) >= total
-            or self.state.used.get(work, 0) >= cap
-        ):
+        if len(self.budget.attempts) >= total or self.budget.used.get(work, 0) >= cap:
             return False
-        self.state.used[work] = self.state.used.get(work, 0) + 1
-        self._save()  # Count even requests interrupted before a response arrives.
+        self.budget.attempts.append((now, work))
+        self._save_budget()  # Count even requests interrupted before a response arrives.
         return True
 
     def _get(self, url: str, work: Work) -> httpx.Response | None:
-        if self.state.retry_at is not None and self.clock() < self.state.retry_at:
+        if self.state.stopped or (
+            self.state.retry_at is not None and self.clock() < self.state.retry_at
+        ):
             return None
         refresh = self.state.refresh_url == url
         while self._reserve(work):
@@ -153,7 +202,7 @@ class Poller:
                     },
                     follow_redirects=False,
                 )
-            except httpx.TransportError:
+            except httpx.HTTPError:
                 self._backoff(None)
                 return None
             if response.status_code == 401:
@@ -187,14 +236,23 @@ class Poller:
                 except (ValueError, TypeError, OverflowError):
                     retry = delay
             if math.isfinite(retry):
-                delay = max(delay, min(retry, 365 * 86400.0))
-        self.state.retry_at = self.clock() + timedelta(seconds=delay + self.jitter())
+                if retry > 86400:
+                    self.state.stopped = "retry_after_exceeds_one_day"
+                    self._save()
+                    return
+                delay = max(delay, retry)
+            else:
+                retry = 0
+        else:
+            retry = 0
+        delay = min(86400, max(retry, delay * (0.8 + 0.4 * self.jitter())))
+        self.state.retry_at = self.clock() + timedelta(seconds=delay)
         self._save()
 
     @staticmethod
     def _items(response: httpx.Response) -> list[dict[str, object]]:
         if response.status_code != 200:
-            raise PollError("webex_request_failed")
+            raise PollError("webex_request_failed", status=response.status_code)
         try:
             raw = response.json()
             items = raw["items"]
@@ -272,6 +330,7 @@ class Poller:
         self, sid: str, space: Space, messages: list[WebexMessage]
     ) -> list[tuple[BundleKey, bytes]]:
         grouped: dict[tuple[str, int], list[WebexMessage]] = {}
+        page_revisions: dict[str, int] = {}
         for message in messages:
             digest = hashlib.sha256(message.model_dump_json().encode()).hexdigest()
             old = space.seen.get(message.message_id)
@@ -282,9 +341,18 @@ class Poller:
                 .date()
                 .isoformat()
             )
-            revision = space.revisions.get(day, 0)
-            if old is not None:
-                revision += 1  # Preserve previous observed bytes in an earlier buffer.
+            revision = page_revisions.get(day, space.revisions.get(day, 0))
+            if day not in page_revisions and any(
+                m.message_id in space.seen
+                and space.seen[m.message_id].digest
+                != hashlib.sha256(m.model_dump_json().encode()).hexdigest()
+                and m.created_at.astimezone(ZoneInfo(self.settings.timezone))
+                .date()
+                .isoformat()
+                == day
+                for m in messages
+            ):
+                revision += 1
             key = BundleKey(self.outbox.instance_id, sid, day, 0, revision)
             try:
                 entry = self.outbox.get(key.capture_id)
@@ -292,8 +360,13 @@ class Poller:
                 if str(error) != "unknown_capture":
                     raise
                 entry = None
-            if entry is not None and entry.state != "buffer":
+            if (
+                day not in page_revisions
+                and entry is not None
+                and entry.state != "buffer"
+            ):
                 revision += 1
+            page_revisions[day] = revision
             space.revisions[day] = revision
             grouped.setdefault((day, revision), []).append(message)
             space.seen[message.message_id] = Seen(
@@ -325,6 +398,10 @@ class Poller:
 
     def _page(self, sid: str, work: Literal["incremental", "overlap"]) -> bool:
         space = self.state.spaces[sid]
+        if space.status != "ready" or (
+            space.retry_at and self.clock() < space.retry_at
+        ):
+            return False
         scan = getattr(space, work)
         now = self.clock()
         if scan is None:
@@ -333,6 +410,8 @@ class Poller:
             )
             if finished is not None and now < finished + timedelta(
                 seconds=self.settings.poll_interval_seconds
+                if work == "incremental"
+                else self.settings.reconcile_interval_seconds
             ):
                 return False
             floor = (
@@ -352,12 +431,23 @@ class Poller:
                 + urlencode({"roomId": sid, "before": now.isoformat(), "max": 100}),
             )
             setattr(space, work, scan)
+            self._save()  # Freeze the backfill/catch-up range before the request.
         url = self._safe_url(scan.url, "/v1/messages", sid)
         response = self._get(url, work)
         if response is None:
             return False
         if response.status_code in (403, 404):
-            space.status = "access_gap"
+            space.last_status = response.status_code
+            space.gap_since = space.gap_since or now
+            space.reason = (
+                "forbidden" if response.status_code == 403 else "repeated_not_found"
+            )
+            space.not_found_count += 1
+            if response.status_code == 403 or space.not_found_count >= 3:
+                space.status = "access_gap"
+            space.retry_at = now + timedelta(
+                seconds=self.settings.poll_interval_seconds
+            )
             self._save()
             return False
         messages = [self._message(raw, sid) for raw in self._items(response)]
@@ -373,6 +463,12 @@ class Poller:
             self._safe_url(next_url, "/v1/messages", sid)
             if next_url in [*scan.visited, url]:
                 raise PollError("pagination_cycle")
+        self.accessible_spaces.add(sid)
+        space.not_found_count = 0
+        space.last_status = response.status_code
+        space.retry_at = None
+        space.reason = None
+        space.gap_since = None
         selected = [m for m in messages if m.created_at >= scan.floor]
         for message in selected:
             scan.seen.add(message.message_id)
@@ -392,9 +488,13 @@ class Poller:
                         scan.floor <= seen.created < scan.ceiling
                         and mid not in scan.seen
                     ):
-                        space.candidates.setdefault(mid, Candidate())
+                        candidate = space.candidates.setdefault(
+                            mid, Candidate(missing_at=now)
+                        )
+                        space.observations.setdefault(
+                            mid, candidate.model_copy(deep=True)
+                        )
                 space.overlap_at = now
-                self.completed_overlap.add(sid)
             setattr(space, work, None)
             space.status = "ready"
         else:
@@ -409,8 +509,7 @@ class Poller:
         ids = sorted(
             sid
             for sid, space in self.state.spaces.items()
-            if sid not in self.settings.exclude_space_ids
-            and space.status != "access_gap"
+            if sid not in self.settings.exclude_space_ids and space.status == "ready"
         )
         if not ids:
             return
@@ -419,40 +518,95 @@ class Poller:
         while idle < len(ids):
             turn = getattr(self.state, attribute) % len(ids)
             setattr(self.state, attribute, turn + 1)
-            if self._page(ids[turn], work):
+            sid = ids[turn]
+            before = self.state.spaces[sid].model_copy(deep=True)
+            try:
+                advanced = self._page(sid, work)
+            except PollError as error:
+                if str(error) == "reauthentication_required":
+                    raise
+                # Initial scan bounds may have been frozen immediately before
+                # this failed request. Restore the committed cursor, including
+                # those bounds, rather than restarting backfill at a later date.
+                saved = self.outbox.cursor(CURSOR)
+                if saved:
+                    before = State.model_validate_json(saved).spaces.get(sid, before)
+                self.state.spaces[sid] = before
+                before.status = "page_error"
+                before.gap_since = before.gap_since or self.clock()
+                before.reason = str(error)
+                before.last_status = error.status or 200
+                self._save()
+                advanced = False
+            if advanced:
                 idle = 0
             else:
                 idle += 1
         self._save()
 
     def _deletions(self) -> None:
-        # A fresh successful overlap proves access only for that run. A missing
+        # A successful message list proves access only for that run. A missing
         # single message remains unverified (retention/revocation is ambiguous).
-        for sid, space in sorted(self.state.spaces.items()):
-            if (
-                sid in self.settings.exclude_space_ids
-                or sid not in self.completed_overlap
-                or space.status != "ready"
+        candidates = sorted(
+            (
+                (candidate.checked_at or datetime.min.replace(tzinfo=UTC), sid, mid)
+                for sid, space in self.state.spaces.items()
+                if sid not in self.settings.exclude_space_ids
+                and sid in self.accessible_spaces
+                and space.status == "ready"
+                for mid, candidate in space.candidates.items()
+            ),
+        )
+        for _, sid, mid in candidates:
+            space = self.state.spaces[sid]
+            candidate = space.candidates[mid]
+            if candidate.checked_at and self.clock() < candidate.checked_at + timedelta(
+                seconds=self.settings.reconcile_interval_seconds
             ):
                 continue
-            for mid, candidate in space.candidates.items():
-                response = self._get(
-                    f"{API}/messages/{quote(mid, safe='')}", "deletion"
-                )
-                if response is None:
-                    return
-                candidate.checked_at = self.clock()
-                candidate.result = (
-                    "present" if response.status_code == 200 else "unverified"
-                )
-                self._save()
+            response = self._get(f"{API}/messages/{quote(mid, safe='')}", "deletion")
+            if response is None:
+                return
+            candidate.checked_at = self.clock()
+            candidate.result = (
+                "present" if response.status_code == 200 else "unverified"
+            )
+            space.observations[mid] = candidate.model_copy(deep=True)
+            if response.status_code == 200:
+                del space.candidates[mid]
+            self._save()
+
+    def _discover_safely(self) -> None:
+        if self.state.rooms_retry_at and self.clock() < self.state.rooms_retry_at:
+            return
+        try:
+            self.discover(one_page=True)
+            self.state.rooms_error = None
+        except PollError as error:
+            if str(error) == "reauthentication_required":
+                raise
+            self.state.rooms_error = str(error)
+            self.state.rooms_retry_at = self.clock() + timedelta(
+                seconds=self.settings.poll_interval_seconds
+            )
+            self._save()
+
+    def _prune_seen(self) -> None:
+        for space in self.state.spaces.values():
+            floor = self.clock() - timedelta(days=self.settings.reconcile_overlap_days)
+            for scan in (space.incremental, space.overlap):
+                if scan:
+                    floor = min(floor, scan.floor)
+            space.seen = {
+                mid: seen for mid, seen in space.seen.items() if seen.created >= floor
+            }
 
     def tick(self) -> None:
         """Incremental has first claim; overlap is a separate resumable round."""
         # Discard in-memory mutations after any failed transaction/parse so that
         # the same Poller object is as safe to retry as a restarted process.
         try:
-            self.completed_overlap.clear()
+            self.accessible_spaces.clear()
             excluded = set(self.settings.exclude_space_ids)
             for sid in self.state.exclusions - excluded:
                 if sid in self.state.spaces:
@@ -462,7 +616,13 @@ class Poller:
                     space.incremental_at = space.overlap_at = None
                     space.status = "ready"
             self.state.exclusions = excluded
+            # Stage 7 must check this durable marker before closing open buffers.
+            for sid, space in self.state.spaces.items():
+                space.excluded = sid in excluded
+            self._prune_seen()
             self._save()
+            if self.state.stopped:
+                raise PollError("account_stopped")
             window = (
                 int(self.clock().timestamp()) // self.settings.poll_interval_seconds
             )
@@ -471,12 +631,22 @@ class Poller:
                 self.state.scheduled_window = window
                 self.state.discovery_first = not discovery_first
             if discovery_first or not self.state.spaces:
-                self.discover(one_page=True)
+                self._discover_safely()
             self._round("incremental")
-            self.discover(one_page=True)
+            self._discover_safely()
             self._round("incremental")
             self._round("overlap")
             self._deletions()
+            self._prune_seen()
+            self._save()
+            if self.state.stopped:
+                raise PollError("account_stopped")
         finally:
             raw = self.outbox.cursor(CURSOR)
             self.state = State.model_validate_json(raw) if raw else State()
+            raw_budget = self.outbox.cursor(BUDGET)
+            self.budget = (
+                RequestBudget.model_validate_json(raw_budget)
+                if raw_budget
+                else RequestBudget()
+            )

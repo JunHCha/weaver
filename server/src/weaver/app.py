@@ -410,7 +410,11 @@ def reextract(
                     raise ValueError(
                         "--apply --plan PATH 필요 (--source/--plan-out 제외)"
                     )
-                report = apply_report(settings.state_root, load_plan(plan))
+                report = apply_report(
+                    settings.state_root,
+                    load_plan(plan),
+                    archive_root=settings.archive_root,
+                )
             else:
                 if plan is not None:
                     raise ValueError("--plan에는 --apply가 필요합니다")

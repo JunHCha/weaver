@@ -251,6 +251,7 @@ def poll(
                 time.sleep(webex.poll_interval_seconds)
     except (
         PollError,
+        httpx.HTTPError,
         OAuthError,
         ValueError,
         OSError,
@@ -272,41 +273,58 @@ def poll_status(config: ConfigOption = None) -> None:
     """Report only counts and deadlines; no Space/message names or IDs."""
     import json
 
+    from pydantic import ValidationError
+
     from weaver.app import _load
     from weaver.shepherd.cli import _outbox
 
-    from .poller import CURSOR, State
+    from .poller import BUDGET, CURSOR, RequestBudget, State
 
-    settings = _load(config)
-    _, outbox = _outbox(settings.shepherds.webex.instance_id, config)
-    raw = outbox.cursor(CURSOR)
-    state = State.model_validate_json(raw) if raw else State()
-    typer.echo(
-        json.dumps(
-            {
-                "spaces": len(state.spaces),
-                "access_gaps": sum(
-                    s.status == "access_gap" for s in state.spaces.values()
-                ),
-                "pending_incremental": sum(
-                    s.incremental is not None for s in state.spaces.values()
-                ),
-                "pending_overlap": sum(
-                    s.overlap is not None for s in state.spaces.values()
-                ),
-                "deletion_candidates": sum(
-                    len(s.candidates) for s in state.spaces.values()
-                ),
-                "requests_used": state.used,
-                "retry_at": state.retry_at.isoformat() if state.retry_at else None,
-            },
-            sort_keys=True,
+    try:
+        settings = _load(config)
+        _, outbox = _outbox(settings.shepherds.webex.instance_id, config)
+        raw = outbox.cursor(CURSOR)
+        state = State.model_validate_json(raw) if raw else State()
+        typer.echo(
+            json.dumps(
+                {
+                    "spaces": len(state.spaces),
+                    "access_gaps": sum(
+                        s.status == "access_gap" for s in state.spaces.values()
+                    ),
+                    "pending_incremental": sum(
+                        s.incremental is not None for s in state.spaces.values()
+                    ),
+                    "pending_overlap": sum(
+                        s.overlap is not None for s in state.spaces.values()
+                    ),
+                    "deletion_candidates": sum(
+                        len(s.candidates) for s in state.spaces.values()
+                    ),
+                    "requests_used": RequestBudget.model_validate_json(
+                        outbox.cursor(BUDGET) or "{}"
+                    ).used,
+                    "page_errors": sum(
+                        s.status == "page_error" for s in state.spaces.values()
+                    ),
+                    "account_stopped": state.stopped,
+                    "discovery_error": state.rooms_error,
+                    "retry_at": state.retry_at.isoformat() if state.retry_at else None,
+                },
+                sort_keys=True,
+            )
         )
-    )
+    except (ValidationError, ValueError, OSError):
+        typer.echo("Error: webex_status_unavailable", err=True)
+        raise typer.Exit(1) from None
 
 
 @webex_cli.command("poll-resume")
-def poll_resume(config: ConfigOption = None) -> None:
+def poll_resume(
+    config: ConfigOption = None,
+    space_ids: Annotated[list[str] | None, typer.Option("--space-id")] = None,
+    account: Annotated[bool, typer.Option("--account")] = False,
+) -> None:
     """After checking account access, retry isolated Spaces from saved cursors."""
     from weaver.app import _load
     from weaver.runtime.loop import AlreadyRunning, InstanceLock
@@ -321,9 +339,18 @@ def poll_resume(config: ConfigOption = None) -> None:
         with InstanceLock(outbox.path.parent / "poll.lock"):
             raw = outbox.cursor(CURSOR)
             state = State.model_validate_json(raw) if raw else State()
-            for space in state.spaces.values():
-                if space.status == "access_gap":
+            if space_ids and any(sid not in state.spaces for sid in space_ids):
+                raise ValueError("unknown_space")
+            if account:
+                state.stopped = None
+                state.retry_at = None
+            for sid, space in state.spaces.items():
+                if space_ids and sid not in space_ids:
+                    continue
+                if space.status in ("access_gap", "page_error"):
                     space.status = "ready"
+                    space.not_found_count = 0
+                    space.retry_at = None
             outbox.buffer_page([], cursor=(CURSOR, state.model_dump_json()))
     except (ValueError, OSError, AlreadyRunning, CapacityError):
         typer.echo(
