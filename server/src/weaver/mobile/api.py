@@ -20,6 +20,8 @@ from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException
 
 from weaver.action.courier import ActionCourier
+from weaver.alert.delivery import AlertDelivery
+from weaver.alert.history import AlertBodyExpired
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.loom.summary_state import SummaryState
@@ -136,6 +138,7 @@ def create_app(
     store = store or MobileStore(config.state_root)
     archive = archive or ArchiveStore.from_config(config)
     summary = summary or SummaryState(config.state_root)
+    alerts = AlertDelivery(config).history
     reviews = ReviewService(summary, store)
     captures = CaptureService(
         archive,
@@ -245,10 +248,12 @@ def create_app(
                     "verdict": 2,
                     "action": 2,
                     "action_result": 2,
+                    **({"alert": 2} if mobile.transport_for("alert") == "http" else {}),
                 },
                 "transports": {
                     feature: mobile.transport_for(feature)
-                    for feature in ("capture", "review", "action")
+                    for feature in ("capture", "review", "action", "alert")
+                    if feature != "alert" or mobile.transport_for(feature) != "files"
                 },
                 "limits": {
                     "max_payload_bytes": mobile.max_payload_bytes,
@@ -264,7 +269,7 @@ def create_app(
                     "dictionary": True,
                     "edits": True,
                     "thread_handling": True,
-                    "alerts": False,  # not served over HTTP yet: keep reading files
+                    "alerts": mobile.transport_for("alert") == "http",
                     "pipeline": False,
                 },
                 "feed_epoch": store.feed_epoch,
@@ -355,6 +360,48 @@ def create_app(
         if operation is None or operation.device_id != who.device.device_id:
             raise ApiError(404, "operation_not_found")
         return json_response(operation_body(operation))
+
+    # ---- alerts (durable receipt, never local dismiss) --------------------------
+
+    def alert_http() -> None:
+        if mobile.transport_for("alert") != "http":
+            raise ApiError(409, "transport_files")
+
+    @router.get("/alerts")
+    def list_alerts(who: ReviewScope) -> JSONResponse:
+        alert_http()
+        return json_response(
+            {
+                "items": alerts.bodies(device_id=who.device.device_id),
+                "next_cursor": None,
+            }
+        )
+
+    @router.get("/alerts/{alert_id}")
+    def get_alert(alert_id: str, _who: ReviewScope) -> JSONResponse:
+        alert_http()
+        try:
+            alert = alerts.body(alert_id)
+        except AlertBodyExpired:
+            raise ApiError(410, "alert_body_expired") from None
+        if alert is None:
+            raise ApiError(404, "alert_not_found")
+        return json_response(
+            alert, headers={"ETag": '"' + content_hash(alert.model_dump_json()) + '"'}
+        )
+
+    @router.put("/alerts/{alert_id}/ack")
+    def ack_alert(alert_id: str, who: ReviewScope) -> JSONResponse:
+        alert_http()
+        try:
+            received = alerts.ack(
+                who.device.device_id, alert_id, (clock or (lambda: datetime.now(UTC)))()
+            )
+        except AlertBodyExpired:
+            raise ApiError(410, "alert_body_expired") from None
+        if not received:
+            raise ApiError(404, "alert_not_found")
+        return json_response({"alert_id": alert_id, "state": "received"})
 
     # ---- actions ---------------------------------------------------------------
 

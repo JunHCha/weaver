@@ -109,8 +109,10 @@ max_backoff_seconds = 1800
 # port = 8787
 # whois = "cli"            # default: tailscale whois --json (app-bundle CLI auto-detected); "localapi" needs a socket
 # transport = "files"       # "http" moves capture/review/action to the phone API
+# alert_body_days = 30       # days after all active review devices durably ack; unreceived bodies stay
 # [mobile.features]
 # action = "http"
+# alert = "http"            # enable only after the phone InboxDatabase ledger APK is installed
 
 # Webex OAuth setup (does not start a poller). Keep secret values out of TOML.
 # Paths below are relative to this TOML, outside sync/vault and backup folders.

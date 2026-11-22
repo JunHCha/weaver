@@ -729,14 +729,18 @@ def test_http_config_does_not_require_or_initialize_shared_folders(
 ):
     import shutil
 
-    path = write_config(tmp_path, '[mobile]\ntransport = "http"\n')
+    path = write_config(
+        tmp_path, '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\n'
+    )
     shutil.rmtree(tmp_path / "sync_root")
     config = load_config(path, environ={}, init_directories=initialize)
     assert not config.sync_root.exists()
 
 
 def test_http_config_accepts_unwritable_shared_folder(tmp_path, monkeypatch):
-    path = write_config(tmp_path, '[mobile]\ntransport = "http"\n')
+    path = write_config(
+        tmp_path, '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\n'
+    )
     access = os.access
     sync = tmp_path / "sync_root"
     monkeypatch.setattr(

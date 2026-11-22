@@ -37,6 +37,7 @@ def test_local_capture_scope_host_origin_revoke_and_rotation(
     receipt = f"/mobile/v1/captures/{CAP}/receipt"
     assert client.get(receipt, headers=headers).status_code == 404
     assert client.get("/mobile/v1/read/now", headers=headers).status_code == 403
+    assert client.get("/mobile/v1/alerts", headers=headers).status_code == 403
     assert (
         client.get(receipt, headers={**headers, "Origin": "null"}).json()["code"]
         == "origin_not_allowed"

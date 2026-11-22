@@ -133,6 +133,38 @@ scope: `read`, `capture`, `review`, `action`(+실행 폰 1대), `edit`. 표시 �
 | `GET /reviews/{id}/revisions/{rev}` | ReviewPackage v2 + `ETag` |
 | `PUT /reviews/{id}/revisions/{rev}/verdict` | Verdict v2 + `If-Match`(패키지 ETag) → **202 operation**(`Location`). 같은 키·내용 재전송은 같은 operation(적용 후에도). 409 `verdict_conflict`, 412 `stale_revision`(`current_revision`)·`etag_mismatch`, 428 `if_match_required`, 404 `package_not_found` |
 
+### Alert (scope `review`, ADR-049 / I3)
+
+| 경로 | 계약 |
+|---|---|
+| `GET /alerts` | `{items:[Alert v2], next_cursor:null}`. 이 기기가 아직 영속 수신 ack하지 않은 본문 |
+| `GET /alerts/{id}` | Alert v2 + `ETag`. ack 후에도 보존 기간 동안 조회 가능. 만료 본문은 410 `alert_body_expired`, 없는 ID는 404 `alert_not_found` |
+| `PUT /alerts/{id}/ack` | 본문 없는 멱등 요청 → `{alert_id, state:"received"}`. 만료 본문은 410 `alert_body_expired`, 없는 ID는 404 `alert_not_found` |
+
+본문·History·미완료 게시 기록은 private `state_root/alerts.sqlite3`의 같은 트랜잭션에 먼저 저장한다.
+파일 게시 뒤 marker commit 전에 중단되면 같은 ID/본문으로 재생한다. 실제 존재하는 기존 alert 파일만 이관하며
+삭제된 파일의 History만으로 본문을 만들지 않는다. 생성자는 파일 이관을 하지 않고 reconcile에서 수행한다.
+본문 충돌·잘못된 파일은 원본을 보존하고 파일명/오류 종류를 경고한 뒤 다른 파일을 계속 이관한다.
+만료된 DB 본문에 실제 같은 ID 파일이 다시 오면 본문을 복원하며 History/ack는 유지한다.
+
+Alert HTTP는 새 APK의 로컬 ledger 배포 뒤 `[mobile.features] alert = "http"`로 명시적으로 켠다.
+기본 Alert 경로는 global `transport="http"`여도 `files`다. 이 경우 기존 capabilities bytes 호환성을 위해
+`transports.alert`·`schema_versions.alert`를 생략한다. HTTP를 명시하면 각각 `http`·`2`와 `features.alerts=true`를 보낸다.
+Alert 전송은 review의 경로와 독립이고, `/changes`의 Alert kind·snapshot·구형 앱 협상은 I4 후속 범위다.
+
+수신 ack는 폰 DB commit 성공만 뜻하며 알림 읽음/닫음이나 다른 기기의 수신 상태를 바꾸지 않는다.
+서버는 `(device_id, alert_id)`로 ack를 보관한다. 재페어링의 새 device_id는 기존 ack를 상속하지 않는다.
+HTTP→files에서는 ack된 것도 같은 ID/본문으로 일회 재게시하며, 폰이 `(server_id, alert_id)` ledger로
+이미 닫거나 알림을 게시한 ID를 다시 알리지 않고 읽지 않은 본문을 유지해야 한다.
+
+`[mobile] alert_body_days`는 양의 정수이며 기본값은 30일이다.
+HTTP 유지보수는 현재 활성 review 기기가 모두 영속 수신 ack를 완료한 시점부터 그 일수가 지난 본문만 지운다.
+미수신·수신 기기 없음·files 경로는 기간에 관계없이 보존하고 History/ack는 GC하지 않는다.
+보존 기간이 지난 본문은 새 페어링/파일 복귀에서도 복구되지 않으므로 APK의 private 본문 보존이 필요하다.
+만료 ID는 GET과 ack 모두 410으로 응답하며 기존/새 기기의 ack 기록을 추가하지 않는다.
+롤백 결과 `ReplayResult(published, expired)`와 로그는 만료로 재게시하지 못한 건수를 표시한다.
+HTTP 유지보수 로그 `waiting_review_devices`는 보존 본문 중 하나라도 미수신인 활성 review 기기 수다.
+
 ### Action (scope `action`, 실행 폰 1대 — 아니면 403 `not_executor`)
 
 | 요청 | 응답 |
@@ -222,19 +254,19 @@ node(+로그인 사용자) 결합, scope 분리다.
 설정(`transport`/`[mobile.features]`)을 바꾼 뒤 두 프로세스를 **이 순서로** 재시작한다. `mobile serve`는 시작할 때
 설정을 읽어 `capabilities.transports`와 HTTP 디스패치를 정하고, 데몬(`weaver run`)은 파일 게시와 재게시를 정한다.
 
-- **files → http**: ① 데몬 재시작(Action 파일을 비운다) → ② `mobile serve` 재시작(HTTP 디스패치와 capabilities를 연다).
+- **files → http**: ① 데몬 재시작(Action 파일을 비우고 Alert 파일은 private DB commit 후 비운다) → ② `mobile serve` 재시작(HTTP 디스패치와 capabilities를 연다).
 - **http → files**: ① `mobile serve` 재시작(HTTP 디스패치를 닫고 capabilities가 `files`가 된다) → ② 데몬 재시작
-  (미결 검토 패키지·Action을 폴더에 다시 게시한다). 데몬을 띄우기 전에 `weaver mobile reconcile`로 재게시만 먼저 할 수도 있다.
+  (미결 검토 패키지·Action과 보존된 Alert 본문 전체를 폴더에 다시 게시한다). 데몬을 띄우기 전에 `weaver mobile reconcile`로 재게시만 먼저 할 수도 있다.
 
 어느 쪽이든 실행기 두 대가 같은 Action을 받는 구간이 없고, 이미 보낸 capture·Verdict·결과는 어느 경로로 늦게 와도
 공통 journal이 한 번만 반영한다.
 
 ## 범위 밖
 
-Alert, `/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.alerts/pipeline=false`).
+`/pipeline`, vault 스냅샷·첨부 API는 아직 없다(`features.pipeline=false`). Alert HTTP는 위의 명시적 APK 배포 gate를 따른다.
 검토 패키지·legacy diff 파일(`proposals/`)은 review transport가 `files`일 때만 선택적으로 게시한다.
 요약 journal과 private archive 및 `pipeline.sqlite3` 관찰이 원천이며 공유 폴더 쓰기 실패는 HTTP durable
-commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 capture/review/action 중 하나라도 `files`일 때 유지한다.
+commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 capture/review/action/alert 중 하나라도 `files`일 때 유지한다.
 모든 transport가 HTTP면 설정 로딩·초기화도 공유 Courier 폴더의 존재/쓰기 권한을 요구하거나 폴더를 만들지 않는다.
 private state/archive/vault 경계·권한 검사는 유지한다. capture를 HTTP에서 files로 복귀하면 archive journal의 Receipt도 다시 게시한다(기존 bytes/수신 시각 유지).
 미결 파일 재게시와 명시적 `mobile reconcile`은
