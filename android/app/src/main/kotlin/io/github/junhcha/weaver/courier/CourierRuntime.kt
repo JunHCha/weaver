@@ -58,18 +58,20 @@ object CourierRuntime {
             val old = tree(context)
             prefs(context).edit().putString("tree", uri.toString()).putBoolean("stopped", false)
                 .putString("status", report.joinToString("\n")).commit()
-            if (old != null && old != uri) runCatching {
-                context.contentResolver.releasePersistableUriPermission(old, grant)
-            }
+            if (old != null && old != uri) releaseOwnGrant(context, old, grant)
             schedule(context)
             report
         } catch (error: Exception) {
             CourierDatabase(context).use { it.diagnostic("courier", "selection", CourierClient.errorCode(error)) }
-            if (tree(context) != uri) runCatching {
-                context.contentResolver.releasePersistableUriPermission(uri, grant)
-            }
+            if (tree(context) != uri) releaseOwnGrant(context, uri, grant)
             throw error
         }
+    }
+
+    /** Persisted grants are per URI, so a tree the phone vault also uses must keep its grant (W5-A6 / I6). */
+    private fun releaseOwnGrant(context: Context, uri: Uri, grant: Int) {
+        if (io.github.junhcha.weaver.pipeline.VaultAccess.tree(context) == uri) return
+        runCatching { context.contentResolver.releasePersistableUriPermission(uri, grant) }
     }
 
     fun folder(context: Context): SafCourierFolder {

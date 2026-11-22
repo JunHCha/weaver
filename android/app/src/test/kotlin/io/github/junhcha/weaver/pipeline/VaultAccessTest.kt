@@ -113,4 +113,23 @@ class VaultAccessTest {
         }
         assertThrows(IllegalArgumentException::class.java) { VaultAccess.select(context, Uri.parse("file:///tmp/vault")) }
     }
+
+    @Test fun sameSizeDifferentContentIsNotArrivalAndVaultSelectionKeepsReadOnlyGrant() {
+        val expected = "version-A".toByteArray()
+        writePage("version-B".toByteArray()) // same length, different SHA-256
+        VaultAccess.select(context, tree)
+        VaultAccess.setName(context, "Example")
+        assertFalse(VaultAccess.arrived(context, page("wiki/예시 메모.md", expected)))
+        provider.docs.getValue(TestDocumentsProvider.ROOT + "/wiki/예시 메모.md").file.writeBytes(expected)
+        assertTrue(VaultAccess.arrived(context, page("wiki/예시 메모.md", expected)))
+        // Re-selecting the same vault never widens its grant to write access.
+        VaultAccess.select(context, tree)
+        assertFalse(context.contentResolver.persistedUriPermissions.single { it.uri == tree }.isWritePermission)
+    }
+
+    @Test fun obsidianOpenLinkIsIndependentOfCourierSelection() {
+        val link = VaultAccess.obsidianUri("Weaver 예시", "wiki/예시 메모.md")
+        assertTrue(link.startsWith("obsidian://open?vault="))
+        assertTrue(link.endsWith("file=wiki%2F%EC%98%88%EC%8B%9C%20%EB%A9%94%EB%AA%A8.md"))
+    }
 }
