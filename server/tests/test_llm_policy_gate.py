@@ -113,7 +113,7 @@ def test_unknown_lineage_is_allowed_only_while_no_webex_source_exists(tmp_path):
     present = [False]
     policy, ledger = make_policy(
         tmp_path,
-        shared_sources=lambda: [UNKNOWN_DICTIONARY_SOURCE, UNKNOWN_WIKI_SOURCE],
+        shared_sources=lambda: [UNKNOWN_WIKI_SOURCE],
         webex_present=lambda: present[0],
     )
     with provenance_scope(["req"], shared=True, requester="req"):
@@ -355,7 +355,9 @@ def make_vault(tmp_path, *, webex):
     source = ArchiveStore.from_config(config).put(
         m, outbox_file(config.courier.outbox, m, body)
     )
-    ContextDictionary(config.state_root).add_entry("합성 프로젝트", "project")
+    ContextDictionary(config.state_root, archive_root=config.archive_root).add_entry(
+        "합성 프로젝트", "project"
+    )
     if webex:
         archive_webex(config, 1, "SPACE_OPEN")
     return config, source.source_id, configured_policy(config)
@@ -429,8 +431,201 @@ def test_non_webex_vault_first_summary_and_wiki_are_not_blocked(tmp_path):
 
 def test_webex_in_archive_blocks_unknown_lineage_but_not_known_open_input(tmp_path):
     config, source_id, policy = make_vault(tmp_path, webex=True)
+    from weaver.context import ContextDictionary
+
+    ContextDictionary(config.state_root, archive_root=config.archive_root).add_entry(
+        "After Webex", "topic"
+    )
     with provenance_scope([source_id], shared=True, requester=source_id):
         with pytest.raises(PolicyBlocked):  # dictionary lineage is unknown
             policy.prepare("s", "u")
     with provenance_scope([source_id]):
         assert policy.prepare("s", "u").user == "u"
+
+
+def test_dictionary_created_before_first_webex_does_not_block_first_summary(tmp_path):
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    ContextDictionary(config.state_root, archive_root=config.archive_root).add_entry(
+        "Earlier", "topic"
+    )
+    source = archive_webex(config, 0, "OPEN")
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_dictionary_sources_are_checked_even_with_existing_approved_context(
+    tmp_path, snapshot
+):
+    from weaver.context import ContextDictionary
+    from weaver.fabric import FabricStore
+    from weaver.llm.policy_archive import configured_policy
+
+    from .fabric.test_store import draft
+
+    config = load_config(write_config(tmp_path), environ={})
+    open_id = archive_webex(config, 0, "OPEN")
+    closed_id = archive_webex(config, 1, "PRIVATE")
+    FabricStore(config.state_root / "fabric.sqlite3").append(
+        [draft("open", source_id=open_id)]
+    )
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Private-derived", "topic", source_ids=(closed_id,))
+    policy = configured_policy(config, snapshot=snapshot)
+    policy.excluded_space_ids = frozenset({"PRIVATE"})
+    assert closed_id in policy.shared_sources()
+    with provenance_scope([open_id], shared=True), pytest.raises(PolicyBlocked):
+        policy.prepare("s", "u")
+
+
+def test_dictionary_known_open_source_allows_first_summary_and_unknown_stays_closed(
+    tmp_path,
+):
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    source = archive_webex(config, 0, "OPEN")
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Known", "topic", source_ids=(source,))
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+    dictionary.add_entry("Unknown", "topic")
+    with provenance_scope([source], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+def test_dictionary_write_time_flag_survives_clock_rollback_and_receipt_removal(
+    tmp_path,
+):
+    import sqlite3
+
+    from weaver.context import ContextDictionary
+    from weaver.llm.policy_archive import configured_policy
+
+    config = load_config(write_config(tmp_path), environ={})
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Earlier", "topic")
+    dictionary.add_entry(
+        "Earlier unknown wiki", "topic", source_ids=(UNKNOWN_WIKI_SOURCE,)
+    )
+    source = archive_webex(config, 0, "OPEN")
+    # The archived clock goes backwards; there is no time comparison to change policy.
+    with sqlite3.connect(config.archive_root / "index.sqlite3") as db:
+        db.execute(
+            "UPDATE captures SET receipt_json=json_set(receipt_json, '$.received_at', '1900-01-01T00:00:00Z')"
+        )
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+    dictionary.add_entry("Human after Webex", "topic")
+    with sqlite3.connect(config.archive_root / "index.sqlite3") as db:
+        db.execute("DELETE FROM captures")
+        db.execute("DELETE FROM sources")
+    assert dictionary.policy_origins()[1]
+    with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+def test_dictionary_legacy_migration_uses_archive_presence(tmp_path):
+    import sqlite3
+
+    from weaver.context import ContextDictionary
+
+    config = load_config(write_config(tmp_path), environ={})
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Legacy", "topic")
+    with sqlite3.connect(config.state_root / "context.sqlite3") as db:
+        db.execute("DROP TABLE entry_origins")
+    archive_webex(config, 0, "OPEN")
+    migrated = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    assert migrated.policy_origins()[1]
+
+
+def test_web_human_alias_after_webex_stays_closed(tmp_path):
+    from weaver.llm.policy_archive import configured_policy
+    from weaver.web.editing import AliasEdit, add_alias
+
+    config, _, _ = make_vault(tmp_path, webex=True)
+    add_alias(config, AliasEdit(entry="합성 프로젝트", alias="human alias"))
+    with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+def test_non_webex_promotion_and_reextract_alias_do_not_poison_first_webex_summary(
+    tmp_path,
+):
+    from datetime import timedelta
+
+    from weaver.context import ContextDictionary
+    from weaver.fabric import FabricStore, ThreadQuery
+    from weaver.llm.policy_archive import configured_policy
+    from weaver.loom.reextract import NameChange, SourcePlan, _apply
+    from weaver.loom.tagging import NewEntry
+    from weaver.wiki.promotion import ProjectLifecycle
+
+    from .wiki.test_promotion import AREA, NAME, NOW, fact, proposal
+
+    config, origin, _ = make_vault(tmp_path, webex=False)
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry(AREA, "area", source_ids=(origin,))
+    dictionary.add_entry(
+        "Before rename", "topic", human_edited=False, source_ids=(origin,)
+    )
+    archive_webex(config, 1, "OPEN")
+    fabric = FabricStore.from_config(config)
+    fabric.append([fact("one", day=5, source_id=origin), fact("two", source_id=origin)])
+    lifecycle = ProjectLifecycle(
+        config.state_root / "promotion.sqlite3", dictionary, fabric
+    )
+    lifecycle.apply(
+        [proposal()], fabric.entries(ThreadQuery()), NOW + timedelta(days=1)
+    )
+    assert dictionary.resolve(NAME).promoted
+    _apply(
+        config.state_root,
+        fabric,
+        SourcePlan(
+            source_id=origin,
+            key="synthetic",
+            renames=[NameChange(observed="Before rename", canonical="Renamed")],
+            additions=[NewEntry(name="Renamed", kind="topic", aliases=["new alias"])],
+        ),
+    )
+    assert dictionary.resolve("new alias").name == "Renamed"
+    source = archive_webex(config, 2, "OPEN")
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+
+
+def test_compiler_dictionary_pages_include_page_and_section_sources(tmp_path):
+    from weaver.context import ContextDictionary
+    from weaver.fabric import FabricStore
+    from weaver.llm.policy_archive import configured_policy
+    from weaver.wiki.compiler import Compiler, Summary
+    from weaver.wiki.store import WikiStore
+
+    from .wiki.test_compiler import FakeLLM
+
+    config, origin, _ = make_vault(tmp_path, webex=True)
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    store = WikiStore(config.vault_root, config.state_root / "wiki")
+    store.write("pages/Known.md", {"kind": "topic"}, "# Known", None)
+    store.write_metadata(
+        "pages/Known.md",
+        {"source_ids": [origin], "sections": {"s": {"source_ids": [origin]}}},
+    )
+    compiler = Compiler(
+        store,
+        FabricStore.from_config(config),
+        dictionary,
+        FakeLLM(),
+        config.state_root / "compiler.sqlite3",
+        lambda _: Summary("s", "u"),
+    )
+    compiler._sync_pages()
+    source = archive_webex(config, 2, "OPEN")
+    with provenance_scope([source], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"

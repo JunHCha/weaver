@@ -114,7 +114,7 @@ max_backoff_seconds = 1800
 # action = "http"
 # alert = "http"            # enable only after the phone InboxDatabase ledger APK is installed
 
-# Webex OAuth setup (does not start a poller). Keep secret values out of TOML.
+# Webex OAuth/poller setup (start explicitly). Keep secret values out of TOML.
 # Paths below are relative to this TOML, outside sync/vault and backup folders.
 # The private directory is created 0700 and credential files use 0600.
 # [shepherds.webex]
@@ -127,6 +127,14 @@ max_backoff_seconds = 1800
 # poll_interval_seconds = 300
 # initial_backfill_days = 7
 # reconcile_overlap_days = 7
+# reconcile_interval_seconds = 21600 # Per-Space overlap restart, at least poll interval.
+# request_budget_window_seconds = 300 # Sliding window, independent of poll interval.
+# Messaging API attempt caps per sliding window (default 300 seconds).
+# All values must be positive; task caps together must fit the account cap.
+# request_budget_total = 300
+# request_budget_incremental = 200 # Includes Space discovery and retries.
+# request_budget_overlap = 80
+# request_budget_deletion = 20
 # bundle = "space_day"
 # timezone = "Asia/Seoul"
 # attachments = "metadata_only"

@@ -182,8 +182,12 @@ def configured_policy(config: ServerConfig, *, snapshot: bool = False) -> LlmPol
                     )
                 )
         dictionary = config.state_root / "context.sqlite3"
-        if not ids and dictionary.is_file():
-            if ContextDictionary.open_readonly(dictionary).snapshot().entries:
+        if dictionary.is_file():
+            origins, unknown = ContextDictionary.open_readonly(
+                dictionary
+            ).policy_origins()
+            ids.update(origins)
+            if unknown:
                 ids.add(UNKNOWN_DICTIONARY_SOURCE)
         return tuple(sorted(ids))
 

@@ -717,12 +717,16 @@ class SummaryReview(ApprovalExtractor):
                     tuple(entry.aliases),
                     human_edited=False,
                     drop_conflicting_aliases=True,
+                    source_ids=(package.source_id,),
                 )
             if prepared.threads:
                 self.sink.append(prepared.threads)
             for correction in prepared.corrections:
                 self.context.learn(
-                    correction.observed, correction.canonical, correction.kind
+                    correction.observed,
+                    correction.canonical,
+                    correction.kind,
+                    source_ids=(package.source_id,),
                 )
             if prepared.package is not None:
                 self.state.save_package(prepared.package, script)

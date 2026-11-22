@@ -26,6 +26,24 @@ def _strings(value: object) -> set[str]:
     )
 
 
+def page_source_ids(
+    metadata: Mapping[str, object], thread_sources: Mapping[str, str]
+) -> set[str]:
+    """Include page and section origins, resolving legacy Thread references."""
+    known = _strings(metadata.get("source_ids"))
+    threads = _strings(metadata.get("thread_ids"))
+    sections = metadata.get("sections")
+    if isinstance(sections, dict):
+        for section in sections.values():
+            if isinstance(section, dict):
+                known |= _strings(section.get("source_ids"))
+                threads |= _strings(section.get("thread_ids"))
+    known |= {thread_sources[t] for t in threads if t in thread_sources}
+    if threads - thread_sources.keys():
+        known.add(UNKNOWN_WIKI_SOURCE)
+    return known
+
+
 def source_ids(store: WikiStore, thread_sources: Mapping[str, str]) -> set[str]:
     """``thread_sources`` maps Fabric Thread ID to its Source ID."""
     result: set[str] = set()

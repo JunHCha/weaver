@@ -477,7 +477,12 @@ class ProjectLifecycle:
             if len(selected.thread_ids) < 2 or not self.eligible(selected, active, now):
                 continue
             entry = self.context.add_entry(
-                candidate.name, "project", human_edited=False
+                candidate.name,
+                "project",
+                human_edited=False,
+                source_ids=tuple(
+                    sorted({by_id[t].source_id for t in selected.thread_ids})
+                ),
             )
             if (
                 entry.name != candidate.name

@@ -5,6 +5,7 @@ allows payload GC; quarantine and authentication failures retain original bytes.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -201,26 +202,44 @@ class Outbox:
     def buffer(
         self, key: BundleKey, payload: bytes, *, cursor: tuple[str, str] | None = None
     ) -> None:
-        if key.instance_id != self.instance_id:
-            raise ValueError("outbox_instance_mismatch")
+        self.buffer_page([(key, payload)], cursor=cursor)
+
+    def buffer_page(
+        self,
+        buffers: list[tuple[BundleKey, bytes]],
+        *,
+        cursor: tuple[str, str] | None = None,
+        exclusions: tuple[str, ...] | None = None,
+    ) -> None:
+        """Commit every bundle touched by one source page with its source cursor."""
         with self._write() as db:
-            row = db.execute(
-                "SELECT bundle, state, LENGTH(payload) FROM entries WHERE capture_id=?",
-                (key.capture_id,),
-            ).fetchone()
-            if row and (row[0] != key.encoded or row[1] != "buffer"):
-                raise ValueError("immutable_capture")
-            self._capacity(
-                db,
-                int(row is None),
-                len(payload) - (row[2] if row else 0),
-                collecting=True,
-            )
-            db.execute(
-                "INSERT INTO entries VALUES (?,?,'buffer',?,NULL,NULL,NULL,NULL) ON CONFLICT(capture_id) DO UPDATE SET payload=excluded.payload",
-                (key.capture_id, key.encoded, payload),
-            )
+            if exclusions is not None:
+                db.execute(
+                    "INSERT OR REPLACE INTO cursors VALUES (?,?)",
+                    ("webex.excluded_spaces.v1", json.dumps(exclusions)),
+                )
+            for key, payload in buffers:
+                if key.instance_id != self.instance_id:
+                    raise ValueError("outbox_instance_mismatch")
+                row = db.execute(
+                    "SELECT bundle, state, LENGTH(payload) FROM entries WHERE capture_id=?",
+                    (key.capture_id,),
+                ).fetchone()
+                if row and (row[0] != key.encoded or row[1] != "buffer"):
+                    raise ValueError("immutable_capture")
+                self._capacity(
+                    db,
+                    int(row is None),
+                    len(payload) - (row[2] if row else 0),
+                    collecting=True,
+                )
+                db.execute(
+                    "INSERT INTO entries VALUES (?,?,'buffer',?,NULL,NULL,NULL,NULL) ON CONFLICT(capture_id) DO UPDATE SET payload=excluded.payload",
+                    (key.capture_id, key.encoded, payload),
+                )
             if cursor:
+                if not buffers:
+                    self._capacity(db, 0, 0, collecting=True)
                 db.execute("INSERT OR REPLACE INTO cursors VALUES (?,?)", cursor)
 
     def cursor(self, name: str) -> str | None:
@@ -230,12 +249,21 @@ class Outbox:
             ).fetchone()
         return None if row is None else str(row[0])
 
+    def space_excluded(self, space: str) -> bool:
+        """Stage 7 must consult the durable collection exclusion before close."""
+        return space in json.loads(self.cursor("webex.excluded_spaces.v1") or "[]")
+
     def close(
         self, key: BundleKey, manifest: Manifest, *, depends_on: str | None = None
     ) -> None:
         raw = manifest.model_dump_json().encode()
         manifest = Manifest.model_validate_json(raw)
         with self._write() as db:
+            excluded = db.execute(
+                "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+            ).fetchone()
+            if excluded and key.space in json.loads(excluded[0]):
+                raise ValueError("excluded_space")
             row = db.execute(
                 "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
                 (key.capture_id,),

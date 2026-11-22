@@ -31,6 +31,7 @@ class Page:
     kind: Kind
     aliases: tuple[str, ...] = ()
     summary: str = ""
+    source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -207,7 +208,7 @@ class EntryAlreadyExists(ValueError):
 class ContextDictionary:
     """SQLite dictionary; read/modify/write operations share a write transaction."""
 
-    def __init__(self, state_root: Path) -> None:
+    def __init__(self, state_root: Path, *, archive_root: Path | None = None) -> None:
         self._readonly = False
         state_root.mkdir(parents=True, exist_ok=True)
         self._path = state_root / "context.sqlite3"
@@ -236,6 +237,18 @@ class ContextDictionary:
             elif version != _VERSION:
                 raise SchemaVersionError("unsupported context database version")
             db.execute(
+                "CREATE TABLE IF NOT EXISTS origin_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            if archive_root is not None:
+                db.execute(
+                    "INSERT OR REPLACE INTO origin_config VALUES ('archive', ?)",
+                    (str(archive_root.resolve()),),
+                )
+            binding = db.execute(
+                "SELECT value FROM origin_config WHERE key='archive'"
+            ).fetchone()
+            self._archive = Path(binding[0]) if binding else None
+            db.execute(
                 "CREATE TABLE IF NOT EXISTS project_lifecycle "
                 "(name TEXT PRIMARY KEY, promoted INTEGER NOT NULL, archived INTEGER NOT NULL)"
             )
@@ -245,6 +258,21 @@ class ContextDictionary:
             if "reverted" not in columns:
                 db.execute(
                     "ALTER TABLE project_lifecycle ADD COLUMN reverted INTEGER NOT NULL DEFAULT 0"
+                )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS entry_origins (name TEXT PRIMARY KEY, source_ids TEXT NOT NULL, unknown_at TEXT)"
+            )
+            columns = {row[1] for row in db.execute("PRAGMA table_info(entry_origins)")}
+            if "unknown_webex" not in columns:
+                db.execute("ALTER TABLE entry_origins ADD COLUMN unknown_webex INTEGER")
+                db.execute(
+                    "UPDATE entry_origins SET unknown_webex=? WHERE unknown_at IS NOT NULL",
+                    (int(self._has_webex()),),
+                )
+            for entry in self._load(db)[0].entries:
+                db.execute(
+                    "INSERT OR IGNORE INTO entry_origins (name, source_ids, unknown_webex) VALUES (?, '[]', ?)",
+                    (_key(entry.name), int(self._has_webex())),
                 )
         with self._path.open("rb") as file:
             os.fchmod(file.fileno(), 0o600)
@@ -427,11 +455,93 @@ class ContextDictionary:
     @contextmanager
     def _writing(
         self,
+        source_ids: tuple[str, ...] = (),
+        page_origins: dict[str, tuple[str, ...]] | None = None,
     ) -> Iterator[tuple[sqlite3.Connection, DictionarySnapshot, dict[str, _Edit]]]:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             snapshot, edits = self._load(db)
             yield db, snapshot, edits
+            before = {_key(e.name): e for e in snapshot.entries}
+            for entry in self._load(db)[0].entries:
+                prior = before.get(_key(entry.name))
+
+                def content(value: ContextEntry) -> ContextEntry:
+                    return replace(
+                        value, promoted=False, archived=False, promotion_reverted=False
+                    )
+
+                if prior is None or content(prior) != content(entry):
+                    self._record_origin(
+                        db,
+                        entry.name,
+                        (page_origins or {}).get(_key(entry.name), source_ids),
+                    )
+
+    def _has_webex(self) -> bool:
+        if self._archive is None:
+            return True  # No archive binding is not evidence of a non-Webex write.
+        index = self._archive / "index.sqlite3"
+        if not index.exists():
+            return False
+        try:
+            db = sqlite3.connect(f"{index.as_uri()}?mode=ro", uri=True)
+            try:
+                return (
+                    db.execute(
+                        "SELECT 1 FROM sources WHERE json_extract(source_json, '$.channel')='webex' LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return True
+
+    def _record_origin(
+        self, db: sqlite3.Connection, name: str, source_ids: tuple[str, ...]
+    ) -> None:
+        from weaver.llm.policy import UNKNOWN_LINEAGE
+
+        row = db.execute(
+            "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
+            (_key(name),),
+        ).fetchone()
+        origins = set(json.loads(row[0])) if row else set()
+        origins.update(set(source_ids) - UNKNOWN_LINEAGE)
+        unknown = row[1] if row else None
+        if not source_ids or UNKNOWN_LINEAGE.intersection(source_ids):
+            unknown = int(bool(unknown) or self._has_webex())
+        db.execute(
+            "INSERT OR REPLACE INTO entry_origins (name, source_ids, unknown_webex) VALUES (?, ?, ?)",
+            (_key(name), json.dumps(sorted(origins)), unknown),
+        )
+
+    def policy_origins(self) -> tuple[set[str], bool]:
+        """A persisted write-time flag proves unknown content non-Webex."""
+        ids: set[str] = set()
+        unknown = False
+        with self._connect() as db:
+            db.execute("BEGIN")
+            entries = self._load(db)[0].entries
+            exists = any(
+                row[1] == "unknown_webex"
+                for row in db.execute("PRAGMA table_info(entry_origins)")
+            )
+            for entry in entries:
+                row = (
+                    db.execute(
+                        "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
+                        (_key(entry.name),),
+                    ).fetchone()
+                    if exists
+                    else None
+                )
+                if row:
+                    ids.update(json.loads(row[0]))
+                if row is None or row[1] == 1:
+                    unknown = True
+        return ids, unknown
 
     @staticmethod
     def _require(snapshot: DictionarySnapshot, name: str) -> ContextEntry:
@@ -516,16 +626,19 @@ class ContextDictionary:
         human_edited: bool = True,
         drop_conflicting_aliases: bool = False,
         require_new: bool = False,
+        source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         """Idempotent creation; automatic approval can discard racing alias conflicts."""
         _validate(name, kind)
-        with self._writing() as (db, snapshot, _):
+        with self._writing(source_ids) as (db, snapshot, _):
             existing = snapshot.resolve(name)
             if existing:
                 if require_new:
                     raise EntryAlreadyExists(existing.name)
                 if drop_conflicting_aliases and _key(existing.name) != _key(name):
                     logger.warning("skipped conflicting dictionary proposal")
+                if source_ids:
+                    self._record_origin(db, existing.name, source_ids)
                 return existing
             normalized = tuple(sorted({_nfc(a) for a in aliases}))
             if drop_conflicting_aliases:
@@ -568,10 +681,40 @@ class ContextDictionary:
             return self._require(self._load(db)[0], entry.name)
 
     def rename(
-        self, name: str, new_name: str, *, human_edited: bool = True
+        self,
+        name: str,
+        new_name: str,
+        *,
+        human_edited: bool = True,
+        source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing() as (db, snapshot, edits):
+        with self._writing(source_ids) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
+            origin = db.execute(
+                "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
+                (_key(entry.name),),
+            ).fetchone()
+            if origin and _key(name) != _key(new_name):
+                previous = db.execute(
+                    "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
+                    (_key(new_name),),
+                ).fetchone()
+                origins = set(json.loads(origin[0])) | (
+                    set(json.loads(previous[0])) if previous else set()
+                )
+                flags = [
+                    v
+                    for v in (origin[1], previous[1] if previous else None)
+                    if v is not None
+                ]
+                db.execute(
+                    "INSERT OR REPLACE INTO entry_origins (name, source_ids, unknown_webex) VALUES (?, ?, ?)",
+                    (
+                        _key(new_name),
+                        json.dumps(sorted(origins)),
+                        max(flags) if flags else None,
+                    ),
+                )
             target = snapshot.resolve(new_name)
             if target and target.name != entry.name:
                 raise EntryAlreadyExists(target.name)
@@ -620,9 +763,14 @@ class ContextDictionary:
             )
 
     def add_alias(
-        self, name: str, alias: str, *, human_edited: bool = True
+        self,
+        name: str,
+        alias: str,
+        *,
+        human_edited: bool = True,
+        source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing() as (db, snapshot, edits):
+        with self._writing(source_ids) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             edit = self._edit_for(entry, edits)
             if not human_edited:
@@ -713,12 +861,19 @@ class ContextDictionary:
             )
             db.execute("INSERT OR IGNORE INTO dismissed_tag_pairs VALUES (?,?)", pair)
 
-    def learn(self, observed: str, canonical: str, kind: Kind) -> None:
+    def learn(
+        self,
+        observed: str,
+        canonical: str,
+        kind: Kind,
+        *,
+        source_ids: tuple[str, ...] = (),
+    ) -> None:
         observed, canonical = _nfc(observed), _nfc(canonical)
         _validate(canonical, kind)
         if not observed.strip():
             raise ValueError("observed must be nonempty")
-        with self._writing() as (db, snapshot, _):
+        with self._writing(source_ids) as (db, snapshot, _):
             resolved = snapshot.resolve(canonical)
             canonical = resolved.name if resolved else canonical
             db.execute(
@@ -742,7 +897,9 @@ class ContextDictionary:
             if _key(page.name) in names or any(not a.strip() for a in page.aliases):
                 raise ValueError("duplicate page or empty alias")
             names.add(_key(page.name))
-        with self._writing() as (db, _, edits):
+        with self._writing(
+            page_origins={_key(p.name): p.source_ids for p in pages}
+        ) as (db, _, edits):
             db.execute("DELETE FROM wiki_alias")
             db.execute("DELETE FROM wiki")
             for page in pages:

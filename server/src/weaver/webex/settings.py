@@ -18,6 +18,12 @@ class WebexSettings:
     poll_interval_seconds: int = 300
     initial_backfill_days: int = 7
     reconcile_overlap_days: int = 7
+    reconcile_interval_seconds: int = 21600
+    request_budget_window_seconds: int = 300
+    request_budget_total: int = 300
+    request_budget_incremental: int = 200
+    request_budget_overlap: int = 80
+    request_budget_deletion: int = 20
     bundle: str = "space_day"
     timezone: str = "Asia/Seoul"
     attachments: str = "metadata_only"
@@ -42,15 +48,35 @@ class WebexSettings:
             "poll_interval_seconds",
             "initial_backfill_days",
             "reconcile_overlap_days",
+            "reconcile_interval_seconds",
+            "request_budget_window_seconds",
         ):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise ConfigError(f"shepherds.webex.{name}: expected positive integer")
+        if self.reconcile_interval_seconds < self.poll_interval_seconds:
+            raise ConfigError(
+                "shepherds.webex.reconcile_interval_seconds: must be at least poll_interval_seconds"
+            )
         if not isinstance(self.exclude_space_ids, tuple) or any(
             not isinstance(item, str) or not item.strip()
             for item in self.exclude_space_ids
         ):
             raise ConfigError(
                 "shepherds.webex.exclude_space_ids: expected string array"
+            )
+        budgets = (
+            self.request_budget_total,
+            self.request_budget_incremental,
+            self.request_budget_overlap,
+            self.request_budget_deletion,
+        )
+        if any(type(v) is not int or v <= 0 for v in budgets):
+            raise ConfigError(
+                "shepherds.webex.request_budget: expected positive integers"
+            )
+        if sum(budgets[1:]) > self.request_budget_total:
+            raise ConfigError(
+                "shepherds.webex.request_budget: task sum exceeds account cap"
             )
         try:
             ZoneInfo(self.timezone)

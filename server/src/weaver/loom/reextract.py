@@ -1075,7 +1075,13 @@ def _journal_db(root: Path) -> sqlite3.Connection:
     return db
 
 
-def _apply(root: Path, fabric: FabricStore, plan: SourcePlan) -> None:
+def _apply(
+    root: Path,
+    fabric: FabricStore,
+    plan: SourcePlan,
+    *,
+    archive_root: Path | None = None,
+) -> None:
     with closing(_journal_db(root)) as db, db:
         db.execute(
             "INSERT OR IGNORE INTO plans VALUES (?, ?, 0)",
@@ -1083,10 +1089,15 @@ def _apply(root: Path, fabric: FabricStore, plan: SourcePlan) -> None:
         )
     # Dictionary operations precede the atomic Fabric batch, so no committed
     # fact can reference a dictionary entry that has not yet been persisted.
-    context = ContextDictionary(root)
+    context = ContextDictionary(root, archive_root=archive_root)
     for change in plan.renames:
         if context.resolve(change.canonical) is None:
-            context.rename(change.observed, change.canonical, human_edited=False)
+            context.rename(
+                change.observed,
+                change.canonical,
+                human_edited=False,
+                source_ids=(plan.source_id,),
+            )
     for entry in plan.additions:
         actual = context.add_entry(
             entry.name,
@@ -1094,16 +1105,21 @@ def _apply(root: Path, fabric: FabricStore, plan: SourcePlan) -> None:
             tuple(entry.aliases),
             human_edited=False,
             drop_conflicting_aliases=True,
+            source_ids=(plan.source_id,),
         )
         for alias in entry.aliases:
-            context.add_alias(actual.name, alias, human_edited=False)
+            context.add_alias(
+                actual.name, alias, human_edited=False, source_ids=(plan.source_id,)
+            )
     fabric.append(plan.batch)
     with closing(_journal_db(root)) as db, db:
         db.execute("UPDATE plans SET done=1 WHERE key=?", (plan.key,))
     plan.done = True
 
 
-def apply_report(root: Path, supplied: Report) -> Report:
+def apply_report(
+    root: Path, supplied: Report, *, archive_root: Path | None = None
+) -> Report:
     """No model dependency; caller holds InstanceLock for validation and apply."""
     if (
         not supplied.valid
@@ -1145,7 +1161,7 @@ def apply_report(root: Path, supplied: Report) -> Report:
             plan.error = "journal conflict: --discard-plan 후 다시 계획 필요"
             continue
         try:
-            _apply(root, fabric, plan)
+            _apply(root, fabric, plan, archive_root=archive_root)
         except Exception as error:
             plan.error = type(error).__name__
         # A normal failure records its exact resulting state for safe retries.
