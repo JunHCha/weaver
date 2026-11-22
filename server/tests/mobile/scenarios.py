@@ -909,7 +909,51 @@ def request_handling(tmp: Path) -> Recorder:
     return r
 
 
+def alerts(tmp: Path) -> Recorder:
+    from weaver.alert import AlertHistory
+    from weaver.schema import Alert
+
+    h = Harness(tmp, '[mobile.features]\nalert = "http"\n', clock=lambda: NOW)
+    headers = h.pair("review")
+    other = h.pair("review", label="second phone")
+    body = Alert(
+        schema_version=2,
+        alert_id="alt_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+        package_id="pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+        thread_id="thr_2",
+        message="합성 일정 알림",
+        created_at=NOW,
+    )
+    history = AlertHistory(h.config.state_root / "alerts.sqlite3")
+    history.stage(body, "thr_1")
+    history.projected(body.alert_id)
+    r = Recorder(
+        h, "alerts", "Alert v2 bodies and device receipt ack; never local dismiss."
+    )
+    r.call("enabled_capabilities", "GET", f"{BASE}/capabilities", headers=headers)
+    r.call("list", "GET", f"{BASE}/alerts", headers=headers)
+    r.call("body", "GET", f"{BASE}/alerts/{body.alert_id}", headers=headers)
+    r.call(
+        "receipt",
+        "PUT",
+        f"{BASE}/alerts/{body.alert_id}/ack",
+        headers=headers,
+        note="Send only after the phone InboxDatabase body/receipt transaction commits; not on dismiss.",
+    )
+    r.call(
+        "receipt_retry", "PUT", f"{BASE}/alerts/{body.alert_id}/ack", headers=headers
+    )
+    r.call("received_list", "GET", f"{BASE}/alerts", headers=headers)
+    r.call("other_device_list", "GET", f"{BASE}/alerts", headers=other)
+    r.call(
+        "body_after_receipt", "GET", f"{BASE}/alerts/{body.alert_id}", headers=headers
+    )
+    r.call("unknown", "GET", f"{BASE}/alerts/unknown", headers=headers)
+    return r
+
+
 GROUPS = [
+    alerts,
     request_handling,
     capabilities,
     errors,

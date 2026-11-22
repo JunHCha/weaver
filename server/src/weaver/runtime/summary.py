@@ -207,6 +207,8 @@ class AlertDetector(Protocol):
         self, package_id: str, selected: Sequence[Thread], snapshot: Sequence[Thread]
     ) -> list[Alert]: ...
 
+    def pending(self) -> list[Alert]: ...
+
     def published(self, alert: Alert) -> None: ...
 
 
@@ -254,6 +256,12 @@ class ObservationPublisher:
         """Auxiliary: a failure is logged by type only and never blocks the tick."""
         assert self.alerts is not None
         detector, sink = self.alerts
+        try:
+            for alert in detector.pending():
+                sink.publish_alert(alert)
+                detector.published(alert)
+        except Exception as error:
+            logger.warning("alert recovery failed: %s", type(error).__name__)
         for package_id, selected in approvals:
             try:
                 for alert in detector.detect(package_id, selected, snapshot):

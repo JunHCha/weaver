@@ -8,8 +8,10 @@ applied over HTTP are blocked from running twice by the shared journals.
 """
 
 import logging
+from datetime import UTC, datetime
 
 from weaver.action.courier import ActionCourier
+from weaver.alert.delivery import AlertDelivery
 from weaver.archive import ArchiveStore
 from weaver.config import TRANSPORT_FEATURES, MobileSettings, ServerConfig
 
@@ -28,6 +30,7 @@ def reconcile_transports(
     config: ServerConfig,
 ) -> list[str]:
     """Record the configured transports; republish when a feature returns to files."""
+    alerts = AlertDelivery(config)
     republished: list[str] = []
     for feature in TRANSPORT_FEATURES:
         wanted = settings.transport_for(feature)
@@ -41,6 +44,8 @@ def reconcile_transports(
                 reviews.republish(config.courier.proposals)
             elif feature == "action":
                 actions.publish()
+            elif feature == "alert":
+                alerts.republish()
             republished.append(feature)
             logger.info("mobile transport %s: http -> files, republished", feature)
         store.record_transport(feature, wanted)
@@ -73,3 +78,13 @@ class MobileRuntime:
             self.config.mobile, self.store, self.reviews, self.actions, self.config
         )
         self.applier.run()
+        if self.config.mobile.transport_for("alert") == "http":
+            AlertDelivery(self.config).history.collect(
+                self.config.mobile.alert_body_days,
+                [
+                    device.device_id
+                    for device in self.store.devices()
+                    if device.active and "review" in device.scopes
+                ],
+                datetime.now(UTC),
+            )

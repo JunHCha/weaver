@@ -159,16 +159,21 @@ class ScheduleAlertDetector:
         found.sort(key=lambda item: item[0])
         fresh = [item for item in found if not self.history.issued(item[1].alert_id)]
         room = max(0, self.max_alerts - self.history.count(package_id))
-        alerts = []
+        alerts = [
+            a for a in self.history.bodies(pending=True) if a.package_id == package_id
+        ]
         for _, alert, pending in fresh[:room]:
             self._pending[alert.alert_id] = pending
+            self.history.stage(alert, pending.basis)
             alerts.append(alert)
         return alerts
 
+    def pending(self) -> list[Alert]:
+        return self.history.bodies(pending=True)
+
     def published(self, alert: Alert) -> None:
-        pending = self._pending.pop(alert.alert_id, None)
-        if pending is not None:
-            self.history.record(alert, pending.basis)
+        self._pending.pop(alert.alert_id, None)
+        self.history.projected(alert.alert_id)
 
     @staticmethod
     def _same_event(earlier: Thread, later: Thread) -> bool:

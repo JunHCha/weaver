@@ -179,7 +179,7 @@ class CourierSettings:
 
 
 Transport = Literal["files", "http"]
-TRANSPORT_FEATURES = ("capture", "review", "action")
+TRANSPORT_FEATURES = ("capture", "review", "action", "alert")
 _TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
 _TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
@@ -218,6 +218,8 @@ class MobileSettings:
     features: tuple[tuple[str, Transport], ...] = ()
     max_payload_bytes: int = 64 * 1024 * 1024
     staging_days: int = 7
+    # Count from the last receipt among all active review devices.
+    alert_body_days: int | None = 30
 
     def __post_init__(self) -> None:
         if self.bind is not None:
@@ -231,8 +233,17 @@ class MobileSettings:
         if type(self.staging_days) is not int or self.staging_days < 1:
             raise ConfigError("mobile.staging_days: expected positive integer")
 
+        if self.alert_body_days is not None and (
+            type(self.alert_body_days) is not int or self.alert_body_days < 1
+        ):
+            raise ConfigError("mobile.alert_body_days: expected positive integer")
+
     def transport_for(self, feature: str) -> Transport:
-        return dict(self.features).get(feature, self.transport)
+        # Alert HTTP requires the phone's new receipt/dismiss ledger. Existing
+        # global HTTP installs must keep their file alerts until APK rollout.
+        return dict(self.features).get(
+            feature, "files" if feature == "alert" else self.transport
+        )
 
     def uses_files(self) -> bool:
         """Shared Courier projections are needed by any file transport user."""
@@ -256,6 +267,7 @@ def _mobile_settings(
         "features",
         "max_payload_bytes",
         "staging_days",
+        "alert_body_days",
     }:
         raise ConfigError("mobile: unknown fields")
     values: dict[str, object] = {}
@@ -266,6 +278,7 @@ def _mobile_settings(
         "transport",
         "max_payload_bytes",
         "staging_days",
+        "alert_body_days",
     ):
         if key in value:
             values[key] = value[key]

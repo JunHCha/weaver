@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from weaver.action import ActionCourier, ActionJob, ActionOutbox
 from weaver.alert import ScheduleAlertDetector
+from weaver.alert.delivery import AlertDelivery
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
@@ -212,7 +213,7 @@ def build_runtime(
         publisher=ObservationPublisher(
             fabric,
             review.state,
-            (ScheduleAlertDetector.from_config(config), courier),
+            (ScheduleAlertDetector.from_config(config), AlertDelivery(config)),
             progress,
         ),
         maintenance=maintenance,
