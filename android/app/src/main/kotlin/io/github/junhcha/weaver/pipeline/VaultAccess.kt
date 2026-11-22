@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract as DC
+import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.schema.PipelinePage
 import java.net.URLEncoder
 import java.security.MessageDigest
@@ -26,7 +27,7 @@ object VaultAccess {
         check(prefs(context).edit().putString("name", value.trim()).commit()) { "설정을 저장하지 못했어요" }
     }
 
-    fun select(context: Context, uri: Uri) {
+    fun select(context: Context, uri: Uri): Unit = synchronized(CourierRuntime.lock) {
         require(
             uri.scheme == "content" &&
                 uri.authority == "com.android.externalstorage.documents" &&
@@ -34,6 +35,7 @@ object VaultAccess {
         ) {
             "폰에 동기화한 로컬 vault 폴더를 선택해 주세요"
         }
+        val previous = tree(context)
         val resolver = context.contentResolver
         resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val root = DC.buildDocumentUriUsingTree(uri, DC.getTreeDocumentId(uri))
@@ -43,7 +45,11 @@ object VaultAccess {
             }
         } ?: error("vault 폴더를 읽을 수 없어요")
         check(prefs(context).edit().putString("tree", uri.toString()).commit()) { "설정을 저장하지 못했어요" }
-        // Do not release a previous tree grant here: Courier or another feature may share it.
+        // Release the previous vault's READ unless Courier uses that same Uri (grants are keyed by Uri value).
+        // Same lock as CourierRuntime.select, so neither side reads a half-updated pair of selections.
+        if (previous != null && previous != uri && previous != CourierRuntime.tree(context)) {
+            runCatching { resolver.releasePersistableUriPermission(previous, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
     }
 
     fun arrived(context: Context, page: PipelinePage): Boolean {

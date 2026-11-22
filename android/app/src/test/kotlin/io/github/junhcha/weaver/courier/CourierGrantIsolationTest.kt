@@ -38,11 +38,17 @@ class CourierGrantIsolationTest {
     private val rw = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     private val courierTree = DC.buildTreeDocumentUri(authority, TestDocumentsProvider.ROOT)
 
-    /** Same Courier folder spelled as a document under the tree: a different URI value for the same place. */
+    /**
+     * Same Courier folder spelled as a document under the tree: a different URI value for the same place.
+     * Limit: on a real device the picker returns the plain tree Uri, so the reselect (old != new) path is hard
+     * to reach there (SafCourierFolder.allowed pins one folder); this alias is how the tests reach it, and the
+     * failure path (a rejected candidate after takePersistableUriPermission) is the realistic one.
+     */
     private val courierAlias = DC.buildDocumentUriUsingTree(courierTree, TestDocumentsProvider.ROOT)
 
     /** A vault that is not the Courier folder at all. */
     private val vaultTree = DC.buildTreeDocumentUri(authority, "primary:Vault")
+    private val otherVaultTree = DC.buildTreeDocumentUri(authority, "primary:Vault2")
 
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
@@ -69,12 +75,19 @@ class CourierGrantIsolationTest {
         ShadowContentResolver.registerProviderInternal(authority, provider)
         provider.docs["primary:Vault"] = TestDocumentsProvider.Doc(
             null, "Vault", DC.Document.MIME_TYPE_DIR, context.cacheDir)
+        provider.docs["primary:Vault2"] = TestDocumentsProvider.Doc(
+            null, "Vault2", DC.Document.MIME_TYPE_DIR, context.cacheDir)
     }
 
     @After fun teardown() {
         WorkManagerTestInitHelper.closeWorkDatabase()
     }
 
+    /*
+     * Robolectric's ShadowContentResolver (4.17) models Android's grant table closely enough for these tests:
+     * take ORs the flags per Uri, and release(uri, flags) removes only those flags, keeping the rest. The
+     * assertions below therefore check the real partial-release behavior; no fake resolver is needed.
+     */
     private fun grant(uri: Uri) = context.contentResolver.persistedUriPermissions.singleOrNull { it.uri == uri }
 
     @Test fun separateVaultTreeKeepsItsGrantThroughCourierReselect() {
@@ -82,7 +95,7 @@ class CourierGrantIsolationTest {
         CourierRuntime.select(context, courierTree, rw)
         CourierRuntime.select(context, courierAlias, rw)
         assertEquals(courierAlias, CourierRuntime.tree(context))
-        assertNull("old Courier grant is released", grant(courierTree))
+        assertNull("old Courier URI loses every flag (read and write)", grant(courierTree))
         assertNotNull(grant(courierAlias))
         assertTrue(grant(vaultTree)!!.isReadPermission)
         assertEquals(vaultTree, VaultAccess.tree(context))
@@ -92,7 +105,7 @@ class CourierGrantIsolationTest {
         VaultAccess.select(context, vaultTree)
         provider.changeFinalName = true // selfTest fails after the grant was taken
         assertThrows(IllegalStateException::class.java) { CourierRuntime.select(context, courierTree, rw) }
-        assertNull("failed candidate grant is released", grant(courierTree))
+        assertNull("failed candidate URI loses every flag (read and write)", grant(courierTree))
         assertTrue(grant(vaultTree)!!.isReadPermission)
         assertNull(CourierRuntime.tree(context))
     }
@@ -103,6 +116,7 @@ class CourierGrantIsolationTest {
         CourierRuntime.select(context, courierAlias, rw)
         assertEquals(courierAlias, CourierRuntime.tree(context))
         assertTrue("vault grant on the shared tree survives", grant(courierTree)!!.isReadPermission)
+        assertFalse("Courier's write access is released", grant(courierTree)!!.isWritePermission)
         assertEquals(courierTree, VaultAccess.tree(context))
     }
 
@@ -111,6 +125,7 @@ class CourierGrantIsolationTest {
         provider.changeFinalName = true
         assertThrows(IllegalStateException::class.java) { CourierRuntime.select(context, courierTree, rw) }
         assertTrue("vault grant on the shared tree survives", grant(courierTree)!!.isReadPermission)
+        assertFalse("failed candidate's write access is released", grant(courierTree)!!.isWritePermission)
         assertNull(CourierRuntime.tree(context))
     }
 
@@ -126,5 +141,29 @@ class CourierGrantIsolationTest {
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         assertTrue(VaultAccess.arrived(context, PipelinePage(
             path = "wiki/a.md", updatedAt = "2026-11-12T01:00:00Z", sha256 = sha)))
+        assertTrue(grant(courierTree)!!.isReadPermission)
+        assertFalse(grant(courierTree)!!.isWritePermission)
+    }
+
+    @Test fun vaultSwitchReleasesOldVaultReadUnlessCourierUsesIt() {
+        VaultAccess.select(context, vaultTree)
+        VaultAccess.select(context, otherVaultTree)
+        assertNull("previous vault read grant is released", grant(vaultTree))
+        assertTrue(grant(otherVaultTree)!!.isReadPermission)
+        // Courier's tree stays whole when the vault moves away from it.
+        CourierRuntime.select(context, courierTree, rw)
+        VaultAccess.select(context, courierTree)
+        VaultAccess.select(context, otherVaultTree)
+        assertTrue(grant(courierTree)!!.isReadPermission)
+        assertTrue("Courier keeps its write access", grant(courierTree)!!.isWritePermission)
+    }
+
+    @Test fun vaultSwitchOffTheCourierTreeKeepsBothFlagsForCourier() {
+        CourierRuntime.select(context, courierTree, rw)
+        VaultAccess.select(context, courierTree)
+        VaultAccess.select(context, vaultTree)
+        assertEquals(vaultTree, VaultAccess.tree(context))
+        assertTrue(grant(courierTree)!!.isReadPermission)
+        assertTrue(grant(courierTree)!!.isWritePermission)
     }
 }

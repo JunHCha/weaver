@@ -68,10 +68,23 @@ object CourierRuntime {
         }
     }
 
-    /** Persisted grants are per URI, so a tree the phone vault also uses must keep its grant (W5-A6 / I6). */
+    /**
+     * Persisted grants are keyed by the Uri value, so comparing the Uri strings is the same identity Android
+     * uses for its grant table. When the phone vault holds the same Uri, only Courier's own write access is
+     * released and the vault's read access stays; otherwise the whole grant goes (W5-A6 / I6).
+     * Runs under [lock] (select), as does VaultAccess.select, so the vault value read here cannot change midway.
+     */
     private fun releaseOwnGrant(context: Context, uri: Uri, grant: Int) {
-        if (io.github.junhcha.weaver.pipeline.VaultAccess.tree(context) == uri) return
-        runCatching { context.contentResolver.releasePersistableUriPermission(uri, grant) }
+        val shared = io.github.junhcha.weaver.pipeline.VaultAccess.tree(context) == uri
+        val flags = if (shared) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else grant
+        try {
+            context.contentResolver.releasePersistableUriPermission(uri, flags)
+        } catch (error: Exception) {
+            // A leftover grant is harmless to correctness but must stay visible.
+            runCatching {
+                CourierDatabase(context).use { it.diagnostic("courier", "release_grant", CourierClient.errorCode(error)) }
+            }
+        }
     }
 
     fun folder(context: Context): SafCourierFolder {
