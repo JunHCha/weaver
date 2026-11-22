@@ -3,9 +3,11 @@
 import pytest
 
 from weaver.config import load_config
+from weaver.context import ContextDictionary
 from weaver.llm.ledger import Ledger
 from weaver.llm.policy import (
     ALLOWED_CHANNELS,
+    HUMAN_DICTIONARY_SOURCE,
     UNKNOWN_DICTIONARY_SOURCE,
     UNKNOWN_WIKI_SOURCE,
     LedgerBacklog,
@@ -544,12 +546,64 @@ def test_dictionary_legacy_migration_uses_archive_presence(tmp_path):
     assert migrated.policy_origins()[1]
 
 
-def test_web_human_alias_after_webex_stays_closed(tmp_path):
+def test_web_human_edits_after_webex_do_not_close_first_webex_summary(tmp_path):
+    from weaver.llm.policy_archive import configured_policy
+    from weaver.web.editing import (
+        AliasEdit,
+        EntryEdit,
+        MergeEdit,
+        add_alias,
+        edit_entry,
+        merge,
+        remove_alias,
+    )
+
+    config, _, _ = make_vault(tmp_path, webex=True)
+    add_alias(config, AliasEdit(entry="합성 프로젝트", alias="human alias"))
+    remove_alias(config, AliasEdit(entry="합성 프로젝트", alias="human alias"))
+    edit_entry(config, EntryEdit(entry="합성 프로젝트", name="사람 이름"))
+    edit_entry(config, EntryEdit(entry="사람 이름", kind="topic"))
+    ContextDictionary(config.state_root, archive_root=config.archive_root).add_entry(
+        "병합 대상", "topic", source_ids=(HUMAN_DICTIONARY_SOURCE,)
+    )
+    merge(config, MergeEdit(entry="사람 이름", target="병합 대상"))
+    dictionary = ContextDictionary(config.state_root)
+    ids, unknown = dictionary.policy_origins()
+    assert HUMAN_DICTIONARY_SOURCE in ids and not unknown
+    fresh = archive_webex(config, 5, "SPACE_OPEN")
+    with provenance_scope([fresh], shared=True):
+        assert configured_policy(config).prepare("s", "u").user == "u"
+
+
+def test_automatic_unknown_write_after_webex_stays_closed_with_human_edit(tmp_path):
     from weaver.llm.policy_archive import configured_policy
     from weaver.web.editing import AliasEdit, add_alias
 
     config, _, _ = make_vault(tmp_path, webex=True)
     add_alias(config, AliasEdit(entry="합성 프로젝트", alias="human alias"))
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Auto unknown", "topic", human_edited=False)
+    assert dictionary.policy_origins()[1]
+    with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+    # A later human edit cannot launder an already unknown entry.
+    add_alias(config, AliasEdit(entry="Auto unknown", alias="typed alias"))
+    with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
+        configured_policy(config).prepare("s", "u")
+
+
+def test_human_edit_mixed_with_excluded_webex_space_stays_closed(tmp_path):
+    from weaver.llm.policy_archive import configured_policy
+    from weaver.web.editing import AliasEdit, add_alias
+
+    extra = '[shepherds.webex]\nexclude_space_ids = ["SPACE_PRIVATE"]\n'
+    config = load_config(write_config(tmp_path, extra), environ={})
+    private = archive_webex(config, 0, "SPACE_PRIVATE")
+    dictionary = ContextDictionary(config.state_root, archive_root=config.archive_root)
+    dictionary.add_entry("Private derived", "topic", source_ids=(private,))
+    add_alias(config, AliasEdit(entry="Private derived", alias="typed alias"))
+    ids, unknown = dictionary.policy_origins()
+    assert {private, HUMAN_DICTIONARY_SOURCE} <= ids and not unknown
     with provenance_scope([], shared=True), pytest.raises(PolicyBlocked):
         configured_policy(config).prepare("s", "u")
 

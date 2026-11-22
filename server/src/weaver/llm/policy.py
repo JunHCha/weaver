@@ -44,6 +44,10 @@ class Backlog(Protocol):
 UNKNOWN_DICTIONARY_SOURCE = "unknown_dictionary_provenance"
 UNKNOWN_WIKI_SOURCE = "unknown_wiki_provenance"
 UNKNOWN_LINEAGE = frozenset({UNKNOWN_DICTIONARY_SOURCE, UNKNOWN_WIKI_SOURCE})
+# Proven origin: the user typed this dictionary content in the web editor. It is
+# not unknown lineage and never stands in for a Source; Webex Source IDs mixed
+# into the same entry are still judged by their Space.
+HUMAN_DICTIONARY_SOURCE = "human_dictionary_edit"
 
 # Every channel except Webex is allowed by default; Webex needs its Space ID.
 ALLOWED_CHANNELS: frozenset[str] = frozenset(get_args(Channel.__value__)) - {"webex"}
@@ -140,6 +144,8 @@ class LlmPolicy:
         """IDs that are closed or unknown now; a transient fault blocks this call."""
         closed: set[str] = set()
         for source_id in sorted(ids):
+            if source_id == HUMAN_DICTIONARY_SOURCE:
+                continue  # user-entered content, allowed even after Webex ingest
             if source_id == UNKNOWN_DICTIONARY_SOURCE:
                 # The dictionary's persisted write-time flag already established
                 # uncertainty. Removing a Source/Receipt cannot erase that fact.

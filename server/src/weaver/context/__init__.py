@@ -753,8 +753,10 @@ class ContextDictionary:
                 return self._require(self._load(db)[0], result.name)
             return result
 
-    def set_kind(self, name: str, kind: Kind) -> ContextEntry:
-        with self._writing() as (db, snapshot, edits):
+    def set_kind(
+        self, name: str, kind: Kind, *, source_ids: tuple[str, ...] = ()
+    ) -> ContextEntry:
+        with self._writing(source_ids) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             return self._save(
                 db,
@@ -804,8 +806,10 @@ class ContextDictionary:
             )
             return self._save(db, snapshot, edit)
 
-    def remove_alias(self, name: str, alias: str) -> ContextEntry:
-        with self._writing() as (db, snapshot, edits):
+    def remove_alias(
+        self, name: str, alias: str, *, source_ids: tuple[str, ...] = ()
+    ) -> ContextEntry:
+        with self._writing(source_ids) as (db, snapshot, edits):
             entry = self._require(snapshot, name)
             edit = self._edit_for(entry, edits)
             edit = replace(
@@ -817,9 +821,14 @@ class ContextDictionary:
             return self._save(db, snapshot, edit)
 
     def merge(
-        self, source: str, target: str, *, kind: Kind | None = None
+        self,
+        source: str,
+        target: str,
+        *,
+        kind: Kind | None = None,
+        source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
-        with self._writing() as (db, snapshot, edits):
+        with self._writing(source_ids) as (db, snapshot, edits):
             a, b = self._require(snapshot, source), self._require(snapshot, target)
             if a.name == b.name:
                 return b
