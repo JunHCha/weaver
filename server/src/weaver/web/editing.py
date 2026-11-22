@@ -18,12 +18,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, DictionarySnapshot, EntryAlreadyExists
 from weaver.fabric import FabricStore, ThreadQuery
+from weaver.llm.policy import HUMAN_DICTIONARY_SOURCE
 from weaver.runtime.loop import AlreadyRunning, InstanceLock
 from weaver.schema import TagCorrection, Thread, ThreadDraft
 
 from .presentation import presentation
 
 MAX_BODY_BYTES = 65536
+# Direct human dictionary edits are a proven origin, never an unknown one.
+HUMAN_EDIT = (HUMAN_DICTIONARY_SOURCE,)
 TagKind = Literal["project", "area", "person", "organization", "topic"]
 Name = Annotated[str, Field(min_length=1, max_length=256)]
 
@@ -240,7 +243,11 @@ def apply_tags(
             with writable_dictionary(config) as dictionary:
                 for name in missing:
                     dictionary.add_entry(
-                        name, edit.kinds[name], human_edited=True, require_new=True
+                        name,
+                        edit.kinds[name],
+                        human_edited=True,
+                        require_new=True,
+                        source_ids=HUMAN_EDIT,
                     )
         snapshot = dictionary_snapshot(config)
         drafts = []
@@ -306,20 +313,28 @@ def edit_entry(config: ServerConfig, edit: EntryEdit) -> dict[str, str]:
         )
     with writable_dictionary(config) as dictionary:
         if edit.name is not None:
-            entry = dictionary.rename(edit.entry, edit.name)
+            entry = dictionary.rename(edit.entry, edit.name, source_ids=HUMAN_EDIT)
         elif edit.kind is not None:
-            entry = dictionary.set_kind(edit.entry, edit.kind)
+            entry = dictionary.set_kind(edit.entry, edit.kind, source_ids=HUMAN_EDIT)
     return {"name": entry.name}
 
 
 def add_alias(config: ServerConfig, edit: AliasEdit) -> dict[str, str]:
     with writable_dictionary(config) as dictionary:
-        return {"name": dictionary.add_alias(edit.entry, edit.alias).name}
+        return {
+            "name": dictionary.add_alias(
+                edit.entry, edit.alias, source_ids=HUMAN_EDIT
+            ).name
+        }
 
 
 def remove_alias(config: ServerConfig, edit: AliasEdit) -> dict[str, str]:
     with writable_dictionary(config) as dictionary:
-        return {"name": dictionary.remove_alias(edit.entry, edit.alias).name}
+        return {
+            "name": dictionary.remove_alias(
+                edit.entry, edit.alias, source_ids=HUMAN_EDIT
+            ).name
+        }
 
 
 def merge(config: ServerConfig, edit: MergeEdit) -> dict[str, str]:
@@ -332,7 +347,11 @@ def merge(config: ServerConfig, edit: MergeEdit) -> dict[str, str]:
                 "kind_choice_required",
                 "종류가 다른 항목은 합친 뒤의 종류를 직접 선택하세요.",
             )
-        return {"name": dictionary.merge(edit.entry, edit.target, kind=edit.kind).name}
+        return {
+            "name": dictionary.merge(
+                edit.entry, edit.target, kind=edit.kind, source_ids=HUMAN_EDIT
+            ).name
+        }
 
 
 def dictionary_entries(config: ServerConfig) -> list[dict[str, object]]:
