@@ -238,24 +238,12 @@ class InboxTest {
         assertEquals(1, InboxRuntime.alerts(app).size)
     }
 
-    @Test fun alertResolvesWhenSeenPackageDisappearsAndFileIsDeleted() {
-        put(review)
-        putAlert()
-        scan()
+    @Test fun missingReviewSnapshotNeverClosesAnAlert() {
+        put(review); putAlert(); scan()
         remove("${review.packageId}.r1.json")
-        scan()
-        // One absent scan is only a grace period (a revise may briefly show neither rev).
+        repeat(3) { scan() }
         assertEquals(1, InboxRuntime.alerts(app).size)
-        assertTrue(folder.deleted.isEmpty())
-        scan()
-        assertTrue(InboxRuntime.alerts(app).isEmpty())
-        assertTrue("proposals/alert_${alert.alertId}.json" in folder.deleted)
-        // A resynced copy of a resolved alert is neither listed nor deleted again.
-        folder.deleted.clear()
-        putAlert()
-        scan()
-        scan()
-        assertTrue(InboxRuntime.alerts(app).isEmpty())
+        assertTrue(alertFile())
         assertTrue(folder.deleted.isEmpty())
     }
 
@@ -321,13 +309,13 @@ class InboxTest {
         putAlert(); scan(); scan()
         val bytes = folder.files.remove("proposals/alert_${alert.alertId}.json")!!
         scan()
-        assertTrue(InboxRuntime.alerts(app).isEmpty())
+        assertEquals(1, InboxRuntime.alerts(app).size)
         folder.files["proposals/alert_${alert.alertId}.json"] = bytes
         scan(); scan()
         assertEquals(1, InboxRuntime.alerts(app).size)
         assertTrue(folder.deleted.isEmpty())
         // Returning is not a new alert: no new sound.
-        posted(InboxRuntime.ALERT_NOTIFICATION)?.let { assertTrue(silent(it)) }
+        assertTrue(InboxRuntime.alerts(app).single().notified)
     }
 
     @Test fun selectingAnotherFolderAndReturningDeletesNothing() {

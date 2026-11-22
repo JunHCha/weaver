@@ -130,7 +130,8 @@ class TransportIntegrationTest {
     @Test fun pairingStartsFromTheServersTransportsAndRefreshFollowsEveryChange() {
         server.capabilities(allHttp)
         TransportRuntime.pair(context, FakeMobileServer.code(server))
-        TransportFeature.entries.forEach { assertEquals(TransportRoute.HTTP, TransportRuntime.settings(context).route(it)) }
+        TransportFeature.entries.filter { it != TransportFeature.ALERT }.forEach { assertEquals(TransportRoute.HTTP, TransportRuntime.settings(context).route(it)) }
+        assertEquals(TransportRoute.FILES, TransportRuntime.settings(context).route(TransportFeature.ALERT))
         server.capabilities(mapOf("capture" to "files", "review" to "http", "action" to "files"))
         TransportRuntime.refresh(context)
         assertEquals(TransportRoute.FILES, TransportRuntime.settings(context).route(TransportFeature.CAPTURE))

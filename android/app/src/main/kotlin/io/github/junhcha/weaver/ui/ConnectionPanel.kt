@@ -181,7 +181,7 @@ fun ConnectionPanel() {
             message = withContext(Dispatchers.IO) {
                 try {
                     val result = TransportRuntime.pair(context, text)
-                    if (result.otherServerQueued > 0) "연결했어요. 이전 서버의 대기 항목 ${result.otherServerQueued}건은 따로 보관해요" else "연결했어요"
+                    result.alertWarning ?: if (result.otherServerQueued > 0) "연결했어요. 이전 서버의 대기 항목 ${result.otherServerQueued}건은 따로 보관해요" else "연결했어요"
                 } catch (error: Exception) { pairingErrorText(error) }
             }
             busy = false; tick++

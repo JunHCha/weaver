@@ -16,11 +16,14 @@ import io.github.junhcha.weaver.courier.CourierRules
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.courier.CourierWorker
 import io.github.junhcha.weaver.storage.AppStorage
+import io.github.junhcha.weaver.inbox.InboxDatabase
+import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.schema.Alert
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonPrimitive
 
-data class PairResult(val serverId: String, val otherServerQueued: Int)
+data class PairResult(val serverId: String, val otherServerQueued: Int, val alertWarning: String? = null)
 
 /** Wires pairing, the server's routes, the per-server spool and the exchange into the existing Courier runtime. */
 object TransportRuntime {
@@ -58,7 +61,16 @@ object TransportRuntime {
         val settings = settings(context)
         if (!settings.anyHttp || settings.needsRepair) return null
         val pairing = settings.pairing() ?: return null
-        return HttpExchange(apiFactory(pairing), spool(context, settings), state(context, settings), settings::route, settings::feature)
+        return HttpExchange(apiFactory(pairing), spool(context, settings), state(context, settings), settings::route, { feature -> settings.feature(feature) && (feature != ServerFeature.ALERTS || settings.alertError == null) },
+            inboxAlertLedger(context, pairing.serverId, pairing.deviceId))
+    }
+
+    internal fun inboxAlertLedger(context: Context, serverId: String, deviceId: String): AlertLedger = object : AlertLedger {
+        private fun <T> local(block: (InboxDatabase) -> T): T =
+            synchronized(InboxRuntime.lock) { InboxDatabase(context).use(block) }
+        override fun receive(alert: Alert) { local { it.receiveAlert(serverId, alert, System.currentTimeMillis(), deviceId) } }
+        override fun pending(): List<String> = local { it.pendingAlertAcks(serverId, deviceId) }
+        override fun acknowledged(alertId: String) { local { it.alertAcknowledged(serverId, deviceId, alertId) } }
     }
 
     /** The paired server's API for reads and tag edits, or null when this phone is not paired (or must pair again). */
@@ -91,9 +103,10 @@ object TransportRuntime {
         try {
             val capabilities = apiFactory(pairing).capabilities()
             val identityBefore = routed(context, MissingFolder).identity
-            settings.applyCapabilities(capabilities)
+            applyServerCapabilities(context, pairing.serverId, capabilities)?.let { summary.fail(it, false) }
             val after = routed(context, MissingFolder).identity
             if (identityBefore != after) io.github.junhcha.weaver.review.ReviewRuntime.retarget(context, identityBefore, after)
+        } catch (error: IllegalStateException) { summary.fail(error.message ?: "alert_source_conflict", false)
         } catch (error: ApiException) {
             if (error.status == 401 || error.code == "node_mismatch") summary.needsRepair = true
             summary.fail(error.code, error.retryable)
@@ -115,10 +128,33 @@ object TransportRuntime {
         val settings = settings(context)
         synchronized(CourierRuntime.lock) {
             settings.pair(pairing)
-            settings.applyCapabilities(capabilities)
+            applyServerCapabilities(context, pairing.serverId, capabilities)
             context.getSharedPreferences("transport-last", Context.MODE_PRIVATE).edit().putString("server_id", pairing.serverId).commit()
         }
-        return PairResult(pairing.serverId, otherServerQueue(context))
+        return PairResult(pairing.serverId, otherServerQueue(context), settings.alertError?.let(::alertPairingWarning))
+    }
+
+    internal fun alertPairingWarning(code: String): String = when (code) {
+        "alert_source_server_conflict" -> "연결했지만 변경 알림 폴더가 다른 서버에 연결되어 있어요. 서버별 폴더를 선택하세요."
+        "alert_body_conflict" -> "연결했지만 같은 변경 알림 ID의 본문이 달라요. 알림 사본을 확인하세요."
+        else -> "연결했지만 변경 알림 저장소를 열지 못했어요. 다시 동기화해 주세요."
+    }
+
+    internal fun applyServerCapabilities(context: Context, serverId: String, capabilities: kotlinx.serialization.json.JsonObject,
+                                         files: CourierFolder? = null): String? {
+        val settings = settings(context)
+        settings.applyCapabilities(capabilities)
+        val error = try {
+            val alertFiles = files ?: CourierRuntime.files(context)
+            if (alertFiles !== MissingFolder) synchronized(InboxRuntime.lock) {
+                InboxDatabase(context).use { it.bindAlertSource(alertFiles.identity, serverId) }
+            }
+            null
+        } catch (error: IllegalStateException) {
+            error.message?.takeIf { it in setOf("alert_source_server_conflict", "alert_body_conflict") } ?: "alert_store_unavailable"
+        } catch (_: Exception) { "alert_store_unavailable" }
+        settings.alertError = error
+        return error
     }
 
     /** Queued items that belong to a server other than the paired one (kept, never sent to the wrong server). */
@@ -166,6 +202,7 @@ object TransportRuntime {
                     TransportFeature.CAPTURE -> "outbox"
                     TransportFeature.VERDICT -> "decisions"
                     TransportFeature.ACTION_RESULT -> CourierRules.ACTION_RESULTS
+                    TransportFeature.ALERT -> return@forEach
                 }
                 val entries = spool.list(folder).filter { it.regular && !CourierRules.ignored(it.name) }
                 // Payloads first, manifests (.json) last, so a crash between the two never exposes a manifest without its body.

@@ -18,6 +18,7 @@ enum class TransportFeature(val wire: String, val label: String) {
     CAPTURE("capture", "수집"),
     VERDICT("review", "검토 판정"),
     ACTION_RESULT("action", "실행 결과"),
+    ALERT("alert", "변경 경고"),
 }
 
 enum class TransportRoute(val label: String) { FILES("Syncthing"), HTTP("HTTP") }
@@ -93,6 +94,9 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     val baseUrl: String? get() = prefs.getString(URL, null)
     val serverId: String? get() = prefs.getString(SERVER_ID, null)
     val deviceId: String? get() = prefs.getString(DEVICE_ID, null)
+    var alertError: String?
+        get() = prefs.getString("alert_error", null)
+        set(value) { prefs.edit().putString("alert_error", value).commit() }
 
     /**
      * The stored pairing, or null when it cannot be rebuilt. A paired phone whose token no longer opens (the Keystore
@@ -143,11 +147,15 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     fun applyCapabilities(capabilities: JsonObject): List<TransportFeature> {
         val transports = capabilities["transports"] as? JsonObject
         val features = capabilities["features"] as? JsonObject
+        val alertHttp = runCatching {
+            alertWireJson.decodeFromString<AlertCapabilities>(capabilities.toString()).http
+        }.getOrDefault(false)
         val changed = mutableListOf<TransportFeature>()
         val edit = prefs.edit()
         TransportFeature.entries.forEach { f ->
             val wire = (transports?.get(f.wire) as? JsonPrimitive)?.contentOrNull
-            val next = if (wire == "http") TransportRoute.HTTP else TransportRoute.FILES
+            val enabled = f != TransportFeature.ALERT || alertHttp
+            val next = if (wire == "http" && enabled) TransportRoute.HTTP else TransportRoute.FILES
             if (route(f) != next) changed += f
             edit.putString(routeKey(f), next.name)
         }
@@ -172,7 +180,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     /** Last read problem (prefixed `read:`), otherwise the last exchange error. Never a message or a path. */
     var lastError: String?
         get() = listOfNotNull(lastReadError, lastWikiError).distinct().takeIf { it.isNotEmpty() }
-            ?.joinToString(",")?.let { "read:$it" } ?: prefs.getString(LAST_ERROR, null)
+            ?.joinToString(",")?.let { "read:$it" } ?: prefs.getString(LAST_ERROR, null) ?: alertError
         set(value) { prefs.edit().putString(LAST_ERROR, value).apply() }
 
     /** Read failures survive successful Courier exchanges; only a successful read clears them. */

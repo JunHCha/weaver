@@ -38,6 +38,7 @@ class HttpExchange(
     private val state: TransportState,
     private val route: (TransportFeature) -> TransportRoute,
     private val offered: (ServerFeature) -> Boolean = { false },
+    private val alertLedger: AlertLedger? = null,
 ) {
     val summary = ExchangeSummary()
     private class Abort : RuntimeException()
@@ -48,16 +49,17 @@ class HttpExchange(
     fun pull(): ExchangeSummary = guarded {
         if (http(TransportFeature.VERDICT)) {
             item(TransportFeature.VERDICT, "list:reviews", ::pullReviews)
-            // Alerts and the map are read over HTTP only while the server offers them; otherwise the Syncthing folder keeps feeding them.
-            if (offered(ServerFeature.ALERTS)) item(TransportFeature.VERDICT, "list:alerts", ::pullAlerts)
+            // The map still follows review; Alerts have an independent route below.
             if (offered(ServerFeature.PIPELINE)) item(TransportFeature.VERDICT, "list:pipeline", ::pullPipeline)
         }
+        if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "list:alerts", ::pullAlerts)
         if (http(TransportFeature.ACTION_RESULT)) item(TransportFeature.ACTION_RESULT, "list:actions", ::pullActions)
     }
 
     fun push(): ExchangeSummary = guarded {
         if (http(TransportFeature.CAPTURE)) pushCaptures()
-        if (http(TransportFeature.VERDICT)) { pushVerdicts(); if (offered(ServerFeature.ALERTS)) pushAlertAcks() }
+        if (http(TransportFeature.VERDICT)) pushVerdicts()
+        if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "acks:alerts", ::pushAlertAcks)
         if (http(TransportFeature.ACTION_RESULT)) pushResults()
     }
 
@@ -93,9 +95,10 @@ class HttpExchange(
                 }
             }
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false); throw Abort()
-        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); throw Abort()
+        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); if (feature != TransportFeature.ALERT) throw Abort()
         } catch (error: UnreachableException) { summary.unreachable = true; summary.fail("unreachable", true); throw Abort()
         } catch (error: SecurityException) { throw error
+        } catch (_: android.database.sqlite.SQLiteException) { summary.fail("alert_store_unavailable", true)
         } catch (error: Exception) { blockItem(key, CourierClient.errorCode(error)); summary.fail(CourierClient.errorCode(error), false) }
     }
 
@@ -129,22 +132,25 @@ class HttpExchange(
     }
 
     private fun pullAlerts() {
-        val listed = api.alerts().mapNotNull { (it as? JsonObject)?.let { o -> id(o, "alert_id") to it } }
-        val ids = listed.map { it.first }.toSet()
-        listed.forEach { (id, element) ->
-            item(TransportFeature.VERDICT, "alert:$id") {
-                if (id !in state.load().alertsSeen) {
-                    spool.put("proposals", "alert_$id.json", element.toString().toByteArray())
-                    state.update { it.copy(alertsSeen = it.alertsSeen + id) }
+        val page = api.alertPage()
+        if (page.nextCursor != null) summary.rejected["list:alerts"] = "alert_cursor_ignored"
+        page.items.forEach { element ->
+            val rawId = ((element as? JsonObject)?.get("alert_id") as? JsonPrimitive)?.contentOrNull
+                ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) }
+                ?: "invalid_" + java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(element.toString().toByteArray()).take(8).joinToString("") { "%02x".format(it) }
+            item(TransportFeature.ALERT, "alert:$rawId") {
+                val alert = try { CourierClient.decoded<io.github.junhcha.weaver.schema.Alert>(element.toString()) }
+                catch (_: Exception) { throw ApiException(422, "invalid_alert", false) }
+                val ledger = alertLedger ?: throw IllegalStateException("alert_ledger_required")
+                try { ledger.receive(alert) } catch (error: IllegalStateException) {
+                    if (error.message != "alert_body_conflict") throw error
+                    throw ApiException(409, "alert_body_conflict", false)
                 }
+                // SQLite is the body cache. HTTP Alerts never need a Courier spool projection.
             }
         }
-        // Withdrawn on the server: the inbox treats the missing file as removal.
-        spool.list("proposals").filter { it.regular }.forEach { entry ->
-            val match = CourierRules.alert.matchEntire(entry.name) ?: return@forEach
-            if (match.groupValues[1] !in ids) spool.delete("proposals", entry.name)
-        }
-        state.update { it.copy(alertsSeen = it.alertsSeen.filter { id -> id in ids || spool.exists("proposals", "alert_$id.json") }.toSet()) }
+        // A received-only list, another device or a route change is never a local dismiss.
     }
 
     private fun pullPipeline() {
@@ -303,8 +309,16 @@ class HttpExchange(
     }
 
     private fun pushAlertAcks() {
-        state.load().alertsSeen.forEach { id ->
-            if (!spool.exists("proposals", "alert_$id.json")) item(TransportFeature.VERDICT, "ack:$id") { api.ackAlert(id) }
+        val ledger = alertLedger ?: return
+        ledger.pending().forEach { id ->
+            item(TransportFeature.ALERT, "ack:$id") {
+                try { api.ackAlert(id) } catch (error: ApiException) {
+                    if (!((error.status == 410 && error.code == "alert_body_expired") ||
+                        (error.status == 404 && error.code == "alert_not_found"))) throw error
+                    // Expired on the server: stop retrying this device ack, keep the local body and state.
+                }
+                ledger.acknowledged(id)
+            }
         }
     }
 
