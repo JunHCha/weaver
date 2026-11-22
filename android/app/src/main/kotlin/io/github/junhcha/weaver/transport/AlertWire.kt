@@ -4,11 +4,10 @@ import io.github.junhcha.weaver.schema.Alert
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
-data class AlertEnvelope(val items: List<Alert>, @SerialName("next_cursor") val nextCursor: String?) {
-    init { require(nextCursor == null) { "unsupported_alert_cursor" } }
-}
+data class AlertEnvelope(val items: List<JsonElement>, @SerialName("next_cursor") val nextCursor: String?)
 
 @Serializable
 data class AlertAck(@SerialName("alert_id") val alertId: String, val state: String) {
@@ -28,6 +27,7 @@ data class AlertCapabilities(
 @Serializable
 data class AlertError(val code: String, val retryable: Boolean)
 
+/** Capabilities share an extensible object with unrelated features; tolerate their keys only here. */
 internal val alertWireJson = Json { ignoreUnknownKeys = true }
 
 /** All methods return only after a durable local commit. Never infer receipt from adapter file absence. */

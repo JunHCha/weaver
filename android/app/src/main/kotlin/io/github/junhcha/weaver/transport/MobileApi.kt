@@ -90,6 +90,7 @@ interface MobileApi {
     fun putVerdict(packageId: String, revision: Long, verdict: ByteArray, etag: String): String
     fun operation(id: String): Operation
     fun alerts(): List<JsonElement>
+    fun alertPage(): AlertEnvelope = AlertEnvelope(alerts(), null)
     fun ackAlert(alertId: String)
     /** 410 alert_body_expired preserves the callers local cache. */
     fun alert(alertId: String): ByteArray = throw UnsupportedOperationException()
@@ -250,15 +251,15 @@ class HttpsMobileApi(
             (o["code"] as? JsonPrimitive)?.contentOrNull, (o["kind"] as? JsonPrimitive)?.contentOrNull, o["result"] as? JsonObject)
     }
 
-    override fun alerts(): List<JsonElement> {
+    override fun alerts(): List<JsonElement> = alertPage().items
+    override fun alertPage(): AlertEnvelope {
         val body = call("GET", "/alerts")
-        try { alertWireJson.decodeFromString<AlertEnvelope>(body.body.decodeToString()) }
+        return try { io.github.junhcha.weaver.schema.WeaverCodec.json.decodeFromString<AlertEnvelope>(body.body.decodeToString()) }
         catch (_: Exception) { throw InvalidResponseException() }
-        return items(body)
     }
     override fun ackAlert(alertId: String) {
         val body = call("PUT", "/alerts/$alertId/ack").body.decodeToString()
-        val ack = try { alertWireJson.decodeFromString<AlertAck>(body) }
+        val ack = try { io.github.junhcha.weaver.schema.WeaverCodec.json.decodeFromString<AlertAck>(body) }
         catch (_: Exception) { throw InvalidResponseException() }
         if (ack.alertId != alertId) throw InvalidResponseException()
     }

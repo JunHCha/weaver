@@ -94,6 +94,9 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     val baseUrl: String? get() = prefs.getString(URL, null)
     val serverId: String? get() = prefs.getString(SERVER_ID, null)
     val deviceId: String? get() = prefs.getString(DEVICE_ID, null)
+    var alertError: String?
+        get() = prefs.getString("alert_error", null)
+        set(value) { prefs.edit().putString("alert_error", value).commit() }
 
     /**
      * The stored pairing, or null when it cannot be rebuilt. A paired phone whose token no longer opens (the Keystore
@@ -177,7 +180,7 @@ class TransportSettings(private val prefs: SharedPreferences, private val box: S
     /** Last read problem (prefixed `read:`), otherwise the last exchange error. Never a message or a path. */
     var lastError: String?
         get() = listOfNotNull(lastReadError, lastWikiError).distinct().takeIf { it.isNotEmpty() }
-            ?.joinToString(",")?.let { "read:$it" } ?: prefs.getString(LAST_ERROR, null)
+            ?.joinToString(",")?.let { "read:$it" } ?: prefs.getString(LAST_ERROR, null) ?: alertError
         set(value) { prefs.edit().putString(LAST_ERROR, value).apply() }
 
     /** Read failures survive successful Courier exchanges; only a successful read clears them. */

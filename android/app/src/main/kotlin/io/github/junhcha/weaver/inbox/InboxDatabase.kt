@@ -11,7 +11,7 @@ import java.io.File
 
 /** Review index and durable phone-owned Alert ledger; synchronous calls belong on an IO thread. */
 class InboxDatabase(context: Context) : SQLiteOpenHelper(
-    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 4,
+    context, File(context.filesDir, "inbox.sqlite3").absolutePath, null, 5,
 ), java.io.Closeable {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -36,13 +36,20 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             return
         }
         val ledger = AlertLedgerStore(db)
+        if (oldVersion == 4) {
+            db.execSQL("ALTER TABLE alert_ledger ADD COLUMN received_via TEXT NOT NULL DEFAULT 'files'")
+            ledger.createHttpReceipts()
+            return
+        }
         ledger.create()
         val source = db.rawQuery("SELECT value FROM settings WHERE key=?", arrayOf("tree")).use { if (it.moveToFirst()) it.getString(0) else "legacy" }
         val server = if (source.startsWith("http:")) source.removePrefix("http:") else "files:$source"
         ledger.bind(source, server)
         db.rawQuery("SELECT alert_id, package_id, thread_id, message, created_at, state, first_seen, notified, changed_at FROM alerts", null).use { c ->
             while (c.moveToNext()) {
-                val alert = Alert(2, c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4))
+                // Keep invalid v3 rows verbatim in alerts for diagnosis without blocking migration.
+                val alert = try { Alert(2, c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4)) }
+                catch (_: IllegalArgumentException) { continue }
                 ledger.receive(server, alert, c.getLong(6))
                 if (c.getString(5) in setOf(DISMISSED, RESOLVED)) ledger.close(server, alert.alertId, c.getLong(8))
                 if (c.getInt(7) == 1) db.execSQL("UPDATE alert_ledger SET posted=1 WHERE server_id=? AND alert_id=?", arrayOf(server, alert.alertId))
@@ -74,7 +81,12 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         } finally { db.endTransaction() }
     }
 
-    fun receiveAlert(serverId: String, alert: Alert, now: Long) = ledger().receive(serverId, alert, now)
+    fun receiveAlert(serverId: String, alert: Alert, now: Long, deviceId: String? = null) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try { ledger().receive(serverId, alert, now, deviceId); db.setTransactionSuccessful() } finally { db.endTransaction() }
+    }
+    fun pruneClosedAlerts(now: Long) = ledger().pruneClosed(now)
     fun pendingAlertAcks(serverId: String, deviceId: String): List<String> = ledger().pending(serverId, deviceId)
     fun alertAcknowledged(serverId: String, deviceId: String, alertId: String) = ledger().acknowledged(serverId, deviceId, alertId)
     fun alertBodies(serverId: String): List<Alert> = ledger().bodies(serverId)
@@ -103,11 +115,10 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
 
     /** Reconcile review absence only; Alert absence never closes or removes a cached body. */
     fun reconcile(packages: List<ReviewPackage>, alerts: List<Alert>, unreadable: Set<String>, now: Long,
-                  source: String, rebuilt: Boolean, alertSource: String = source, serverId: String? = null): List<String> {
+                  source: String, rebuilt: Boolean, alertSource: String = source, serverId: String? = null, onAlertError: (Exception) -> Unit = { throw it }): List<String> {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val alertServer = selectAlertSource(alertSource, serverId)
             val trusted = setting("tree") == source && !rebuilt
             val heldPackages = unreadable.mapNotNull { CourierRules.revision.matchEntire(it)?.groupValues?.get(1) }.toSet()
             for (p in packages) {
@@ -132,8 +143,6 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
                     // Older revision resynced, or one this app already decided: keep the row as is.
                 }
             }
-            for (a in alerts) ledger().receive(alertServer, a, now)
-            val delete: List<String>
             if (trusted) {
                 val present = packages.map { it.packageId }.toSet() + heldPackages
                 db.execSQL("UPDATE reviews SET absent_scans=0 WHERE package_id IN (${marks(present)})", present.toTypedArray())
@@ -144,13 +153,21 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
                     db.execSQL("UPDATE reviews SET state='$GONE' WHERE package_id=? AND state='$ACTIVE'", arrayOf(it))
                 }
             }
-            // Adapter cleanup is driven only by a committed local close. Repeat on resync or crash.
-            val closed = ledger().closedIds(alertServer)
-            delete = alerts.filter { it.alertId in closed }.map { "alert_${it.alertId}.json" }
             setting("tree", source)
             setting("last_scan_at", now.toString())
             db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        // Alert failures cannot roll back committed review ingestion/history.
+        db.beginTransaction()
+        try {
+            val alertServer = selectAlertSource(alertSource, serverId)
+            for (a in alerts) ledger().receive(alertServer, a, now)
+            ledger().pruneClosed(now)
+            val closed = ledger().closedIds(alertServer)
+            val delete = alerts.filter { it.alertId in closed }.map { "alert_${it.alertId}.json" }
+            db.setTransactionSuccessful()
             return delete
+        } catch (error: Exception) { onAlertError(error); return emptyList()
         } finally { db.endTransaction() }
     }
 
@@ -171,11 +188,7 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
             c.getInt(4) == 1, c.getLong(5)))
     } }
 
-    fun alerts(): List<AlertItem> {
-        val server = alertServer()
-        return ledger().bodies(server).map { a -> AlertItem(a.alertId, a.packageId, a.threadId, a.message,
-            a.createdAt, ledger().posted(server, a.alertId), server) }
-    }
+    fun alerts(): List<AlertItem> = ledger().items(alertServer())
 
     internal fun markReviewsNotified() {
         writableDatabase.execSQL("UPDATE reviews SET notified_revision=revision WHERE state='$ACTIVE'")
@@ -185,7 +198,6 @@ class InboxDatabase(context: Context) : SQLiteOpenHelper(
         db.beginTransaction()
         try {
             setting("alert_pending", signature)
-            markAlertsNotified()
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }

@@ -70,8 +70,8 @@ class InboxDeviceTest {
                 }
                 db.reconcile(emptyList(), emptyList(), emptySet(), 4, "synthetic-saf", false)
                 assertEquals(alert.message, db.alerts().single().message)
-                assertEquals(listOf(closed.alertId), db.pendingAlertAcks(server, "device-one"))
-                assertEquals(2, db.pendingAlertAcks(server, "new-pairing-device").size)
+                assertTrue(db.pendingAlertAcks(server, "device-one").isEmpty())
+                assertTrue(db.pendingAlertAcks(server, "new-pairing-device").isEmpty())
                 db.reconcile(emptyList(), listOf(alert), emptySet(), 5, "http:other-server", false, serverId = "other-server")
                 assertFalse(db.alerts().single().notified)
                 db.reconcile(emptyList(), emptyList(), emptySet(), 6, "synthetic-saf", false)

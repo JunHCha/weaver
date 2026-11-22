@@ -59,7 +59,7 @@ class HttpExchange(
     fun push(): ExchangeSummary = guarded {
         if (http(TransportFeature.CAPTURE)) pushCaptures()
         if (http(TransportFeature.VERDICT)) pushVerdicts()
-        if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) pushAlertAcks()
+        if (http(TransportFeature.ALERT) && offered(ServerFeature.ALERTS)) item(TransportFeature.ALERT, "acks:alerts", ::pushAlertAcks)
         if (http(TransportFeature.ACTION_RESULT)) pushResults()
     }
 
@@ -95,7 +95,7 @@ class HttpExchange(
                 }
             }
         } catch (error: PinMismatchException) { summary.needsRepair = true; summary.fail("pin_mismatch", false); throw Abort()
-        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); throw Abort()
+        } catch (error: InvalidResponseException) { summary.fail("invalid_read_response", false); if (feature != TransportFeature.ALERT) throw Abort()
         } catch (error: UnreachableException) { summary.unreachable = true; summary.fail("unreachable", true); throw Abort()
         } catch (error: SecurityException) { throw error
         } catch (_: android.database.sqlite.SQLiteException) { summary.fail("alert_store_unavailable", true)
@@ -132,18 +132,22 @@ class HttpExchange(
     }
 
     private fun pullAlerts() {
-        api.alerts().forEach { element ->
-            val alert = CourierClient.decoded<io.github.junhcha.weaver.schema.Alert>(element.toString())
-            item(TransportFeature.ALERT, "alert:${alert.alertId}") {
-                // Commit the body before exposing the adapter or making the receipt eligible for ack.
+        val page = api.alertPage()
+        if (page.nextCursor != null) summary.rejected["list:alerts"] = "alert_cursor_ignored"
+        page.items.forEach { element ->
+            val rawId = ((element as? JsonObject)?.get("alert_id") as? JsonPrimitive)?.contentOrNull
+                ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) }
+                ?: "invalid_" + java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(element.toString().toByteArray()).take(8).joinToString("") { "%02x".format(it) }
+            item(TransportFeature.ALERT, "alert:$rawId") {
+                val alert = try { CourierClient.decoded<io.github.junhcha.weaver.schema.Alert>(element.toString()) }
+                catch (_: Exception) { throw ApiException(422, "invalid_alert", false) }
                 val ledger = alertLedger ?: throw IllegalStateException("alert_ledger_required")
                 try { ledger.receive(alert) } catch (error: IllegalStateException) {
                     if (error.message != "alert_body_conflict") throw error
-                    // Keep both versions for diagnosis; this is not a valid Courier Alert filename.
-                    spool.put("proposals", "alert_${alert.alertId}.sync-conflict-body.json", element.toString().toByteArray())
                     throw ApiException(409, "alert_body_conflict", false)
                 }
-                spool.put("proposals", "alert_${alert.alertId}.json", element.toString().toByteArray())
+                // SQLite is the body cache. HTTP Alerts never need a Courier spool projection.
             }
         }
         // A received-only list, another device or a route change is never a local dismiss.
@@ -309,7 +313,8 @@ class HttpExchange(
         ledger.pending().forEach { id ->
             item(TransportFeature.ALERT, "ack:$id") {
                 try { api.ackAlert(id) } catch (error: ApiException) {
-                    if (error.status != 410 || error.code != "alert_body_expired") throw error
+                    if (!((error.status == 410 && error.code == "alert_body_expired") ||
+                        (error.status == 404 && error.code == "alert_not_found"))) throw error
                     // Expired on the server: stop retrying this device ack, keep the local body and state.
                 }
                 ledger.acknowledged(id)

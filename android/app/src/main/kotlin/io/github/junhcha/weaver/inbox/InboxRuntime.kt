@@ -50,16 +50,19 @@ object InboxRuntime {
      */
     fun apply(context: Context, folder: CourierFolder, inbox: CourierClient.Inbox, diagnostics: CourierDatabase,
               now: Long = System.currentTimeMillis()): Boolean {
+        var successful = true
         val delete = synchronized(lock) {
             InboxDatabase(context).use {
                 val source = (folder as? RoutedFolder)?.alertSource ?: folder.identity
                 val server = TransportRuntime.settings(context).serverId
-                val closed = it.reconcile(inbox.packages, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"), source, server)
+                val closed = it.reconcile(inbox.packages, inbox.alerts, inbox.unreadable, now, folder.identity, folder.created("proposals"), source, server) { error ->
+                    diagnostics.diagnostic("proposals", "alerts", error.message?.takeIf { code -> code in setOf("alert_body_conflict", "alert_source_server_conflict") } ?: "alert_store_unavailable")
+                    successful = false
+                }
                 val http = TransportRuntime.settings(context).route(TransportFeature.ALERT) == TransportRoute.HTTP
-                (closed + if (http) inbox.alerts.map { a -> "alert_${a.alertId}.json" } else emptyList()).distinct()
+                (closed + if (http && successful) inbox.alerts.map { a -> "alert_${a.alertId}.json" } else emptyList()).distinct()
             }
         }
-        var successful = true
         delete.forEach { name ->
             try { folder.delete("proposals", name)
             } catch (error: SecurityException) { throw error
@@ -98,7 +101,9 @@ object InboxRuntime {
         synchronized(lock) {
             InboxDatabase(context).use { db ->
                 notifyReviews(context, db, now)
-                notifyAlerts(context, db)
+                try { notifyAlerts(context, db) } catch (_: Exception) {
+                    TransportRuntime.settings(context).alertError = "alert_store_unavailable"
+                }
             }
         }
         version.value = version.value + 1
@@ -175,6 +180,7 @@ object InboxRuntime {
         if (recovering && manager.activeNotifications.any {
                 it.id == ALERT_NOTIFICATION && it.notification.extras.getString("weaver_alert_signature") == signature
             }) {
+            db.markAlertsNotified()
             db.setting("alert_pending", "")
             db.setting("alert_signature", signature)
             db.setting("alert_blocked", "false")
@@ -186,10 +192,13 @@ object InboxRuntime {
         }
         val blocked = db.setting("alert_blocked") == "true"
         val lines = items.map { it.message.take(80) }
-        // Durable intent precedes Android notification side effects; recovery uses the same ID silently.
+        // Only successful notify marks posted. A pending crash recovers silently; if Android no longer
+        // has the notification (including a swipe in the crash window), this may show it again.
+        // Prefer retaining the warning over dropping a never-posted one; device acceptance is separate.
         db.prepareAlertsNotification(signature)
         if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, "일정 변경 가능 ${items.size}건", lines,
                 silent = blocked || !added || recovering, signature = signature)) {
+            db.markAlertsNotified()
             db.setting("alert_pending", "")
             db.setting("alert_signature", signature)
             db.setting("alert_blocked", "false")
