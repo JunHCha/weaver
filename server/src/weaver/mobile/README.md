@@ -138,12 +138,14 @@ scope: `read`, `capture`, `review`, `action`(+실행 폰 1대), `edit`. 표시 �
 | 경로 | 계약 |
 |---|---|
 | `GET /alerts` | `{items:[Alert v2], next_cursor:null}`. 이 기기가 아직 영속 수신 ack하지 않은 본문 |
-| `GET /alerts/{id}` | Alert v2 + `ETag`. ack 후에도 보존 기간 동안 조회 가능 |
-| `PUT /alerts/{id}/ack` | 본문 없는 멱등 요청 → `{alert_id, state:"received"}`. 알 수 없는 ID는 404 `alert_not_found` |
+| `GET /alerts/{id}` | Alert v2 + `ETag`. ack 후에도 보존 기간 동안 조회 가능. 만료 본문은 410 `alert_body_expired`, 없는 ID는 404 `alert_not_found` |
+| `PUT /alerts/{id}/ack` | 본문 없는 멱등 요청 → `{alert_id, state:"received"}`. 만료 본문은 410 `alert_body_expired`, 없는 ID는 404 `alert_not_found` |
 
 본문·History·미완료 게시 기록은 private `state_root/alerts.sqlite3`의 같은 트랜잭션에 먼저 저장한다.
 파일 게시 뒤 marker commit 전에 중단되면 같은 ID/본문으로 재생한다. 실제 존재하는 기존 alert 파일만 이관하며
-삭제된 파일의 History만으로 본문을 만들지 않는다. 본문 충돌·잘못된 파일은 원본을 보존하고 이관을 중단한다.
+삭제된 파일의 History만으로 본문을 만들지 않는다. 생성자는 파일 이관을 하지 않고 reconcile에서 수행한다.
+본문 충돌·잘못된 파일은 원본을 보존하고 파일명/오류 종류를 경고한 뒤 다른 파일을 계속 이관한다.
+만료된 DB 본문에 실제 같은 ID 파일이 다시 오면 본문을 복원하며 History/ack는 유지한다.
 
 Alert HTTP는 새 APK의 로컬 ledger 배포 뒤 `[mobile.features] alert = "http"`로 명시적으로 켠다.
 기본 Alert 경로는 global `transport="http"`여도 `files`다. 이 경우 기존 capabilities bytes 호환성을 위해
@@ -159,6 +161,9 @@ HTTP→files에서는 ack된 것도 같은 ID/본문으로 일회 재게시하�
 HTTP 유지보수는 현재 활성 review 기기가 모두 영속 수신 ack를 완료한 시점부터 그 일수가 지난 본문만 지운다.
 미수신·수신 기기 없음·files 경로는 기간에 관계없이 보존하고 History/ack는 GC하지 않는다.
 보존 기간이 지난 본문은 새 페어링/파일 복귀에서도 복구되지 않으므로 APK의 private 본문 보존이 필요하다.
+만료 ID는 GET과 ack 모두 410으로 응답하며 기존/새 기기의 ack 기록을 추가하지 않는다.
+롤백 결과 `ReplayResult(published, expired)`와 로그는 만료로 재게시하지 못한 건수를 표시한다.
+HTTP 유지보수 로그 `waiting_review_devices`는 보존 본문 중 하나라도 미수신인 활성 review 기기 수다.
 
 ### Action (scope `action`, 실행 폰 1대 — 아니면 403 `not_executor`)
 

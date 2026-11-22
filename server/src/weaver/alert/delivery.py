@@ -4,6 +4,8 @@ Receipt ack never means dismiss. The phone owns the (server_id, alert_id)
 ledger, including notification publication and local read/dismiss state.
 """
 
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from weaver.config import ServerConfig
@@ -12,41 +14,49 @@ from weaver.schema import Alert
 
 from .history import AlertHistory
 
+logger = logging.getLogger("weaver.alert")
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    published: int
+    expired: int
+
 
 class AlertDelivery:
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
         self.history = AlertHistory(config.state_root / "alerts.sqlite3")
-        self.import_files()
-        if config.mobile.transport_for("alert") == "http":
-            self.retire_files()
 
-    def import_files(self) -> int:
+    def reconcile(self) -> int:
+        return self.import_files(
+            retire=self.config.mobile.transport_for("alert") == "http"
+        )
+
+    def import_files(self, *, retire: bool = False) -> int:
         """Import actual extant files only; history cannot reconstruct old bodies.
 
-        Validate before touching files. Malformed/conflicting files stop migration
-        and remain available for diagnosis rather than silently losing an alert.
+        Invalid/conflicting files remain available for diagnosis; other files proceed.
         """
         count = 0
         for path in self.config.courier.proposals.glob("alert_*.json"):
-            alert = Alert.model_validate_json(path.read_bytes())
-            if path.name != f"alert_{alert.alert_id}.json":
-                raise ValueError("alert_filename_mismatch")
-            self.history.stage(
-                alert, self.history.basis(alert.alert_id) or "", projected=True
-            )
+            try:
+                alert = Alert.model_validate_json(path.read_bytes())
+                if path.name != f"alert_{alert.alert_id}.json":
+                    raise ValueError("alert_filename_mismatch")
+                self.history.stage(
+                    alert, self.history.basis(alert.alert_id) or "", projected=True
+                )
+                if retire:
+                    path.unlink()
+                    fsync_directory(path.parent, strict=True)
+            except (ValueError, OSError) as error:
+                logger.warning(
+                    "alert migration skipped: %s %s", path.name, type(error).__name__
+                )
+                continue
             count += 1
         return count
-
-    def retire_files(self) -> None:
-        """Remove only files already committed to the private store."""
-        for path in self.config.courier.proposals.glob("alert_*.json"):
-            alert = Alert.model_validate_json(path.read_bytes())
-            if self.history.body(alert.alert_id) != alert:
-                raise ValueError("alert_body_conflict")
-            path.unlink()
-        if self.config.courier.proposals.exists():
-            fsync_directory(self.config.courier.proposals, strict=True)
 
     def _publish(self, alert: Alert) -> Path:
         directory = self.config.courier.proposals
@@ -68,7 +78,7 @@ class AlertDelivery:
             return self._publish(alert)
         return None
 
-    def republish(self) -> int:
+    def republish(self) -> ReplayResult:
         """HTTP -> files includes acknowledged alerts, with identical IDs/bodies.
 
         The phone ledger suppresses notifications for already published/dismissed
@@ -78,4 +88,7 @@ class AlertDelivery:
         for alert in alerts:
             self._publish(alert)
             self.history.projected(alert.alert_id)
-        return len(alerts)
+        expired = self.history.expired_count()
+        if expired:
+            logger.warning("alert rollback missing expired bodies: %d", expired)
+        return ReplayResult(len(alerts), expired)

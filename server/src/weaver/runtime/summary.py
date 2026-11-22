@@ -257,11 +257,18 @@ class ObservationPublisher:
         assert self.alerts is not None
         detector, sink = self.alerts
         try:
-            for alert in detector.pending():
+            pending = detector.pending()
+        except Exception as error:
+            logger.warning("alert recovery listing failed: %s", type(error).__name__)
+            pending = []
+        for alert in pending:
+            try:
                 sink.publish_alert(alert)
                 detector.published(alert)
-        except Exception as error:
-            logger.warning("alert recovery failed: %s", type(error).__name__)
+            except Exception as error:
+                logger.warning(
+                    "alert recovery failed: %s %s", type(error).__name__, alert.alert_id
+                )
         for package_id, selected in approvals:
             try:
                 for alert in detector.detect(package_id, selected, snapshot):

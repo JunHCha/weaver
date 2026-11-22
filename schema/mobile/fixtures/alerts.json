@@ -228,6 +228,57 @@
           "retryable": false
         }
       }
+    },
+    {
+      "name": "unknown_ack",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/alerts/unknown/ack",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "alert_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "expired_body",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/alerts/alt_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "code": "alert_body_expired",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "expired_ack",
+      "request": {
+        "method": "PUT",
+        "path": "/mobile/v1/alerts/alt_01ARZ3NDEKTSV4RRFFQ69G5FA0/ack",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "code": "alert_body_expired",
+          "retryable": false
+        }
+      }
     }
   ]
 }

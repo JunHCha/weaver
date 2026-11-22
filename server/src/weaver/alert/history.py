@@ -16,6 +16,10 @@ from pathlib import Path
 from weaver.schema import Alert
 
 
+class AlertBodyExpired(ValueError):
+    """The delivery ID exists, but its retained body has expired."""
+
+
 class AlertHistory:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -108,6 +112,12 @@ class AlertHistory:
                 "SELECT body FROM alert_delivery WHERE alert_id=?", (alert.alert_id,)
             ).fetchone()
             if row is not None:
+                if row[0] is None:
+                    db.execute(
+                        "UPDATE alert_delivery SET body=?, projected=? WHERE alert_id=?",
+                        (body, int(projected), alert.alert_id),
+                    )
+                    return
                 if row[0] != body:
                     raise ValueError("alert_body_conflict")
                 return
@@ -131,9 +141,32 @@ class AlertHistory:
             row = db.execute(
                 "SELECT body FROM alert_delivery WHERE alert_id=?", (alert_id,)
             ).fetchone()
-        return (
-            None if row is None or row[0] is None else Alert.model_validate_json(row[0])
-        )
+        if row is not None and row[0] is None:
+            raise AlertBodyExpired(alert_id)
+        return None if row is None else Alert.model_validate_json(row[0])
+
+    def expired_count(self) -> int:
+        with self._connect() as db:
+            return int(
+                db.execute(
+                    "SELECT count(*) FROM alert_delivery WHERE body IS NULL"
+                ).fetchone()[0]
+            )
+
+    def waiting_devices(self, devices: Sequence[str]) -> int:
+        """Active recipients still missing at least one retained Alert receipt."""
+        with self._connect() as db:
+            return sum(
+                bool(
+                    db.execute(
+                        "SELECT 1 FROM alert_delivery d WHERE d.body IS NOT NULL "
+                        "AND NOT EXISTS (SELECT 1 FROM alert_ack a "
+                        "WHERE a.alert_id=d.alert_id AND a.device_id=?) LIMIT 1",
+                        (device,),
+                    ).fetchone()
+                )
+                for device in devices
+            )
 
     def bodies(
         self, *, pending: bool = False, device_id: str | None = None
@@ -162,13 +195,13 @@ class AlertHistory:
     def ack(self, device_id: str, alert_id: str, now: datetime) -> bool:
         """Idempotent receipt only; retain the body and other devices' delivery."""
         with self._connect() as db:
-            if (
-                db.execute(
-                    "SELECT 1 FROM alert_delivery WHERE alert_id=?", (alert_id,)
-                ).fetchone()
-                is None
-            ):
+            row = db.execute(
+                "SELECT body FROM alert_delivery WHERE alert_id=?", (alert_id,)
+            ).fetchone()
+            if row is None:
                 return False
+            if row[0] is None:
+                raise AlertBodyExpired(alert_id)
             db.execute(
                 "INSERT OR IGNORE INTO alert_ack VALUES (?,?,?)",
                 (device_id, alert_id, now.astimezone(UTC).isoformat()),

@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -949,6 +949,11 @@ def alerts(tmp: Path) -> Recorder:
         "body_after_receipt", "GET", f"{BASE}/alerts/{body.alert_id}", headers=headers
     )
     r.call("unknown", "GET", f"{BASE}/alerts/unknown", headers=headers)
+    r.call("unknown_ack", "PUT", f"{BASE}/alerts/unknown/ack", headers=headers)
+    history.ack(h.device.device_id, body.alert_id, NOW)
+    history.collect(30, [h.device.device_id], NOW + timedelta(days=31))
+    r.call("expired_body", "GET", f"{BASE}/alerts/{body.alert_id}", headers=headers)
+    r.call("expired_ack", "PUT", f"{BASE}/alerts/{body.alert_id}/ack", headers=headers)
     return r
 
 

@@ -1,14 +1,17 @@
 """Alert HTTP envelope/receipt contract; dismiss lives only in the phone DB."""
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from server.tests.alert.test_delivery import alert
 
 from weaver.alert import AlertHistory
+from weaver.alert.history import AlertBodyExpired
 from weaver.config import ConfigError, MobileSettings
+from weaver.mobile.api import create_app
 from weaver.mobile.transport import MobileRuntime, reconcile_transports
+from weaver.runtime.assemble import build_runtime
 
 from .helpers import Harness
 
@@ -22,6 +25,24 @@ def seed(h):
     history.stage(body, "thr_1")
     history.projected(body.alert_id)
     return history, body
+
+
+@pytest.mark.parametrize("settings", ["", HTTP])
+def test_invalid_file_does_not_block_startup_or_reconciliation(
+    tmp_path, settings, caplog
+):
+    h = Harness(tmp_path, settings)
+    path = h.config.courier.proposals / "alert_invalid.json"
+    path.write_text("invalid JSON")
+    build_runtime(h.config, environ={})  # construct only; never invoke an LLM
+    create_app(h.config, h.whois)
+    create_app(h.config, None, local_bind=("127.0.0.1", 8788))
+    assert (
+        reconcile_transports(h.config.mobile, h.store, h.reviews, h.actions, h.config)
+        == []
+    )
+    assert path.read_text() == "invalid JSON"
+    assert "alert migration skipped: alert_invalid.json" in caplog.text
 
 
 def test_receipt_is_device_specific_durable_and_not_dismiss(tmp_path):
@@ -133,6 +154,29 @@ def test_retention_toml(tmp_path):
     assert h.config.mobile.alert_body_days == 45
 
 
+def test_expired_body_and_ack_are_gone_for_existing_and_new_devices(tmp_path):
+    h = Harness(tmp_path, HTTP)
+    headers = h.pair("review")
+    device = h.device.device_id
+    history, body = seed(h)
+    history.ack(device, body.alert_id, body.created_at)
+    assert history.collect(30, [device], body.created_at + timedelta(days=31)) == 1
+    new_headers = h.pair("review")
+    for who in (headers, new_headers):
+        assert h.client.get(BASE, headers=who).json()["items"] == []
+        for method, suffix in (("get", ""), ("put", "/ack")):
+            response = getattr(h.client, method)(
+                f"{BASE}/{body.alert_id}{suffix}", headers=who
+            )
+            assert response.status_code == 410
+            assert response.json()["code"] == "alert_body_expired"
+            unknown = getattr(h.client, method)(f"{BASE}/unknown{suffix}", headers=who)
+            assert unknown.status_code == 404
+            assert unknown.json()["code"] == "alert_not_found"
+    with history._connect() as db:
+        assert db.execute("SELECT count(*) FROM alert_ack").fetchone()[0] == 1
+
+
 def test_maintenance_collects_only_http_bodies_received_by_active_reviewers(tmp_path):
     for route in ("http", "files"):
         h = Harness(tmp_path / route, f'[mobile.features]\nalert = "{route}"\n')
@@ -143,10 +187,22 @@ def test_maintenance_collects_only_http_bodies_received_by_active_reviewers(tmp_
         h.pair("review")
         revoked = h.device.device_id
         h.store.revoke(revoked)
-        runtime = MobileRuntime(h.config, h.store, h.applier, h.reviews, h.actions)
+        now = body.created_at + timedelta(days=100)
+        runtime = MobileRuntime(
+            h.config,
+            h.store,
+            h.applier,
+            h.reviews,
+            h.actions,
+            clock=lambda now=now: now,
+        )
         runtime.run()
         assert history.body(body.alert_id) == body  # no receipt, however old
-        history.ack(recipient, body.alert_id, datetime.now(UTC) - timedelta(days=31))
+        history.ack(recipient, body.alert_id, now - timedelta(days=31))
         runtime.run()
-        assert (history.body(body.alert_id) is None) == (route == "http")
+        if route == "http":
+            with pytest.raises(AlertBodyExpired):
+                history.body(body.alert_id)
+        else:
+            assert history.body(body.alert_id) == body
         assert history.issued(body.alert_id)

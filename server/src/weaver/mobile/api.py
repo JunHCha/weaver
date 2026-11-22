@@ -21,6 +21,7 @@ from starlette.exceptions import HTTPException
 
 from weaver.action.courier import ActionCourier
 from weaver.alert.delivery import AlertDelivery
+from weaver.alert.history import AlertBodyExpired
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.loom.summary_state import SummaryState
@@ -379,7 +380,10 @@ def create_app(
     @router.get("/alerts/{alert_id}")
     def get_alert(alert_id: str, _who: ReviewScope) -> JSONResponse:
         alert_http()
-        alert = alerts.body(alert_id)
+        try:
+            alert = alerts.body(alert_id)
+        except AlertBodyExpired:
+            raise ApiError(410, "alert_body_expired") from None
         if alert is None:
             raise ApiError(404, "alert_not_found")
         return json_response(
@@ -389,9 +393,13 @@ def create_app(
     @router.put("/alerts/{alert_id}/ack")
     def ack_alert(alert_id: str, who: ReviewScope) -> JSONResponse:
         alert_http()
-        if not alerts.ack(
-            who.device.device_id, alert_id, (clock or (lambda: datetime.now(UTC)))()
-        ):
+        try:
+            received = alerts.ack(
+                who.device.device_id, alert_id, (clock or (lambda: datetime.now(UTC)))()
+            )
+        except AlertBodyExpired:
+            raise ApiError(410, "alert_body_expired") from None
+        if not received:
             raise ApiError(404, "alert_not_found")
         return json_response({"alert_id": alert_id, "state": "received"})
 
