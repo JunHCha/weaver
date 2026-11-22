@@ -27,6 +27,16 @@ from weaver.schema import Manifest, Receipt
 from .settings import OutboxLimits as OutboxLimits
 
 logger = logging.getLogger("weaver.shepherd")
+# Largest frozen request payload (one Space-day part); Courier enforces the same.
+MAX_PAYLOAD_BYTES = 64 * 1024**2
+_STOPPING_NOTICES = frozenset(
+    {
+        "outbox_capacity",
+        "courier_quarantine",
+        "courier_auth_required",
+        "courier_operator_required",
+    }
+)
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -37,6 +47,16 @@ class BundleKey:
     day: str
     part: int
     revision: int
+
+    @classmethod
+    def decode(cls, encoded: bytes) -> "BundleKey":
+        fields: list[str] = []
+        while encoded:
+            size = int.from_bytes(encoded[:4], "big")
+            fields.append(encoded[4 : 4 + size].decode())
+            encoded = encoded[4 + size :]
+        instance, space, day, part, revision = fields
+        return cls(instance, space, day, int(part), int(revision))
 
     @property
     def encoded(self) -> bytes:
@@ -55,6 +75,11 @@ class BundleKey:
         )
         encoded = [unicodedata.normalize("NFC", v).encode("utf-8") for v in values]
         return b"".join(len(v).to_bytes(4, "big") + v for v in encoded)
+
+    @property
+    def day_prefix(self) -> bytes:
+        """Encoded instance/space/day: the shared prefix of every part and revision."""
+        return self.encoded[: -(8 + len(str(self.part)) + len(str(self.revision)))]
 
     @property
     def capture_id(self) -> str:
@@ -117,9 +142,7 @@ class Outbox:
         finally:
             os.close(fd)
         self.free_bytes = free_bytes or (lambda: shutil.disk_usage(path.parent).free)
-        self.notify = notify or (
-            lambda code: logger.warning("Shepherd stopped: %s", code)
-        )
+        self.notify = notify or self._log_notice
         with self._connect() as db:
             # Effective immediately for new databases; legacy files need offline VACUUM.
             db.execute("PRAGMA auto_vacuum=INCREMENTAL")
@@ -142,6 +165,14 @@ class Outbox:
             db.execute(
                 "INSERT OR IGNORE INTO meta VALUES ('instance_id', ?)", (instance_id,)
             )
+
+    @staticmethod
+    def _log_notice(code: str) -> None:
+        # Only collection/delivery stops say "stopped"; a held buffer does not.
+        if code in _STOPPING_NOTICES:
+            logger.warning("Shepherd stopped: %s", code)
+        else:
+            logger.warning("Shepherd needs operator action: %s", code)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -253,74 +284,196 @@ class Outbox:
         """Stage 7 must consult the durable collection exclusion before close."""
         return space in json.loads(self.cursor("webex.excluded_spaces.v1") or "[]")
 
+    def bundle_keys(self) -> list[tuple[BundleKey, str]]:
+        """Private identity metadata, including Receipt/GC tombstones."""
+        with self._read() as db:
+            return [
+                (BundleKey.decode(bytes(bundle)), state)
+                for bundle, state in db.execute("SELECT bundle,state FROM entries")
+            ]
+
+    def freeze_parts(
+        self,
+        original: BundleKey,
+        expected: bytes,
+        parts: list[tuple[BundleKey, bytes, Manifest, str | None]],
+    ) -> None:
+        """Replace one open buffer with all frozen parts in one durable commit.
+
+        Validation/capacity failure preserves the exact unsplit open buffer.
+        Caller holds the account's poll.lock throughout collection and close.
+        """
+        if not parts or parts[0][0] != original:
+            raise ValueError("invalid_parts")
+        with self._write() as db:
+            row = db.execute(
+                "SELECT state,payload FROM entries WHERE capture_id=?",
+                (original.capture_id,),
+            ).fetchone()
+            if row != ("buffer", expected):
+                raise ValueError("buffer_changed")
+            for number, (key, body, manifest, dependency) in enumerate(parts):
+                if key != BundleKey(
+                    original.instance_id,
+                    original.space,
+                    original.day,
+                    number,
+                    original.revision,
+                ):
+                    raise ValueError("invalid_parts")
+                if number:
+                    db.execute(
+                        "INSERT INTO entries VALUES (?,?,'buffer',?,NULL,NULL,NULL,NULL)",
+                        (key.capture_id, key.encoded, body),
+                    )
+                else:
+                    db.execute(
+                        "UPDATE entries SET payload=? WHERE capture_id=?",
+                        (body, key.capture_id),
+                    )
+                self._close(db, key, manifest, depends_on=dependency)
+            self._capacity(db, 0, 0)
+
     def close(
         self, key: BundleKey, manifest: Manifest, *, depends_on: str | None = None
     ) -> None:
+        with self._write() as db:
+            self._close(db, key, manifest, depends_on=depends_on)
+
+    def _close(
+        self,
+        db: sqlite3.Connection,
+        key: BundleKey,
+        manifest: Manifest,
+        *,
+        depends_on: str | None = None,
+    ) -> None:
         raw = manifest.model_dump_json().encode()
         manifest = Manifest.model_validate_json(raw)
-        with self._write() as db:
-            excluded = db.execute(
-                "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+        excluded = db.execute(
+            "SELECT value FROM cursors WHERE name='webex.excluded_spaces.v1'"
+        ).fetchone()
+        if excluded and key.space in json.loads(excluded[0]):
+            raise ValueError("excluded_space")
+        row = db.execute(
+            "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
+            (key.capture_id,),
+        ).fetchone()
+        if key.instance_id != self.instance_id or row is None or row[0] != key.encoded:
+            raise ValueError("unknown_bundle")
+        if row[1] != "buffer":
+            if row[3] == raw and row[4] == depends_on:
+                return
+            raise ValueError("immutable_capture")
+        body = bytes(row[2])
+        if (
+            manifest.capture_id != key.capture_id
+            or manifest.size != len(body)
+            or manifest.sha256 != hashlib.sha256(body).hexdigest()
+            or len(body) > MAX_PAYLOAD_BYTES
+            or len(raw) > 64 * 1024
+            or not manifest.payload.startswith(key.capture_id + ".")
+            or "/" in manifest.payload
+            or manifest.payload.endswith(".json")
+        ):
+            raise ValueError("invalid_frozen_request")
+        if key.revision > 0 and depends_on is None:
+            raise ValueError("correction_requires_dependency")
+        if depends_on:
+            parent = db.execute(
+                "SELECT bundle FROM entries WHERE capture_id=? AND state != 'buffer'",
+                (depends_on,),
             ).fetchone()
-            if excluded and key.space in json.loads(excluded[0]):
-                raise ValueError("excluded_space")
+            if depends_on == key.capture_id or parent is None:
+                raise ValueError("invalid_dependency")
+            if key.revision > 0:
+                previous = self._predecessor(db, key)
+                if (
+                    previous is None
+                    or previous[0] != depends_on
+                    or "buffer" in previous[1]
+                ):
+                    raise ValueError("invalid_correction_dependency")
+        self._capacity(db, 0, len(raw))
+        db.execute(
+            "UPDATE entries SET state='pending', manifest=?, depends_on=? WHERE capture_id=?",
+            (raw, depends_on, key.capture_id),
+        )
+
+    @staticmethod
+    def _revision_parts(
+        db: sqlite3.Connection, key: BundleKey, *, below: bool
+    ) -> list[tuple[int, int, str, str, bytes | None]]:
+        """(revision, part, capture_id, state, receipt) of this day's other entries."""
+        prefix = key.day_prefix
+        found = []
+        for capture_id, bundle, state, receipt in db.execute(
+            "SELECT capture_id, bundle, state, receipt FROM entries"
+            " WHERE substr(bundle,1,?)=? AND capture_id!=? AND state!='discarded'",
+            (len(prefix), prefix, key.capture_id),
+        ):
+            other = BundleKey.decode(bytes(bundle))
+            if not below or other.revision < key.revision:
+                found.append((other.revision, other.part, capture_id, state, receipt))
+        return found
+
+    @classmethod
+    def _predecessor(
+        cls, db: sqlite3.Connection, key: BundleKey
+    ) -> tuple[str, list[str]] | None:
+        """Chain anchor of a correction: its direct predecessor revision.
+
+        That is the highest earlier, non-discarded revision of the same Space-day.
+        A correction can split differently (2 parts become 1 or 1 becomes 2), so
+        parts do not map one to one: the anchor is the lowest remaining part of
+        that revision and every part of the revision gates delivery
+        (`_dependency_ready`). Returns (anchor capture id, member states).
+        """
+        earlier = cls._revision_parts(db, key, below=True)
+        if not earlier:
+            return None
+        newest = max(revision for revision, *_ in earlier)
+        members = sorted((p, cid, st) for r, p, cid, st, _ in earlier if r == newest)
+        return members[0][1], [state for _, _, state in members]
+
+    def correction_parent(self, key: BundleKey) -> str | None:
+        """Capture ID a correction of this key must depend on (None for revision 0)."""
+        if key.revision == 0:
+            return None
+        with self._read() as db:
+            link = self._predecessor(db, key)
+        return None if link is None else link[0]
+
+    def _dependency_ready(self, entry: Entry) -> bool:
+        """True when everything this request must follow already has its Receipt.
+
+        A correction waits for every part of its predecessor revision (decided
+        by revision, not by a single `depends_on` capture); any other dependency
+        waits for that one capture.
+        """
+        if not entry.depends_on:
+            return True
+        with self._read() as db:
             row = db.execute(
-                "SELECT bundle, state, payload, manifest, depends_on FROM entries WHERE capture_id=?",
-                (key.capture_id,),
+                "SELECT bundle FROM entries WHERE capture_id=?", (entry.capture_id,)
             ).fetchone()
-            if (
-                key.instance_id != self.instance_id
-                or row is None
-                or row[0] != key.encoded
-            ):
-                raise ValueError("unknown_bundle")
-            if row[1] != "buffer":
-                if row[3] == raw and row[4] == depends_on:
-                    return
-                raise ValueError("immutable_capture")
-            body = bytes(row[2])
-            if (
-                manifest.capture_id != key.capture_id
-                or manifest.size != len(body)
-                or manifest.sha256 != hashlib.sha256(body).hexdigest()
-                or len(body) > 64 * 1024**2
-                or len(raw) > 64 * 1024
-                or not manifest.payload.startswith(key.capture_id + ".")
-                or "/" in manifest.payload
-                or manifest.payload.endswith(".json")
-            ):
-                raise ValueError("invalid_frozen_request")
-            if key.revision > 0 and depends_on is None:
-                raise ValueError("correction_requires_dependency")
-            if depends_on:
-                parent = db.execute(
-                    "SELECT bundle FROM entries WHERE capture_id=? AND state != 'buffer'",
-                    (depends_on,),
-                ).fetchone()
-                if depends_on == key.capture_id or parent is None:
-                    raise ValueError("invalid_dependency")
-                if key.revision > 0:
-                    prefix = key.encoded[: -(4 + len(str(key.revision).encode()))]
-                    previous = db.execute(
-                        "SELECT capture_id, bundle, state FROM entries WHERE substr(bundle,1,?)=? AND capture_id!=? AND state!='discarded'",
-                        (len(prefix), prefix, key.capture_id),
-                    ).fetchall()
-                    earlier = [
-                        (int(bytes(bundle)[len(prefix) + 4 :]), identifier, state)
-                        for identifier, bundle, state in previous
-                        if int(bytes(bundle)[len(prefix) + 4 :]) < key.revision
-                    ]
-                    if (
-                        not earlier
-                        or max(earlier)[1] != depends_on
-                        or max(earlier)[2] == "buffer"
-                    ):
-                        raise ValueError("invalid_correction_dependency")
-            self._capacity(db, 0, len(raw))
-            db.execute(
-                "UPDATE entries SET state='pending', manifest=?, depends_on=? WHERE capture_id=?",
-                (raw, depends_on, key.capture_id),
-            )
+            anchor = db.execute(
+                "SELECT bundle, receipt FROM entries WHERE capture_id=?",
+                (entry.depends_on,),
+            ).fetchone()
+            if anchor is None:
+                return False
+            own = BundleKey.decode(bytes(row[0])) if row else None
+            if own is None or own.revision == 0:
+                return anchor[1] is not None
+            previous = BundleKey.decode(bytes(anchor[0]))
+            parts = self._revision_parts(db, own, below=True)
+        group = [
+            receipt
+            for revision, _, _, _, receipt in parts
+            if revision == previous.revision
+        ]
+        return bool(group) and all(receipt is not None for receipt in group)
 
     def get(self, capture_id: str, *, include_payload: bool = True) -> Entry:
         """Read one request; metadata callers explicitly omit the payload BLOB."""
@@ -497,10 +650,7 @@ class Outbox:
         for entry in self.entries():
             if self.paused:
                 break
-            if entry.state != "pending" or (
-                entry.depends_on
-                and self.get(entry.depends_on, include_payload=False).receipt is None
-            ):
+            if entry.state != "pending" or not self._dependency_ready(entry):
                 continue
             path = f"captures/{entry.capture_id}"
             try:

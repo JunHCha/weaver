@@ -570,7 +570,7 @@ def test_http_error_backoff_never_leaks_private_url(setup):
     assert poller.state.retry_at > NOW
 
 
-def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setup):
+def test_same_day_page_edits_update_the_open_buffer_and_exclusion_blocks_close(setup):
     make, box, clock, settings = setup
     changed = False
 
@@ -579,8 +579,8 @@ def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setu
             return page([{"id": "S"}])
         return page(
             [
-                message("a", text="changed" if changed else "first"),
-                message("b", text="changed" if changed else "first"),
+                message("a", days=0.1, text="changed" if changed else "first"),
+                message("b", days=0.1, text="changed" if changed else "first"),
             ]
         )
 
@@ -589,8 +589,11 @@ def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setu
     changed = True
     clock.now += timedelta(minutes=5)
     poller.tick()
-    assert len(bundles(box)) == 2
-    assert sorted(len(b.messages) for b in bundles(box)) == [2, 2]
+    # The day is still open: edits update the one buffer instead of adding a
+    # revision (an open buffer is not an immutable Source yet).
+    assert len(bundles(box)) == 1
+    assert [m.text for m in bundles(box)[0].messages] == ["changed", "changed"]
+    assert [k.revision for k, _ in box.bundle_keys()] == [0]
     excluded, _ = make(respond, replace(settings, exclude_space_ids=("S",)))
     excluded.tick()
     assert excluded.state.spaces["S"].excluded
@@ -599,11 +602,16 @@ def test_same_day_page_edits_share_one_revision_and_exclusion_marks_buffers(setu
 
     from .shepherd.test_outbox import manifest
 
-    key = BundleKey(box.instance_id, "S", "2026-11-19", 0, 0)
+    key = BundleKey(box.instance_id, "S", "2026-11-20", 0, 0)
     payload = box.get(key.capture_id).payload
     with pytest.raises(ValueError, match="excluded_space"):
         box.close(key, manifest(key, payload))
     assert box.get(key.capture_id).state == "buffer"
+    # freeze_parts goes through the same gate.
+    with pytest.raises(ValueError, match="excluded_space"):
+        box.freeze_parts(key, payload, [(key, payload, manifest(key, payload), None)])
+    assert box.get(key.capture_id).state == "buffer"
+    assert box.get(key.capture_id).payload == payload
 
 
 def test_cli_status_corruption_and_selective_resume_are_safe(setup, monkeypatch):

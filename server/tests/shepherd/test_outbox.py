@@ -555,3 +555,127 @@ def test_incremental_vacuum_releases_gc_pages(tmp_path: Path) -> None:
     box.collect_garbage()
     assert box.path.stat().st_size < before // 2
     assert box.get(key.capture_id).payload is None
+
+
+def _chain(box: Outbox, shape: list[int]) -> list[list[BundleKey]]:
+    """Close revisions r0..rn with shape[r] parts each; every part follows its parent."""
+    revisions = []
+    for revision, parts in enumerate(shape):
+        keys = [BundleKey("one", "a", "2026-11-20", n, revision) for n in range(parts)]
+        for key in keys:
+            box.buffer(key, b"body")
+        for key in keys:
+            box.close(
+                key, manifest(key, b"body"), depends_on=box.correction_parent(key)
+            )
+        revisions.append(keys)
+    return revisions
+
+
+def _courier(blocked: set[str], quarantined: set[str] | None = None):
+    """Fake Courier: a Receipt GET is a 503 for blocked parts; PUT may 409."""
+    asked: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        identifier = request.url.path.split("/")[-2]
+        asked.append(identifier)
+        if request.method == "GET":
+            if identifier in blocked:
+                return httpx.Response(503)
+            if identifier in (quarantined or set()):
+                return httpx.Response(404)
+            return httpx.Response(
+                200,
+                json={
+                    "schema_version": 1,
+                    "capture_id": identifier,
+                    "sha256": hashlib.sha256(b"body").hexdigest(),
+                    "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                    "received_at": "2026-11-20T00:00:00Z",
+                },
+            )
+        return httpx.Response(409, json={"code": "capture_conflict"})
+
+    client = httpx.Client(
+        base_url="http://test/", transport=httpx.MockTransport(respond)
+    )
+    return client, asked
+
+
+@pytest.mark.parametrize("shape", [[2, 1], [1, 2], [1, 2, 1], [2, 2, 1], [1, 3, 2]])
+def test_correction_waits_for_every_part_of_the_previous_revision(
+    tmp_path: Path, shape: list[int]
+) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    revisions = _chain(box, shape)
+    # Every part of revision n depends on the anchor (first part) of revision n-1.
+    for earlier, later in zip(revisions, revisions[1:], strict=False):
+        assert {box.get(k.capture_id).depends_on for k in later} == {
+            earlier[0].capture_id
+        }
+    for index in range(len(revisions) - 1):
+        # The last part of this revision is not received: the next one must wait.
+        held = revisions[index][-1].capture_id
+        later = {k.capture_id for rev in revisions[index + 1 :] for k in rev}
+        client, asked = _courier({held})
+        box.deliver(client)
+        assert not later & set(asked), f"{shape} released before {held}"
+        assert box.get(held).state == "pending"
+        # Reset for the next round: a fresh outbox with the same chain.
+        box = Outbox(
+            tmp_path / f"outbox{index}.db", "one", OutboxLimits(min_free_bytes=1)
+        )
+        revisions = _chain(box, shape)
+    client, asked = _courier(set())
+    box.deliver(client)
+    assert {e.state for e in box.entries()} == {"received"}
+
+
+def test_correction_is_released_only_when_all_parts_of_the_predecessor_are_received(
+    tmp_path: Path,
+) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    zero, one = _chain(box, [2, 1])
+    client, asked = _courier({zero[1].capture_id})
+    box.deliver(client)
+    assert box.get(zero[0].capture_id).state == "received"
+    assert one[0].capture_id not in asked  # part 0 alone is not enough
+    client, asked = _courier(set())
+    box.deliver(client)
+    assert box.get(one[0].capture_id).state == "received"
+
+
+def test_quarantined_part_of_the_previous_revision_blocks_the_correction(
+    tmp_path: Path,
+) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    zero, one = _chain(box, [2, 2])
+    quarantined = zero[1].capture_id
+    client, asked = _courier(set(), {quarantined})
+    box.deliver(client)
+    assert box.get(quarantined).state == "quarantine"
+    assert box.get(zero[0].capture_id).state == "received"
+    assert not {k.capture_id for k in one} & set(asked)
+    box.deliver(client)  # still blocked on later passes
+    assert not {k.capture_id for k in one} & set(asked)
+    # After the operator retries and Courier accepts it, the correction follows.
+    box.retry(quarantined)
+    client, asked = _courier(set())
+    box.deliver(client)
+    assert {e.state for e in box.entries()} == {"received"}
+
+
+def test_correction_close_requires_the_whole_previous_revision_to_be_frozen(
+    tmp_path: Path,
+) -> None:
+    box = Outbox(tmp_path / "outbox.db", "one", OutboxLimits(min_free_bytes=1))
+    keys = [BundleKey("one", "a", "2026-11-20", n, 0) for n in range(2)]
+    for key in keys:
+        box.buffer(key, b"body")
+    box.close(keys[0], manifest(keys[0], b"body"))  # part 1 is still open
+    correction = BundleKey("one", "a", "2026-11-20", 0, 1)
+    box.buffer(correction, b"body")
+    with pytest.raises(ValueError, match="invalid_correction_dependency"):
+        box.close(
+            correction, manifest(correction, b"body"), depends_on=keys[0].capture_id
+        )

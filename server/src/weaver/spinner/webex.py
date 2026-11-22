@@ -45,6 +45,14 @@ class WebexBundle(Contract):
     instance_id: NonEmpty
     space_id: NonEmpty
     messages: list[WebexMessage] = Field(min_length=1)
+    # Frozen-bundle identity. Collector buffers leave the defaults; closing a
+    # Space-day writes them so the archived bytes alone name the day, the part
+    # and, for a correction, the capture it corrects (never Script content).
+    day: NonEmpty | None = None
+    part: int = Field(default=0, ge=0)
+    part_count: int = Field(default=1, ge=1)
+    revision: int = Field(default=0, ge=0)
+    corrects_capture_id: NonEmpty | None = None
 
     @model_validator(mode="after")
     def unique_messages(self) -> Self:
@@ -69,6 +77,13 @@ class WebexProvenance(Contract):
     space_id: NonEmpty
     # Position corresponds to Script segment s1, s2, ...; IDs never enter Script.
     messages: list[WebexMessageRef]
+    # Space-day identity of a closed bundle; revision > 0 is a correction Source
+    # that links to the capture it corrects and never rewrites an approved Thread.
+    day: NonEmpty | None = None
+    part: int = 0
+    part_count: int = 1
+    revision: int = 0
+    corrects_capture_id: NonEmpty | None = None
 
 
 def parse_webex(source: Source, text: str) -> tuple[Script, WebexProvenance]:
@@ -125,6 +140,11 @@ def parse_webex(source: Source, text: str) -> tuple[Script, WebexProvenance]:
             sha256=source.sha256,
             instance_id=bundle.instance_id,
             space_id=bundle.space_id,
+            day=bundle.day,
+            part=bundle.part,
+            part_count=bundle.part_count,
+            revision=bundle.revision,
+            corrects_capture_id=bundle.corrects_capture_id,
             messages=[
                 WebexMessageRef(
                     message_id=message.message_id,
@@ -214,6 +234,13 @@ class WebexProvenanceStore:
                 "SELECT body FROM provenance WHERE source_id=?", (source_id,)
             ).fetchone()
         return self._decode(row[0]) if row else None
+
+    def siblings(self, space_id: str, day: str) -> list[WebexProvenance]:
+        """Every known Source of one Space-day (all parts and revisions)."""
+        with closing(sqlite3.connect(self.path)) as db, db:
+            rows = db.execute("SELECT body FROM provenance").fetchall()
+        found = [self._decode(body) for (body,) in rows]
+        return [v for v in found if v.space_id == space_id and v.day == day]
 
     def resolve(self, source_id: str) -> tuple[str, str] | None:
         value = self.get(source_id)

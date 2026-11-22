@@ -46,6 +46,17 @@ class ReviewProjection:
             return False
         return changed
 
+    def _retract(self, package_id: str) -> None:
+        """Remove a superseded review's files so Courier stops offering them."""
+        try:
+            for path in self.directory.glob(f"{package_id}.r*"):
+                if path.suffix in (".json", ".diff") and not path.is_symlink():
+                    path.unlink(missing_ok=True)
+        except OSError as error:
+            if self.strict:
+                raise
+            logger.warning("review projection unavailable: %s", type(error).__name__)
+
     def recover(self, state: SummaryState) -> list[str]:
         """Publish undecided reviews and retry completed revisions exactly until success."""
         if not self.enabled:
@@ -64,9 +75,13 @@ class ReviewProjection:
             completed = db.execute(
                 "SELECT package FROM pending_projections ORDER BY id, revision"
             ).fetchall()
+        superseded = state.superseded_sources()
         publications: list[tuple[ReviewPackage, str | None, bool]] = []
         for raw, prepared in rows:
             package = ReviewPackage.model_validate_json(raw)
+            if package.source_id in superseded:
+                self._retract(package.package_id)
+                continue
             diff = None
             if prepared is not None:
                 value = json.loads(prepared)

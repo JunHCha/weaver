@@ -52,7 +52,11 @@ class ReviewService:
                 " LEFT JOIN reviews v ON v.id = p.id AND v.revision = p.revision"
                 " WHERE v.stage IS NULL OR v.stage != 'APPLIED' ORDER BY p.id"
             ).fetchall()
-        return [ReviewPackage.model_validate_json(row[0]) for row in rows]
+        superseded = self.state.superseded_sources()
+        packages = [ReviewPackage.model_validate_json(row[0]) for row in rows]
+        # A superseded review leaves the waiting list; the feed turns it into a
+        # tombstone exactly like a closed review.
+        return [p for p in packages if p.source_id not in superseded]
 
     def latest_rev(self, package_id: str) -> int | None:
         with self.state.connect() as db:
@@ -109,6 +113,8 @@ class ReviewService:
         if revision < latest:
             raise ApiError(412, "stale_revision", extra={"current_revision": latest})
         package = self.package(package_id, revision)
+        if package.source_id in self.state.superseded_sources():
+            raise ApiError(409, "review_superseded")
         if if_match is None:
             raise ApiError(428, "if_match_required")
         if if_match != etag(package):

@@ -25,6 +25,7 @@ from weaver.loom.summary_review import SummaryReview
 from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
+from weaver.spinner.webex import WebexProvenanceStore
 from weaver.wiki.store import WikiStore
 
 from .gate import LlmGate, LlmStatus
@@ -87,7 +88,8 @@ def build_runtime(
     archive = ArchiveStore.from_config(config)
     context = ContextDictionary(config.state_root, archive_root=config.archive_root)
     fabric = FabricStore.from_config(config)
-    summaries = SummaryLookup(config.archive_root / "summaries", archive)
+    webex = WebexProvenanceStore(config.state_root)
+    summaries = SummaryLookup(config.archive_root / "summaries", archive, webex)
     review = SummaryReview(
         client,
         context,
@@ -135,7 +137,9 @@ def build_runtime(
         reviser=LlmReviser(client),
         revision_threshold=drafts.revision_threshold,
     )
-    processor = SummaryProcessor(spinner, drafts, gate, progress, policy=policy)
+    processor = SummaryProcessor(
+        spinner, drafts, gate, progress, policy=policy, webex=webex
+    )
 
     maintenance = list(plugins.maintenance)
     maintenance.append(MaintenanceTask("review-projection", interval, review.republish))

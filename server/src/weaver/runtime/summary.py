@@ -15,6 +15,16 @@ from weaver.loom.summary_review import Prepared, SummaryReview
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import Alert, EventSummary, ReviewPackage, Source, Thread, Verdict
 from weaver.spinner import Spinner
+from weaver.spinner.webex import WebexProvenanceStore
+from weaver.webex.review_rule import (
+    REVIEW,
+    CorrectionCase,
+    CorrectionReviewRule,
+    CorrectionStatus,
+    ReviewDecision,
+    ReviewEveryCorrection,
+    SupersedeUnreviewedCorrections,
+)
 from weaver.wiki.compiler import Summary
 
 from .gate import Interrupted, LlmGate
@@ -27,9 +37,15 @@ logger = logging.getLogger(__name__)
 class SummaryLookup:
     """Resolve the latest archived summary and its source-copy title."""
 
-    def __init__(self, archive: Path, sources: ArchiveStore) -> None:
+    def __init__(
+        self,
+        archive: Path,
+        sources: ArchiveStore,
+        webex: WebexProvenanceStore | None = None,
+    ) -> None:
         self.archive = archive
         self.sources = sources
+        self.webex = webex
 
     def latest(self, source_id: str) -> EventSummary | None:
         items = []
@@ -47,6 +63,7 @@ class SummaryLookup:
         source = self.sources.get(source_id)
         date = (source.occurred_at or source.captured_at).date().isoformat()
         if source.channel == "webex":
+            # Wiki summary titles (and their paths) stay stable per Space-day.
             return f"{date} Webex 대화"
         counterpart = source.hints.counterpart or "알 수 없음"
         return f"{date} {counterpart} {source.channel}"
@@ -120,6 +137,28 @@ class ReviewAdapter:
         )
 
 
+class SummaryCorrectionLedger:
+    """Webex correction Sources and their review state (provenance + journal)."""
+
+    def __init__(self, webex: WebexProvenanceStore, state: SummaryState) -> None:
+        self.webex, self.state = webex, state
+
+    def corrections(self, space_id: str, day: str) -> list[CorrectionStatus]:
+        superseded = self.state.superseded_sources()
+        return [
+            CorrectionStatus(
+                source_id=value.source_id,
+                revision=value.revision,
+                part=value.part,
+                message_ids=frozenset(m.message_id for m in value.messages),
+                reviewed=self.state.review_received(value.source_id),
+                superseded_by=superseded.get(value.source_id),
+            )
+            for value in self.webex.siblings(space_id, day)
+            if value.revision > 0
+        ]
+
+
 class SummaryProcessor:
     """Produce a single durable review package for each archived source."""
 
@@ -131,10 +170,50 @@ class SummaryProcessor:
         progress: PipelinePublisher | None = None,
         *,
         policy: LlmPolicy | None = None,
+        webex: WebexProvenanceStore | None = None,
+        correction_rule: CorrectionReviewRule | None = None,
     ) -> None:
         self.policy = policy
+        self.webex = webex
+        if correction_rule is None:
+            # Option A (user decision 2026-11-22) is the default whenever the
+            # review journal is available; otherwise the document baseline.
+            correction_rule = (
+                SupersedeUnreviewedCorrections(
+                    SummaryCorrectionLedger(webex, drafts.state)
+                )
+                if webex is not None and drafts is not None
+                else ReviewEveryCorrection()
+            )
+        self.correction_rule = correction_rule
         self.spinner, self.drafts, self.gate = spinner, drafts, gate
         self.progress = progress
+
+    def _correction_decision(self, source: Source) -> ReviewDecision:
+        value = self.webex.get(source.source_id) if self.webex is not None else None
+        if value is None or value.revision == 0:
+            return REVIEW
+        return self.correction_rule.decide(
+            CorrectionCase(
+                source_id=source.source_id,
+                space_id=value.space_id,
+                day=value.day,
+                part=value.part,
+                revision=value.revision,
+                corrects_capture_id=value.corrects_capture_id,
+            )
+        )
+
+    def _review_suffix(self, source: Source) -> str:
+        value = self.webex.get(source.source_id) if self.webex is not None else None
+        if value is None:
+            return ""
+        suffix = ""
+        if value.part_count > 1:
+            suffix += f" ({value.part + 1}/{value.part_count})"
+        if value.revision > 0:
+            suffix += f" 정정 {value.revision}"
+        return suffix
 
     def process(self, source: Source, stop: threading.Event) -> Outcome:
         if self.progress is not None:
@@ -151,6 +230,19 @@ class SummaryProcessor:
         # so enabling them later cannot silently release a denied backlog.
         if self.policy is not None:
             self.policy.check(Provenance(frozenset({source.source_id})))
+        decision = (
+            self._correction_decision(source) if source.channel == "webex" else REVIEW
+        )
+        if decision.action == "skip":
+            # No page now, but never a final "done": the rule is asked again.
+            return "waiting_llm"
+        if decision.action == "supersede":
+            if self.drafts.state.supersede(
+                source.source_id, decision.superseded_by or source.source_id
+            ):
+                self.drafts.projection.recover(self.drafts.state)
+                return "done"
+            # A Verdict already arrived for it: it stays a normal review.
         with self.drafts.state.connect() as db:
             rows = db.execute(
                 "SELECT package FROM packages WHERE revision=1"
@@ -167,6 +259,7 @@ class SummaryProcessor:
                     if self.progress is not None:
                         self.progress.observe_package(package)
                     self.drafts.projection.recover(self.drafts.state)
+                self._supersede(decision, source)
                 return "done"
         if not self.gate.available:
             return "waiting_llm"
@@ -190,10 +283,21 @@ class SummaryProcessor:
             call=script if source.channel == "call" and not revised else None,
             revised=revised,
             on_revised=lambda corrected: self.spinner.save_revised(source, corrected),
+            title_suffix=self._review_suffix(source),
         )
         if self.progress is not None:
             self.progress.observe_package(package)
+        self._supersede(decision, source)
         return "done"
+
+    def _supersede(self, decision: ReviewDecision, source: Source) -> None:
+        """After this correction's page exists, retire the older undecided ones."""
+        if not any(
+            self.drafts.state.supersede(old, source.source_id)
+            for old in decision.supersedes
+        ):
+            return
+        self.drafts.projection.recover(self.drafts.state)
 
 
 class AlertSink(Protocol):

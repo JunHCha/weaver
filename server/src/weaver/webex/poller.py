@@ -2,14 +2,15 @@
 
 REST fixtures assume descending creation order and reply inclusion. These remain
 pilot acceptance checks; an HTTP error or invalid page never proves deletion.
-The next stage closes these durable B4 buffers into immutable capture requests.
+Closing the durable B4 buffers into immutable capture requests (stage 7) lives in
+bundler.py and runs at the end of each tick.
 """
 
 import hashlib
 import math
 import random
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Literal, Protocol
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -18,15 +19,21 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from weaver.shepherd.outbox import BundleKey, Outbox
+from weaver.shepherd.outbox import MAX_PAYLOAD_BYTES, BundleKey, CapacityError, Outbox
 from weaver.spinner.webex import WebexAttachment, WebexBundle, WebexMessage
 
+from .bundler import close_ready
 from .settings import WebexSettings
 
 API = "https://webexapis.com/v1"
 CURSOR = "webex.poll.v1"
 BUDGET = "webex.budget.v1"
 type Work = Literal["incremental", "overlap", "deletion"]
+
+
+def _split_hold(slot: str) -> tuple[str, int]:
+    day, _, revision = slot.partition("#")
+    return day, int(revision or 0)
 
 
 class Tokens(Protocol):
@@ -67,6 +74,13 @@ class Space(BaseModel):
     overlap: Scan | None = None
     incremental_at: datetime | None = None
     overlap_at: datetime | None = None
+    # Upper bound of the last completed incremental scan: every message created
+    # before it was observed. Stage 7 closes a day only once this passes midnight.
+    synced_through: datetime | None = None
+    # "day#revision" -> fixed code for buffers stage 7 could not close.
+    holds: dict[str, str] = Field(default_factory=dict)
+    # "day" -> why a finished local day was not closed (Space not ready yet).
+    close_waiting: dict[str, str] = Field(default_factory=dict)
     status: str = "ready"
     gap_since: datetime | None = None
     last_status: int | None = None
@@ -123,7 +137,9 @@ class Poller:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         jitter: Callable[[], float] = random.random,
+        max_payload_bytes: int = MAX_PAYLOAD_BYTES,
     ) -> None:
+        self.max_payload_bytes = max_payload_bytes
         self.settings, self.outbox, self.tokens, self.client = (
             settings,
             outbox,
@@ -341,31 +357,20 @@ class Poller:
                 .date()
                 .isoformat()
             )
-            revision = page_revisions.get(day, space.revisions.get(day, 0))
-            if day not in page_revisions and any(
-                m.message_id in space.seen
-                and space.seen[m.message_id].digest
-                != hashlib.sha256(m.model_dump_json().encode()).hexdigest()
-                and m.created_at.astimezone(ZoneInfo(self.settings.timezone))
-                .date()
-                .isoformat()
-                == day
-                for m in messages
-            ):
-                revision += 1
-            key = BundleKey(self.outbox.instance_id, sid, day, 0, revision)
-            try:
-                entry = self.outbox.get(key.capture_id)
-            except ValueError as error:
-                if str(error) != "unknown_capture":
-                    raise
-                entry = None
-            if (
-                day not in page_revisions
-                and entry is not None
-                and entry.state != "buffer"
-            ):
-                revision += 1
+            revision = page_revisions.get(day)
+            if revision is None:
+                # An open buffer is not an immutable Source yet: edits and late
+                # messages before close update it in place (one page per Source).
+                # Only a closed revision makes the next observation a correction.
+                revision = space.revisions.get(day, 0)
+                key = BundleKey(self.outbox.instance_id, sid, day, 0, revision)
+                try:
+                    closed = self.outbox.get(key.capture_id).state != "buffer"
+                except ValueError as error:
+                    if str(error) != "unknown_capture":
+                        raise
+                    closed = False
+                revision += closed
             page_revisions[day] = revision
             space.revisions[day] = revision
             grouped.setdefault((day, revision), []).append(message)
@@ -482,6 +487,9 @@ class Poller:
                 if scan.top is not None:
                     space.high_water = max(space.high_water or scan.top, scan.top)
                 space.incremental_at = now
+                space.synced_through = max(
+                    space.synced_through or scan.ceiling, scan.ceiling
+                )
             else:
                 for mid, seen in space.seen.items():
                     if (
@@ -576,6 +584,56 @@ class Poller:
                 del space.candidates[mid]
             self._save()
 
+    def _close_block(self, sid: str, day_end: datetime) -> str | None:
+        """Fixed code for why a finished day cannot close yet (None: ready)."""
+        space = self.state.spaces.get(sid)
+        if space is None:
+            return "unknown_space"
+        if space.excluded or sid in self.settings.exclude_space_ids:
+            return "excluded"
+        if space.status != "ready":
+            return f"space_{space.status}"
+        if space.incremental is not None or space.overlap is not None:
+            return "scan_in_progress"
+        if space.synced_through is None or space.synced_through < day_end:
+            return "not_synced"
+        return None
+
+    def _can_close(self, sid: str, day_end: datetime) -> bool:
+        return self._close_block(sid, day_end) is None
+
+    def _close_bundles(self) -> None:
+        """Stage 7: freeze finished Space-days (and late corrections) for delivery."""
+        known = {
+            (sid, *_split_hold(slot))
+            for sid, space in self.state.spaces.items()
+            for slot in space.holds
+        }
+        result = close_ready(
+            self.outbox,
+            timezone=self.settings.timezone,
+            now=self.clock(),
+            eligible=self._can_close,
+            max_payload_bytes=self.max_payload_bytes,
+            known_holds=known,
+        )
+        holds: dict[str, dict[str, str]] = {}
+        for (sid, day, revision), code in result.held.items():
+            holds.setdefault(sid, {})[f"{day}#{revision}"] = code
+        waiting: dict[str, dict[str, str]] = {}
+        tz = ZoneInfo(self.settings.timezone)
+        for sid, day in result.waiting:
+            end = datetime.combine(
+                date.fromisoformat(day) + timedelta(days=1), time.min, tzinfo=tz
+            )
+            waiting.setdefault(sid, {})[day] = self._close_block(sid, end) or "waiting"
+        for sid, space in self.state.spaces.items():
+            space.holds = holds.get(sid, {})
+            space.close_waiting = waiting.get(sid, {})
+        if result.capacity:
+            self._save()
+            raise CapacityError("outbox_capacity")
+
     def _discover_safely(self) -> None:
         if self.state.rooms_retry_at and self.clock() < self.state.rooms_retry_at:
             return
@@ -614,6 +672,7 @@ class Poller:
                     space.high_water = None
                     space.incremental = space.overlap = None
                     space.incremental_at = space.overlap_at = None
+                    space.synced_through = None
                     space.status = "ready"
             self.state.exclusions = excluded
             # Stage 7 must check this durable marker before closing open buffers.
@@ -638,6 +697,7 @@ class Poller:
             self._round("overlap")
             self._deletions()
             self._prune_seen()
+            self._close_bundles()
             self._save()
             if self.state.stopped:
                 raise PollError("account_stopped")

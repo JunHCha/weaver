@@ -96,6 +96,7 @@ class SummaryDrafts:
         call: Script | None = None,
         revised: bool = False,
         on_revised: Callable[[Script], None] | None = None,
+        title_suffix: str = "",
     ) -> tuple[ReviewPackage, str]:
         """Return the package and revised Script after committing to SummaryState.
 
@@ -171,7 +172,7 @@ class SummaryDrafts:
             package_id=package_id,
             source_id=source_id,
             revision=1,
-            title=response.title.strip() or _topic(response.body),
+            title=(response.title.strip() or _topic(response.body)) + title_suffix,
             source_text=source_text,
             source_type=source_type,
             draft_body=body,
