@@ -52,7 +52,6 @@
           "feed_kinds": [
             "fabric",
             "pipeline",
-            "review",
             "wiki"
           ],
           "feed_epoch": "ep_00000000000000000000000000000001",
@@ -182,6 +181,49 @@
       }
     },
     {
+      "name": "older_apk_list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/pipeline",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "schema_version": 2,
+              "revision": 1,
+              "capture_id": "cap_01ARZ3NDEKTSV4RRFFQ69G5FA0",
+              "source_id": "src_00000000000000000000000001",
+              "package_id": null,
+              "package_revision": null,
+              "source_type": "share_text",
+              "title": "수확한 데이터",
+              "location": "spinner",
+              "status": "working",
+              "apply_failure_limit": 5,
+              "stage_times": {
+                "수집": "2026-11-07T00:00:00Z",
+                "전송": "2026-11-11T23:00:00Z"
+              },
+              "history": [
+                "spinner"
+              ],
+              "threads": [],
+              "pages": [],
+              "digest": null,
+              "updated_at": "2026-11-11T23:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "note": "APKs before the feed client (features.pipeline true) pull this path with review scope. The body is the same list as /read/pipeline; not for new clients."
+    },
+    {
       "name": "stale_cursor",
       "request": {
         "method": "GET",
@@ -200,7 +242,7 @@
           "retryable": false
         }
       },
-      "note": "The cursor pins the exact list; a changed list answers 410, restart without a cursor."
+      "note": "The cursor pins the exact list; a changed list answers 410. The client must restart the whole list without a cursor and replace what it holds with the new list."
     },
     {
       "name": "invalid_cursor",

@@ -730,8 +730,7 @@ def test_http_config_does_not_require_or_initialize_shared_folders(
     import shutil
 
     path = write_config(
-        tmp_path,
-        '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\npipeline = "http"\n',
+        tmp_path, '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\n'
     )
     shutil.rmtree(tmp_path / "sync_root")
     config = load_config(path, environ={}, init_directories=initialize)
@@ -740,8 +739,7 @@ def test_http_config_does_not_require_or_initialize_shared_folders(
 
 def test_http_config_accepts_unwritable_shared_folder(tmp_path, monkeypatch):
     path = write_config(
-        tmp_path,
-        '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\npipeline = "http"\n',
+        tmp_path, '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\n'
     )
     access = os.access
     sync = tmp_path / "sync_root"
@@ -751,3 +749,46 @@ def test_http_config_accepts_unwritable_shared_folder(tmp_path, monkeypatch):
         lambda p, mode: False if p == sync or sync in p.parents else access(p, mode),
     )
     assert load_config(path, environ={}).sync_root == sync.resolve()
+
+
+def test_unset_pipeline_does_not_turn_all_http_back_into_files(tmp_path):
+    path = write_config(
+        tmp_path, '[mobile]\ntransport = "http"\n[mobile.features]\nalert = "http"\n'
+    )
+    mobile = load_config(path, environ={}).mobile
+    assert not mobile.pipeline_explicit()
+    assert mobile.transport_for("pipeline") == "files"  # feed stays off
+    assert not mobile.uses_files()
+    assert not mobile.publishes_pipeline_files()
+
+
+def test_unset_pipeline_keeps_the_projection_rule_while_a_feature_uses_files(
+    tmp_path,
+):
+    path = write_config(tmp_path, '[mobile.features]\ncapture = "http"\n')
+    mobile = load_config(path, environ={}).mobile
+    assert mobile.uses_files()
+    assert mobile.publishes_pipeline_files()
+
+
+@pytest.mark.parametrize("choice, files", [("http", False), ("files", True)])
+def test_explicit_pipeline_overrides_the_projection_rule(tmp_path, choice, files):
+    path = write_config(
+        tmp_path,
+        '[mobile]\ntransport = "http"\n[mobile.features]\n'
+        f'alert = "http"\npipeline = "{choice}"\n',
+    )
+    mobile = load_config(path, environ={}).mobile
+    assert mobile.pipeline_explicit()
+    assert mobile.publishes_pipeline_files() is files
+    assert mobile.uses_files() is files
+    assert (
+        load_config(
+            write_config(
+                tmp_path,
+                '[mobile]\ntransport = "files"\n[mobile.features]\npipeline = "http"\n',
+            ),
+            environ={},
+        ).mobile.publishes_pipeline_files()
+        is False
+    )

@@ -5,6 +5,7 @@ authentication modes. Neither shares the loopback web app's session token. Succe
 archive step named in the contract is complete.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -50,8 +51,13 @@ logger = logging.getLogger("weaver.mobile")
 MAX_JSON_BYTES = 1 << 20
 MAX_FEED_PAGE = 100
 MAX_FEED_BYTES = 4 * 1024 * 1024
-CURSOR = re.compile(r"^(ep_[0-9a-f]{32})\.(\d+)$")
+CURSOR = re.compile(r"^(ep_[0-9a-f]{32})\.(\d+)(?:\.([0-9a-f]{8}))?$")
 TRANSPORT_VERSION = 1
+
+
+def kinds_pin(kinds: frozenset[str]) -> str:
+    """Short digest of the requested kind set, carried inside the feed cursor."""
+    return hashlib.sha256(",".join(sorted(kinds)).encode()).hexdigest()[:8]
 
 
 def allowed_hosts(bind: str, port: int) -> frozenset[str]:
@@ -160,6 +166,7 @@ def create_app(
         read.head,
         action_dispatch=lambda: mobile.transport_for("action") == "http",
         sources=FeedSources(
+            review_http=lambda: mobile.transport_for("review") == "http",
             alerts=alerts,
             alerts_http=lambda: mobile.transport_for("alert") == "http",
             pipeline=pipeline,
@@ -489,14 +496,6 @@ def create_app(
     ) -> JSONResponse:
         feed.reconcile()
         epoch = store.feed_epoch
-        after = 0
-        if cursor is not None:
-            match = CURSOR.fullmatch(cursor)
-            if match is None:
-                raise ApiError(422, "invalid_cursor")
-            if match.group(1) != epoch or int(match.group(2)) > store.feed_head():
-                raise ApiError(410, "cursor_expired")
-            after = int(match.group(2))
         # A phone that does not name its kinds is an older build: it never sees a
         # kind added after it shipped. Kinds a feature handed back to files, or a
         # scope the device lacks, are hidden, not deleted (no tombstone).
@@ -505,6 +504,20 @@ def create_app(
             if kinds is None
             else frozenset(k for k in kinds.split(",") if k in KIND_SCOPES)
         )
+        # The cursor pins the requested kinds: continuing with another set would
+        # silently skip the new kinds' older entries, so the server says 410.
+        pin = kinds_pin(asked)
+        after = 0
+        if cursor is not None:
+            match = CURSOR.fullmatch(cursor)
+            if match is None:
+                raise ApiError(422, "invalid_cursor")
+            if match.group(1) != epoch or int(match.group(2)) > store.feed_head():
+                raise ApiError(410, "cursor_expired")
+            # A cursor from before the pin existed is valid for the legacy set only.
+            if (match.group(3) or (pin if asked == LEGACY_KINDS else None)) != pin:
+                raise ApiError(410, "cursor_expired")
+            after = int(match.group(2))
         allowed = {
             kind
             for kind in asked & feed.served_kinds()
@@ -524,7 +537,7 @@ def create_app(
                     "op": item.op,
                     "body": None if item.body is None else json.loads(item.body),
                 }
-                size += len(canonical(entry))
+                size += len(canonical(entry).encode())
                 if shown and size > MAX_FEED_BYTES:
                     # Page break: resume right after the last item that was sent.
                     more = True
@@ -535,7 +548,7 @@ def create_app(
             {
                 "feed_epoch": epoch,
                 "items": shown,
-                "next_cursor": f"{epoch}.{last}",
+                "next_cursor": f"{epoch}.{last}.{pin}",
                 "has_more": more,
             }
         )
@@ -626,6 +639,17 @@ def create_app(
         pipeline_http()
         return json_response(pipeline.page(cursor, limit))
 
+    @router.get("/pipeline")
+    def legacy_pipeline(
+        _who: ReviewScope,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 500,
+    ) -> JSONResponse:
+        # APKs before the feed client pull the same list from here (review scope,
+        # as their file route was); the body is identical to /read/pipeline.
+        pipeline_http()
+        return json_response(pipeline.page(cursor, limit))
+
     @router.get("/read/pipeline/{source_id}")
     def read_pipeline_item(
         source_id: str, request: Request, _who: ReadScope
@@ -634,7 +658,10 @@ def create_app(
         entry = pipeline.get(source_id)
         tag = f'"{entry.etag}"'
         if request.headers.get("if-none-match") == tag:
-            return Response(status_code=304, headers={"ETag": tag})
+            return Response(
+                status_code=304,
+                headers={"ETag": tag, "Cache-Control": "no-store"},
+            )
         return json_response(entry.payload, headers={"ETag": tag})
 
     @router.get("/read/wiki/pages")
@@ -651,7 +678,10 @@ def create_app(
         page = read.wiki_page(page_id)
         tag = f'"{page.sha256}"'
         if request.headers.get("if-none-match") == tag:
-            return Response(status_code=304, headers={"ETag": tag})
+            return Response(
+                status_code=304,
+                headers={"ETag": tag, "Cache-Control": "no-store"},
+            )
         return json_response(page, headers={"ETag": tag})
 
     # ---- edits (journaled by client_id) ----------------------------------------

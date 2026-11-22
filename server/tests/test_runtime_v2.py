@@ -768,12 +768,9 @@ def test_runtime_alerts_when_a_new_approval_moves_an_approved_schedule(tmp_path)
 @pytest.mark.parametrize(
     "mobile, files",
     [
+        ('transport = "http"\n[mobile.features]\nalert = "http"', False),
         (
-            'transport = "http"\n[mobile.features]\nalert = "http"\npipeline = "http"',
-            False,
-        ),
-        (
-            'transport = "files"\n[mobile.features]\ncapture = "http"\nreview = "http"\naction = "http"\nalert = "http"\npipeline = "http"',
+            'transport = "files"\n[mobile.features]\ncapture = "http"\nreview = "http"\naction = "http"\nalert = "http"',
             False,
         ),
         *[

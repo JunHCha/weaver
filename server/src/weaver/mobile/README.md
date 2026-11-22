@@ -176,32 +176,41 @@ HTTP 유지보수 로그 `waiting_review_devices`는 보존 본문 중 하나라
 
 ### 변경 피드 (인증된 모든 기기, 항목은 scope별로 걸러짐)
 
-`GET /changes?cursor=<epoch>.<seq>&limit=<=100` →
+`GET /changes?cursor=<epoch>.<seq>.<pin>&limit=<=100&kinds=…` →
 `{feed_epoch, items:[{seq, kind, id, revision, op:"upsert|tombstone", body}], next_cursor, has_more}`.
-`kind`: `review`(scope review; body에 etag·stage), `action`(scope action; body 없음, 내용은 `GET /actions`),
+`kind`: `review`(scope review, `review`가 http일 때만; body에 etag·stage), `action`(scope action; body 없음, 내용은 `GET /actions`),
 `fabric`(scope read; 읽기 모델이 바뀌었다는 힌트, revision=Fabric head seq),
 `alert`(scope review, `alert`가 http일 때만; id=alert_id, body 없음, 본문·수신 ack는 `/alerts`),
 `pipeline`(scope read, `pipeline`이 http일 때만; id=source_id, revision=PipelineItem.revision, body `{etag}`, 본문은 `GET /read/pipeline/{id}`),
 `wiki`(scope read; id=페이지 ID, body `{etag}`, 본문은 `GET /read/wiki/pages/{id}`; 사람 편집·컴파일이 Fabric head와 별개라 독립 hint).
 `kinds` 쿼리(쉼표 구분)로 폰이 이해하는 kind를 밝힌다. **생략하면 구형 앱으로 보고 `review·action·fabric`만** 보내며,
 서버가 모르는 이름은 무시한다. 협상은 `kinds`로 하고 capabilities `feed_kinds`는 서버가 내릴 수 있는 목록이다.
-폰이 지원 kind를 늘렸다면 기존 cursor를 이어 쓰지 말고 cursor 없이 새 스냅샷을 받아야 한다(이전 구간의 새 kind는 이미 건너뛰었다).
-기능이 files로 돌아가면(`action`·`alert`·`pipeline`) 그 kind는 해당 응답과 `feed_kinds`에서 빠지지만 **tombstone은 만들지 않는다**
-(기록된 항목은 그대로 남고 숨겨질 뿐이며 다시 http로 돌아오면 변경분만 이어서 나간다). `wiki`는 files 경로가 없어 롤백 대상이 아니다.
+`next_cursor`의 `<pin>`은 요청 kind 집합(알려진 이름만, 순서 무관)의 해시 8자리다. **다른 `kinds`로 이어 쓴 cursor는 410
+`cursor_expired`**이므로(pin이 없는 옛 형식은 `kinds` 생략=구형 집합에만 유효) kind를 늘린 폰은 cursor 없이 새 스냅샷을 받아야 한다.
+이렇게 이전 구간의 새 kind 누락을 서버가 막는다. cursor는 불투명 문자열로 다룬다.
+기능이 files로 돌아가면(`review`·`action`·`alert`·`pipeline`) 그 kind는 해당 응답과 `feed_kinds`에서 빠지지만 **tombstone은 만들지 않는다**
+(기록된 항목은 그대로 남고 숨겨질 뿐이다). `review`는 transport가 files인 동안 feed에서 내려가며 폰은 `proposals/`를 읽는다
+(문서 syncthing-removal-http-migration 확정). **다시 http로 돌아오면 그 kind의 현재 항목을 모두 새 seq로 다시 알린다**
+(files 구간에 snapshot을 받은 폰이 놓치지 않게 한다). `wiki`는 files 경로가 없어 롤백 대상이 아니다.
+Alert hint는 `/alerts`가 서빙하는 본문(보존 중인 `alert_delivery` 행, `AlertHistory.bodies/body`)과 같은 집합이며, 본문이 만료되면 tombstone이다.
 tombstone은 리소스 제거(review/action 종료, 만료된 Alert 본문, 사라진 Wiki 페이지·pipeline 항목)만 뜻한다. 원천(pipeline.sqlite3,
 wiki.sqlite3)을 일시적으로 읽지 못하면 그 kind는 갱신을 건너뛰고 기존 항목을 보존한다(누락을 삭제로 해석하지 않는다).
-페이지는 `limit`개 또는 `max_feed_bytes`(4 MiB)에서 끊기고 `has_more=true`이며 `next_cursor`로 이어 간다(최소 1개는 항상 보낸다).
+페이지는 `limit`개 또는 `max_feed_bytes`(4 MiB, 항목 JSON의 UTF-8 바이트 기준)에서 끊기고 `has_more=true`이며 `next_cursor`로 이어 간다(최소 1개는 항상 보낸다).
 영속 `seq`+`feed_epoch`, 리소스별 최신
 항목만 남는 압축 로그이므로 **cursor 없이 부르면 곧 스냅샷**이다. epoch가 다르거나 head보다 앞선 cursor는
 410 `cursor_expired` → 처음부터 다시. 페이지를 로컬에 모두 적용한 뒤 `PUT /devices/self/checkpoint`
-`{cursor}`로 확인한다(후퇴하지 않고 body의 기기 ID는 무시).
+`{cursor}`로 확인한다(후퇴하지 않고 body의 기기 ID는 무시). 304 응답에도 `Cache-Control: no-store`를 보낸다.
 
 ### 읽기 모델 (scope `read`)
 
 - `GET /read/pipeline?cursor&limit(≤500, 기본 500)` → `{items:[PipelineItem v2], next_cursor}`, `source_id` 순.
   `transports.pipeline=http`(`features.pipeline=true`)일 때만이고 아니면 409 `transport_files`. 원천은 `pipeline.sqlite3`이며
   Courier 파일 projection을 읽지 않는다. 기본값 key(`capture_hosts`·`summary`·`counterpart`·`related_tags`·`wiki_edit`)는 생략한다.
-  cursor는 목록 세대를 고정하므로 목록이 바뀐 뒤 쓰면 410 `cursor_expired`(처음부터), 형식이 틀리면 422 `invalid_cursor`.
+  cursor는 목록 세대를 고정하므로 목록이 바뀐 뒤 쓰면 410 `cursor_expired`이다. **클라이언트는 cursor 없이 목록 전체를 다시 받아
+  가진 목록을 통째로 교체해야 한다**(일부 페이지만 이어 붙이지 않는다). 형식이 틀리면 422 `invalid_cursor`, 원천을 일시적으로 못 읽으면
+  재시도 가능한 503 `pipeline_unavailable`이다. 검증에 실패한 행 하나는 그 행만 건너뛰고(로그에 ID·오류 종류) 나머지를 준다.
+- `GET /pipeline` → `/read/pipeline`과 같은 응답. **구형 APK 호환 경로**다(scope `review`; `features.pipeline=true`를 보고 이 경로를 부른다).
+  새 클라이언트는 쓰지 않는다. 구형 APK는 review가 http일 때만 이 목록을 읽는다.
 - `GET /read/pipeline/{source_id}` → PipelineItem. `ETag`(feed hint의 `etag`와 같다)와 `If-None-Match` 304를 지원하고 없으면 404 `pipeline_not_found`.
 
 웹의 분류 함수(`web.presentation`, `fabric.state.project`, `relations`, `mentionMatch`)를 그대로 쓴다.
@@ -282,10 +291,13 @@ node(+로그인 사용자) 결합, scope 분리다.
 
 ## 범위 밖
 
-vault 스냅샷·첨부 API는 아직 없다. Alert·pipeline HTTP는 위의 명시적 APK 배포 gate를 따른다.
+vault 스냅샷·첨부 API는 아직 없다.
+**W5-A5 APK 이전에는 `pipeline="http"`를 운영에 켜지 않는다.** 구형 APK는 `/pipeline` 호환 경로로 지도를 갱신하지만 feed·tombstone·410 재시작을 모르고, review가 files이면 지도를 읽지 않는다.
+배포 순서는 APK 먼저, 서버 설정은 나중이다. Alert·pipeline HTTP는 위의 명시적 APK 배포 gate를 따른다.
 검토 패키지·legacy diff 파일(`proposals/`)은 review transport가 `files`일 때만 선택적으로 게시한다.
 요약 journal과 private archive 및 `pipeline.sqlite3` 관찰이 원천이며 공유 폴더 쓰기 실패는 HTTP durable
-commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 capture/review/action/alert 중 하나라도 `files`일 때 유지한다.
+commit을 실패로 바꾸지 않는다. Pipeline 파일 projection은 `pipeline`을 명시하지 않았다면 capture/review/action/alert 중 하나라도 `files`일 때 유지한다(미설정 `pipeline`은 files로 세지 않아
+기존 all-http 설정이 그대로 동작한다). `pipeline`을 명시하면 그 값이 판정을 덮어쓴다(`http`면 게시하지 않고 `files`면 게시).
 모든 transport가 HTTP면 설정 로딩·초기화도 공유 Courier 폴더의 존재/쓰기 권한을 요구하거나 폴더를 만들지 않는다.
 private state/archive/vault 경계·권한 검사는 유지한다. capture를 HTTP에서 files로 복귀하면 archive journal의 Receipt도 다시 게시한다(기존 bytes/수신 시각 유지).
 미결 파일 재게시와 명시적 `mobile reconcile`은

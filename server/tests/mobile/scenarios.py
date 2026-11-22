@@ -366,7 +366,7 @@ def actions_files(tmp: Path) -> Recorder:
 
 
 def changes(tmp: Path) -> Recorder:
-    h = Harness(tmp, clock=lambda: NOW)
+    h = Harness(tmp, '[mobile.features]\nreview = "http"\n', clock=lambda: NOW)
     headers = h.pair("read", "review")
     r = Recorder(
         h, "changes", "Change feed (epoch.seq cursor, compacted) and device checkpoint."
@@ -964,7 +964,9 @@ def changes_kinds(tmp: Path) -> Recorder:
     from .helpers import receive_pipeline
 
     h = Harness(
-        tmp, '[mobile.features]\nalert = "http"\npipeline = "http"\n', clock=lambda: NOW
+        tmp,
+        '[mobile.features]\nreview = "http"\nalert = "http"\npipeline = "http"\n',
+        clock=lambda: NOW,
     )
     headers = h.pair("read", "review")
     body = Alert(
@@ -1014,6 +1016,16 @@ def changes_kinds(tmp: Path) -> Recorder:
         params={"kinds": "fabric,hologram"},
         note="Kinds the server does not know are ignored so a newer phone still works.",
     )
+    r.call(
+        "kinds_changed_cursor",
+        "GET",
+        f"{BASE}/changes",
+        headers=headers,
+        params={"kinds": "fabric", "cursor": snapshot.json()["next_cursor"]},
+        note="The cursor carries a digest of the kinds it was cut for. Continuing it with "
+        "another set would skip the new kinds' older entries, so the server answers 410: "
+        "drop the cursor and take a new snapshot for the new set.",
+    )
     history.ack(h.device.device_id, body.alert_id, NOW)
     history.collect(30, [h.device.device_id], NOW + timedelta(days=31))
     r.call(
@@ -1022,11 +1034,24 @@ def changes_kinds(tmp: Path) -> Recorder:
         f"{BASE}/changes",
         headers=headers,
         params={
-            "kinds": "alert",
+            "kinds": "review,action,alert,pipeline,wiki,fabric",
             "cursor": snapshot.json()["next_cursor"],
         },
         note="Expiry of a retained body tombstones the alert hint. Leaving a route back to "
         "files never writes a tombstone: the kind just disappears from the feed.",
+    )
+    files = Harness(tmp / "files", clock=lambda: NOW)
+    other = files.pair("read", "review")
+    r.h = files
+    r.call(
+        "review_on_files",
+        "GET",
+        f"{BASE}/changes",
+        headers=other,
+        params={"kinds": "review,fabric"},
+        note="While review runs over files the review kind leaves the feed (and "
+        "capabilities.feed_kinds) without a tombstone; read proposals/ instead. When it "
+        "returns to http every current review entry is announced again under new seq values.",
     )
     return r
 
@@ -1054,13 +1079,23 @@ def pipeline(tmp: Path) -> Recorder:
         headers=auth(headers, **{"If-None-Match": detail.headers["etag"]}),
     )
     r.call("item_not_found", "GET", f"{BASE}/read/pipeline/missing", headers=headers)
+    reviewer = h.pair("review", label="older APK")
+    r.call(
+        "older_apk_list",
+        "GET",
+        f"{BASE}/pipeline",
+        headers=reviewer,
+        note="APKs before the feed client (features.pipeline true) pull this path with "
+        "review scope. The body is the same list as /read/pipeline; not for new clients.",
+    )
     r.call(
         "stale_cursor",
         "GET",
         f"{BASE}/read/pipeline",
         headers=headers,
         params={"cursor": "0" * 64 + ":1"},
-        note="The cursor pins the exact list; a changed list answers 410, restart without a cursor.",
+        note="The cursor pins the exact list; a changed list answers 410. The client must "
+        "restart the whole list without a cursor and replace what it holds with the new list.",
     )
     r.call(
         "invalid_cursor",

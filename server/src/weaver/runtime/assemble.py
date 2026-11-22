@@ -103,7 +103,7 @@ def build_runtime(
             config.state_root,
             config.courier.proposals,
             failure_limit=config.courier_settings.max_attempts,
-            publish_files=config.mobile.uses_files(),
+            publish_files=config.mobile.publishes_pipeline_files(),
         ),
         archive,
         review.state,

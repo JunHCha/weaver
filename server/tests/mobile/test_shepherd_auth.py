@@ -38,6 +38,14 @@ def test_local_capture_scope_host_origin_revoke_and_rotation(
     assert client.get(receipt, headers=headers).status_code == 404
     assert client.get("/mobile/v1/read/now", headers=headers).status_code == 403
     assert client.get("/mobile/v1/alerts", headers=headers).status_code == 403
+    # The change feed and the pipeline map are phone-only, outside capture scope.
+    for path in (
+        "/mobile/v1/changes",
+        "/mobile/v1/read/pipeline",
+        "/mobile/v1/pipeline",
+    ):
+        denied = client.get(path, headers=headers)
+        assert (denied.status_code, denied.json()["code"]) == (403, "scope_denied")
     assert (
         client.get(receipt, headers={**headers, "Origin": "null"}).json()["code"]
         == "origin_not_allowed"

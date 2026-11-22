@@ -246,11 +246,32 @@ class MobileSettings:
             "files" if feature in ("alert", "pipeline") else self.transport,
         )
 
+    def pipeline_explicit(self) -> bool:
+        """Whether ``pipeline`` was chosen in ``[mobile.features]``."""
+        return "pipeline" in dict(self.features)
+
     def uses_files(self) -> bool:
-        """Shared Courier projections are needed by any file transport user."""
+        """Shared Courier projections are needed by any file transport user.
+
+        An unset ``pipeline`` is not counted: it only defaults to files so the
+        feed stays off, and must not turn an existing all-http install back into
+        a files install.
+        """
         return any(
-            self.transport_for(feature) == "files" for feature in TRANSPORT_FEATURES
+            self.transport_for(feature) == "files"
+            for feature in TRANSPORT_FEATURES
+            if feature != "pipeline" or self.pipeline_explicit()
         )
+
+    def publishes_pipeline_files(self) -> bool:
+        """Whether the rollback-only pipeline file projection is written.
+
+        An explicit ``pipeline`` decides alone. Unset keeps the #199 rule: the
+        projection is published while any other feature still uses files.
+        """
+        if self.pipeline_explicit():
+            return self.transport_for("pipeline") == "files"
+        return self.uses_files()
 
 
 def _mobile_settings(

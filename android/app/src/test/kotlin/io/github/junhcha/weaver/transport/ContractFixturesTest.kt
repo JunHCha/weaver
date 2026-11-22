@@ -74,7 +74,16 @@ class ContractFixturesTest {
         }
         assertEquals("tombstone", feed("changes_kinds.alert_body_expired").items.single().op)
         val offered = (Fx.json("pipeline.enabled_capabilities")["feed_kinds"] as JsonArray).map { it.jsonPrimitive.content }
-        assertEquals(listOf("fabric", "pipeline", "review", "wiki"), offered)
+        // Review runs over files in that scenario, so the review kind is not offered (and never tombstoned).
+        assertEquals(listOf("fabric", "pipeline", "wiki"), offered)
+        val onFiles = feed("changes_kinds.review_on_files")
+        assertEquals(listOf("fabric"), onFiles.items.map { it.kind })
+        assertTrue(onFiles.items.none { it.removed })
+        // A cursor cut for one kind set is refused (410) for another: restart with a new snapshot.
+        assertEquals(410, ContractFixtures["changes_kinds.kinds_changed_cursor"].status)
+        assertEquals("cursor_expired", Fx.json("changes_kinds.kinds_changed_cursor")["code"]!!.jsonPrimitive.content)
+        // The older APK path serves the same list as /read/pipeline.
+        assertEquals(Fx.json("pipeline.list"), Fx.json("pipeline.older_apk_list"))
     }
 
     @Test fun pipelineFixturesDecodeAsPipelineItemsWithDefaultKeysOmitted() {

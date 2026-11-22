@@ -26,7 +26,7 @@
               "body": null
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.4",
+          "next_cursor": "ep_00000000000000000000000000000001.4.2fb8b948",
           "has_more": false
         }
       },
@@ -86,7 +86,7 @@
               }
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.4",
+          "next_cursor": "ep_00000000000000000000000000000001.4.728c5870",
           "has_more": false
         }
       },
@@ -118,11 +118,33 @@
               "body": null
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.4",
+          "next_cursor": "ep_00000000000000000000000000000001.4.ad2a542c",
           "has_more": false
         }
       },
       "note": "Kinds the server does not know are ignored so a newer phone still works."
+    },
+    {
+      "name": "kinds_changed_cursor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "kinds": "fabric",
+          "cursor": "ep_00000000000000000000000000000001.4.728c5870"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "code": "cursor_expired",
+          "retryable": false
+        }
+      },
+      "note": "The cursor carries a digest of the kinds it was cut for. Continuing it with another set would skip the new kinds' older entries, so the server answers 410: drop the cursor and take a new snapshot for the new set."
     },
     {
       "name": "alert_body_expired",
@@ -130,8 +152,8 @@
         "method": "GET",
         "path": "/mobile/v1/changes",
         "query": {
-          "kinds": "alert",
-          "cursor": "ep_00000000000000000000000000000001.4"
+          "kinds": "review,action,alert,pipeline,wiki,fabric",
+          "cursor": "ep_00000000000000000000000000000001.4.728c5870"
         },
         "headers": {
           "authorization": "Bearer <token>"
@@ -151,11 +173,43 @@
               "body": null
             }
           ],
-          "next_cursor": "ep_00000000000000000000000000000001.5",
+          "next_cursor": "ep_00000000000000000000000000000001.5.728c5870",
           "has_more": false
         }
       },
       "note": "Expiry of a retained body tombstones the alert hint. Leaving a route back to files never writes a tombstone: the kind just disappears from the feed."
+    },
+    {
+      "name": "review_on_files",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/changes",
+        "query": {
+          "kinds": "review,fabric"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "feed_epoch": "ep_00000000000000000000000000000002",
+          "items": [
+            {
+              "seq": 1,
+              "kind": "fabric",
+              "id": "threads",
+              "revision": 0,
+              "op": "upsert",
+              "body": null
+            }
+          ],
+          "next_cursor": "ep_00000000000000000000000000000002.1.6cbecb6e",
+          "has_more": false
+        }
+      },
+      "note": "While review runs over files the review kind leaves the feed (and capabilities.feed_kinds) without a tombstone; read proposals/ instead. When it returns to http every current review entry is announced again under new seq values."
     }
   ]
 }

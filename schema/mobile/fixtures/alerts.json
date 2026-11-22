@@ -52,7 +52,6 @@
           "feed_kinds": [
             "alert",
             "fabric",
-            "review",
             "wiki"
           ],
           "feed_epoch": "ep_00000000000000000000000000000001",
