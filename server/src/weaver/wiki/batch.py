@@ -166,27 +166,31 @@ class BatchCompiler(Compiler):
         self, active: list[Thread], new: list[Thread]
     ) -> list[dict[str, object]]:
         dictionary = self.context.snapshot()
-        area_names = {
-            entry.name for entry in dictionary.entries if entry.kind == "area"
-        }
-        new_keys = {
-            key
-            for thread in new
-            for key in [*thread.tags, thread.counterpart]
-            if key and key not in area_names
-        }
-        new_areas = {tag for thread in new for tag in thread.tags if tag in area_names}
+
+        def area_tags(thread: Thread) -> set[str]:
+            return {a.name for tag in thread.tags if (a := dictionary.area_of(tag))}
+
+        def _is_area(key: str) -> bool:
+            area = dictionary.area_of(key)
+            entry = dictionary.resolve(key)
+            return area is not None and entry is not None and area.name == entry.name
+
+        def keys_of(thread: Thread) -> set[str]:
+            return {
+                key
+                for key in [*thread.tags, thread.counterpart]
+                if key and not _is_area(key)
+            }
+
+        new_keys = {key for thread in new for key in keys_of(thread)}
+        new_areas = {area for thread in new for area in area_tags(thread)}
         groups: dict[tuple[str, str], list[Thread]] = {}
         for thread in active:
-            areas = set(thread.tags) & area_names
+            areas = area_tags(thread)
             if len(areas) != 1:
                 continue
             area = next(iter(areas))
-            keys = {
-                key
-                for key in [*thread.tags, thread.counterpart]
-                if key and key not in area_names
-            }
+            keys = keys_of(thread)
             for key in keys or {"__area__"}:
                 if key in new_keys or not new_keys and area in new_areas:
                     groups.setdefault((area, key), []).append(thread)
@@ -227,7 +231,7 @@ class BatchCompiler(Compiler):
                 for t in threads
                 if isinstance(ids, list) and t.thread_id in ids
                 for tag in t.tags
-                if (entry := dictionary.resolve(tag)) and entry.kind == "area"
+                if (entry := dictionary.area_of(tag))
             }
             scope = meta.get("state_tag") or (
                 next(iter(areas)) if len(areas) == 1 else None
@@ -421,7 +425,11 @@ class BatchCompiler(Compiler):
         for edit in self.store.scan(self.store.clock()):
             self._edit(edit)
         lifecycle = ProjectLifecycle(
-            self.state_path, self.context, self.fabric, self.timezone
+            self.state_path,
+            self.context,
+            self.fabric,
+            self.timezone,
+            self.default_sphere,
         )
         now = datetime.fromtimestamp(self.store.clock(), UTC)
         lifecycle.refresh(now)
@@ -902,8 +910,7 @@ class BatchCompiler(Compiler):
                 entry.name
                 for t in selected
                 for tag in t.tags
-                if (entry := self.context.snapshot().resolve(tag))
-                and entry.kind == "area"
+                if (entry := self.context.snapshot().area_of(tag))
             }
             state_scope = page.state_tag or (
                 next(iter(page_areas)) if len(page_areas) == 1 else None
@@ -933,8 +940,7 @@ class BatchCompiler(Compiler):
                 entry.name
                 for t in selected
                 for tag in t.tags
-                if (entry := self.context.snapshot().resolve(tag))
-                and entry.kind == "area"
+                if (entry := self.context.snapshot().area_of(tag))
             }
             if len(areas) == 1:
                 props["area"] = next(iter(areas))
@@ -1057,7 +1063,13 @@ class BatchCompiler(Compiler):
         if self.digest is not None:
             self.digest.apply(digest_targets, result.digests, high)
         self._sync_pages()
-        lifecycle.apply(result.promotions, full_active, now, replay=False)
+        lifecycle.apply(
+            result.promotions,
+            full_active,
+            now,
+            replay=False,
+            proposals=self.location_proposals,
+        )
         with closing(sqlite3.connect(self.state_path)) as db, db:
             db.execute("UPDATE bookmark SET seq=?", (high,))
             db.executemany(

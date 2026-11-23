@@ -572,9 +572,9 @@ def test_digest_uses_full_period_and_promotion_validation_uses_full_active_log(
     observed = []
     original_apply = ProjectLifecycle.apply
 
-    def full_snapshot(self, proposals, active, *args, **kwargs):
+    def full_snapshot(self, candidates, active, *args, **kwargs):
         observed.append({t.thread_id for t in active})
-        return original_apply(self, proposals, active, *args, **kwargs)
+        return original_apply(self, candidates, active, *args, **kwargs)
 
     monkeypatch.setattr(ProjectLifecycle, "apply", full_snapshot)
     fabric.append([T.draft("three", "네트워크")])

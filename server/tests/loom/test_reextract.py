@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+import pytest
 from pydantic import BaseModel
 from server.tests.fake_responses import fixture_response
 from typer.testing import CliRunner
@@ -12,9 +13,11 @@ from weaver.action import ActionEngine, ActionOutbox
 from weaver.app import cli
 from weaver.config import PrivacySettings
 from weaver.context import ContextDictionary
+from weaver.context.proposals import LocationProposals
+from weaver.context.tree import expand
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.ledger import Ledger, MemoryLedger
-from weaver.loom.reextract import apply_report, render
+from weaver.loom.reextract import Report, apply_report, render
 from weaver.loom.reextract import reextract as plan_reextract
 from weaver.loom.summary_review import Prepared
 from weaver.loom.summary_state import SummaryState
@@ -49,7 +52,8 @@ def draft(key, source=SOURCE, **changes):
 
 
 class FakeLlm:
-    def __init__(self, *, fail_body=None, schedule=False):
+    def __init__(self, *, fail_body=None, schedule=False, tags=("위버 작업", "TODO")):
+        self.tags = list(tags)
         self.calls = []
         self.fail_body = fail_body
         self.schedule = schedule
@@ -82,7 +86,7 @@ class FakeLlm:
                         "kind": "일정" if self.schedule else "기록",
                         "content": "새 승인 사실",
                         "occurred_at": NOW.isoformat(),
-                        "tags": ["위버 작업", "TODO"],
+                        "tags": self.tags,
                         "field": "schedule" if self.schedule else None,
                         "value": SLOT if self.schedule else None,
                         "direction": None,
@@ -317,12 +321,13 @@ def test_cli_noninteractive_apply_requires_yes_and_daemon_lock(tmp_path, monkeyp
     settings = SimpleNamespace(
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
-        llm=None,
+        llm=SimpleNamespace(max_cli_calls_per_day=30),
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
         shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
+        reference=SimpleNamespace(default_sphere="회사"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
     runner = CliRunner()
@@ -347,12 +352,13 @@ def test_cli_json_preview_uses_fake_client(tmp_path, monkeypatch):
     settings = SimpleNamespace(
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
-        llm=None,
+        llm=SimpleNamespace(max_cli_calls_per_day=30),
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
         shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
+        reference=SimpleNamespace(default_sphere="회사"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
     monkeypatch.setattr(llm, "create_client", lambda *args, **kwargs: FakeLlm())
@@ -473,12 +479,13 @@ def test_json_apply_reports_partial_failure_with_nonzero_exit(tmp_path, monkeypa
     settings = SimpleNamespace(
         state_root=tmp_path,
         vault_root=tmp_path / "wiki",
-        llm=None,
+        llm=SimpleNamespace(max_cli_calls_per_day=30),
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
         shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
         time=SimpleNamespace(timezone="Asia/Seoul"),
+        reference=SimpleNamespace(default_sphere="회사"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
     monkeypatch.setattr(
@@ -662,3 +669,165 @@ def test_area_contract_error_is_reported_per_source(tmp_path):
     assert plans[SOURCE].error == "SchemaMismatch"
     assert not plans[SOURCE].batch
     assert not plans[OTHER].error and plans[OTHER].new
+
+
+THIRD = "src_01ARZ3NDEKTSV4RRFFQ69G5FAX"
+
+
+def seed_three(root):
+    for source, name in ((SOURCE, "a"), (OTHER, "b"), (THIRD, "c")):
+        seed(root, source=source, name=name)
+
+
+def approvals(llm):
+    return llm.calls.count("loom.approve")
+
+
+def test_resume_reuses_planned_sources_without_llm(tmp_path):
+    seed_three(tmp_path)
+    wiki = tmp_path / "wiki"
+    first_llm = FakeLlm()
+    first = reextract(tmp_path, wiki, first_llm, limit=2)
+    assert approvals(first_llm) == 2
+    assert len(first.pending_sources) == 1 and len(first.sources) == 2
+    second_llm = FakeLlm()
+    second = reextract(tmp_path, wiki, second_llm, resume=first)
+    assert approvals(second_llm) == 1
+    assert second.pending_sources == [] and len(second.sources) == 3
+    by_key = {p.key: p for p in second.sources}
+    for plan in first.sources:
+        assert by_key[plan.key].new == plan.new
+        assert by_key[plan.key].model_dump_json() == plan.model_dump_json()
+    assert sum(second.llm_calls_by_day.values()) == 5  # 3 approvals + 2 bootstraps
+
+
+def test_resume_rejects_changed_state(tmp_path):
+    seed_three(tmp_path)
+    first = reextract(tmp_path, tmp_path / "wiki", FakeLlm(), limit=1)
+    ContextDictionary(tmp_path).sync_tree("회사", expand("회사", ["회사/infra"]))
+    with pytest.raises(ValueError, match="상태가 바뀌었습니다"):
+        reextract(tmp_path, tmp_path / "wiki", FakeLlm(), resume=first)
+
+
+def test_incomplete_plan_cannot_apply(tmp_path):
+    seed_three(tmp_path)
+    report = reextract(tmp_path, tmp_path / "wiki", FakeLlm(), limit=1)
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    before = fabric.entries(ThreadQuery(include_executions=True))
+    with pytest.raises(ValueError, match="계획이 끝나지 않았습니다"):
+        apply_report(tmp_path, report)
+    assert fabric.entries(ThreadQuery(include_executions=True)) == before
+
+
+def test_unmatched_goes_to_unclassified_and_one_summary_proposal(tmp_path):
+    seed(tmp_path, source=SOURCE, name="a")
+    seed(tmp_path, source=OTHER, name="b")
+    ContextDictionary(tmp_path).sync_tree("회사", expand("회사", ["회사/infra"]))
+    before = hashes(tmp_path)
+    report = plan_reextract(
+        tmp_path, tmp_path / "wiki", FakeLlm(tags=["자유단어"]), limit=5
+    )
+    assert hashes(tmp_path) == before
+    assert [t.tags for p in report.sources for t in p.new] == [["회사/미분류"]] * 2
+    assert report.unclassified == 2
+    assert not (tmp_path / "proposals.sqlite3").exists()
+    assert "미분류 2건 · 남은 원본 0개 · 오늘 LLM 3회" in render(report)
+    apply_report(tmp_path, report)
+    found = [
+        p for p in LocationProposals(tmp_path).pending() if p.kind == "unclassified"
+    ]
+    assert len(found) == 1 and found[0].count == 2
+    apply_report(tmp_path, report)
+    assert len(LocationProposals(tmp_path).pending()) == 1
+
+
+def test_same_day_call_budget_carries_over(tmp_path):
+    seed_three(tmp_path)
+    first = reextract(tmp_path, tmp_path / "wiki", FakeLlm(), limit=2, daily_cap=3)
+    llm = FakeLlm()
+    second = reextract(
+        tmp_path, tmp_path / "wiki", llm, resume=first, limit=2, daily_cap=3
+    )
+    assert approvals(llm) == 0 and llm.calls == []
+    assert second.pending_sources == first.pending_sources
+    assert second.llm_calls_by_day == first.llm_calls_by_day
+
+
+def test_schedule_title_change_is_an_update_effect(tmp_path):
+    old = draft(
+        "old_schedule",
+        kind="일정",
+        content="새 승인 사실",
+        field="schedule",
+        value=SLOT,
+    )
+    seed(tmp_path, old=old)
+    outbox = ActionOutbox(tmp_path / "action-outbox.sqlite3")
+    assert ActionEngine(FabricStore(tmp_path / "fabric.sqlite3"), outbox).run() == 1
+    outbox.finish(
+        outbox.all()[0].action_id,
+        outcome="completed",
+        external_id="event-7",
+        error=None,
+        attempts=1,
+    )
+    llm = FakeLlm(schedule=True)
+    original = llm.generate_json
+
+    def titled(task, system, user, schema):
+        result = original(task, system, user, schema)
+        if task == "loom.approve":
+            result.threads[0].value = {**SLOT, "title": "주간 회의"}
+        return result
+
+    llm.generate_json = titled
+    report = reextract(tmp_path, tmp_path / "wiki", llm)
+    effect = report.sources[0].calendar_effects[0]
+    assert effect.effect == "update" and effect.detail == "제목·설명 갱신"
+
+
+def test_limit_is_per_run_and_daily_cap_bounds_progress(tmp_path):
+    seed_three(tmp_path)
+    wiki = tmp_path / "wiki"
+    first = reextract(tmp_path, wiki, FakeLlm(), limit=1, daily_cap=30)
+    llm = FakeLlm()
+    second = reextract(tmp_path, wiki, llm, resume=first, limit=1, daily_cap=30)
+    assert approvals(llm) == 1 and len(second.sources) == 2
+    assert len(second.pending_sources) == 1
+
+
+def test_bootstrap_call_counts_toward_daily_cap(tmp_path):
+    seed_three(tmp_path)
+    llm = FakeLlm()
+    report = reextract(tmp_path, tmp_path / "wiki", llm, limit=30, daily_cap=3)
+    assert llm.calls.count("loom.reextract_bootstrap") == 1
+    assert approvals(llm) == 2 and len(report.pending_sources) == 1
+    assert sum(report.llm_calls_by_day.values()) == 3
+
+
+def test_human_only_sources_do_not_consume_limit(tmp_path):
+    seed_three(tmp_path)
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append([draft("h1", source="src_01ARZ3NDEKTSV4RRFFQ69G5FB1", actor="human")])
+    llm = FakeLlm()
+    report = reextract(tmp_path, tmp_path / "wiki", llm, limit=1, daily_cap=30)
+    assert approvals(llm) == 1
+    assert "src_01ARZ3NDEKTSV4RRFFQ69G5FB1" in {p.source_id for p in report.sources}
+
+
+def test_render_footer_shows_calendar_update_count(tmp_path):
+    from weaver.loom.reextract import CalendarEffect, SourcePlan
+
+    report = Report(
+        sources=[
+            SourcePlan(
+                source_id="s",
+                key="k",
+                calendar_effects=[
+                    CalendarEffect(effect="update"),
+                    CalendarEffect(effect="유지"),
+                ],
+            )
+        ]
+    )
+    assert "캘린더 update 1건" in render(report)

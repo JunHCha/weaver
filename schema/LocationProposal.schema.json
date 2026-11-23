@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:LocationProposal",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A suggested tree location a person accepts or rejects; never auto-applied.",
+  "properties": {
+    "count": {
+      "minimum": 1,
+      "title": "Count",
+      "type": "integer"
+    },
+    "created_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "fallback": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "kind": {
+      "enum": [
+        "location",
+        "unclassified"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "path": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "proposal_id": {
+      "maxLength": 36,
+      "minLength": 36,
+      "pattern": "^prp_[0-9a-f]{32}$",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "unknown_path",
+        "project_promotion",
+        "reextract_unclassified"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_ids": {
+      "items": {
+        "$ref": "#/$defs/SourceId"
+      },
+      "title": "Source Ids",
+      "type": "array"
+    },
+    "sphere": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "thread_ids": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Thread Ids",
+      "type": "array"
+    },
+    "updated_at": {
+      "$ref": "#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "kind",
+    "reason",
+    "sphere",
+    "path",
+    "parent",
+    "fallback",
+    "thread_ids",
+    "source_ids",
+    "count",
+    "status",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "LocationProposal",
+  "type": "object"
+}

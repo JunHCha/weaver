@@ -50,6 +50,7 @@ def payload_of(item: ApprovedSchedule) -> CalendarPayload:
         start=item.value.start,
         end=item.value.end,
         timezone=item.value.timezone,
+        description=item.value.description,
     )
 
 

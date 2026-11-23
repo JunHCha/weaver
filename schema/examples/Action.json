@@ -9,7 +9,8 @@
     "start": "2026-11-12T10:00:00+09:00",
     "end": "2026-11-12T11:00:00+09:00",
     "timezone": "Asia/Seoul",
-    "title": "주간 점검 회의"
+    "title": "주간 점검 회의",
+    "description": null
   },
   "external_id": null
 }

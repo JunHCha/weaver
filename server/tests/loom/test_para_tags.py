@@ -148,3 +148,145 @@ def test_counterpart_is_added_to_tags_and_not_warned_as_untagged(tmp_path, caplo
     result = prepare(context, Llm(["資料管理"], "김 박사"))
     assert result.threads[0].tags == ["資料管理", "김철수"]
     assert "untagged dictionary names" not in caplog.text
+
+
+# --- path tree mode ---------------------------------------------------------
+
+
+def tree_context(tmp_path, extra=()):
+    from weaver.context.tree import expand
+
+    context = ContextDictionary(tmp_path)
+    context.sync_tree(
+        "회사",
+        expand(
+            "회사",
+            [
+                "회사/infra/network/router",
+                "회사/project/26-12-라우터-교체",
+                "회사/project/26-13-다른-작업",
+                *extra,
+            ],
+        ),
+    )
+    context.add_entry("홍길동", "person")
+    return context
+
+
+def decide(context, values, **kwargs):
+    from weaver.loom.tagging import business_tags
+
+    return business_tags(context.snapshot(), [], {}, values, **kwargs)
+
+
+def test_tree_subject_project_and_mentions(tmp_path, caplog):
+    result = decide(
+        tree_context(tmp_path),
+        [
+            "회사/infra/network/router",
+            "회사/project/26-12-라우터-교체",
+            "홍길동",
+            "네트워크작업",
+        ],
+    )
+    assert result.tags == [
+        "회사/infra/network/router",
+        "회사/project/26-12-라우터-교체",
+        "홍길동",
+    ]
+    assert result.unknown_paths == []
+    assert result.fallback is None
+    assert "dropped free tag" in caplog.text
+
+
+def test_unknown_path_and_free_words_fall_back(tmp_path):
+    result = decide(tree_context(tmp_path), ["회사/infra/storage/nas", "가끔"])
+    assert result.tags == ["회사/미분류"]
+    assert result.unknown_paths == ["회사/infra/storage/nas"]
+    assert result.fallback == "회사/미분류"
+
+
+def test_limits(tmp_path, caplog):
+    context = tree_context(tmp_path, ["회사/infra/network/switch", "회사/stacks/go"])
+    result = decide(
+        context,
+        [
+            "회사/infra/network/router",
+            "회사/infra/network/switch",
+            "회사/stacks/go",
+            "회사/project/26-12-라우터-교체",
+            "회사/project/26-13-다른-작업",
+        ],
+    )
+    assert result.tags == [
+        "회사/infra/network/router",
+        "회사/infra/network/switch",
+        "회사/project/26-12-라우터-교체",
+    ]
+    assert "dropped extra" in caplog.text
+
+
+def test_no_path_uses_default_sphere(tmp_path):
+    result = decide(tree_context(tmp_path), ["홍길동"], default_sphere="가족")
+    assert result.tags == ["가족/미분류", "홍길동"]
+
+
+def test_namespace_and_root_are_not_subjects(tmp_path):
+    context = tree_context(tmp_path)
+    for value in ("회사/infra", "회사"):
+        assert decide(context, [value]).fallback == "회사/미분류"
+
+
+def test_legacy_mode_returns_decision_without_unknowns(tmp_path):
+    context = ContextDictionary(tmp_path)
+    context.add_entry("자료 관리", "area")
+    result = decide(context, ["자료 관리"])
+    assert (result.tags, result.unknown_paths, result.fallback) == (
+        ["자료 관리"],
+        [],
+        None,
+    )
+
+
+def test_tree_node_new_entries_dropped(tmp_path, caplog):
+    from weaver.loom.tagging import NewEntry, proposals
+
+    added, names = proposals(
+        tree_context(tmp_path).snapshot(),
+        [
+            NewEntry(name="회사/infra/x", kind="topic"),
+            NewEntry(name="박철수", kind="person"),
+        ],
+    )
+    assert [e.name for e in added] == ["박철수"]
+    assert "dropped tree node proposal" in caplog.text
+    assert (
+        proposals(
+            tree_context(tmp_path / "b").snapshot(),
+            [NewEntry(name="회사/infra/x", kind="topic")],
+        )[0]
+        == []
+    )
+
+
+def test_tag_context_paths_bounded(tmp_path):
+    from weaver.context.tree import expand
+    from weaver.loom.tagging import tag_context
+
+    context = ContextDictionary(tmp_path)
+    context.sync_tree(
+        "회사",
+        expand(
+            "회사",
+            [
+                *(f"회사/infra/network/장비-{i:04d}" for i in range(2000)),
+                "회사/infra/network/router",
+            ],
+        ),
+    )
+    context.add_entry("홍길동", "person")
+    hints = tag_context(context.snapshot(), "router 교체", [])
+    assert len(json.dumps(hints["paths"], ensure_ascii=False).encode()) <= 4000
+    assert "회사/infra/network/router" in hints["paths"]
+    assert "회사/infra/network" in hints["paths"]
+    assert [e["name"] for e in hints["dictionary"]] == ["홍길동"]

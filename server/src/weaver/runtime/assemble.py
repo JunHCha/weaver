@@ -11,6 +11,7 @@ from weaver.alert.delivery import AlertDelivery
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
+from weaver.context.proposals import LocationProposals
 from weaver.courier import SCAN_INTERVAL_SECONDS, Courier
 from weaver.fabric import FabricStore
 from weaver.ingest import VerdictIngest
@@ -26,6 +27,7 @@ from weaver.schema import Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
 from weaver.spinner.webex import WebexProvenanceStore
+from weaver.wiki.home import check_vault_ignored
 from weaver.wiki.store import WikiStore
 
 from .gate import LlmGate, LlmStatus
@@ -90,6 +92,7 @@ def build_runtime(
     fabric = FabricStore.from_config(config)
     webex = WebexProvenanceStore(config.state_root)
     summaries = SummaryLookup(config.archive_root / "summaries", archive, webex)
+    location_proposals = LocationProposals(config.state_root)
     review = SummaryReview(
         client,
         context,
@@ -99,6 +102,8 @@ def build_runtime(
         proposals=config.courier.proposals,
         publish_files=config.mobile.transport_for("review") == "files",
         timezone=config.time.timezone,
+        default_sphere=config.reference.default_sphere,
+        location_proposals=location_proposals,
     )
     progress = PipelinePublisher(
         PipelineJournal(
@@ -144,6 +149,10 @@ def build_runtime(
     maintenance = list(plugins.maintenance)
     maintenance.append(MaintenanceTask("review-projection", interval, review.republish))
     if config.wiki.enabled:
+        # Before WikiStore, whose constructor creates the folder.
+        check_vault_ignored(
+            config.wiki.vault_root or config.vault_root, config.wiki.folder
+        )
         store = WikiStore(
             config.wiki.vault_root or config.vault_root,
             config.state_root,
@@ -161,6 +170,8 @@ def build_runtime(
             ZoneInfo(config.wiki.timezone),
             summaries,
             journal=progress.journal,
+            default_sphere=config.reference.default_sphere,
+            location_proposals=location_proposals,
         )
         maintenance.append(
             MaintenanceTask(

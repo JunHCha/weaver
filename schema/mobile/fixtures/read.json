@@ -1517,6 +1517,68 @@
           "next_cursor": null
         }
       }
+    },
+    {
+      "name": "proposals",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/proposals",
+        "query": {
+          "status": "pending"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "schema_version": 2,
+              "proposal_id": "prp_7424cd629c7c9ffb2104f9a75731d351",
+              "kind": "location",
+              "reason": "unknown_path",
+              "sphere": "회사",
+              "path": "회사/infra/storage/nas",
+              "parent": "회사/infra",
+              "fallback": "회사/미분류",
+              "thread_ids": [
+                "x1"
+              ],
+              "source_ids": [
+                "src_00000000000000000000000002"
+              ],
+              "count": 1,
+              "status": "pending",
+              "created_at": "2026-11-11T23:00:00Z",
+              "updated_at": "2026-11-11T23:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "note": "Location proposals wait for a person; the default status is pending."
+    },
+    {
+      "name": "proposals_rejected",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/proposals",
+        "query": {
+          "status": "rejected"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [],
+          "next_cursor": null
+        }
+      }
     }
   ]
 }

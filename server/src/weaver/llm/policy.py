@@ -6,6 +6,7 @@ Space ID and the configured exclusions explicitly. Unknown inputs fail closed.
 """
 
 import logging
+import re
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -94,6 +95,87 @@ class PreparedInput:
 def mask_patterns(text: str) -> str:
     """The single masking hook. ADR-046 keeps MVP masking OFF and names intact."""
     return text
+
+
+_MASK = "[MASKED]"
+_SECRET_PATTERNS = (
+    re.compile(
+        r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----"
+        r".*?-----END [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----",
+        re.DOTALL,
+    ),
+    re.compile(
+        r"AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+        r"|sk-[A-Za-z0-9_-]{20,}"
+    ),
+)
+_DECORATION = r"[*_|`\"' \t]*"
+_SEPARATOR = r"(?:[:=：]|는|은|\|)"
+_PASSWORD_NAMES = r"password|passwd|pw|pass|비밀번호|패스워드|암호"
+_OTHER_NAMES = r"secret|token|api[_-]?key|private[_-]?key"
+# Phrases and "id/pw" pairs run to the end of the line (or table cell).
+_PASSWORD_ASSIGNMENT = re.compile(
+    rf"(?i)((?<![A-Za-z])(?:{_PASSWORD_NAMES}){_DECORATION}{_SEPARATOR}{_DECORATION})"
+    r"[^\n|]*[^\s|]"
+)
+_OTHER_ASSIGNMENT = re.compile(
+    rf"(?i)((?<![A-Za-z])(?:{_OTHER_NAMES}){_DECORATION}{_SEPARATOR}{_DECORATION})"
+    r"(?:(?:Bearer|Basic)\s+)?[^\s|]+"
+)
+# Long base64-like runs; "-" and "_" are excluded so slugs never match.
+_LONG_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=]{32,}(?![A-Za-z0-9+/=_-])"
+)
+# Unlabeled base64url secrets: must mix digits, lower and upper case so that
+# lowercase slugs stay untouched.
+_URLSAFE_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
+_WIKI_LINK = re.compile(r"(\[\[[^\]\n]*\]\])")
+
+
+def _mixed_token(match: re.Match[str]) -> str:
+    value = match.group()
+    if not (any(c.isdigit() for c in value) and any(c.isalpha() for c in value)):
+        return value
+    if re.fullmatch(r"[0-9a-f]{40}", value):
+        return value  # git SHA-1
+    if "/" in value and not (
+        "+" in value
+        or "=" in value
+        or (any(c.islower() for c in value) and any(c.isupper() for c in value))
+    ):
+        return value  # path-like
+    return _MASK
+
+
+def _urlsafe_token(match: re.Match[str]) -> str:
+    value = match.group()
+    if (
+        any(c.isdigit() for c in value)
+        and any(c.islower() for c in value)
+        and any(c.isupper() for c in value)
+    ):
+        return _MASK
+    return value
+
+
+def _mask_plain(text: str) -> str:
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(_MASK, text)
+    text = _PASSWORD_ASSIGNMENT.sub(lambda m: m.group(1) + _MASK, text)
+    text = _OTHER_ASSIGNMENT.sub(lambda m: m.group(1) + _MASK, text)
+    text = _LONG_TOKEN.sub(_mixed_token, text)
+    return _URLSAFE_TOKEN.sub(_urlsafe_token, text)
+
+
+def mask_secrets(text: str) -> str:
+    """Hide credentials in text kept for reference search (ADR-046).
+
+    Wiki links ``[[...]]`` are never touched.
+    """
+    parts = _WIKI_LINK.split(text)
+    return "".join(
+        part if index % 2 else _mask_plain(part) for index, part in enumerate(parts)
+    )
 
 
 class LlmPolicy:

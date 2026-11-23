@@ -236,6 +236,8 @@ class ScheduleValue(Contract):
     start: Timestamp
     end: Timestamp | None
     timezone: NonEmpty
+    title: NonEmpty | None = None
+    description: NonEmpty | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> Self:
@@ -494,6 +496,7 @@ class CalendarPayload(ScheduleValue):
     """The calendar event an Action creates, changes to, or removes."""
 
     title: NonEmpty
+    description: NonEmpty | None = None
 
 
 class Action(Version2):
@@ -793,6 +796,29 @@ class PipelineItem(Version2):
         return self
 
 
+class LocationProposal(Version2):
+    """A suggested tree location a person accepts or rejects; never auto-applied."""
+
+    proposal_id: Annotated[
+        str,
+        StringConstraints(
+            strict=True, pattern=r"^prp_[0-9a-f]{32}$", min_length=36, max_length=36
+        ),
+    ]
+    kind: Literal["location", "unclassified"]
+    reason: Literal["unknown_path", "project_promotion", "reextract_unclassified"]
+    sphere: NonEmpty
+    path: NonEmpty | None
+    parent: NonEmpty | None
+    fallback: NonEmpty
+    thread_ids: list[NonEmpty]
+    source_ids: list[SourceId]
+    count: Annotated[StrictInt, Field(ge=1)]
+    status: Literal["pending", "accepted", "rejected"]
+    created_at: Timestamp
+    updated_at: Timestamp
+
+
 SHARED_MODELS = (
     Manifest,
     Receipt,
@@ -808,4 +834,5 @@ SHARED_MODELS = (
     PipelineItem,
     Action,
     ActionResult,
+    LocationProposal,
 )

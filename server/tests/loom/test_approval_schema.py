@@ -45,7 +45,16 @@ def response():
         (None, None),
         ("deadline", "tomorrow"),
         ("status", "done"),
-        ("schedule", {"start": "2026-01-01T09:00:00", "end": None, "timezone": None}),
+        (
+            "schedule",
+            {
+                "start": "2026-01-01T09:00:00",
+                "end": None,
+                "timezone": None,
+                "title": None,
+                "description": None,
+            },
+        ),
         ("assignees", {"add": ["reviewer"], "remove": []}),
     ],
 )

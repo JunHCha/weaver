@@ -1,5 +1,6 @@
 """Project promotion journal and append-only lifecycle side effects."""
 
+import hashlib
 import logging
 import sqlite3
 import unicodedata
@@ -20,6 +21,8 @@ from pydantic import (
 )
 
 from weaver.context import ContextDictionary, DictionarySnapshot, _key
+from weaver.context.proposals import LocationProposals, nearest_parent
+from weaver.context.tree import UNCLASSIFIED, root_of
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.fabric.state import project
 from weaver.schema import TagCorrection, Thread, ThreadDraft
@@ -27,6 +30,17 @@ from weaver.wiki.generation import fingerprint
 
 logger = logging.getLogger(__name__)
 PROJECT_THREAD_PREFIX = "wiki-project:"
+
+
+def _slug(name: str) -> str:
+    """A project name as one path segment: spaces become dashes, separators go."""
+    cleaned = "".join(
+        ch for ch in unicodedata.normalize("NFC", name) if ch not in "/\\#^|[]"
+    )
+    slug = "-".join(cleaned.split())
+    if slug:
+        return slug
+    return "project-" + hashlib.sha256(name.encode()).hexdigest()[:8]
 
 
 class PromotionShape(BaseModel):
@@ -87,7 +101,9 @@ class ProjectLifecycle:
         context: ContextDictionary,
         fabric: Fabric,
         timezone: ZoneInfo | None = None,
+        default_sphere: str = "회사",
     ) -> None:
+        self.default_sphere = default_sphere
         self.path, self.context, self.fabric, self.timezone = (
             path,
             context,
@@ -326,12 +342,7 @@ class ProjectLifecycle:
             return False
         selected = [by_id[key] for key in candidate.thread_ids]
         if any(
-            {
-                e.name
-                for tag in t.tags
-                if (e := dictionary.resolve(tag)) and e.kind == "area"
-            }
-            != {area.name}
+            {e.name for tag in t.tags if (e := dictionary.area_of(tag))} != {area.name}
             for t in selected
         ):
             return False
@@ -354,6 +365,7 @@ class ProjectLifecycle:
         now: datetime,
         *,
         replay: bool = True,
+        proposals: LocationProposals | None = None,
     ) -> None:
         active = active_records(active)
         threads = self.fabric.entries(ThreadQuery())
@@ -394,6 +406,9 @@ class ProjectLifecycle:
                 candidate, active, now
             ):
                 logger.warning("wiki promotion skipped: ineligible")
+                continue
+            if proposals is not None:
+                self._propose(proposals, candidate, active, now)
                 continue
             with self._db() as db:
                 previous = db.execute(
@@ -451,6 +466,35 @@ class ProjectLifecycle:
                     )
         if replay:
             self.refresh(now)
+
+    def _propose(
+        self,
+        proposals: LocationProposals,
+        candidate: ProjectPromotion,
+        active: list[Thread],
+        now: datetime,
+    ) -> None:
+        """Offer a promotion as a new project location; a person decides."""
+        area = self.context.snapshot().area_of(candidate.area)
+        root = (
+            root_of(area.name)
+            if area is not None and area.source == "tree"
+            else self.default_sphere
+        )
+        by_id = {t.thread_id: t for t in active}
+        selected = [by_id[key] for key in candidate.thread_ids if key in by_id]
+        path = f"{root}/project/{_slug(candidate.name)}"
+        proposals.propose(
+            kind="location",
+            reason="project_promotion",
+            sphere=root,
+            path=path,
+            parent=nearest_parent(self.context.snapshot(), path),
+            fallback=f"{root}/{UNCLASSIFIED}",
+            thread_ids=[t.thread_id for t in selected],
+            source_ids=sorted({t.source_id for t in selected}),
+            now=now,
+        )
 
     def _replay(self, threads: list[Thread], blocked: set[str], now: datetime) -> None:
         existing_ids = {t.thread_id for t in threads}

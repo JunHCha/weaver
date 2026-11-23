@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from weaver.mobile.cli import mobile_cli
+from weaver.reference.cli import reference_cli
 from weaver.shepherd.cli import shepherd_cli
 from weaver.webex.cli import webex_cli
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 cli.add_typer(mobile_cli, name="mobile")
+cli.add_typer(reference_cli, name="reference")
 cli.add_typer(shepherd_cli, name="shepherd")
 cli.add_typer(webex_cli, name="webex")
 
@@ -54,7 +56,6 @@ def _load(
     KeepAlive cannot exclude an exit code and would otherwise restart a
     broken configuration every ThrottleInterval.
     """
-    import os
 
     from weaver.config import ConfigError, load_config
 
@@ -65,13 +66,19 @@ def _load(
         return settings
     except ConfigError as error:
         typer.echo(f"Error: invalid configuration: {error}", err=True)
-        from weaver.runtime import launchd
-
-        if os.environ.get(launchd.SUPERVISED_ENV) == "1":
-            import time
-
-            time.sleep(launchd.CONFIG_ERROR_HOLD_SECONDS)
+        _hold_when_supervised()
         raise typer.Exit(code=EX_CONFIG) from None
+
+
+def _hold_when_supervised() -> None:
+    import os
+
+    from weaver.runtime import launchd
+
+    if os.environ.get(launchd.SUPERVISED_ENV) == "1":
+        import time
+
+        time.sleep(launchd.CONFIG_ERROR_HOLD_SECONDS)
 
 
 @cli.command("policy-backlog")
@@ -177,6 +184,54 @@ def wiki_measure(
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def _check_wiki_home(settings: "ServerConfig") -> None:
+    from weaver.wiki.home import VaultNotIgnored, check_vault_ignored
+
+    try:
+        check_vault_ignored(
+            settings.wiki.vault_root or settings.vault_root, settings.wiki.folder
+        )
+    except VaultNotIgnored as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=EX_CONFIG) from None
+
+
+@cli.command("wiki-rebind")
+def wiki_rebind(
+    config: ConfigOption = None,
+    backup: Annotated[
+        Path, typer.Option("--backup", help="New directory outside vault and state")
+    ] = Path(),
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm the rebind")] = False,
+) -> None:
+    """Move Wiki state to a backup so the next compile starts at the new location."""
+    from weaver.config import ConfigError
+    from weaver.runtime import AlreadyRunning, InstanceLock
+    from weaver.wiki.home import rebind
+
+    if backup == Path():
+        raise typer.BadParameter("--backup is required")
+    settings = _load(config)
+    vault = settings.wiki.vault_root or settings.vault_root
+    if not yes:
+        if not sys.stdin.isatty():
+            typer.echo("Error: non-interactive rebind requires --yes", err=True)
+            raise typer.Exit(2)
+        if not typer.confirm(
+            "Wiki 상태를 백업으로 옮기고 새 위치에서 다시 컴파일합니까?"
+        ):
+            raise typer.Exit(2)
+    try:
+        with InstanceLock(settings.state_root / "weaver.lock"):
+            moved = rebind(settings.state_root, backup, vault)
+    except AlreadyRunning:
+        typer.echo("Error: another weaver instance is running", err=True)
+        raise typer.Exit(code=1) from None
+    except ConfigError as error:
+        raise typer.BadParameter(str(error)) from None
+    typer.echo(f"Moved {len(moved)} items to {backup}: {', '.join(moved)}")
+
+
 @cli.command("wiki-migrate")
 def wiki_migrate(
     config: ConfigOption = None,
@@ -208,6 +263,7 @@ def wiki_migrate(
             "--apply requires --backup and --yes after reviewing the preview"
         )
     settings = _load(config)
+    _check_wiki_home(settings)
     store = WikiStore(
         settings.wiki.vault_root or settings.vault_root,
         settings.state_root,
@@ -279,6 +335,7 @@ def run(
 
     import logging
 
+    from weaver.config import ConfigError
     from weaver.runtime import EXIT_ALREADY_RUNNING, AlreadyRunning, InstanceLock
     from weaver.runtime.logs import configure_logging
 
@@ -291,6 +348,11 @@ def run(
 
             try:
                 runtime = build_runtime(settings, interval=interval)
+            except ConfigError as error:
+                logger.critical("runtime setup refused: %s", error)
+                typer.echo(f"Error: {error}", err=True)
+                _hold_when_supervised()
+                raise typer.Exit(code=EX_CONFIG) from None
             except Exception as error:
                 logger.critical("runtime setup failed: %s", type(error).__name__)
                 typer.echo(
@@ -341,6 +403,13 @@ def reextract(
             "--discard-plan", help="Clear pending journal units; keeps committed facts"
         ),
     ] = False,
+    resume: Annotated[
+        Path | None,
+        typer.Option("--resume", help="Continue an unfinished plan with its sources"),
+    ] = None,
+    limit: Annotated[
+        int, typer.Option("--limit", min=1, help="Max new LLM sources in this run")
+    ] = 30,
 ) -> None:
     """Preview saved approvals, or apply a fingerprinted plan with no model.
 
@@ -414,6 +483,7 @@ def reextract(
                     settings.state_root,
                     load_plan(plan),
                     archive_root=settings.archive_root,
+                    default_sphere=settings.reference.default_sphere,
                 )
             else:
                 if plan is not None:
@@ -429,6 +499,10 @@ def reextract(
                     ),
                     source=source,
                     timezone=settings.time.timezone,
+                    default_sphere=settings.reference.default_sphere,
+                    resume=load_plan(resume) if resume else None,
+                    limit=limit,
+                    daily_cap=settings.llm.max_cli_calls_per_day,
                 )
                 if plan_out:
                     save_plan(plan_out, settings.state_root, report)
@@ -543,6 +617,16 @@ def status(config: ConfigOption = None, llm: LlmOption = None) -> None:
     except FileNotFoundError:
         typer.echo("runtime: no status report yet")
     typer.echo(f"\nlog: {settings.log_root / 'weaver.log'}")
+    if settings.wiki.enabled:
+        from weaver.wiki.home import VaultNotIgnored, check_vault_ignored
+
+        try:
+            check_vault_ignored(
+                settings.wiki.vault_root or settings.vault_root, settings.wiki.folder
+            )
+            typer.echo("wiki home: ignored or not a git vault")
+        except VaultNotIgnored as error:
+            typer.echo(f"wiki home: {error}")
 
 
 @cli.command()

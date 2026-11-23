@@ -18,6 +18,7 @@ from pathlib import Path
 from pydantic import JsonValue
 
 from weaver.wiki.document import HUMAN_KEYS, NOTICE, readable_links, with_memo
+from weaver.wiki.home import WikiBindingChanged
 from weaver.wiki.links import rewrite_links
 
 HASH_KEY = "weaver_content_sha256"
@@ -238,6 +239,9 @@ def _render(properties: dict[str, JsonValue], body: str) -> bytes:
     return ("\n".join([*lines, "---", body]).rstrip("\n") + "\n").encode()
 
 
+_REBIND_MESSAGE = "Wiki 위치가 바뀌었습니다: weaver wiki-rebind --backup DIR --yes"
+
+
 class WikiStore:
     _readonly: bool = False
     """Manage pages rooted under a vault, with history outside that vault.
@@ -296,7 +300,9 @@ class WikiStore:
             db.executescript("""CREATE TABLE IF NOT EXISTS page_ids (path TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL);
                 CREATE TABLE IF NOT EXISTS pages (path TEXT PRIMARY KEY, content BLOB NOT NULL, rev TEXT NOT NULL, readonly INTEGER NOT NULL, candidate TEXT, since REAL, mtime REAL);
                 CREATE TABLE IF NOT EXISTS pending (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS human_edits (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);""")
+                CREATE TABLE IF NOT EXISTS human_edits (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS binding (vault TEXT NOT NULL, folder TEXT NOT NULL);""")
+            self._check_binding(db, relative_root.as_posix())
             for stored_path, stored_data in db.execute(
                 "SELECT path, content FROM pages"
             ).fetchall():
@@ -355,6 +361,18 @@ class WikiStore:
             db.execute(
                 "INSERT OR IGNORE INTO human_edits SELECT rev, payload FROM pending"
             )
+
+    def _check_binding(self, db: sqlite3.Connection, folder: str) -> None:
+        """Adopt or verify the vault/folder this state belongs to."""
+        current = (str(self.vault.resolve()), folder)
+        row = db.execute("SELECT vault, folder FROM binding").fetchone()
+        if row is None:
+            recorded = [p for (p,) in db.execute("SELECT path FROM pages")]
+            if any(not (self.root / path).exists() for path in recorded):
+                raise WikiBindingChanged(_REBIND_MESSAGE)
+            db.execute("INSERT INTO binding VALUES (?, ?)", current)
+        elif tuple(row) != current:
+            raise WikiBindingChanged(_REBIND_MESSAGE)
 
     @classmethod
     def open_readonly(

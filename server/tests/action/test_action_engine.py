@@ -10,6 +10,7 @@ from weaver.schema import CalendarPayload
 from .action_helpers import (
     Rig,
     decision,
+    draft,
     request,
     retraction,
     schedule,
@@ -276,3 +277,34 @@ def test_lost_outbox_is_rebuilt_without_running_finished_actions_again(rig):
 def test_outbox_is_private(tmp_path):
     outbox = ActionOutbox(tmp_path / "state" / "action-outbox.sqlite3")
     assert (outbox.path.stat().st_mode & 0o777) == 0o600
+
+
+def test_payload_carries_title_and_description(rig):
+    description = "- 담당 홍길동\n- 2층 전산실"
+    rig.add(
+        draft(
+            "s1",
+            kind="일정",
+            content="UPS 점검 일정을 잡았다",
+            field="schedule",
+            value={
+                "start": "2026-12-01T10:00:00+09:00",
+                "end": None,
+                "timezone": "Asia/Seoul",
+                "title": "서버 정기점검 방문",
+                "description": description,
+            },
+        )
+    )
+    assert rig.engine.run() == 1
+    (action,) = rig.actions()
+    assert action.payload.title == "서버 정기점검 방문"
+    assert action.payload.description == description
+
+
+def test_legacy_schedule_without_title_emits_no_update(rig):
+    rig.add(schedule("s1"))
+    assert rig.engine.run() == 1
+    rig.outbox.reset_cursor()
+    assert rig.engine.run() == 0
+    assert len(rig.actions()) == 1

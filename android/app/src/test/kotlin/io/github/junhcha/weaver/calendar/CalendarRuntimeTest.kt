@@ -63,8 +63,10 @@ class CalendarRuntimeTest {
                     addRow(arrayOf<Any>(71L, "Synthetic calendar", "synthetic@example.invalid", "LOCAL"))
                 } else {
                     inserts.forEachIndexed { index, values ->
-                        if (values.getAsString(Events.DESCRIPTION) == selectionArgs!!.single()) addRow(arrayOf<Any?>(index + 1L, values.getAsLong(Events.CALENDAR_ID), values.getAsString(Events.TITLE),
-                            values.getAsLong(Events.DTSTART), values.getAsLong(Events.DTEND), values.getAsString(Events.EVENT_TIMEZONE)))
+                        if (values.getAsString(Events.DESCRIPTION).let { it == selectionArgs!![0] || it.endsWith(selectionArgs[1].removePrefix("%")) })
+                            addRow(arrayOf<Any?>(index + 1L, values.getAsLong(Events.CALENDAR_ID), values.getAsString(Events.TITLE),
+                            values.getAsLong(Events.DTSTART), values.getAsLong(Events.DTEND), values.getAsString(Events.EVENT_TIMEZONE),
+                            values.getAsString(Events.DESCRIPTION)))
                     }
                 }
             }
@@ -211,6 +213,10 @@ class CalendarRuntimeTest {
         assertEquals("manual_review", reported().error)
         assertNull(journal.mappings().single().uri)
         assertEquals(1, provider.inserts.size) // Only the original fixture, no new writes.
+    }
+
+    @Test fun likeEscapesMarker() {
+        assertEquals("a\\%b\\_c\\\\", likeEscape("a%b_c\\"))
     }
 
     @Test fun calendarsAreFilteredByWriteAccessAndNullRecoveryCursorThrows() {

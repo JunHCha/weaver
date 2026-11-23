@@ -36,6 +36,7 @@ omit newly defaulted fields. All data is synthetic.
 | `ActionResult` | phone → server | 2 | The final result of one Action as `action-results/<action_id>.json`. |
 | `PipelineItem` | server → phone | 2 | Durable source location, transitions, stage times and committed Thread/wiki results. |
 | `Alert` | server → phone | 2 | A notice that a newly approved schedule moved an approved one. |
+| `LocationProposal` | server → phone | 2 | A suggested new tree location (unknown path or project promotion) that a person accepts or rejects. |
 
 ## Common rules
 

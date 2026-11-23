@@ -16,8 +16,8 @@ class CalendarRegistrationTest {
     @get:Rule val temporary = TemporaryFolder()
     private val target = CalendarTarget(42, "Synthetic", "test@example.invalid", "LOCAL")
     private fun id(n: Int) = "act_" + n.toString().padStart(32, '0')
-    private fun payload(start: String = "2026-01-01T09:00:00+09:00", end: String? = null, zone: String = "Asia/Seoul", title: String = "회의") =
-        CalendarPayload(start, end, zone, title)
+    private fun payload(start: String = "2026-01-01T09:00:00+09:00", end: String? = null, zone: String = "Asia/Seoul", title: String = "회의", description: String? = null) =
+        CalendarPayload(start, end, zone, title, description)
     private fun register(n: Int = 1, payload: CalendarPayload = payload()) =
         Action(2, id(n), ActionKind.REGISTER, "thread-$n", n.toLong(), 1, payload, null)
     private fun update(n: Int, event: String, payload: CalendarPayload) =
@@ -29,6 +29,7 @@ class CalendarRegistrationTest {
         var targets = listOf(CalendarTarget(42, "Synthetic", "test@example.invalid", "LOCAL"))
         val events = mutableMapOf<String, List<CalendarRow>>()
         val values = mutableMapOf<String, CalendarEvent>()
+        val stored = mutableMapOf<String, String>()
         val usedTargets = mutableListOf<CalendarTarget>()
         val updates = mutableListOf<Pair<String, CalendarEvent>>()
         val deletes = mutableListOf<String>()
@@ -51,15 +52,18 @@ class CalendarRegistrationTest {
             inserts++; usedTargets += target
             val row = "content://com.android.calendar/events/$inserts" to inserts.toLong()
             values[row.first] = event
+            stored[row.first] = CalendarText.compose(event.description, marker)
             events[marker] = listOf(CalendarRow(row.first, row.second, target.id, event))
             if (crash) throw AssertionError("simulated process death after provider commit")
             if (lostResponse) error("synthetic lost response")
             return row
         }
-        override fun update(uri: String, event: CalendarEvent): Boolean {
+        override fun update(uri: String, event: CalendarEvent, marker: String?): Boolean {
             if (failQuery) error("synthetic provider failure")
             if (uri !in values) return false
-            updates += uri to event; values[uri] = event; return true
+            updates += uri to event; values[uri] = event
+            if (marker != null) stored[uri] = CalendarText.compose(event.description, marker)
+            return true
         }
         override fun delete(uri: String): Boolean {
             deletes += uri; return values.remove(uri) != null
@@ -122,6 +126,57 @@ class CalendarRegistrationTest {
         assertEquals(ActionResult.Outcome.COMPLETED, done.outcome)
         assertEquals(1, provider.inserts)
         assertNotNull(journal().mappings().single().uri)
+    }
+
+    @Test fun registerWritesDescriptionBeforeMarker() {
+        val provider = Provider()
+        journal().select(target)
+        val uri = checkNotNull(results(provider, register(1, payload(description = "- 담당 홍길동"))).single().externalId)
+        assertEquals("- 담당 홍길동\n\n${journal().mappings().single().marker}", provider.stored.getValue(uri))
+    }
+
+    @Test fun crashAfterInsertRecoversByMarkerSuffix() {
+        val provider = Provider().apply { crash = true }
+        journal().select(target)
+        assertThrows(AssertionError::class.java) { results(provider, register(1, payload(description = "- 담당 홍길동"))) }
+        provider.crash = false
+        val done = results(provider, register(1, payload(description = "- 담당 홍길동"))).single()
+        assertEquals(ActionResult.Outcome.COMPLETED, done.outcome)
+        assertEquals(1, provider.inserts)
+    }
+
+    @Test fun legacyMarkerOnlyEventStillMatches() {
+        val provider = Provider().apply { failQuery = true }
+        journal().select(target)
+        executor(provider).run(listOf(register()))
+        val pending = journal().mappings().single()
+        provider.failQuery = false
+        provider.events[pending.marker] = listOf(CalendarRow("content://com.android.calendar/events/7", 7, target.id, pending.event))
+        assertNull(pending.event!!.description)
+        val done = executor(provider).run(listOf(reopen())).single()
+        assertEquals(ActionResult.Outcome.COMPLETED, done.outcome)
+        assertEquals("content://com.android.calendar/events/7", done.externalId)
+        assertEquals(0, provider.inserts)
+    }
+
+    @Test fun updateRewritesDescriptionKeepingMarker() {
+        val provider = Provider()
+        journal().select(target)
+        val event = checkNotNull(results(provider, register(1, payload(description = "옛 설명"))).single().externalId)
+        val marker = journal().mappings().single().marker
+        results(provider, update(2, event, payload(description = "새 설명")))
+        assertEquals("새 설명\n\n$marker", provider.stored.getValue(event))
+        assertEquals("새 설명", journal().mappings().single().event?.description)
+    }
+
+    @Test fun textComposeAndDescriptionAreInverse() {
+        assertEquals("m", CalendarText.compose(null, "m"))
+        assertEquals("m", CalendarText.compose("", "m"))
+        assertEquals("a\n\nm", CalendarText.compose("a", "m"))
+        assertNull(CalendarText.description("m", "m"))
+        assertEquals("a", CalendarText.description("a\n\nm", "m"))
+        assertNull(CalendarText.description("other", "m"))
+        assertNull(CalendarText.description(null, "m"))
     }
 
     @Test fun queryFailureNeverGuessesAbsenceAndTransientFailuresRetryWithBackoff() {

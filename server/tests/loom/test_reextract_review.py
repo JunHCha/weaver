@@ -275,11 +275,12 @@ def test_plan_export_inside_state_is_refused_and_cli_apply_has_no_client(
         state_root=root,
         vault_root=tmp_path,
         wiki=SimpleNamespace(vault_root=None, folder="Managed"),
-        llm=None,
+        llm=SimpleNamespace(max_cli_calls_per_day=30),
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
         shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         time=SimpleNamespace(timezone="Asia/Seoul"),
+        reference=SimpleNamespace(default_sphere="회사"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
 
@@ -331,11 +332,12 @@ def test_cli_uses_overridden_wiki_root(tmp_path, monkeypatch):
         state_root=tmp_path / "state",
         vault_root=tmp_path,
         wiki=SimpleNamespace(vault_root=tmp_path / "overridden", folder="Custom"),
-        llm=None,
+        llm=SimpleNamespace(max_cli_calls_per_day=30),
         archive_root=tmp_path / "archive",
         privacy=PrivacySettings(),
         shepherds=SimpleNamespace(webex=SimpleNamespace(exclude_space_ids=())),
         time=SimpleNamespace(timezone="Asia/Seoul"),
+        reference=SimpleNamespace(default_sphere="회사"),
     )
     monkeypatch.setattr(app, "_load", lambda *args, **kwargs: settings)
     monkeypatch.setattr(llm, "create_client", lambda *args, **kwargs: fake)

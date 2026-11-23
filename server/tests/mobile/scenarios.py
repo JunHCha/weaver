@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from weaver.action import ActionJob
+from weaver.context.proposals import LocationProposals
 from weaver.mobile.whois import PeerIdentity
 from weaver.wiki.store import WikiStore
 
@@ -536,6 +537,33 @@ def read(tmp: Path) -> Recorder:
         params={"subject": "네트워크", "history": "true"},
     )
     r.call("dictionary", "GET", f"{BASE}/read/dictionary", headers=headers)
+    proposals = LocationProposals(h.config.state_root)
+    proposals.propose(
+        kind="location",
+        reason="unknown_path",
+        sphere="회사",
+        path="회사/infra/storage/nas",
+        parent="회사/infra",
+        fallback="회사/미분류",
+        thread_ids=["x1"],
+        source_ids=[labels[CAP]],
+        now=NOW,
+    )
+    r.call(
+        "proposals",
+        "GET",
+        f"{BASE}/read/proposals",
+        headers=headers,
+        params={"status": "pending"},
+        note="Location proposals wait for a person; the default status is pending.",
+    )
+    r.call(
+        "proposals_rejected",
+        "GET",
+        f"{BASE}/read/proposals",
+        headers=headers,
+        params={"status": "rejected"},
+    )
     return r
 
 

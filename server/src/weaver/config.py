@@ -4,6 +4,7 @@ No files or credentials are read on import. Data paths are relative to the
 selected configuration file, and validation never prints supplied values.
 """
 
+import hashlib
 import ipaddress
 import math
 import os
@@ -387,6 +388,78 @@ class CourierPaths:
 
 
 @dataclass(frozen=True)
+class ReferenceVault:
+    sphere: str
+    source: Literal["git", "home"]
+    git_remote: str | None = None
+    branch: str = "main"
+    include: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReferenceSettings:
+    default_sphere: str = "회사"
+    vaults: tuple[ReferenceVault, ...] = ()
+
+
+def reference_clone_dir(state_root: Path, sphere: str) -> Path:
+    digest = hashlib.sha256(sphere.encode()).hexdigest()[:16]
+    return state_root / "reference" / digest / "repo"
+
+
+def _reference_settings(value: object) -> ReferenceSettings:
+    if not isinstance(value, dict) or value.keys() - {"default_sphere", "vault"}:
+        raise ConfigError("reference: expected default_sphere and vault entries")
+    default = value.get("default_sphere", ReferenceSettings.default_sphere)
+    if not isinstance(default, str):
+        raise ConfigError("reference.default_sphere: expected string")
+    entries = value.get("vault", [])
+    if not isinstance(entries, list):
+        raise ConfigError("reference.vault: expected array of tables")
+    vaults: list[ReferenceVault] = []
+    for entry in entries:
+        field = "reference.vault"
+        if not isinstance(entry, dict) or entry.keys() - {
+            "sphere",
+            "source",
+            "git_remote",
+            "branch",
+            "include",
+        }:
+            raise ConfigError(
+                f"{field}: unknown fields (clone paths are not configurable)"
+            )
+        sphere = entry.get("sphere")
+        if not isinstance(sphere, str) or not sphere.strip() or "/" in sphere:
+            raise ConfigError(f"{field}.sphere: expected non-empty name without '/'")
+        source = entry.get("source")
+        if source not in ("git", "home"):
+            raise ConfigError(f"{field}.source: expected git or home")
+        remote = entry.get("git_remote")
+        branch = entry.get("branch", "main")
+        include = entry.get("include", [])
+        if not isinstance(branch, str) or not branch:
+            raise ConfigError(f"{field}.branch: expected string")
+        if not isinstance(include, list) or not all(
+            isinstance(item, str) and item for item in include
+        ):
+            raise ConfigError(f"{field}.include: expected string array")
+        if source == "git":
+            if not isinstance(remote, str) or not remote:
+                raise ConfigError(f"{field}.git_remote: required for git")
+            if include:
+                raise ConfigError(f"{field}.include: only for home")
+        elif remote is not None:
+            raise ConfigError(f"{field}.git_remote: only for git")
+        if any(v.sphere == sphere for v in vaults):
+            raise ConfigError(f"{field}.sphere: duplicate sphere")
+        vaults.append(ReferenceVault(sphere, source, remote, branch, tuple(include)))
+    if vaults and default not in {vault.sphere for vault in vaults}:
+        raise ConfigError("reference.default_sphere: not a configured sphere")
+    return ReferenceSettings(default, tuple(vaults))
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     config_file: Path
     sync_root: Path
@@ -404,6 +477,7 @@ class ServerConfig:
     mobile: MobileSettings = dataclass_field(default_factory=MobileSettings)
     shepherds: ShepherdSettings = dataclass_field(default_factory=ShepherdSettings)
     privacy: PrivacySettings = PrivacySettings()
+    reference: ReferenceSettings = dataclass_field(default_factory=ReferenceSettings)
 
     @property
     def spinner(self) -> ComponentConfig:
@@ -611,6 +685,7 @@ def load_config(
         "mobile",
         "shepherds",
         "privacy",
+        "reference",
     }:
         raise ConfigError("config_file: unknown fields")
     roots: dict[str, Path] = {}
@@ -674,6 +749,7 @@ def load_config(
             wiki_values["vault_root"], config_file.parent, env, "wiki.vault_root"
         )
     wiki = WikiSettings(**wiki_values)
+    reference = _reference_settings(raw.get("reference", {}))
     shepherds_raw = raw.get("shepherds", {})
     if not isinstance(shepherds_raw, dict) or shepherds_raw.keys() - {
         "webex",
@@ -821,4 +897,5 @@ def load_config(
         mobile=mobile,
         shepherds=shepherds,
         privacy=privacy,
+        reference=reference,
     )

@@ -85,15 +85,26 @@ class CalendarJournal(private val file: File) {
 }
 
 @Serializable
-data class CalendarEvent(val title: String, val start: Long, val end: Long, val timezone: String) {
+data class CalendarEvent(val title: String, val start: Long, val end: Long, val timezone: String, val description: String? = null) {
     companion object {
         /** A schedule without an end lasts one hour. */
         fun from(payload: CalendarPayload): CalendarEvent {
             val start = OffsetDateTime.parse(payload.start).toInstant().toEpochMilli()
             val end = payload.end?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() } ?: (start + 3_600_000)
-            return CalendarEvent(payload.title, start, end, payload.timezone)
+            return CalendarEvent(payload.title, start, end, payload.timezone, payload.description)
         }
     }
+}
+
+/** The stored DESCRIPTION is the schedule's description followed by the app-owned marker. */
+object CalendarText {
+    fun compose(description: String?, marker: String): String =
+        if (description.isNullOrEmpty()) marker else "$description\n\n$marker"
+
+    /** A marker-only (legacy) or foreign text has no description of ours. */
+    fun description(stored: String?, marker: String): String? =
+        if (stored == null || stored == marker || !stored.endsWith("\n\n$marker")) null
+        else stored.removeSuffix("\n\n$marker")
 }
 
 data class CalendarRow(val uri: String, val id: Long, val calendarId: Long, val event: CalendarEvent?)
@@ -103,8 +114,8 @@ interface CalendarProvider {
     /** An empty list proves absence; query failures MUST throw. Return ALL marker matches. */
     fun find(marker: String): List<CalendarRow>
     fun insert(target: CalendarTarget, marker: String, event: CalendarEvent): Pair<String, Long>
-    /** False when the event no longer exists. Other failures throw. */
-    fun update(uri: String, event: CalendarEvent): Boolean
+    /** False when the event no longer exists. A null [marker] leaves DESCRIPTION untouched. Other failures throw. */
+    fun update(uri: String, event: CalendarEvent, marker: String?): Boolean
     /** False when the event was already gone. Other failures throw. */
     fun delete(uri: String): Boolean
 }
@@ -202,8 +213,9 @@ class ActionExecutor(
     private fun update(action: Action): Step {
         val uri = checkNotNull(action.externalId)
         val event = CalendarEvent.from(action.payload)
-        if (!provider.update(uri, event)) return Step.Failed("event_missing")
-        journal.mappings().firstOrNull { it.uri == uri }?.let { journal.put(it.copy(event = event)) }
+        val mapping = journal.mappings().firstOrNull { it.uri == uri }
+        if (!provider.update(uri, event, mapping?.marker)) return Step.Failed("event_missing")
+        mapping?.let { journal.put(it.copy(event = event)) }
         return Step.Done(uri)
     }
 

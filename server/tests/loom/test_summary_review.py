@@ -1246,3 +1246,412 @@ def test_prompt_corrections_are_approval_only(tmp_path, action):
         assert "canonical은 검토 답 하나와 정확히 일치" not in llm.system
     assert "#149" not in llm.system
     assert "counterpart가 있으면 그 표준 이름도 반드시 tags에 포함한다" in llm.system
+
+
+def _schedule_review(tmp_path: Path, value: dict[str, object], seen: list[str]):
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            seen.append(system)
+            return fixture_response(
+                schema,
+                {
+                    "body": "방문한다.",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "일정",
+                            "content": "UPS 점검 방문 일정",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": [],
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                            "field": "schedule",
+                            "value": value,
+                            "blocked_by_index": None,
+                        }
+                    ],
+                },
+            )
+
+    sink = FakeSink()
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        timezone="Asia/Seoul",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "원문", verdict, now=NOW)
+    return sink
+
+
+def test_schedule_title_and_description_extracted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    base = {"start": "2026-01-03T09:00:00", "end": None, "timezone": None}
+    description = "- 담당 홍길동\n- 2층 전산실"
+    sink = _schedule_review(
+        tmp_path / "a",
+        base | {"title": "서버 정기점검 방문", "description": description},
+        [],
+    )
+    assert sink.drafts[0].value is not None
+    assert sink.drafts[0].value["title"] == "서버 정기점검 방문"
+    assert sink.drafts[0].value["description"] == description
+    with caplog.at_level("WARNING"):
+        sink = _schedule_review(
+            tmp_path / "b",
+            base | {"title": "12월 3일 방문", "description": "  "},
+            [],
+        )
+    assert sink.drafts[0].value is not None
+    assert "title" not in sink.drafts[0].value
+    assert "description" not in sink.drafts[0].value
+    assert "dropped invalid schedule title" in caplog.text
+    sink = _schedule_review(tmp_path / "c", base | {"description": "가" * 1500}, [])
+    assert sink.drafts[0].value is not None
+    assert len(sink.drafts[0].value["description"]) == 1000
+
+
+def test_schedule_prompt_mentions_title_rules(tmp_path: Path) -> None:
+    seen: list[str] = []
+    _schedule_review(tmp_path, {"start": "2026-01-03T09:00:00", "end": None}, seen)
+    for text in ("title", "30자", "날짜·시각을 넣지 않는다", "description", "개조식"):
+        assert text in seen[0]
+
+
+def test_existing_non_schedule_event_thread_does_not_break_the_hint(
+    tmp_path: Path,
+) -> None:
+    from weaver.fabric import FabricStore
+
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="due",
+                kind="일정",
+                content="보고서 마감",
+                occurred_at=NOW,
+                recorded_at=NOW,
+                tags=[],
+                field="deadline",
+                value="2026-01-05",
+                source_id=SOURCE,
+                actor="ai_approved",
+                direction=None,
+                resolves=None,
+                retracts=None,
+                correction=None,
+            )
+        ]
+    )
+    seen: list[dict[str, object]] = []
+
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            seen.append(json.loads(user))
+            return fixture_response(
+                schema,
+                {
+                    "body": "방문한다.",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "일정",
+                            "content": "UPS 점검 방문",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": [],
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                            "field": "schedule",
+                            "value": {
+                                "start": "2026-01-03T09:00:00",
+                                "end": None,
+                            },
+                            "blocked_by_index": None,
+                        }
+                    ],
+                },
+            )
+
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        fabric,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        timezone="Asia/Seoul",
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "원문", verdict, now=NOW)
+    (hint,) = seen[0]["existing_schedules"]  # type: ignore[misc]
+    assert hint["title"] == "보고서 마감"  # type: ignore[index]
+
+
+def _approve_verdict() -> Verdict:
+    return Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+
+
+def test_prompt_requires_noun_phrase_content(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            seen.append(system)
+            return super().generate_json(task, system, user, schema)
+
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        FakeSink(),
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    review.approve(package(), "원문", _approve_verdict(), now=NOW)
+    assert seen
+    assert "개조식 한 줄" in seen[0] and "명사형" in seen[0]
+    assert "알 수 있는 문장" not in seen[0]
+
+
+def test_noun_phrase_fixture_response_validates(tmp_path: Path) -> None:
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            return fixture_response(
+                schema,
+                {
+                    "body": "서버 정기점검 방문 일정이 확정됐다.",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "일정",
+                            "content": "서버 정기점검 방문 일정 확정",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": [],
+                            "field": "schedule",
+                            "value": {"start": "2026-01-02T09:00:00", "end": None},
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                            "blocked_by_index": None,
+                        }
+                    ],
+                },
+            )
+
+    sink = FakeSink()
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    review.approve(package(), "원문", _approve_verdict(), now=NOW)
+    assert len(sink.drafts) == 1
+    assert sink.drafts[0].content == "서버 정기점검 방문 일정 확정"
+
+
+def test_tree_prompt_and_fixture_validates(tmp_path: Path) -> None:
+    from weaver.context.tree import expand
+
+    seen: dict[str, str] = {}
+
+    class TreeLlm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            seen["system"], seen["user"] = system, user
+            return schema.model_validate(
+                {
+                    "new_entries": [],
+                    "body": "라우터 패치를 결정했다.",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "결정",
+                            "content": "라우터 패치 결정",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": ["회사/infra/network/router"],
+                            "field": None,
+                            "value": None,
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                        }
+                    ],
+                }
+            )
+
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    review = SummaryReview(
+        TreeLlm(), context, sink, tmp_path / "archive", state_root=tmp_path / "state"
+    )
+    verdict = Verdict(
+        schema_version=2,
+        package_id="pkg",
+        revision=1,
+        action="approve",
+        answers=["홍길동"],
+        edited_body=None,
+        feedback=None,
+    )
+    review.approve(package(), "router 원문", verdict, now=NOW)
+    assert "새 경로를 만들지 않는다" in seen["system"]
+    assert "영역(area) 정확히 하나" not in seen["system"]
+    assert "회사/infra/network/router" in json.loads(seen["user"])["paths"]
+    assert sink.drafts[0].tags == ["회사/infra/network/router"]
+
+
+def test_unknown_path_falls_back_and_proposes_once_after_apply(tmp_path: Path) -> None:
+    from weaver.context.proposals import LocationProposals
+    from weaver.context.tree import expand
+
+    class UnknownPathLlm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            return schema.model_validate(
+                {
+                    "new_entries": [],
+                    "body": "NAS 증설을 결정했다.",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": "결정",
+                            "content": "NAS 증설 결정",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": ["회사/infra/storage/nas"],
+                            "field": None,
+                            "value": None,
+                            "direction": None,
+                            "resolves": None,
+                            "retracts": None,
+                        }
+                    ],
+                }
+            )
+
+    class FailingOnce(FakeSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail = True
+
+        def append(self, threads: list[ThreadDraft]) -> list[Thread]:
+            if self.fail:
+                self.fail = False
+                raise OSError("fabric unavailable")
+            return super().append(threads)
+
+    sink = FailingOnce()
+    context = ContextDictionary(tmp_path / "state")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    store = LocationProposals(tmp_path / "state")
+    review = SummaryReview(
+        UnknownPathLlm(),
+        context,
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        location_proposals=store,
+    )
+    verdict = _approve_verdict()
+    prepared = review.prepare(package(), "NAS 원문", verdict, now=NOW)
+    assert prepared.threads[0].tags == ["회사/미분류"]
+    assert store.pending() == []  # prepare writes nothing
+    # A failed Fabric append must leave no proposal behind.
+    with pytest.raises(OSError):
+        review.approve(package(), "NAS 원문", verdict, now=NOW)
+    assert store.pending() == []
+    review.approve(package(), "NAS 원문", verdict, now=NOW)
+    (item,) = store.pending()
+    assert item.path == "회사/infra/storage/nas"
+    assert item.parent == "회사/infra"
+    assert item.fallback == "회사/미분류"
+    assert item.reason == "unknown_path" and item.count == 1
+    assert item.thread_ids == [sink.drafts[0].thread_id]
+    assert item.source_ids == [SOURCE]
+    # Replaying the same judgement is still one proposal.
+    again = SummaryReview(
+        UnknownPathLlm(),
+        context,
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        location_proposals=store,
+    )
+    again.approve(package(), "NAS 원문", verdict, now=NOW)
+    assert len(store.pending()) == 1
+
+
+def test_failing_location_proposal_does_not_skip_dictionary_learning(
+    tmp_path: Path,
+) -> None:
+    from weaver.context.proposals import LocationProposals
+    from weaver.context.tree import expand
+
+    class UnknownPathLlm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            data = super().generate_json(task, system, user, schema).model_dump()
+            data["threads"][0]["tags"] = ["회사/infra/storage/nas"]
+            return fixture_response(schema, data)
+
+    class BrokenProposals(LocationProposals):
+        def propose(self, *args: object, **kwargs: object) -> None:
+            raise OSError("proposals unavailable")
+
+    sink = FakeSink()
+    context = ContextDictionary(tmp_path / "state")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    review = SummaryReview(
+        UnknownPathLlm(),
+        context,
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+        location_proposals=BrokenProposals(tmp_path / "state"),
+    )
+    verdict = _approve_verdict()
+    review.approve(package(), "홍길돈 원문", verdict, now=NOW)
+    assert len(sink.drafts) == 1
+    assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]

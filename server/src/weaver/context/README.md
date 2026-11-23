@@ -84,3 +84,16 @@ candidates. The additive lifecycle table accepts earlier rows without `reverted`
 readers default it to false and writers add the column transactionally. Older
 v1/v2 read-only dictionaries without the additive lifecycle table return false flags; writers create the table transactionally. See
 [`wiki/README.md`](../wiki/README.md) for promotion and suppression journaling.
+
+## tree source
+
+`source="tree"` entries mirror the vault tag and folder tree. They are
+read-only: `rename`, `set_kind`, `add_alias`, `remove_alias` and `merge` raise
+`ValueError("tree node is read-only")`; change the vault instead. A node's name
+is its full path (`회사/infra/network/router`), so it never collides with other
+sources, whose names contain no `/`. Its kind comes from the namespace in
+`context/tree.py` (`node_kind`), not from a stored choice, and nodes have no
+aliases. `sync_tree(sphere, nodes)` replaces one sphere's rows in a transaction
+(table `tree_nodes`, created with `IF NOT EXISTS`; `user_version` stays 2 and
+older readers ignore the table). Tree nodes carry no transcript lineage, so they
+are skipped by origin recording and `policy_origins`.
