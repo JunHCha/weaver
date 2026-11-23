@@ -45,9 +45,12 @@ import io.github.junhcha.weaver.phone.parseWikiBody
 import io.github.junhcha.weaver.phone.resolveLink
 
 @Composable
-internal fun WikiList(pages: List<WikiPage>, emptyText: String, onOpen: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().testTag("wiki-list")) {
-        ScreenTitle("Wiki", "읽기 전용")
+internal fun WikiList(
+    pages: List<WikiPage>, emptyText: String, modifier: Modifier = Modifier.fillMaxSize(), title: String = "Wiki",
+    onOpen: (String) -> Unit,
+) {
+    Column(modifier.testTag("wiki-list")) {
+        ScreenTitle(title, "읽기 전용")
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp)) {
             if (pages.isEmpty()) item { Muted(emptyText) }
             items(pages, key = { it.id }) { page ->

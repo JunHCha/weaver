@@ -108,6 +108,13 @@ internal fun HandlingSheet(title: String, dismiss: () -> Unit, content: @Composa
 @Composable
 internal fun NowThreadSheet(thread: PhoneThread, history: List<PhoneThread>, controller: NowController?,
                             onChanged: () -> Unit, dismiss: () -> Unit) {
+    HandlingSheet("Thread 상세", dismiss) { NowThreadDetail(thread, history, controller, onChanged, dismiss) }
+}
+
+/** Thread detail and handling actions; the sheet wraps it on phones and the wide pane shows it inline. */
+@Composable
+internal fun NowThreadDetail(thread: PhoneThread, history: List<PhoneThread>, controller: NowController?,
+                             onChanged: () -> Unit, dismiss: () -> Unit) {
     val state = controller?.uiState?.collectAsState()?.value
     var action by remember(thread.id) { mutableStateOf<String?>(null) }
     var sentence by remember(thread.id) { mutableStateOf("이 요청을 완료했습니다: ${thread.content}".take(2000)) }
@@ -127,51 +134,49 @@ internal fun NowThreadSheet(thread: PhoneThread, history: List<PhoneThread>, con
             finally { busy = false }
         }
     }
-    HandlingSheet("Thread 상세", dismiss) {
-        Column(Modifier.testTag("now-thread-detail"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(thread.content)
-            Muted("${thread.kind.label} · ${thread.counterpart.orEmpty()}")
-            Muted("기한 ${thread.deadline ?: "없음"} · ${if (thread.retracted == true) "철회됨" else if (thread.open == false && thread.kind == ThreadKind.REQUEST) "해결됨" else ""}")
-            Text("출처: ${thread.source}")
-            Muted("기록 시각 ${thread.recordedAt.atZone(state?.snapshot?.zone ?: SeoulZone)}")
-            Text("관련 이력")
-            history.forEach { Text(it.content); Muted("${it.kind.label} · ${it.source}") }
-            if (history.isEmpty()) Muted("관련 이력이 없어요")
-            if (controller != null && state?.supported == true) {
-                val pending = state.operations.any { it.state == "pending" && it.body["thread_id"]?.jsonPrimitive?.contentOrNull == thread.id }
-                if (pending) Muted("응답 미확인 전송이 있어요. 전송·처리 이력에서 확인해 주세요.")
-                if (thread.kind == ThreadKind.REQUEST && thread.open == true && thread.retracted != true) {
-                    if (state.canEdit) Row {
-                        TextButton(enabled = state.online && !busy && !pending, onClick = { action = "complete"; sentence = "이 요청을 완료했습니다: ${thread.content}".take(2000) }) { Text("완료") }
-                        TextButton(enabled = state.online && !busy && !pending, onClick = { action = "deadline"; sentence = "이 요청의 기한을 ${date}로 변경합니다: ${thread.content}".take(2000) }) { Text("기한 변경") }
-                    }
-                    TextButton(enabled = !busy, onClick = { localAction { controller.snooze(thread, controller.tomorrow()) } }) { Text("내일 오전 9시에 다시 보기") }
-                    OutlinedTextField(custom, { custom = it }, label = { Text("다시 볼 시각 (YYYY-MM-DD HH:mm)") }, modifier = Modifier.fillMaxWidth())
-                    val customTime = runCatching { LocalDateTime.parse(custom, DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withResolverStyle(java.time.format.ResolverStyle.STRICT)).atZone(state.snapshot!!.zone).toInstant() }.getOrNull()
-                    TextButton(enabled = customTime != null && !busy, onClick = {
-                        localAction { controller.snooze(thread, customTime!!) }
-                    }) { Text("지정한 시각까지 미루기") }
-                    Muted("${state.snapshot?.zone} 기준 · 실제 기한은 바뀌지 않아요")
+    Column(Modifier.testTag("now-thread-detail"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(thread.content)
+        Muted("${thread.kind.label} · ${thread.counterpart.orEmpty()}")
+        Muted("기한 ${thread.deadline ?: "없음"} · ${if (thread.retracted == true) "철회됨" else if (thread.open == false && thread.kind == ThreadKind.REQUEST) "해결됨" else ""}")
+        Text("출처: ${thread.source}")
+        Muted("기록 시각 ${thread.recordedAt.atZone(state?.snapshot?.zone ?: SeoulZone)}")
+        Text("관련 이력")
+        history.forEach { Text(it.content); Muted("${it.kind.label} · ${it.source}") }
+        if (history.isEmpty()) Muted("관련 이력이 없어요")
+        if (controller != null && state?.supported == true) {
+            val pending = state.operations.any { it.state == "pending" && it.body["thread_id"]?.jsonPrimitive?.contentOrNull == thread.id }
+            if (pending) Muted("응답 미확인 전송이 있어요. 전송·처리 이력에서 확인해 주세요.")
+            if (thread.kind == ThreadKind.REQUEST && thread.open == true && thread.retracted != true) {
+                if (state.canEdit) Row {
+                    TextButton(enabled = state.online && !busy && !pending, onClick = { action = "complete"; sentence = "이 요청을 완료했습니다: ${thread.content}".take(2000) }) { Text("완료") }
+                    TextButton(enabled = state.online && !busy && !pending, onClick = { action = "deadline"; sentence = "이 요청의 기한을 ${date}로 변경합니다: ${thread.content}".take(2000) }) { Text("기한 변경") }
                 }
-                TextButton(enabled = !busy, onClick = { localAction { controller.hide(thread) } }) { Text("지금에서 숨기기") }
-                Muted("이 기기에서만 숨겨요. 업무를 취소하지 않아요.")
-                if (state.canEdit && action != null) {
-                    if (action == "deadline") OutlinedTextField(date, { date = it; sentence = "이 요청의 기한을 ${it}로 변경합니다: ${thread.content}".take(2000) }, label = { Text("새 기한 (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(sentence, { sentence = it.take(2000) }, label = { Text("기록할 문장 확인") }, modifier = Modifier.fillMaxWidth())
-                    val deadline = runCatching { LocalDate.parse(date) }.getOrNull()
-                    Button(enabled = state.online && !busy && !pending && sentence.isNotBlank() && (action != "deadline" || deadline != null), onClick = {
-                        busy = true
-                        scope.launch {
-                            try { controller.submit(thread, action!!, sentence, deadline); action = null; onChanged(); error = controller.uiState.value.problem?.let(::nowProblem) }
-                            catch (cancel: CancellationException) { throw cancel }
-                            catch (_: Exception) { error = "전송을 확인하지 못했어요. 전송·처리 이력에서 확인해 주세요." }
-                            finally { busy = false }
-                        }
-                    }) { Text(if (busy) "전송 중" else "확인하고 기록") }
-                }
+                TextButton(enabled = !busy, onClick = { localAction { controller.snooze(thread, controller.tomorrow()) } }) { Text("내일 오전 9시에 다시 보기") }
+                OutlinedTextField(custom, { custom = it }, label = { Text("다시 볼 시각 (YYYY-MM-DD HH:mm)") }, modifier = Modifier.fillMaxWidth())
+                val customTime = runCatching { LocalDateTime.parse(custom, DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withResolverStyle(java.time.format.ResolverStyle.STRICT)).atZone(state.snapshot!!.zone).toInstant() }.getOrNull()
+                TextButton(enabled = customTime != null && !busy, onClick = {
+                    localAction { controller.snooze(thread, customTime!!) }
+                }) { Text("지정한 시각까지 미루기") }
+                Muted("${state.snapshot?.zone} 기준 · 실제 기한은 바뀌지 않아요")
             }
-            error?.let { Text(it) }
+            TextButton(enabled = !busy, onClick = { localAction { controller.hide(thread) } }) { Text("지금에서 숨기기") }
+            Muted("이 기기에서만 숨겨요. 업무를 취소하지 않아요.")
+            if (state.canEdit && action != null) {
+                if (action == "deadline") OutlinedTextField(date, { date = it; sentence = "이 요청의 기한을 ${it}로 변경합니다: ${thread.content}".take(2000) }, label = { Text("새 기한 (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(sentence, { sentence = it.take(2000) }, label = { Text("기록할 문장 확인") }, modifier = Modifier.fillMaxWidth())
+                val deadline = runCatching { LocalDate.parse(date) }.getOrNull()
+                Button(enabled = state.online && !busy && !pending && sentence.isNotBlank() && (action != "deadline" || deadline != null), onClick = {
+                    busy = true
+                    scope.launch {
+                        try { controller.submit(thread, action!!, sentence, deadline); action = null; onChanged(); error = controller.uiState.value.problem?.let(::nowProblem) }
+                        catch (cancel: CancellationException) { throw cancel }
+                        catch (_: Exception) { error = "전송을 확인하지 못했어요. 전송·처리 이력에서 확인해 주세요." }
+                        finally { busy = false }
+                    }
+                }) { Text(if (busy) "전송 중" else "확인하고 기록") }
+            }
         }
+        error?.let { Text(it) }
     }
 }
 

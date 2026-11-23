@@ -46,10 +46,13 @@ import io.github.junhcha.weaver.phone.areaDirectory
 import io.github.junhcha.weaver.phone.partyDirectory
 import io.github.junhcha.weaver.phone.timeline
 
-/** First level of the 사람 / 영역 tabs: pick one subject. */
+/** First level of the 영역 tab and the 로그 tab's 사람 filter: pick one subject. */
 @Composable
-internal fun SubjectList(title: String, entries: List<Pair<PhoneTag, Int>>, emptyText: String, onSelect: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().testTag("subject-list")) {
+internal fun SubjectList(
+    title: String, entries: List<Pair<PhoneTag, Int>>, emptyText: String, modifier: Modifier = Modifier.fillMaxSize(),
+    onSelect: (String) -> Unit,
+) {
+    Column(modifier.testTag("subject-list")) {
         ScreenTitle(title)
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp)) {
             if (entries.isEmpty()) item { Muted(emptyText) }

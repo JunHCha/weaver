@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import io.github.junhcha.weaver.inbox.InboxDatabase
@@ -52,7 +51,8 @@ class ReviewPanelTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory = object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker =
-                object : Worker(appContext, workerParameters) {
+                if (workerClassName == RejectWorker::class.java.name) RejectWorker(appContext, workerParameters)
+                else object : Worker(appContext, workerParameters) {
                     override fun doWork(): Result = Result.success()
                 }
         }
@@ -153,6 +153,114 @@ class ReviewPanelTest {
         compose.onNodeWithText("거절").assertIsNotEnabled()
     }
 
+    @Test fun topRejectSchedulesWithoutAnswers() {
+        val (context, p) = prepare()
+        render { ReviewPanel(p.packageId) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-reject").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("직접 답변 1").assertExists()
+        compose.onNodeWithTag("review-reject").performScrollTo().assertIsEnabled().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.pendingRejects(context).isNotEmpty() }
+        assertEquals(p.packageId, ReviewRuntime.pendingRejects(context).single().packageId)
+        assertTrue(ReviewRuntime.records(context).isEmpty())
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-undo").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(listOf(p.packageId), ReviewRuntime.flushDueRejects(context, System.currentTimeMillis() + 6_000))
+        val verdict = ReviewRuntime.records(context).single().verdict
+        assertEquals(Verdict.Action.REJECT, verdict.action)
+        assertTrue(verdict.answers.isEmpty())
+        assertTrue(ReviewRuntime.pendingRejects(context).isEmpty())
+    }
+
+    @Test fun rejectScheduledFromBarePanelIsSentByWorkManager() {
+        val (context, p) = prepare()
+        render { ReviewPanel(p.packageId) {} }
+        // Only a bare panel is on screen: no ApprovalSection exists to send the reject.
+        ReviewRuntime.scheduleReject(context, p, System.currentTimeMillis() - 4_900)
+        val works = WorkManager.getInstance(context).getWorkInfosForUniqueWork("review-reject-${p.packageId}").get()
+        assertEquals(WorkInfo.State.ENQUEUED, works.single().state)
+        assertTrue(ReviewRuntime.records(context).isEmpty())
+        Thread.sleep(200)
+        WorkManagerTestInitHelper.getTestDriver(context)!!.setInitialDelayMet(works.single().id)
+        assertEquals(Verdict.Action.REJECT, ReviewRuntime.records(context).single().verdict.action)
+        assertTrue(ReviewRuntime.pendingRejects(context).isEmpty())
+    }
+
+    @Test fun cancelAfterFireAtIsRefusedAndRejectStillSent() {
+        val (context, p) = prepare()
+        ReviewRuntime.scheduleReject(context, p, System.currentTimeMillis() - 4_900)
+        Thread.sleep(200)
+        assertFalse(ReviewRuntime.cancelReject(context, p.packageId))
+        assertEquals(listOf(p.packageId), ReviewRuntime.pendingRejects(context).map { it.packageId })
+        assertEquals(listOf(p.packageId), ReviewRuntime.flushDueRejects(context))
+        assertEquals(Verdict.Action.REJECT, ReviewRuntime.records(context).single().verdict.action)
+    }
+
+    @Test fun cancelBeforeFireAtCancelsWork() {
+        val (context, p) = prepare()
+        ReviewRuntime.scheduleReject(context, p)
+        assertTrue(ReviewRuntime.cancelReject(context, p.packageId))
+        val works = WorkManager.getInstance(context).getWorkInfosForUniqueWork("review-reject-${p.packageId}").get()
+        assertEquals(WorkInfo.State.CANCELLED, works.single().state)
+    }
+
+    @Test fun pendingRejectOfAnotherRevisionDoesNotHideQuestions() {
+        val (context, p) = prepare()
+        ReviewRuntime.scheduleReject(context, p.copy(revision = p.revision + 1))
+        render { ReviewPanel(p.packageId) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("직접 답변 1").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithTag("review-undo").assertCountEquals(0)
+        compose.onAllNodesWithText("거절 예정", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun undoInsidePanelKeepsScreenAndDraft() {
+        val (_, p) = prepare()
+        var submitted = 0
+        render { ReviewPanel(p.packageId, onSubmitted = { submitted++ }) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-reject").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("요약 본문").performScrollTo().performTextReplacement("쓰던 본문")
+        compose.onNodeWithTag("review-reject").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-undo").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(1, submitted)
+        compose.onNodeWithTag("review-undo").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-reject").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(1, submitted)
+        compose.onNodeWithText("쓰던 본문").assertExists()
+    }
+
+    @Test fun undoCancelsPendingReject() {
+        val (context, p) = prepare()
+        ReviewRuntime.scheduleReject(context, p)
+        render { ReviewPanel(p.packageId) {} }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-undo").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-undo").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ReviewRuntime.pendingRejects(context).isEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-reject").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun failedSendKeepsPendingRejectUntilALaterFlush() {
+        val (context, p) = prepare()
+        // A different verdict already queued for this revision makes the reject's queue() throw.
+        ReviewRuntime.submit(context, p, ReviewDraft.verdict(p, p.questions.map { it.choices[0] }, Verdict.Action.APPROVE, p.draftBody, ""))
+        ReviewRuntime.scheduleReject(context, p)
+        val now = System.currentTimeMillis() + 6_000
+        assertTrue(ReviewRuntime.flushDueRejects(context, now).isEmpty())
+        assertEquals(listOf(p.packageId), ReviewRuntime.pendingRejects(context).map { it.packageId })
+        File(AppStorage.exchangeDir(context), "reviews").listFiles { f -> f.name.contains(".r${p.revision}.") }!!.forEach { it.delete() }
+        assertEquals(listOf(p.packageId), ReviewRuntime.flushDueRejects(context, now))
+        assertTrue(ReviewRuntime.pendingRejects(context).isEmpty())
+        assertEquals(Verdict.Action.REJECT, ReviewRuntime.records(context).single().verdict.action)
+    }
+
+    @Test fun staleRevisionDropsPendingReject() {
+        val (context, p) = prepare()
+        ReviewRuntime.scheduleReject(context, p)
+        val next = p.copy(revision = p.revision + 1)
+        val tree = context.getSharedPreferences("courier", Context.MODE_PRIVATE).getString("tree", "")!!
+        InboxDatabase(context).use { it.reconcile(listOf(next), emptyList(), emptySet(), 2L, tree, false) }
+        assertTrue(ReviewRuntime.flushDueRejects(context, System.currentTimeMillis() + 6_000).isEmpty())
+        assertTrue(ReviewRuntime.records(context).isEmpty())
+        assertTrue(ReviewRuntime.pendingRejects(context).isEmpty())
+    }
+
     @Test fun answersSurviveActivityRecreation() {
         val (context, p) = prepare()
         assertTrue(io.github.junhcha.weaver.pipeline.PipelineRuntime.snapshot(context).any { it.needsReview })
@@ -162,11 +270,8 @@ class ReviewPanelTest {
         val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
         model.refresh()
         compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
-        compose.onNodeWithTag("status-strip").performClick()
-        compose.onNodeWithContentDescription("You 노드").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
-        compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("approval-row-${p.packageId}").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("approval-row-${p.packageId}").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText(p.questions.single().question).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(choice).performScrollTo().performClick()
         compose.onNodeWithText("✓ $choice").assertExists()
@@ -174,154 +279,57 @@ class ReviewPanelTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithText("✓ $choice").fetchSemanticsNodes().isNotEmpty() }
     }
 
-    @Test fun inboxNotificationOpensTheMapYouNodeAndBackReturnsToNowWithoutReplay() {
-        val (_, p) = prepare()
-        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
-        model.refresh()
-        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
-        compose.onNodeWithTag("now-screen").assertExists()
+    private fun pipelineModel() =
+        androidx.lifecycle.ViewModelProvider(compose.activity)[PipelineViewModel::class.java]
 
-        // Open settings first: the notification must close it and land on the map.
-        compose.onNodeWithText("수집·설정").performClick()
-        compose.onNodeWithText("‹ 지금").assertExists()
-        val intent = Intent(InboxRuntime.OPEN_INBOX)
-        val original = compose.activity.intent
-        try {
-            compose.runOnUiThread {
-                io.github.junhcha.weaver.MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java)
-                    .apply { isAccessible = true }.invoke(compose.activity, intent)
-            }
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("내 데이터 흐름").assertExists()
-            compose.onNodeWithTag("now-screen").assertDoesNotExist()
-            // The You node's panel opens the review document.
-            compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
-            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
-            compose.waitUntil(10_000) { compose.onAllNodesWithText(p.questions.single().question).fetchSemanticsNodes().isNotEmpty() }
-
-            // Back all the way out lands on 지금, and recreation does not replay the notification.
-            var guard = 0
-            while (compose.onAllNodesWithTag("now-screen").fetchSemanticsNodes().isEmpty() && guard++ < 6) {
-                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-                compose.waitForIdle()
-            }
-            compose.onNodeWithTag("now-screen").assertExists()
-            // The activity dropped its one-shot flags and the intent action, so nothing can replay the tap.
-            val flag = io.github.junhcha.weaver.MainActivity::class.java.getDeclaredField("showInbox")
-                .apply { isAccessible = true }.get(compose.activity) as androidx.compose.runtime.State<*>
-            assertFalse(flag.value as Boolean)
-            assertEquals(null, compose.activity.intent.action)
-        } finally {
-            compose.runOnUiThread { compose.activity.intent = original }
-        }
-    }
-
-    private fun openMapReview(p: ReviewPackage): Float {
-        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
-        model.refresh()
-        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
-        compose.onNodeWithTag("status-strip").performClick()
-        compose.onNodeWithContentDescription("You 노드").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
-        compose.onNodeWithTag("node-panel").performTouchInput { swipeUp() }
-        compose.onNodeWithText("승인하러 가기").performScrollTo()
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.waitForIdle()
-        val scroll = panelScroll()
-        compose.onNodeWithText("승인하러 가기").performClick()
+    /** Opens the review from its approval row on 지금. */
+    private fun openNowReview(p: ReviewPackage) {
+        pipelineModel().refresh()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("approval-row-${p.packageId}").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("approval-row-${p.packageId}").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-screen").fetchSemanticsNodes().isNotEmpty() &&
             compose.onAllNodesWithText(p.reviewTitle()).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("내 데이터 흐름").assertDoesNotExist()
-        compose.onNodeWithTag("node-panel").assertDoesNotExist()
-        return scroll
+        compose.onNodeWithTag("now-screen").assertDoesNotExist()
     }
 
-    private fun panelScroll(): Float = compose.onNodeWithTag("node-panel").fetchSemanticsNode()
-        .config[SemanticsProperties.VerticalScrollAxisRange].value()
-
-    @Test fun dedicatedReviewSystemAndTopBackRestoreSelectedNodeExpansionAndScroll() {
+    @Test fun dedicatedReviewSystemAndTopBackReturnToNowAndSurviveRecreation() {
         val (_, p) = prepare { it.copy(questions = emptyList()) }
-        val originalScroll = openMapReview(p)
+        openNowReview(p)
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
-        compose.onNodeWithText("단계 시각 접기").assertExists()
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.waitForIdle()
-        val scroll = panelScroll()
-        assertEquals(originalScroll, scroll, 1f)
-        assertTrue("The expanded panel must restore its scrolled position", scroll > 0f)
-        compose.waitUntil(10_000) { compose.onNodeWithText("승인하러 가기").isDisplayed() }
-        compose.onNodeWithText("승인하러 가기").performClick()
+        compose.onNodeWithTag("now-screen").assertExists()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("approval-row-${p.packageId}").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("approval-row-${p.packageId}").performClick()
         compose.onNodeWithTag("review-screen").assertExists()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("review-screen").assertExists()
-        compose.onNodeWithText("‹ 데이터 흐름").performClick()
-        compose.onNodeWithText("단계 시각 접기").assertExists()
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.waitForIdle()
-        assertEquals(scroll, panelScroll(), 1f)
-        compose.waitUntil(10_000) { compose.onNodeWithText("승인하러 가기").isDisplayed() }
-    }
-
-    @Test
-    @Config(sdk = [36], qualifiers = "w1000dp-h600dp-land-xhdpi")
-    fun wideReviewBackRestoresSelectedNodeExpansionAndScroll() =
-        dedicatedReviewSystemAndTopBackRestoreSelectedNodeExpansionAndScroll()
-
-    @Test fun reviewBackPreservesTheOriginPhoneTab() {
-        prepare { it.copy(questions = emptyList()) }
-        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[io.github.junhcha.weaver.pipeline.PipelineViewModel::class.java]
-        model.refresh()
-        compose.waitUntil(10_000) { model.state.value.items.any { it.needsReview } }
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
-        val originalIntent = compose.activity.intent
-        try {
-            compose.runOnUiThread {
-                MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java)
-                    .apply { isAccessible = true }.invoke(compose.activity, Intent(InboxRuntime.OPEN_INBOX))
-            }
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("단계 시각 보기").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("단계 시각 보기").performScrollTo().performClick()
-            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
-            compose.onNodeWithTag("review-screen").assertExists()
-            compose.onNodeWithText("‹ 데이터 흐름").performClick()
-            compose.onNodeWithText("닫기").performScrollTo().performClick()
-            compose.onNodeWithText("‹ 지금").performClick()
-            compose.onNodeWithTag("tab-PEOPLE").assertIsSelected()
-        } finally {
-            compose.runOnUiThread { compose.activity.intent = originalIntent }
-        }
+        compose.onNodeWithText("‹ 지금").performClick()
+        compose.onNodeWithTag("now-screen").assertExists()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("approval-row-${p.packageId}").fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun submitFromDestination(action: Verdict.Action) {
         val (context, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
+        openNowReview(p)
         if (action == Verdict.Action.EDIT)
             compose.onNodeWithText("요약 본문").performTextReplacement("전용 화면에서 수정한 요약")
         compose.onNodeWithText("최종 검토").performScrollTo().performClick()
         val label = when (action) {
             Verdict.Action.APPROVE -> "승인"
-            Verdict.Action.EDIT -> "수정 제출"
-            Verdict.Action.REJECT -> "거절"
+            else -> "수정 제출"
         }
         compose.onNodeWithText(label).performScrollTo().performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("지금 승인할 항목이 없어요").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-screen").assertDoesNotExist()
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-screen").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("now-screen").assertExists()
+        compose.onNodeWithTag("approval-row-${p.packageId}").assertDoesNotExist()
         assertEquals(action, ReviewRuntime.records(context).single().verdict.action)
-        compose.onNodeWithText("닫기").performClick()
-        compose.onNodeWithContentDescription("Loom 노드").performClick()
-        compose.onNodeWithText("승인을 보냈어요 · Mac 반영 대기", substring = true).assertExists()
     }
 
-    @Test fun approveReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.APPROVE)
-    @Test fun editReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.EDIT)
-    @Test fun rejectReturnsToUpdatedMap() = submitFromDestination(Verdict.Action.REJECT)
+    @Test fun approveReturnsToNowWithoutRow() = submitFromDestination(Verdict.Action.APPROVE)
+    @Test fun editReturnsToNowWithoutRow() = submitFromDestination(Verdict.Action.EDIT)
 
-    // Stall only the map refresh: verdict IO and its durable queue continue to run normally.
-    private fun pauseMapRefresh(): Pair<PipelineViewModel, Mutex> {
-        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[PipelineViewModel::class.java]
+    // Stall only the refresh: verdict IO and its durable queue continue to run normally.
+    private fun pauseRefresh(): Pair<PipelineViewModel, Mutex> {
+        val model = pipelineModel()
         val mutex = PipelineViewModel::class.java.getDeclaredField("mutex")
             .apply { isAccessible = true }.get(model) as Mutex
         runBlocking { mutex.lock() }
@@ -336,63 +344,60 @@ class ReviewPanelTest {
         compose.waitForIdle()
     }
 
-    @Test fun failedMapRefreshStillReturnsAfterSubmission() {
+    @Test fun failedRefreshStillReturnsAfterSubmission() {
         val (_, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
-        val (model, mutex) = pauseMapRefresh()
+        openNowReview(p)
+        val (model, mutex) = pauseRefresh()
         try {
             submitApproval()
             // Deliver the same error state that a failed refresh publishes, without corrupting user storage.
             @Suppress("UNCHECKED_CAST")
             val state = PipelineViewModel::class.java.getDeclaredField("mutable")
                 .apply { isAccessible = true }.get(model) as MutableStateFlow<PipelineScreenState>
-            compose.runOnUiThread { state.value = state.value.copy(error = "합성 지도 갱신 실패") }
+            compose.runOnUiThread { state.value = state.value.copy(error = "합성 갱신 실패") }
             compose.onNodeWithTag("review-screen").assertDoesNotExist()
-            compose.onNodeWithText("내 데이터 흐름").assertExists()
-            compose.onNodeWithText("합성 지도 갱신 실패").assertExists()
+            compose.onNodeWithTag("now-screen").assertExists()
         } finally {
             mutex.unlock()
         }
     }
 
-    @Test fun stalledMapRefreshTimesOutAndDoesNotCloseAReopenedReview() {
+    @Test fun stalledRefreshTimesOutAndReturnsToNow() {
         val (_, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
-        val (_, mutex) = pauseMapRefresh()
+        openNowReview(p)
+        val (_, mutex) = pauseRefresh()
         try {
             submitApproval()
+            compose.onNodeWithTag("review-screen").assertExists()
             compose.mainClock.advanceTimeBy(3_500)
             compose.onNodeWithTag("review-screen").assertDoesNotExist()
-            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
-            compose.onNodeWithTag("review-screen").assertExists()
-            compose.mainClock.advanceTimeBy(4_000)
-            compose.onNodeWithTag("review-screen").assertExists()
+            compose.onNodeWithTag("now-screen").assertExists()
         } finally {
             mutex.unlock()
         }
     }
 
-    @Test fun leavingPendingRefreshDoesNotCloseTheSamePackageOnReentry() {
+    @Test fun leavingPendingRefreshDoesNotCloseLaterScreens() {
         val (_, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
-        val (model, mutex) = pauseMapRefresh()
+        openNowReview(p)
+        val (model, mutex) = pauseRefresh()
         try {
             submitApproval()
-            compose.onNodeWithText("‹ 데이터 흐름").performClick()
-            compose.onNodeWithText("승인하러 가기").performScrollTo().performClick()
-            compose.onNodeWithTag("review-screen").assertExists()
+            compose.onNodeWithText("‹ 지금").performClick()
+            compose.onNodeWithTag("now-screen").assertExists()
+            compose.onNodeWithText("수집·설정").performClick()
         } finally {
             mutex.unlock()
         }
         compose.waitUntil(10_000) { model.state.value.items.none { it.packageId == p.packageId && it.needsReview } }
         compose.mainClock.advanceTimeBy(3_500)
-        compose.onNodeWithTag("review-screen").assertExists()
+        compose.onNodeWithText("‹ 지금").assertExists()
     }
 
     @Test fun submittedRefreshWaitSurvivesActivityRecreationAndStillReturns() {
         val (_, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
-        val (_, mutex) = pauseMapRefresh()
+        openNowReview(p)
+        val (_, mutex) = pauseRefresh()
         try {
             submitApproval()
             compose.onNodeWithTag("review-screen").assertExists()
@@ -400,7 +405,7 @@ class ReviewPanelTest {
             compose.onNodeWithTag("review-screen").assertExists()
             compose.mainClock.advanceTimeBy(3_500)
             compose.onNodeWithTag("review-screen").assertDoesNotExist()
-            compose.onNodeWithText("내 데이터 흐름").assertExists()
+            compose.onNodeWithTag("now-screen").assertExists()
         } finally {
             mutex.unlock()
         }
@@ -408,7 +413,7 @@ class ReviewPanelTest {
 
     @Test fun submittingConsumesSystemBackAndDisablesTopBackUntilQueued() {
         val (context, p) = prepare { it.copy(questions = emptyList()) }
-        openMapReview(p)
+        openNowReview(p)
         compose.onNodeWithText("최종 검토").performScrollTo().performClick()
         val acquired = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -421,16 +426,16 @@ class ReviewPanelTest {
         try {
             assertTrue(acquired.await(10, TimeUnit.SECONDS))
             compose.onNodeWithText("승인").performScrollTo().performClick()
-            compose.onNodeWithText("‹ 데이터 흐름").assertIsNotEnabled().performClick()
+            compose.onNodeWithText("‹ 지금").assertIsNotEnabled().performClick()
             compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithTag("review-screen").assertExists()
         } finally {
             release.countDown()
             blocker.join(10_000)
         }
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("지금 승인할 항목이 없어요").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-screen").fetchSemanticsNodes().isEmpty() }
         assertEquals(1, ReviewRuntime.records(context).size)
-        compose.onNodeWithTag("review-screen").assertDoesNotExist()
+        compose.onNodeWithTag("now-screen").assertExists()
     }
 
     @Test fun missingPackageShowsReadErrorAndKeepsApprovalDisabled() {

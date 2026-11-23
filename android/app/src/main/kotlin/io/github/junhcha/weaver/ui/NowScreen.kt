@@ -1,7 +1,6 @@
 package io.github.junhcha.weaver.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.phone.Direction
 import io.github.junhcha.weaver.phone.PhoneThread
@@ -32,18 +30,19 @@ import io.github.junhcha.weaver.phone.SeoulZone
 import io.github.junhcha.weaver.phone.StatusCounts
 import java.time.Instant
 
-/** "지금": only what needs deciding today. The pipeline map shrinks to the status strip; tapping it opens the map. */
+/** "지금": only what needs deciding today. The status strip only reports counts. */
 @Composable
 internal fun NowScreen(
     view: NowView?,
     counts: StatusCounts,
     now: Instant,
     connected: Boolean,
-    onOpenMap: () -> Unit,
     onOpenSettings: () -> Unit,
     zone: java.time.ZoneId = SeoulZone,
     onThread: (PhoneThread) -> Unit = {},
     handling: (@Composable () -> Unit)? = null,
+    onReview: (String) -> Unit = {},
+    counterparts: Map<String, String> = emptyMap(),
 ) {
     val today = now.atZone(zone).toLocalDate()
     Column(Modifier.fillMaxSize().testTag("now-screen")) {
@@ -52,12 +51,13 @@ internal fun NowScreen(
             Muted("${today.shortDate()} (${today.dayOfWeekKo()})", Modifier.weight(1f).padding(start = 8.dp))
             TextButton(onClick = onOpenSettings, Modifier.defaultMinSize(minHeight = 48.dp)) { Text("수집·설정") }
         }
-        StatusStrip(counts, onOpenMap)
+        StatusStrip(counts)
         handling?.invoke()
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            ApprovalSection(onReview, counterparts, zone)
             when {
                 view == null -> Muted("불러오는 중")
                 view.isEmpty -> Muted(if (connected) "지금 처리할 일이 없어요" else "연결된 데이터 없음")
@@ -90,10 +90,9 @@ internal fun NowScreen(
 }
 
 @Composable
-private fun StatusStrip(counts: StatusCounts, onOpen: () -> Unit) {
+private fun StatusStrip(counts: StatusCounts) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("status-strip")
-            .clickable(role = Role.Button, onClickLabel = "데이터 흐름 지도 열기", onClick = onOpen),
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("status-strip"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         StatusCell("검토 대기", counts.waitingReview, Modifier.weight(1f))

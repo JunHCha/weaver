@@ -13,8 +13,9 @@ class ReviewTest {
     private val id = "pkg_01ARZ3NDEKTSV4RRFFQ69G5FA0"
     private fun review(): ReviewPackage = CourierClient.decoded<ReviewPackage>(
         File(System.getProperty("weaver.schemaDir"), "examples/ReviewPackage.json").readText())
-    private fun verdict(p: ReviewPackage, action: Verdict.Action) = ReviewDraft.verdict(
-        p, p.questions.map { it.choices.first() }, action, "수정 본문", "다시 정리해 주세요")
+    private fun verdict(p: ReviewPackage, action: Verdict.Action) =
+        if (action == Verdict.Action.REJECT) ReviewDraft.reject(p) else ReviewDraft.verdict(
+            p, p.questions.map { it.choices.first() }, action, "수정 본문", "다시 정리해 주세요")
 
     private class Folder : CourierFolder {
         val files = mutableMapOf<String, String>()
@@ -73,7 +74,7 @@ class ReviewTest {
         assertTrue(ReviewStore(root).synchronize(folder))
         assertEquals(v, ReviewStore(root).records().single().verdict)
         assertThrows(IllegalStateException::class.java) {
-            ReviewStore(root).queue(folder, p, v.copy(action = Verdict.Action.APPROVE))
+            ReviewStore(root).queue(folder, p, verdict(p, Verdict.Action.APPROVE))
         }
         val name = "decisions/${p.packageId}.r${p.revision}.json"
         folder.files[name] = "different"
@@ -122,5 +123,12 @@ class ReviewTest {
     @Test fun serverGeneratedPackageIdsAreAccepted() {
         val folder = Folder(); val p = review().copy(packageId = "pkg_0123456789abcdef0123456789abcdef"); folder.put(p)
         assertEquals(p, ReviewStore(temporary.newFolder()).latest(folder, p.packageId))
+    }
+
+    @Test fun rejectMustCarryNoAnswers() {
+        val folder = Folder(); val p = review(); folder.put(p)
+        val store = ReviewStore(temporary.newFolder())
+        val bad = ReviewDraft.reject(p).copy(answers = p.questions.map { it.choices.first() })
+        assertThrows(IllegalArgumentException::class.java) { store.queue(folder, p, bad) }
     }
 }

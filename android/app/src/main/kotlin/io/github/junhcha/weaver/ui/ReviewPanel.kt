@@ -6,11 +6,14 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.review.*
@@ -25,32 +28,37 @@ fun ReviewPanel(
     onSubmitted: () -> Unit = {},
     onBusyChanged: (Boolean) -> Unit = {},
     showCloseButton: Boolean = true,
+    wide: Boolean = false,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val changes by InboxRuntime.changes.collectAsState()
-    var snapshot by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var snapshot by rememberSaveable(id, key = "review-snapshot") { mutableStateOf<String?>(null) }
     val p = remember(snapshot) { snapshot?.let { WeaverCodec.json.decodeFromString<ReviewPackage>(it) } }
-    var answers by rememberSaveable(id) { mutableStateOf(arrayListOf<String>()) }
-    var body by rememberSaveable(id) { mutableStateOf("") }
-    var feedback by rememberSaveable(id) { mutableStateOf("") }
-    var finalReview by rememberSaveable(id) { mutableStateOf(false) }
+    var answers by rememberSaveable(id, key = "review-answers") { mutableStateOf(arrayListOf<String>()) }
+    var body by rememberSaveable(id, key = "review-body") { mutableStateOf("") }
+    var feedback by rememberSaveable(id, key = "review-feedback") { mutableStateOf("") }
+    var finalReview by rememberSaveable(id, key = "review-finalReview") { mutableStateOf(false) }
     var latest by remember(id) { mutableStateOf<ReviewPackage?>(null) }
     var record by remember(id) { mutableStateOf<ReviewRecord?>(null) }
     var readError by remember(id) { mutableStateOf<String?>(null) }
     var error by remember(id) { mutableStateOf<String?>(null) }
     val preferences = remember(context) { context.getSharedPreferences("review-settings", android.content.Context.MODE_PRIVATE) }
     var vault by remember { mutableStateOf(preferences.getString("vault", "").orEmpty()) }
-    var showLinks by rememberSaveable(id) { mutableStateOf(false) }
-    var showSource by rememberSaveable(id) { mutableStateOf(false) }
+    var showLinks by rememberSaveable(id, key = "review-showLinks") { mutableStateOf(false) }
+    var showSource by rememberSaveable(id, key = "review-showSource") { mutableStateOf(false) }
     var busy by remember(id) { mutableStateOf(false) }
+    var pendingReject by remember(id) { mutableStateOf<PendingReject?>(null) }
+    var undoExpired by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id, changes) {
         do {
             val (result, records) = withContext(Dispatchers.IO) {
                 runCatching { ReviewRuntime.open(context, id) } to ReviewRuntime.records(context)
             }
             val reviewed = snapshot?.let { WeaverCodec.json.decodeFromString<ReviewPackage>(it) } ?: result.getOrNull()
+            pendingReject = withContext(Dispatchers.IO) { ReviewRuntime.pendingRejects(context) }
+                .firstOrNull { it.packageId == id && it.revision == reviewed?.revision }
             record = records.firstOrNull { it.verdict.packageId == id && it.verdict.revision == reviewed?.revision }
             result.onSuccess { fresh ->
                 latest = fresh; readError = null
@@ -63,16 +71,40 @@ fun ReviewPanel(
             delay(5_000)
         } while (isActive)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LaunchedEffect(pendingReject) {
+        val entry = pendingReject
+        undoExpired = false
+        if (entry != null) {
+            delay((entry.fireAt - System.currentTimeMillis()).coerceAtLeast(0))
+            undoExpired = true
+        }
+    }
+    val content: @Composable ColumnScope.() -> Unit = {
         if (showCloseButton) OutlinedButton(onClick = onClose) { Text("검토 닫기") }
         if (p != null) {
             val stale = latest != p
             val enabled = !busy && !stale && record == null
             Text(p.reviewTitle(), style = MaterialTheme.typography.titleLarge)
+            if (pendingReject != null && record == null) {
+                OutlinedButton(enabled = !undoExpired, modifier = Modifier.testTag("review-undo"), onClick = {
+                    scope.launch {
+                        val undone = withContext(Dispatchers.IO) { ReviewRuntime.cancelReject(context, id) }
+                        if (undone) pendingReject = null else undoExpired = true
+                    }
+                }) { Text(if (undoExpired) "거절 전송 중" else "거절 예정 · 되돌리기") }
+            } else OutlinedButton(enabled = enabled, modifier = Modifier.testTag("review-reject"), onClick = {
+                busy = true; onBusyChanged(true); error = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { runCatching { ReviewRuntime.scheduleReject(context, p) } }
+                    result.onSuccess { pendingReject = it; onSubmitted() }.onFailure { error = it.message ?: "거절 예약 실패" }
+                    busy = false
+                    onBusyChanged(false)
+                }
+            }) { Text("거절") }
             Text("요약 · 바로 수정할 수 있습니다", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(value = body, onValueChange = { body = it }, enabled = enabled,
                 label = { Text("요약 본문") }, modifier = Modifier.fillMaxWidth())
-            if (p.sourceText.isNotBlank()) {
+            if (!wide && p.sourceText.isNotBlank()) {
                 TextButton(onClick = { showSource = !showSource }) { Text(if (showSource) "전체 원문 접기" else "전체 원문 보기") }
                 if (showSource) Text(p.sourceText)
             }
@@ -92,7 +124,9 @@ fun ReviewPanel(
                     OutlinedButton(onClick = { ReviewRuntime.retry(context) }) { Text("재시도") }
             }
             if (stale && record == null) Text("최신 문서를 다시 확인하세요")
-            if (!finalReview) {
+            if (pendingReject != null && record == null) {
+                Text("5초 뒤 답변 없이 거절을 보냅니다.", style = MaterialTheme.typography.bodySmall)
+            } else if (!finalReview) {
                 Text("확인할 질문", style = MaterialTheme.typography.titleMedium)
                 if (p.questions.isEmpty()) Text("확인할 질문 없음")
                 p.questions.forEachIndexed { index, q ->
@@ -126,9 +160,8 @@ fun ReviewPanel(
                 OutlinedTextField(value = feedback, onValueChange = { feedback = it }, enabled = enabled,
                     label = { Text("추가 피드백 (선택)") }, modifier = Modifier.fillMaxWidth())
                 Text("모든 답변과 피드백을 한 번에 보냅니다.", style = MaterialTheme.typography.bodySmall)
-                val actions = listOf(Verdict.Action.APPROVE, Verdict.Action.REJECT)
-                actions.forEach { requestedAction ->
-                    val action = if (requestedAction == Verdict.Action.APPROVE && body != p.draftBody) Verdict.Action.EDIT else requestedAction
+                run {
+                    val action = if (body != p.draftBody) Verdict.Action.EDIT else Verdict.Action.APPROVE
                     OutlinedButton(enabled = enabled, onClick = {
                         busy = true; onBusyChanged(true); error = null
                         scope.launch {
@@ -141,16 +174,24 @@ fun ReviewPanel(
                             busy = false
                             onBusyChanged(false)
                         }
-                    }) { Text(when (requestedAction) {
-                        Verdict.Action.APPROVE -> if (body != p.draftBody) "수정 제출" else "승인"; Verdict.Action.EDIT -> "수정 제출"
-                        Verdict.Action.REJECT -> "거절"
-                    }) }
+                    }) { Text(if (action == Verdict.Action.EDIT) "수정 제출" else "승인") }
                 }
             }
         }
         if (record == null) readError?.let { Text(it) }
         error?.let { Text(it) }
     }
+    if (wide && p != null) {
+        // Summary, questions and actions on the left; the full source stays readable on the right.
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp).testTag("review-source"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("원문", style = MaterialTheme.typography.titleMedium)
+                if (p.sourceText.isBlank()) Text("원문이 포함되지 않은 문서입니다", style = MaterialTheme.typography.bodySmall)
+                else Text(p.sourceText)
+            }
+        }
+    } else Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
 

@@ -1,6 +1,7 @@
 package io.github.junhcha.weaver.review
 
 import android.content.Context
+import androidx.work.*
 import io.github.junhcha.weaver.courier.CourierFolder
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxRuntime
@@ -8,6 +9,7 @@ import io.github.junhcha.weaver.schema.ReviewPackage
 import io.github.junhcha.weaver.schema.Verdict
 import io.github.junhcha.weaver.storage.AppStorage
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /** IO entry points; serializes UI actions and WorkManager with Courier's process lock. */
 object ReviewRuntime {
@@ -25,6 +27,51 @@ object ReviewRuntime {
         InboxRuntime.submitted(context, p.packageId, p.revision)
         CourierRuntime.kick(context)
         InboxRuntime.refresh(context)
+    }
+    private const val REJECT_DELAY_MS = 5_000L
+    private fun pending(context: Context) = PendingRejects(File(AppStorage.exchangeDir(context), "reviews/pending-rejects.json"))
+    fun pendingRejects(context: Context): List<PendingReject> = synchronized(CourierRuntime.lock) { pending(context).all() }
+    private fun rejectWork(packageId: String) = "review-reject-$packageId"
+    /** Persists the pending reject and enqueues a job that sends it, so it fires without any screen showing. */
+    fun scheduleReject(context: Context, p: ReviewPackage, nowMs: Long = System.currentTimeMillis()): PendingReject =
+        synchronized(CourierRuntime.lock) {
+            PendingReject(p.packageId, p.revision, nowMs + REJECT_DELAY_MS).also { pending(context).schedule(it) }
+        }.also {
+            WorkManager.getInstance(context).enqueueUniqueWork(rejectWork(p.packageId), ExistingWorkPolicy.REPLACE,
+                OneTimeWorkRequestBuilder<RejectWorker>()
+                    .setInitialDelay((it.fireAt - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS).build())
+            InboxRuntime.refresh(context)
+        }
+    /** Undo; returns false (a no-op) once the undo window has passed, because the reject is then being sent. */
+    fun cancelReject(context: Context, packageId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val cancelled = synchronized(CourierRuntime.lock) {
+            val entry = pending(context).all().firstOrNull { it.packageId == packageId }
+            entry != null && entry.fireAt > nowMs && pending(context).cancel(packageId)
+        }
+        if (cancelled) WorkManager.getInstance(context).cancelUniqueWork(rejectWork(packageId))
+        InboxRuntime.refresh(context)
+        return cancelled
+    }
+    /**
+     * Sends due rejects. An entry is removed only once sent or obsolete (revision moved on, package unreadable);
+     * a failed send keeps it for the next flush.
+     */
+    fun flushDueRejects(context: Context, nowMs: Long = System.currentTimeMillis()): List<String> {
+        val sent = synchronized(CourierRuntime.lock) {
+            val queue = pending(context)
+            queue.due(nowMs).mapNotNull { entry ->
+                val p = runCatching { open(context, entry.packageId) }.getOrNull()
+                if (p == null || p.revision != entry.revision) {
+                    queue.remove(entry.packageId, entry.revision)
+                    return@mapNotNull null
+                }
+                if (runCatching { submit(context, p, ReviewDraft.reject(p)) }.isFailure) return@mapNotNull null
+                queue.remove(entry.packageId, entry.revision)
+                entry.packageId
+            }
+        }
+        InboxRuntime.refresh(context)
+        return sent
     }
     fun synchronize(context: Context, folder: CourierFolder): Boolean = synchronized(CourierRuntime.lock) {
         val store = store(context)
@@ -52,4 +99,13 @@ object ReviewRuntime {
     fun retarget(context: Context, from: String, to: String) = synchronized(CourierRuntime.lock) { store(context).retarget(from, to) }
 
     fun retry(context: Context) { CourierRuntime.kick(context) }
+}
+
+/** Sends due rejects in the background; entries whose send failed are retried. */
+class RejectWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+    override fun doWork(): Result {
+        ReviewRuntime.flushDueRejects(applicationContext)
+        val now = System.currentTimeMillis()
+        return if (ReviewRuntime.pendingRejects(applicationContext).any { it.fireAt <= now }) Result.retry() else Result.success()
+    }
 }

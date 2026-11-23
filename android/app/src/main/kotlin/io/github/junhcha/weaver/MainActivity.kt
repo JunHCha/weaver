@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import io.github.junhcha.weaver.courier.CourierRuntime
 import io.github.junhcha.weaver.inbox.InboxRuntime
 import io.github.junhcha.weaver.phone.PhoneReadModels
+import io.github.junhcha.weaver.review.ReviewRuntime
 import io.github.junhcha.weaver.shepherd.ShepherdRuntime
 import io.github.junhcha.weaver.ui.HomeScreen
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         CourierRuntime.schedule(this)
         lifecycleScope.launch(Dispatchers.IO) { ShepherdRuntime.schedule(applicationContext) }
+        lifecycleScope.launch(Dispatchers.IO) { ReviewRuntime.flushDueRejects(applicationContext) }
         observer = ShepherdRuntime.observeForeground(this)
     }
 

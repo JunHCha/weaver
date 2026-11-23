@@ -1,0 +1,165 @@
+package io.github.junhcha.weaver.ui
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import io.github.junhcha.weaver.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+/** Home screen. Opens with any combination of denied permissions; nothing is asked at launch. */
+@Composable
+fun ToolsScreen(showPendingCalls: Boolean = false) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var granted by remember { mutableStateOf(Feature.entries.associateWith { it.isGranted(context) }) }
+    val refresh = {
+        granted = Feature.entries.associateWith { it.isGranted(context) }
+        scope.launch(Dispatchers.IO) { io.github.junhcha.weaver.shepherd.ShepherdRuntime.schedule(context) }
+    }
+    LifecycleResumeEffect(Unit) {
+        refresh()
+        onPauseOrDispose { }
+    }
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { refresh() }
+
+    WeaverTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .safeDrawingPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.home_subtitle), style = MaterialTheme.typography.bodyMedium)
+                ShepherdPanel(showPendingCalls)
+                // Settings owns the one calendar panel; a review opened here must not draw a second one.
+                CompositionLocalProvider(LocalCalendarHostedBySettings provides true) { InboxPanel() }
+                ConnectionPanel()
+                DiagnosticsPanel()
+                CourierPanel()
+                CalendarPanel(alwaysShow = true)
+                if (io.github.junhcha.weaver.BuildConfig.DEBUG) DebugCallBriefEntry()
+                Feature.entries.forEach { feature ->
+                    FeatureCard(
+                        feature = feature,
+                        granted = granted.getValue(feature),
+                        onRequest = {
+                            if (feature == Feature.SHEPHERD) {
+                                scope.launch(Dispatchers.IO) { io.github.junhcha.weaver.shepherd.ShepherdRuntime.activate(context) }
+                            }
+                            launcher.launch(feature.permissions().toTypedArray())
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeatureCard(feature: Feature, granted: Boolean, onRequest: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(feature.title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(feature.description), style = MaterialTheme.typography.bodySmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(if (granted) R.string.permission_granted else R.string.permission_denied),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                if (!granted) {
+                    OutlinedButton(onClick = onRequest) { Text(stringResource(R.string.permission_request)) }
+                }
+            }
+        }
+    }
+}
+
+/** Debug builds only: the call-briefing experiment is no longer a second launcher icon but an entry here. */
+@Composable
+private fun DebugCallBriefEntry() {
+    val context = LocalContext.current
+    OutlinedButton(
+        onClick = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent().setClassName(context.packageName, "io.github.junhcha.weaver.callbrief.CallBriefSetupActivity"),
+                )
+            }
+        },
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+    ) { Text("통화 브리핑 시험") }
+}
+
+
+@Composable
+private fun DiagnosticsPanel() {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    var summary by remember { mutableStateOf("충돌 기록을 읽는 중") }
+    var busy by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        summary = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            io.github.junhcha.weaver.diagnostics.CrashDiagnostics.store(context).lastSummary()
+                ?: "저장된 충돌 기록이 없어요"
+        }
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("진단", style = MaterialTheme.typography.titleMedium)
+            Text(summary)
+            OutlinedButton(enabled = !busy, onClick = {
+                busy = true
+                scope.launch {
+                    summary = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        try {
+                            if (!io.github.junhcha.weaver.transport.TransportRuntime.settings(context).paired) "서버 페어링이 필요해요"
+                            else {
+                                io.github.junhcha.weaver.diagnostics.CrashDiagnostics.send(context)
+                                if (io.github.junhcha.weaver.diagnostics.CrashDiagnostics.store(context).pending().isEmpty()) "충돌 기록을 보냈어요"
+                                else "다시 페어링한 뒤 보내 주세요"
+                            }
+                        } catch (_: Exception) { "보내지 못했어요. 기록은 보관 중이에요" }
+                    }
+                    busy = false
+                }
+            }) { Text("다시 보내기") }
+        }
+    }
+}

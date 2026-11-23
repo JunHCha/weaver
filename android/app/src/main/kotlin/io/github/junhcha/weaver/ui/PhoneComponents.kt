@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
@@ -57,7 +59,8 @@ internal fun PhoneChip(label: String, selected: Boolean, onClick: (() -> Unit)?,
     Surface(
         // Toggles are checkboxes with a state; the fixed 상대 chip is a plain label. 48dp touch target either way.
         modifier = modifier.heightIn(min = 48.dp).let {
-            if (onClick != null) it.toggleable(selected, role = Role.Checkbox, onValueChange = { onClick() }) else it
+            if (onClick != null) it.toggleable(selected, role = Role.Checkbox, onValueChange = { onClick() })
+                .semantics { stateDescription = if (selected) "선택됨" else "선택 안 됨" } else it
         },
         shape = shape,
         color = if (selected) WeaverTokens.indigo else WeaverTokens.surface,
