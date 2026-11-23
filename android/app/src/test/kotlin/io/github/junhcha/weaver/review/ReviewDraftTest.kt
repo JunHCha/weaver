@@ -28,4 +28,14 @@ class ReviewDraftTest {
         assertThrows(IllegalArgumentException::class.java) { ReviewDraft.verdict(p, listOf(" "), Verdict.Action.APPROVE, "", "") }
         assertThrows(IllegalArgumentException::class.java) { ReviewDraft.verdict(p, listOf("하나"), Verdict.Action.EDIT, " ", "") }
     }
+    @Test fun rejectNeedsNoAnswers() {
+        val two = p.copy(questions = p.questions + p.questions)
+        val v = ReviewDraft.reject(two)
+        assertEquals(Verdict.Action.REJECT, v.action)
+        assertTrue(v.answers.isEmpty())
+        assertNull(v.editedBody)
+        assertNull(v.feedback)
+        assertEquals(two.revision, v.revision)
+        assertThrows(IllegalArgumentException::class.java) { ReviewDraft.verdict(two, listOf("", ""), Verdict.Action.APPROVE, "", "") }
+    }
 }

@@ -10,4 +10,7 @@ object ReviewDraft {
         return Verdict(2, p.packageId, p.revision, action, answers,
             body.takeIf { action == Verdict.Action.EDIT }, feedback.takeIf { it.isNotBlank() && action != Verdict.Action.REJECT })
     }
+
+    /** Reject needs no answers; the server only counts answers for approve. */
+    fun reject(p: ReviewPackage): Verdict = Verdict(2, p.packageId, p.revision, Verdict.Action.REJECT, emptyList(), null, null)
 }

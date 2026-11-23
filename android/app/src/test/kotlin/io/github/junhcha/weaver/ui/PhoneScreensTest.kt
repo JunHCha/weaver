@@ -3,6 +3,7 @@ package io.github.junhcha.weaver.ui
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -44,11 +45,10 @@ class PhoneScreensTest {
 
     private val now: Instant = OffsetDateTime.parse("2026-11-18T09:00:00+09:00").toInstant()
     private val model: PhoneReadModel = SyntheticPhoneReadModel(Clock.fixed(now, ZoneId.of("UTC")))
-    private var mapOpened = 0
     private var settingsOpened = 0
 
     private fun show(counts: StatusCounts = StatusCounts(2, 1, 0), readModel: PhoneReadModel = model) = compose.setContent {
-        MaterialTheme { WeaverTheme { PhoneShell(readModel, counts, { now }, { mapOpened++ }, { settingsOpened++ }) } }
+        MaterialTheme { WeaverTheme { PhoneShell(readModel, counts, { now }, { settingsOpened++ }, {}) } }
     }
 
     @Test fun nowShowsOnlyOverdueTodayAndNewThreadsWithTheStatusStrip() {
@@ -68,20 +68,20 @@ class PhoneScreensTest {
         compose.onNodeWithText("UPS 점검 일정 정리").assertDoesNotExist()
     }
 
-    @Test fun statusStripOpensTheMapAndSettingsButtonOpensSettings() {
+    @Test fun statusStripIsNotAButtonAndSettingsButtonOpensSettings() {
         show()
         compose.onNodeWithText("검토 대기").assertIsDisplayed()
         compose.onNodeWithText("처리 중").assertIsDisplayed()
         compose.onNodeWithText("중지").assertIsDisplayed()
-        compose.onNodeWithTag("status-strip").performClick()
-        assertEquals(1, mapOpened)
+        compose.onNodeWithTag("status-strip").assertHasNoClickAction()
         compose.onNodeWithText("수집·설정").performClick()
         assertEquals(1, settingsOpened)
     }
 
     @Test fun personTimelineHidesMentionsAndHistoryUntilToggled() {
         show()
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("tab-LOG").performClick()
+        compose.onNodeWithTag("log-filter-PEOPLE").performClick()
         compose.onNodeWithText("이서준").performClick()
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
         compose.onNodeWithText("장비 반입 시 이서준 동행 필요").assertDoesNotExist()
@@ -98,14 +98,14 @@ class PhoneScreensTest {
     @Test fun areaTimelineOffersOnlyTheHistoryToggle() {
         show()
         compose.onNodeWithTag("tab-AREAS").performClick()
-        compose.onNodeWithText("네트워크").performClick()
+        compose.onAllNodesWithText("네트워크")[0].performClick() // the area row; the same-named document is listed below it
         compose.onNodeWithText("이력 포함").assertExists()
         compose.onNodeWithText("언급 포함").assertDoesNotExist()
     }
 
     @Test fun wikiViewerShowsFrontmatterAndLinksLeadToTimelines() {
         show()
-        compose.onNodeWithTag("tab-WIKI").performClick()
+        compose.onNodeWithTag("tab-AREAS").performClick()
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.onNodeWithTag("wiki-viewer").assertIsDisplayed()
         compose.onNodeWithText("읽기 전용").assertIsDisplayed()
@@ -118,7 +118,7 @@ class PhoneScreensTest {
 
     @Test fun wikiLinksOpenTheLinkedTimeline() {
         show()
-        compose.onNodeWithTag("tab-WIKI").performClick()
+        compose.onNodeWithTag("tab-AREAS").performClick()
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.onNodeWithText("나, 이서준").performClick() // clickable annotation on the assignee link
         compose.onNodeWithTag("timeline-screen").assertIsDisplayed()
@@ -153,7 +153,8 @@ class PhoneScreensTest {
 
     @Test fun timelineChipsAreCheckboxesWithStateAndBigTargets() {
         show()
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("tab-LOG").performClick()
+        compose.onNodeWithTag("log-filter-PEOPLE").performClick()
         compose.onNodeWithText("이서준").performClick()
         val chip = compose.onNode(androidx.compose.ui.test.hasText("언급 포함") and androidx.compose.ui.test.isToggleable())
         chip.assertIsOff()

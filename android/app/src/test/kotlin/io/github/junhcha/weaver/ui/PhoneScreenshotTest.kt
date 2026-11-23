@@ -57,7 +57,9 @@ class PhoneScreenshotTest {
         }
         compose.waitForIdle()
         shoot("1-now")
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("tab-LOG").performClick()
+        compose.waitForIdle(); shoot("2-log-all")
+        compose.onNodeWithTag("log-filter-PEOPLE").performClick()
         compose.waitForIdle(); shoot("2a-people-list")
         compose.onNodeWithText("이서준").performClick()
         compose.waitForIdle(); shoot("2b-person-timeline")
@@ -66,9 +68,7 @@ class PhoneScreenshotTest {
         compose.onNodeWithText("이력 포함").performClick()
         compose.waitForIdle(); shoot("2d-person-timeline-history")
         compose.onNodeWithTag("tab-AREAS").performClick()
-        compose.waitForIdle(); shoot("2e-area-list")
-        compose.onNodeWithTag("tab-WIKI").performClick()
-        compose.waitForIdle(); shoot("3a-wiki-list")
+        compose.waitForIdle(); shoot("2e-areas-and-documents")
         compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.waitForIdle(); shoot("3b-wiki-viewer")
     }

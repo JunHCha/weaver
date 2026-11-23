@@ -26,7 +26,7 @@ class NowRecentTest {
             entry("different-seoul-day", "2026-11-19T14:00:00Z", "2026-11-19T16:00:00Z"),
         ))
         compose.setContent { WeaverTheme {
-            NowScreen(view, StatusCounts(0, 0, 0), Instant.parse("2026-11-20T00:00:00Z"), true, {}, {})
+            NowScreen(view, StatusCounts(0, 0, 0), Instant.parse("2026-11-20T00:00:00Z"), true, {})
         } }
         compose.onNodeWithText("11/6 09:00 · 기록 · 통화 · 11/20 반영").assertExists()
         compose.onNodeWithText("오늘 08:00 · 기록 · 통화").assertExists()
@@ -42,7 +42,7 @@ class NowRecentTest {
             NowEntry(thread("zoned", "2026-11-19T15:30:00Z")),
         ))
         compose.setContent { WeaverTheme {
-            NowScreen(view, StatusCounts(0, 0, 0), Instant.parse("2026-11-20T00:00:00Z"), true, {}, {}, zone = java.time.ZoneId.of("UTC"))
+            NowScreen(view, StatusCounts(0, 0, 0), Instant.parse("2026-11-20T00:00:00Z"), true, {}, zone = java.time.ZoneId.of("UTC"))
         } }
         compose.onNodeWithText("11/6 00:00 · 기록 · 통화 · 변경 반영").assertExists()
         compose.onNodeWithText("어제 15:30 · 기록 · 통화").assertExists()

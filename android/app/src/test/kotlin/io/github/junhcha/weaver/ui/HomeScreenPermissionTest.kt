@@ -53,15 +53,6 @@ class HomeScreenPermissionTest {
     }
 
     @Test
-    @Config(sdk = [36])
-    fun statusStripOpensTheMapAndBackReturnsToNow() {
-        compose.onNodeWithTag("status-strip").performClick()
-        compose.onNodeWithText("내 데이터 흐름").assertExists()
-        compose.onNodeWithText("‹ 지금").performClick()
-        compose.onNodeWithTag("now-screen").assertExists()
-    }
-
-    @Test
     @Config(sdk = [26])
     fun opensOnMinSdkWithPartialGrant() {
         // Notifications need no runtime permission before Android 13.
@@ -134,7 +125,8 @@ class HomeScreenPermissionTest {
     @Config(sdk = [36])
     fun tabsSystemBackAndRecreateRestore() {
         compose.onNodeWithTag("now-screen").assertExists()
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("tab-LOG").performClick()
+        compose.onNodeWithTag("log-filter-PEOPLE").performClick()
         compose.onNodeWithTag("subject-list").assertExists()
         compose.onNodeWithText("이서준").performClick()
         compose.onNodeWithTag("timeline-screen").assertExists()
@@ -144,7 +136,8 @@ class HomeScreenPermissionTest {
         back()
         compose.onNodeWithTag("now-screen").assertExists()
 
-        compose.onNodeWithTag("tab-PEOPLE").performClick()
+        compose.onNodeWithTag("tab-LOG").performClick()
+        compose.onNodeWithTag("log-filter-PEOPLE").performClick()
         compose.onNodeWithText("이서준").performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("timeline-screen").assertExists()
@@ -152,8 +145,8 @@ class HomeScreenPermissionTest {
         back()
         compose.onNodeWithTag("now-screen").assertExists()
 
-        compose.onNodeWithTag("tab-WIKI").performClick()
-        compose.onNodeWithText("네트워크").performClick()
+        compose.onNodeWithTag("tab-AREAS").performClick()
+        compose.onNodeWithText("방화벽 장비 교체").performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("wiki-viewer").assertExists()
     }
