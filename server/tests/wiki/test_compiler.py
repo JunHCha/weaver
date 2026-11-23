@@ -634,3 +634,178 @@ def test_wiki_contract_failure_is_bounded_durable_and_acknowledged_without_threa
     assert llm.calls == MAX_EDIT_CONTRACT_FAILURES
     assert "acknowledged without threads" in caplog.text
     assert "SYNTHETIC_PRIVATE" not in caplog.text
+
+
+def test_human_edit_prompt_has_content_rules() -> None:
+    from weaver.loom.tagging import CONTENT_RULES
+    from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
+
+    assert CONTENT_RULES in HUMAN_EDIT_PROMPT
+
+
+def _tree_edit(tmp_path, default_sphere, existing_tags=None):
+    import json
+
+    from weaver.context.tree import expand
+    from weaver.wiki.compiler import EditChange
+    from weaver.wiki.store import HumanEdit
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=0)
+    store.acknowledge = lambda edit: None
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    context.sync_tree("가족", expand("가족", ["가족/집"]))
+    seen = {}
+
+    class Llm(FakeLLM):
+        def generate_json(self, task, system, user, schema):
+            seen["system"] = system
+            return schema.model_validate(
+                {
+                    "changes": [],
+                    "hunks": [
+                        {
+                            "id": h["id"],
+                            "classification": "fact",
+                            "changes": [
+                                EditChange(
+                                    content="자유 단어만", tags=["가끔"]
+                                ).model_dump()
+                            ],
+                        }
+                        for h in json.loads(user)["hunks"][:1]
+                    ],
+                }
+            )
+
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        Llm(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+        default_sphere,
+    )
+    if existing_tags:
+        fabric.append(
+            [
+                draft().model_copy(
+                    update={"tags": existing_tags, "field": None, "value": None}
+                )
+            ]
+        )
+        store.write_metadata("pages/자료.md", {"thread_ids": ["one"]})
+    edit = HumanEdit(
+        "pages/자료.md",
+        "old",
+        "new",
+        "합성 변경",
+        {},
+        {},
+        body_before="# 자료\n\n옛 문장\n",
+        body_after="# 자료\n\n새 문장\n",
+    )
+    compiler._edit(edit)
+    human = [t for t in fabric.entries(ThreadQuery()) if t.actor == "human"]
+    return seen, human
+
+
+def test_tree_mode_uses_tree_prompt(tmp_path):
+    seen, _ = _tree_edit(tmp_path, "가족")
+    assert "새 경로를 만들지 않는다" in seen["system"]
+    assert "영역(area) 정확히 하나" not in seen["system"]
+
+
+def test_edit_free_words_fall_back_to_default_sphere(tmp_path):
+    _, human = _tree_edit(tmp_path, "가족")
+    assert [t.tags for t in human] == [["가족/미분류"]]
+
+
+def test_edit_fallback_root_follows_existing_page_threads(tmp_path):
+    _, human = _tree_edit(tmp_path, "회사", existing_tags=["가족/집"])
+    assert ["가족/미분류"] in [t.tags for t in human]
+
+
+def _proposal_edit(tmp_path, order):
+    from weaver.context.proposals import LocationProposals
+    from weaver.context.tree import expand
+    from weaver.schema import TagCorrection
+    from weaver.wiki.compiler import EditChange
+    from weaver.wiki.store import HumanEdit
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    store = WikiStore(vault, tmp_path / "wiki", settle_seconds=0)
+    store.acknowledge = lambda edit: None
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    context.add_entry("김철수", "person")
+    fabric.append([draft().model_copy(update={"field": None, "value": None})])
+    business = EditChange(content="NAS 증설", tags=["회사/infra/storage/nas"])
+    correction = EditChange(
+        content="태그 정정",
+        tags=[],
+        correction=TagCorrection(target="one", remove=[], add=["김철수"]),
+    )
+    changes = [business, correction] if order == "business" else [correction, business]
+
+    class Llm(FakeLLM):
+        def generate_json(self, task, system, user, schema):
+            return fixture_response(EditResult, dict(changes=changes))
+
+    compiler = Compiler(
+        store,
+        fabric,
+        context,
+        Llm(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    proposals = LocationProposals(tmp_path / "proposals")
+    compiler.location_proposals = proposals
+    edit = HumanEdit(
+        "pages/홍길동.md",
+        "old",
+        "new",
+        "diff",
+        {"state_tag": "홍길동"},
+        {"state_tag": "홍길동"},
+    )
+    return compiler, fabric, proposals, edit
+
+
+@pytest.mark.parametrize("order", ["business", "correction"])
+def test_human_edit_proposes_only_for_the_business_change(tmp_path, order):
+    compiler, fabric, proposals, edit = _proposal_edit(tmp_path, order)
+    compiler._edit(edit)
+    (item,) = proposals.pending()
+    human = [t for t in fabric.entries(ThreadQuery()) if t.actor == "human"]
+    business = [t for t in human if t.correction is None]
+    assert [t.content for t in business] == ["NAS 증설"]
+    assert business[0].tags == ["회사/미분류"]
+    assert item.path == "회사/infra/storage/nas"
+    assert item.parent == "회사/infra"
+    assert item.thread_ids == [business[0].thread_id]
+    assert item.reason == "unknown_path"
+
+
+def test_human_edit_proposal_follows_append_and_retries_once(tmp_path, monkeypatch):
+    compiler, fabric, proposals, edit = _proposal_edit(tmp_path, "business")
+    original = fabric.append
+
+    def broken(drafts):
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(fabric, "append", broken)
+    with pytest.raises(OSError, match="interrupted"):
+        compiler._edit(edit)
+    assert proposals.pending() == []
+    monkeypatch.setattr(fabric, "append", original)
+    compiler._edit(edit)
+    compiler._edit(edit)
+    assert len(proposals.pending()) == 1

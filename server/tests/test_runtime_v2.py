@@ -838,3 +838,29 @@ def test_http_runtime_processes_capture_without_shared_folders(tmp_path, mobile,
     )
     runtime._tick(threading.Event())
     assert config.sync_root.exists() == files
+
+
+def test_wiki_refuses_unignored_git_vault(tmp_path):
+    import subprocess
+
+    from typer.testing import CliRunner
+
+    from weaver.app import cli
+    from weaver.wiki.home import VaultNotIgnored
+
+    config_file = tmp_path / "server.toml"
+    config_file.write_text(
+        "\n".join(
+            f'{key}_root = "{key}"'
+            for key in ("sync", "archive", "vault", "state", "log")
+        )
+        + '\n[wiki]\nenabled = true\nfolder = "Weaver"\ntimezone = "UTC"\n'
+    )
+    config = load_config(config_file, init_directories=True)
+    subprocess.run(["git", "init", "-q", str(config.vault_root)], check=True)
+    with pytest.raises(VaultNotIgnored):
+        build_runtime(config, plugins=Plugins(client=FakeLlm(), policy=open_policy()))
+    assert not (config.vault_root / "Weaver").exists()
+    result = CliRunner().invoke(cli, ["run", "--config", str(config_file)])
+    assert result.exit_code == 78
+    assert not (config.vault_root / "Weaver").exists()

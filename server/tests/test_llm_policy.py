@@ -613,3 +613,64 @@ def test_loom_approval_blocks_then_resumes_through_the_real_policy(tmp_path):
     ledger.policy_resume(ledger.policy_backlog())
     assert reextract(state, wiki, checked).valid
     assert "loom.approve" in [task for task, _ in checked.inputs]
+
+
+def test_mask_secrets_patterns() -> None:
+    from weaver.llm.policy import mask_patterns, mask_secrets
+
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+    assert mask_secrets("password: hunter2") == "password: [MASKED]"
+    assert mask_secrets("비밀번호：abc123") == "비밀번호：[MASKED]"
+    assert mask_secrets(pem) == "[MASKED]"
+    assert mask_secrets("AKIAABCDEFGHIJKLMNOP") == "[MASKED]"
+    assert mask_secrets("ghp_" + "a" * 30) == "[MASKED]"
+    assert mask_secrets("xoxb-1234567890-abc") == "[MASKED]"
+    assert mask_secrets("sk-" + "a1" * 12) == "[MASKED]"
+    assert mask_secrets("k " + "a1B2" * 9) == "k [MASKED]"
+    assert mask_secrets("홍길동 라우터 192.168.0.1") == "홍길동 라우터 192.168.0.1"
+    assert mask_secrets("a" * 40) == "a" * 40
+    assert mask_patterns("x") == "x"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[[infra/network/switch-01-core-distribution-layer]]",
+        "2024-11-23-vendor-meeting-notes-fortigate-100f",
+        "infra/network/switch01/core/distribution/layer/x",
+        "a" * 7 + "1" * 3 + "b" * 30 + "[[" + "a1" * 20 + "]]",
+        "commit " + "0123456789abcdef0123456789abcdef01234567",
+        "lab_pwd=/home/user",
+        "release-notes-for-the-fortigate-upgrade-window",
+        "bypass: yes, passed: no",
+        "서버 192.168.0.1 aa:bb:cc:dd:ee:ff fortigate-100f.example.com",
+    ],
+)
+def test_mask_secrets_keeps_ordinary_text(text: str) -> None:
+    from weaver.llm.policy import mask_secrets
+
+    expected = text
+    assert mask_secrets(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("**비밀번호**: x1", "**비밀번호**: [MASKED]"),
+        ("| 비밀번호 | x1 |", "| 비밀번호 | [MASKED] |"),
+        ("비밀번호는 abc123", "비밀번호는 [MASKED]"),
+        ("ID/PW: admin/hunter2", "ID/PW: [MASKED]"),
+        ("pw=hunter2", "pw=[MASKED]"),
+        ("Password: my long phrase here", "Password: [MASKED]"),
+        ("token: Bearer abc.def", "token: [MASKED]"),
+        ("api_key = Basic dXNlcjpw", "api_key = [MASKED]"),
+        ("h " + "a1" * 16, "h [MASKED]"),
+        ("h " + "0123456789abcdef" * 4, "h [MASKED]"),
+        ("t Xy3_kL9-mN2pQ7rS4tU8vW1xY6zA0bC5dE", "t [MASKED]"),
+        ("x " + "Ab1" * 12 + "/+=", "x [MASKED]"),
+    ],
+)
+def test_mask_secrets_catches_variants(text: str, expected: str) -> None:
+    from weaver.llm.policy import mask_secrets
+
+    assert mask_secrets(text) == expected

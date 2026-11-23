@@ -21,10 +21,11 @@ from pydantic import BaseModel, JsonValue
 from weaver.archive import ArchiveStore, SourceNotFound
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, DictionarySnapshot
+from weaver.context.proposals import LocationProposals, Status
 from weaver.fabric import FabricStore
 from weaver.fabric.requests import request_values
 from weaver.fabric.state import InvalidSetOperation, project
-from weaver.schema import Thread
+from weaver.schema import LocationProposal, Thread
 from weaver.web.editing import canonical_threads, dictionary_entries
 from weaver.web.presentation import presentation
 from weaver.wiki.store import WikiStore, _properties
@@ -240,6 +241,7 @@ class ReadModel:
         self._lock = threading.Lock()
         self._snapshot_cache: Snapshot | None = None
         self._labels: dict[str, str] = {}
+        self._proposals: LocationProposals | None = None
         self._wiki_cache: tuple[tuple[int, ...], dict[str, str]] | None = None
 
     # ---- Fabric ----------------------------------------------------------------
@@ -363,6 +365,14 @@ class ReadModel:
             }
             for entry in dictionary_entries(self.config)
         ]
+
+    def proposals(self, status: Status | None) -> list[LocationProposal]:
+        # Reading must not create the store, so an absent file is simply empty.
+        if not (self.config.state_root / "proposals.sqlite3").is_file():
+            return []
+        if self._proposals is None:
+            self._proposals = LocationProposals(self.config.state_root)
+        return self._proposals.list(status)
 
     def tags(self) -> list[TagView]:
         snapshot = self.snapshot()

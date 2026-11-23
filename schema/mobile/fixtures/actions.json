@@ -27,7 +27,8 @@
                 "start": "2026-12-01T01:00:00Z",
                 "end": null,
                 "timezone": "Asia/Seoul",
-                "title": "주간 회의"
+                "title": "주간 회의",
+                "description": null
               },
               "external_id": null
             }
@@ -58,7 +59,8 @@
             "start": "2026-12-01T01:00:00Z",
             "end": null,
             "timezone": "Asia/Seoul",
-            "title": "주간 회의"
+            "title": "주간 회의",
+            "description": null
           },
           "external_id": null
         }

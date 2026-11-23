@@ -12,12 +12,14 @@ data class CalendarPayload(
     val end: String?,
     val timezone: String,
     val title: String,
+    val description: String? = null,
 ) {
     init {
         Rules.timestamp(start, "start")
         end?.let { Rules.timestamp(it, "end"); require(OffsetDateTime.parse(it).toInstant() > OffsetDateTime.parse(start).toInstant()) }
         ZoneId.of(timezone)
         Rules.nonEmpty(title, "title")
+        description?.let { Rules.nonEmpty(it, "description") }
     }
 }
 

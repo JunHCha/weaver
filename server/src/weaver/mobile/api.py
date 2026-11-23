@@ -11,7 +11,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -625,6 +625,18 @@ def create_app(
     @router.get("/read/dictionary")
     def read_dictionary(_who: ReadScope) -> JSONResponse:
         return json_response({"items": read.dictionary(), "next_cursor": None})
+
+    @router.get("/read/proposals")
+    def read_proposals(
+        _who: ReadScope,
+        status: Literal["pending", "accepted", "rejected"] = "pending",
+    ) -> JSONResponse:
+        return json_response(
+            {
+                "items": [p.model_dump(mode="json") for p in read.proposals(status)],
+                "next_cursor": None,
+            }
+        )
 
     def pipeline_http() -> None:
         if mobile.transport_for("pipeline") != "http":

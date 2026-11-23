@@ -119,7 +119,19 @@ def test_compile_promotes_idempotently_and_preserves_original_rows(tmp_path):
     context, fabric, _, llm, compiler = setup(tmp_path)
     with sqlite3.connect(fabric.path) as db:
         before = db.execute("SELECT seq, payload FROM threads").fetchall()
-    compiler.run()
+    lifecycle = ProjectLifecycle(compiler.state_path, context, fabric)
+    candidates = [
+        {
+            "name": NAME,
+            "area": AREA,
+            "goal": "라우터 전환",
+            "end_state": "검증 후 구형 장비 철거",
+            "short_task": False,
+            "thread_ids": ["one", "two"],
+        }
+    ]
+    now = NOW + timedelta(days=1)
+    lifecycle.apply(candidates, fabric.entries(ThreadQuery()), now, proposals=None)
     entry = context.resolve(NAME)
     assert entry.promoted and not entry.archived and not entry.human_edited
     assert len(corrections(fabric)) == 2
@@ -137,8 +149,8 @@ def test_compile_promotes_idempotently_and_preserves_original_rows(tmp_path):
             == before
         )
     assert tag_snapshot(context.snapshot()).resolve(NAME)
-    compiler.run()
-    assert llm.calls == 1 and len(corrections(fabric)) == 2
+    lifecycle.apply(candidates, fabric.entries(ThreadQuery()), now, proposals=None)
+    assert len(corrections(fabric)) == 2
     print(
         "SYNTHETIC promotion: 2 system tag corrections; original rows unchanged; retry adds 0"
     )
@@ -655,3 +667,77 @@ def test_expired_pending_append_does_not_create_a_stale_active_project(
     assert not corrections(fabric) and llm.calls == 1
     assert context.resolve(NAME).archived
     assert tag_snapshot(context.snapshot()).resolve(NAME) is None
+
+
+def test_batch_promotion_is_proposal_only(tmp_path):
+    from weaver.context.proposals import LocationProposals
+
+    context, fabric, _, llm, compiler = setup(tmp_path)
+    store = LocationProposals(tmp_path / "proposals-state")
+    compiler.location_proposals = store
+    compiler.run()
+    assert not [
+        t
+        for t in fabric.entries(ThreadQuery())
+        if t.kind == "태그정정" and t.thread_id.startswith("wiki-project:")
+    ]
+    assert not context.resolve(NAME).promoted
+    (item,) = store.pending()
+    assert item.reason == "project_promotion" and item.kind == "location"
+    assert item.path == "회사/project/라우터-교체"
+    assert item.path.startswith("회사/project/")
+    assert item.sphere == "회사" and item.parent is None  # legacy: no tree node
+    assert sorted(item.thread_ids) == ["one", "two"]
+    compiler.run()
+    assert llm.calls == 1 and len(store.pending()) == 1
+    store.decide(item.proposal_id, "rejected", NOW)
+    fabric.append([fact("three")])
+    compiler.run()
+    assert store.pending() == []  # a rejected location is never re-proposed
+
+
+def test_promotion_path_uses_tree_root_and_slug(tmp_path):
+    from weaver.context.proposals import LocationProposals
+    from weaver.context.tree import expand
+    from weaver.wiki.promotion import ProjectPromotion
+
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_tree("집", expand("집", ["집/생활/집수리"]))
+    fabric = FabricStore(tmp_path / "fabric.sqlite3")
+    fabric.append(
+        [
+            fact("one", day=5, tags=["집/생활"]),
+            fact("two", tags=["집/생활"]),
+        ]
+    )
+    lifecycle = ProjectLifecycle(tmp_path / "life.sqlite3", context, fabric)
+    store = LocationProposals(tmp_path / "state")
+    candidate = ProjectPromotion(
+        name="욕실 #리모델링/공사",
+        area="집/생활",
+        goal="공사",
+        end_state="완료",
+        short_task=False,
+        thread_ids=["one", "two"],
+    )
+    lifecycle.apply(
+        [candidate.model_dump()],
+        fabric.entries(ThreadQuery()),
+        NOW,
+        replay=False,
+        proposals=store,
+    )
+    (item,) = store.pending()
+    assert item.path == "집/project/욕실-리모델링공사"
+    assert item.sphere == "집"
+    assert item.parent in ("집", "집/project")
+
+
+def test_slug_never_yields_an_empty_segment():
+    from weaver.wiki.promotion import _slug
+
+    assert _slug("집 수리") == "집-수리"
+    for name in ("///", "  ", "#^|", ""):
+        slug = _slug(name)
+        assert slug and "/" not in slug
+    assert _slug("///") == _slug("///") != _slug("##")

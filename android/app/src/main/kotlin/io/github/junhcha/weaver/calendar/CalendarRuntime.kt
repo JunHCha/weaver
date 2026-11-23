@@ -44,6 +44,9 @@ object CalendarRuntime {
     }
 }
 
+/** Escapes LIKE wildcards for a pattern declared with ESCAPE '\'. */
+fun likeEscape(text: String) = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 class DeviceCalendarProvider(context: Context) : CalendarProvider {
     private val resolver = context.contentResolver
     override fun calendars(): List<CalendarTarget> {
@@ -58,14 +61,16 @@ class DeviceCalendarProvider(context: Context) : CalendarProvider {
         }
     }
     override fun find(marker: String): List<CalendarRow> = checkNotNull(resolver.query(
-        Events.CONTENT_URI, arrayOf(Events._ID, Events.CALENDAR_ID, Events.TITLE, Events.DTSTART, Events.DTEND, Events.EVENT_TIMEZONE),
-        "${Events.DESCRIPTION} = ? AND ${Events.DELETED} = 0",
-        arrayOf(marker), null)) { "등록 복구 조회 실패" }.use { cursor ->
+        Events.CONTENT_URI, arrayOf(Events._ID, Events.CALENDAR_ID, Events.TITLE, Events.DTSTART, Events.DTEND, Events.EVENT_TIMEZONE,
+            Events.DESCRIPTION),
+        "(${Events.DESCRIPTION} = ? OR ${Events.DESCRIPTION} LIKE ? ESCAPE '\\') AND ${Events.DELETED} = 0",
+        arrayOf(marker, "%\n\n" + likeEscape(marker)), null)) { "등록 복구 조회 실패" }.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(0)
                 val event = if ((1..5).any { cursor.isNull(it) }) null else
-                    CalendarEvent(cursor.getString(2), cursor.getLong(3), cursor.getLong(4), cursor.getString(5))
+                    CalendarEvent(cursor.getString(2), cursor.getLong(3), cursor.getLong(4), cursor.getString(5),
+                        CalendarText.description(cursor.getString(6), marker))
                 add(CalendarRow(ContentUris.withAppendedId(Events.CONTENT_URI, id).toString(), id, cursor.getLong(1), event))
             }
         }
@@ -78,18 +83,19 @@ class DeviceCalendarProvider(context: Context) : CalendarProvider {
             put(Events.DTEND, event.end)
             put(Events.EVENT_TIMEZONE, event.timezone)
             put(Events.ALL_DAY, 0) // Schedules have no all-day flag. Midnight is still a timed event.
-            put(Events.DESCRIPTION, marker) // App-owned marker; no SYNC_* or sync-adapter privileges.
+            put(Events.DESCRIPTION, CalendarText.compose(event.description, marker)) // Ends with the app-owned marker; no SYNC_* or sync-adapter privileges.
             put(Events.HAS_ATTENDEE_DATA, 0)
         }
         val uri = checkNotNull(resolver.insert(Events.CONTENT_URI, values)) { "일정 삽입 응답 없음" }
         return uri.toString() to ContentUris.parseId(uri)
     }
-    override fun update(uri: String, event: CalendarEvent): Boolean {
+    override fun update(uri: String, event: CalendarEvent, marker: String?): Boolean {
         val values = ContentValues().apply {
             put(Events.TITLE, event.title)
             put(Events.DTSTART, event.start)
             put(Events.DTEND, event.end)
             put(Events.EVENT_TIMEZONE, event.timezone)
+            if (marker != null) put(Events.DESCRIPTION, CalendarText.compose(event.description, marker))
         }
         return resolver.update(eventUri(uri), values, null, null) > 0
     }

@@ -10,6 +10,7 @@ from weaver.schema import (
     SHARED_MODELS,
     Action,
     ActionResult,
+    CalendarPayload,
     EventSummary,
     Question,
     ReviewPackage,
@@ -291,6 +292,16 @@ def test_action_contract():
             Action.model_validate(data | invalid)
     update = example("Action-update")
     assert Action.model_validate(update).external_id
+    assert (
+        Action.model_validate(update).model_dump(mode="json")["payload"]["description"]
+        == update["payload"]["description"]
+    )
+    assert CalendarPayload.model_json_schema()["required"] == [
+        "start",
+        "end",
+        "timezone",
+        "title",
+    ]
     with pytest.raises(ValidationError):
         Action.model_validate(update | {"external_id": None})
 

@@ -15,10 +15,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from weaver.context.tree import TreeNode
 
 Kind = Literal["person", "organization", "project", "area", "topic"]
-Source = Literal["learn", "wiki", "contact"]
+Source = Literal["learn", "wiki", "contact", "tree"]
 _KINDS = {"person", "organization", "project", "area", "topic"}
 _VERSION = 2
 
@@ -114,6 +117,21 @@ class DictionarySnapshot:
     def resolve(self, name: str) -> ContextEntry | None:
         key = _key(name)
         return self._names.get(key) or self._aliases.get(key)
+
+    @property
+    def has_tree(self) -> bool:
+        return any(e.source == "tree" for e in self.entries)
+
+    def area_of(self, tag: str) -> ContextEntry | None:
+        from weaver.context import tree
+
+        entry = self.resolve(tag)
+        if entry is None:
+            return None
+        if entry.source == "tree":
+            path = tree.area_of(entry.name)
+            return None if path is None else self.resolve(path)
+        return entry if entry.kind == "area" else None
 
     def candidates(
         self, text: str, contact_name: str | None = None, limit: int = 10
@@ -237,6 +255,10 @@ class ContextDictionary:
             elif version != _VERSION:
                 raise SchemaVersionError("unsupported context database version")
             db.execute(
+                "CREATE TABLE IF NOT EXISTS tree_nodes "
+                "(name TEXT PRIMARY KEY, kind TEXT NOT NULL, sphere TEXT NOT NULL)"
+            )
+            db.execute(
                 "CREATE TABLE IF NOT EXISTS origin_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
             if archive_root is not None:
@@ -314,10 +336,21 @@ class ContextDictionary:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (1, _VERSION):
             raise SchemaVersionError("unsupported context database version")
-        entries = {
-            _key(n): ContextEntry(_nfc(n), k, source="learn")
-            for n, k in db.execute("SELECT name, kind FROM learned ORDER BY name DESC")
-        }
+        entries: dict[str, ContextEntry] = {}
+        # Tree nodes load first, so any later source with the same key wins.
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
+        ).fetchone():
+            for n, k in db.execute("SELECT name, kind FROM tree_nodes ORDER BY name"):
+                entries[_key(n)] = ContextEntry(_nfc(n), k, source="tree")
+        entries.update(
+            {
+                _key(n): ContextEntry(_nfc(n), k, source="learn")
+                for n, k in db.execute(
+                    "SELECT name, kind FROM learned ORDER BY name DESC"
+                )
+            }
+        )
         wiki = {
             _key(n): ContextEntry(_nfc(n), k, summary=summary)
             for n, k, summary in db.execute(
@@ -471,6 +504,8 @@ class ContextDictionary:
             yield db, snapshot, edits
             before = {_key(e.name): e for e in snapshot.entries}
             for entry in self._load(db)[0].entries:
+                if entry.source == "tree":
+                    continue  # Vault paths carry no transcript lineage.
                 prior = before.get(_key(entry.name))
 
                 def content(value: ContextEntry) -> ContextEntry:
@@ -536,6 +571,8 @@ class ContextDictionary:
                 for row in db.execute("PRAGMA table_info(entry_origins)")
             )
             for entry in entries:
+                if entry.source == "tree":
+                    continue
                 row = (
                     db.execute(
                         "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
@@ -555,6 +592,13 @@ class ContextDictionary:
         entry = snapshot.resolve(name)
         if entry is None:
             raise ValueError("unknown dictionary entry")
+        return entry
+
+    @classmethod
+    def _require_editable(cls, snapshot: DictionarySnapshot, name: str) -> ContextEntry:
+        entry = cls._require(snapshot, name)
+        if entry.source == "tree":
+            raise ValueError("tree node is read-only")
         return entry
 
     @staticmethod
@@ -700,7 +744,7 @@ class ContextDictionary:
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         with self._writing(source_ids, human=human_edited) as (db, snapshot, edits):
-            entry = self._require(snapshot, name)
+            entry = self._require_editable(snapshot, name)
             origin = db.execute(
                 "SELECT source_ids, unknown_webex FROM entry_origins WHERE name=?",
                 (_key(entry.name),),
@@ -768,7 +812,7 @@ class ContextDictionary:
         self, name: str, kind: Kind, *, source_ids: tuple[str, ...] = ()
     ) -> ContextEntry:
         with self._writing(source_ids, human=True) as (db, snapshot, edits):
-            entry = self._require(snapshot, name)
+            entry = self._require_editable(snapshot, name)
             return self._save(
                 db,
                 snapshot,
@@ -784,7 +828,7 @@ class ContextDictionary:
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         with self._writing(source_ids, human=human_edited) as (db, snapshot, edits):
-            entry = self._require(snapshot, name)
+            entry = self._require_editable(snapshot, name)
             edit = self._edit_for(entry, edits)
             if not human_edited:
                 if not alias.strip():
@@ -821,7 +865,7 @@ class ContextDictionary:
         self, name: str, alias: str, *, source_ids: tuple[str, ...] = ()
     ) -> ContextEntry:
         with self._writing(source_ids, human=True) as (db, snapshot, edits):
-            entry = self._require(snapshot, name)
+            entry = self._require_editable(snapshot, name)
             edit = self._edit_for(entry, edits)
             edit = replace(
                 edit,
@@ -840,7 +884,10 @@ class ContextDictionary:
         source_ids: tuple[str, ...] = (),
     ) -> ContextEntry:
         with self._writing(source_ids, human=True) as (db, snapshot, edits):
-            a, b = self._require(snapshot, source), self._require(snapshot, target)
+            a, b = (
+                self._require_editable(snapshot, source),
+                self._require_editable(snapshot, target),
+            )
             if a.name == b.name:
                 return b
             source_edit, edit = self._edit_for(a, edits), self._edit_for(b, edits)
@@ -925,6 +972,15 @@ class ContextDictionary:
                     "INSERT INTO corrections VALUES (?, ?) ON CONFLICT(observed) DO UPDATE SET name=excluded.name",
                     (observed, canonical),
                 )
+
+    def sync_tree(self, sphere: str, nodes: "list[TreeNode]") -> None:
+        """Replace one sphere's read-only tree nodes in a single transaction."""
+        with self._writing() as (db, _, _edits):
+            db.execute("DELETE FROM tree_nodes WHERE sphere=?", (sphere,))
+            db.executemany(
+                "INSERT OR REPLACE INTO tree_nodes VALUES (?, ?, ?)",
+                [(_nfc(n.name), n.kind, sphere) for n in nodes],
+            )
 
     def sync_from_pages(self, pages: list[Page]) -> None:
         pages = [

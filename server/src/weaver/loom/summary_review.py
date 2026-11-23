@@ -12,21 +12,28 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
 from weaver.context import ContextDictionary, DictionarySnapshot, Kind, _key
+from weaver.context.proposals import (
+    LocationProposals,
+    ProposalDraft,
+    nearest_parent,
+)
+from weaver.context.tree import UNCLASSIFIED, root_of
 from weaver.courier.atomic import write_json_atomic
 from weaver.fabric import ThreadQuery
 from weaver.llm.policy import ScopedClient
 from weaver.llm.types import LlmClient
 from weaver.loom.projection import ReviewProjection
+from weaver.loom.schedules import schedule_title, valid_title
 from weaver.loom.summary_state import SummaryState, read_source_reference
 from weaver.loom.tagging import (
     FACT_RULES,
     MAX_NEW_ENTRIES,
-    TAG_RULES,
     NewEntry,
     business_tags,
     counterpart_name,
     proposals,
     tag_context,
+    tag_rules,
     tag_snapshot,
 )
 from weaver.loom.tagging import TAG_CONTEXT_TOKEN_BUDGET as TAG_CONTEXT_TOKEN_BUDGET
@@ -58,6 +65,8 @@ class ExtractedSchedule(TypedDict):
     start: str
     end: NotRequired[str | None]
     timezone: NotRequired[str | None]
+    title: NotRequired[str | None]
+    description: NotRequired[str | None]
 
 
 class AssigneeChange(TypedDict):
@@ -65,6 +74,16 @@ class AssigneeChange(TypedDict):
 
     add: list[str]
     remove: list[str]
+
+
+def _hint_title(thread: Thread) -> str:
+    """Title shown for an existing schedule; other 일정 Threads keep their text."""
+    if thread.field == "schedule":
+        try:
+            return schedule_title(thread, ScheduleValue.model_validate(thread.value))
+        except ValueError:
+            pass
+    return thread.content or ""
 
 
 def _literal_enums(schema: dict[str, Any]) -> None:
@@ -134,6 +153,7 @@ class Prepared(BaseModel):
     threads: list[ThreadDraft] = []
     corrections: list[Correction] = []
     new_entries: list[NewEntry] = []
+    location_proposals: list[ProposalDraft] = []
 
 
 class DictionaryReader(Protocol):
@@ -164,7 +184,9 @@ class ApprovalExtractor:
         source_time_is_fallback: bool = False,
         approved_at: datetime | None = None,
         allow_current_approval_time: bool = True,
+        default_sphere: str = "회사",
     ) -> None:
+        self.default_sphere = default_sphere
         self.approved_at = approved_at
         self.allow_current_approval_time = allow_current_approval_time
         self.source_time_is_fallback = source_time_is_fallback
@@ -284,10 +306,10 @@ class ApprovalExtractor:
                 "\n"
                 + FACT_RULES
                 + "\n"
-                + TAG_RULES
+                + tag_rules(full_dictionary)
                 + "\n검토 질문과 답은 Thread가 아니지만, feedback의 검토자 본인에게 향한 확인·등록·처리 등 할 일 지시는 예외로 요청 Thread 하나로 만든다."
                 " direction=받음(내가 할 일), from_feedback=true로 쓴다."
-                " content는 출처의 어떤 일을 해야 하는지 알 수 있는 문장이고 태그와 영역은 대상 출처를 따른다."
+                " content는 출처의 어떤 일을 해야 하는지 알 수 있는 개조식 한 줄이고 태그와 영역은 대상 출처를 따른다."
                 " answers와 일반 의견·감상·사실 교정만인 feedback은 독립 Thread로 만들지 않는다."
                 " 그 외 출처 업무 Thread는 from_feedback=false이다."
                 " 피드백 요청의 occurred_at은 approved_at이다."
@@ -306,6 +328,10 @@ class ApprovalExtractor:
                 + (
                     " 일정은 field=schedule, value={start,end,timezone}으로 추출한다."
                     " 시각은 ISO 8601로 쓰고 종료나 시간대가 없으면 null로 둔다."
+                    " 일정 value에는 title(날짜·시각 없는 짧은 명사구, 30자 이하,"
+                    " 예: ACME 서버 정기점검 방문)과 description(세부 맥락·근거를"
+                    " 개조식 줄 '- '로)을 쓴다. title에는 날짜·시각을 넣지 않는다."
+                    " 날짜·시각은 start/end에만 쓴다. 모르면 null로 둔다."
                     " 문서에 요청 완료가 일정의 선행 조건으로 명시된 경우에만"
                     " blocked_by_index에 같은 응답 threads 배열의 요청 인덱스(0부터)를 쓴다."
                     " 의존 관계를 추측하지 말고 없거나 불확실하면 null로 둔다."
@@ -351,7 +377,7 @@ class ApprovalExtractor:
                     "existing_schedules": [
                         {
                             "id": t.thread_id,
-                            "title": t.content,
+                            "title": _hint_title(t),
                             "value": t.value,
                             "tags": t.tags,
                         }
@@ -405,22 +431,54 @@ class ApprovalExtractor:
             feedback_origins.append(flag)
         if seen_feedback and approval is None:
             raise MissingApprovalTime()
-        validated_tags = [
-            business_tags(dictionary, new_entries, proposed_names, thread.tags)
+        decisions = [
+            business_tags(
+                dictionary,
+                new_entries,
+                proposed_names,
+                thread.tags,
+                default_sphere=self.default_sphere,
+            )
             for thread in response.threads
         ]
-        area_names = {
-            entry.name for entry in dictionary.entries if entry.kind == "area"
-        } | {entry.name for entry in new_entries if entry.kind == "area"}
+        validated_tags = [decision.tags for decision in decisions]
+        # Only drafted here; SummaryReview.apply writes them after the Fabric append.
+        drafted: dict[str, ProposalDraft] = {}
+        for position, decision in enumerate(decisions):
+            for unknown in decision.unknown_paths:
+                root = root_of(unknown)
+                item = drafted.setdefault(
+                    unknown,
+                    ProposalDraft(
+                        kind="location",
+                        reason="unknown_path",
+                        sphere=root,
+                        path=unknown,
+                        parent=nearest_parent(full_dictionary, unknown),
+                        fallback=decision.fallback or f"{root}/{UNCLASSIFIED}",
+                        thread_ids=[],
+                        source_ids=[package.source_id],
+                    ),
+                )
+                if ids[position] not in item.thread_ids:
+                    item.thread_ids.append(ids[position])
+        added_areas = {entry.name for entry in new_entries if entry.kind == "area"}
+
+        def first_subject(tags: list[str]) -> str | None:
+            # Tree mode always leads with its subject paths; legacy has one area.
+            if dictionary.has_tree:
+                return tags[0] if tags else None
+            return next(
+                (t for t in tags if dictionary.area_of(t) or t in added_areas), None
+            )
+
         source_area = next(
             (
-                tag
+                subject
                 for tags, from_feedback in zip(
                     validated_tags, feedback_origins, strict=True
                 )
-                if not from_feedback
-                for tag in tags
-                if tag in area_names
+                if not from_feedback and (subject := first_subject(tags))
             ),
             None,
         )
@@ -440,7 +498,8 @@ class ApprovalExtractor:
                 data["direction"] = "받음"
                 data["occurred_at"] = min(approval, timestamp)
                 if source_area is not None and source_area not in tags:
-                    tags = [source_area if tag in area_names else tag for tag in tags]
+                    first = first_subject(tags)
+                    tags = [source_area if tag == first else tag for tag in tags]
                     logger.warning("corrected feedback request area")
             # Long calls may contain facts later than their start. Capture-only
             # references cannot bound historical facts in imported transcripts.
@@ -518,6 +577,21 @@ class ApprovalExtractor:
                 except (ZoneInfoNotFoundError, ValueError):
                     raise ValueError("unknown timezone") from None
                 value["timezone"] = zone.key
+                raw_title = value.pop("title", None)
+                if raw_title is not None:
+                    title = (
+                        valid_title(raw_title) if isinstance(raw_title, str) else None
+                    )
+                    if title is None:
+                        logger.warning("dropped invalid schedule title")
+                    else:
+                        value["title"] = title
+                raw_description = value.pop("description", None)
+                if isinstance(raw_description, str):
+                    if raw_description.strip():
+                        value["description"] = raw_description.strip()[:1000]
+                elif raw_description is not None:
+                    logger.warning("dropped invalid schedule description")
                 for key in ("start", "end"):
                     raw = value.get(key)
                     if raw is not None:
@@ -534,9 +608,13 @@ class ApprovalExtractor:
                             ) != dt.replace(tzinfo=None):
                                 raise ValueError("nonexistent local schedule time")
                         value[key] = dt.isoformat()
-                data["value"] = ScheduleValue.model_validate(value).model_dump(
-                    mode="json"
-                )
+                data["value"] = {
+                    key: item
+                    for key, item in ScheduleValue.model_validate(value)
+                    .model_dump(mode="json")
+                    .items()
+                    if item is not None or key not in ("title", "description")
+                }
             if (
                 not thread_fallback
                 and data["field"] == "schedule"
@@ -600,6 +678,7 @@ class ApprovalExtractor:
             threads=drafts,
             corrections=corrections,
             new_entries=new_entries,
+            location_proposals=list(drafted.values()),
         )
 
 
@@ -617,8 +696,14 @@ class SummaryReview(ApprovalExtractor):
         proposals: Path | None = None,
         publish_files: bool = True,
         timezone: str = "Asia/Seoul",
+        default_sphere: str = "회사",
+        location_proposals: LocationProposals | None = None,
     ) -> None:
-        super().__init__(llm, context, sink, timezone=timezone)
+        super().__init__(
+            llm, context, sink, timezone=timezone, default_sphere=default_sphere
+        )
+        # ``proposals`` is already the review-file projection directory.
+        self.location_proposals = location_proposals
         self.context: ContextDictionary = context
         self.archive = archive
         self.state = SummaryState(state_root)
@@ -728,6 +813,17 @@ class SummaryReview(ApprovalExtractor):
                     correction.kind,
                     source_ids=(package.source_id,),
                 )
+            if self.location_proposals is not None:
+                # Proposals are advisory: a failure must not undo dictionary
+                # learning or leave the review unapplied.
+                try:
+                    for draft in prepared.location_proposals:
+                        self.location_proposals.propose(
+                            **draft.model_dump(),
+                            now=prepared.applied_at or datetime.now(UTC),
+                        )
+                except Exception:
+                    logger.exception("location proposal write failed; continuing")
             if prepared.package is not None:
                 self.state.save_package(prepared.package, script)
             with self.state.connect() as db:

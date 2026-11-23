@@ -482,3 +482,57 @@ def test_evidence_heading_inside_body_is_still_rejected(tmp_path):
     with pytest.raises(ValueError):
         compiler.run()
     assert compiler.bookmark() == 0
+
+
+def test_area_derived_from_tree_path(tmp_path):
+    from weaver.context.tree import expand
+
+    store = WikiStore(tmp_path / "vault", tmp_path / "state", settle_seconds=0)
+    fabric = FabricStore(tmp_path / "fabric.db")
+    fabric.append([draft("one", ["회사/infra/network/router"])])
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    llm = Llm()
+    llm.transform = lambda data: (
+        data
+        | {
+            "pages": [
+                {**p, "body": "# 네트워크 운영\n\n서술형 본문.\n"}
+                for p in data["pages"]
+            ]
+        }
+    )
+    BatchCompiler(
+        store,
+        fabric,
+        context,
+        llm,
+        tmp_path / "compiler.db",
+        lambda _: Summary("승인된 통화", "요약 전문과 제약 조건"),
+    ).run()
+    props, _, _ = store.read("pages/네트워크 운영.md")
+    assert props["area"] == "회사/infra/network"
+
+
+def test_tree_subject_topic_is_a_promotion_grouping_key(tmp_path):
+    from weaver.context.tree import expand
+
+    store = WikiStore(tmp_path / "vault", tmp_path / "state", settle_seconds=0)
+    fabric = FabricStore(tmp_path / "fabric.db")
+    context = ContextDictionary(tmp_path / "context")
+    context.sync_tree("회사", expand("회사", ["회사/infra/network/router"]))
+    tag = ["회사/infra/network/router"]
+    fabric.append([draft("a", tag), draft("b", tag)])
+    new = fabric.append([draft("c", tag)])
+    compiler = BatchCompiler(
+        store,
+        fabric,
+        context,
+        Llm(),
+        tmp_path / "compiler.db",
+        lambda _: Summary("요약", "본문"),
+    )
+    candidates = compiler._promotion_candidates(fabric.entries(ThreadQuery()), new)
+    target = next(c for c in candidates if c["key"] == tag[0])
+    assert target["area"] == "회사/infra/network"
+    assert target["evidence_count"] == 3

@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from weaver.context import ContextDictionary
+from weaver.context.proposals import LocationProposals
 from weaver.fabric import Fabric, ThreadQuery
 from weaver.llm.types import LlmClient
 from weaver.wiki.batch import BatchCompiler
@@ -36,6 +37,8 @@ class WikiJob:
         zone: ZoneInfo,
         lookup: SummaryLookup,
         journal: PipelineJournal | None = None,
+        default_sphere: str = "회사",
+        location_proposals: LocationProposals | None = None,
     ) -> None:
         self.store, self.fabric, self.context, self.zone, self.lookup = (
             store,
@@ -45,9 +48,16 @@ class WikiJob:
             lookup,
         )
         self.compiler = BatchCompiler(
-            store, fabric, context, client, state / "wiki-compiler.sqlite3", lookup
+            store,
+            fabric,
+            context,
+            client,
+            state / "wiki-compiler.sqlite3",
+            lookup,
+            default_sphere,
         )
         self.compiler.timezone = zone
+        self.compiler.location_proposals = location_proposals
         self.digest = DigestBuilder(
             store,
             state / "wiki-digest.sqlite3",

@@ -430,3 +430,42 @@ def test_wiki_pending_human_edit_is_not_published_to_the_phone(tmp_path):
     )
     after = h.client.get(f"{READ}/wiki/pages/{page['id']}", headers=headers).json()
     assert "원문" in after["body"] and "중간" not in after["body"]
+
+
+def test_read_proposals_lists_pending(tmp_path):
+    from jsonschema import Draft202012Validator, FormatChecker
+
+    from weaver.context.proposals import LocationProposals
+    from weaver.schema import LocationProposal
+
+    h = Harness(tmp_path)
+    headers = h.pair("read")
+    empty = h.client.get(f"{READ}/proposals", headers=headers)
+    assert empty.status_code == 200 and empty.json()["items"] == []
+    store = LocationProposals(h.config.state_root)
+    store.propose(
+        kind="location",
+        reason="unknown_path",
+        sphere="회사",
+        path="회사/infra/storage/nas",
+        parent="회사/infra",
+        fallback="회사/미분류",
+        thread_ids=["t1"],
+        source_ids=["src_01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        now=at("05"),
+    )
+    page = h.client.get(f"{READ}/proposals", headers=headers)
+    assert page.status_code == 200
+    body = page.json()
+    assert body["next_cursor"] is None
+    assert body["items"][0]["kind"] == "location"
+    schema = LocationProposal.model_json_schema(mode="validation", by_alias=True)
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    for item in body["items"]:
+        validator.validate(item)
+    rejected = h.client.get(f"{READ}/proposals?status=rejected", headers=headers)
+    assert rejected.json()["items"] == []
+    assert (
+        h.client.get(f"{READ}/proposals?status=bogus", headers=headers).status_code
+        == 422
+    )

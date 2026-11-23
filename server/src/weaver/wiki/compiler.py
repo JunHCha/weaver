@@ -22,6 +22,12 @@ from weaver.context import (
     Kind,
     Page,
 )
+from weaver.context.proposals import (
+    LocationProposals,
+    ProposalDraft,
+    nearest_parent,
+)
+from weaver.context.tree import UNCLASSIFIED, root_of
 from weaver.fabric.state import project
 from weaver.fabric.store import Fabric, ThreadQuery
 from weaver.llm.errors import InvalidJson, MissingOutput, Refusal, SchemaMismatch
@@ -52,7 +58,7 @@ from weaver.wiki.document import (
 )
 from weaver.wiki.generation import GenerationCache, fingerprint
 from weaver.wiki.links import summary_path
-from weaver.wiki.prompts import HUMAN_EDIT_PROMPT
+from weaver.wiki.prompts import HUMAN_EDIT_PROMPT, HUMAN_EDIT_TREE_PROMPT
 from weaver.wiki.provenance import page_source_ids
 from weaver.wiki.provenance import source_ids as wiki_source_ids
 from weaver.wiki.selection import (
@@ -135,7 +141,7 @@ def _field_tags(
         and thread.kind not in ("태그정정", "실행", "거절")
         and any(dictionary.resolve(tag) == entry for tag in thread.tags)
         for tag in thread.tags
-        if (area := dictionary.resolve(tag)) and area.kind == "area"
+        if (area := dictionary.area_of(tag))
     }
     return list(
         dict.fromkeys([entry.name, *(sorted(areas) if len(areas) == 1 else [])])
@@ -187,7 +193,9 @@ class Compiler:
         llm: LlmClient,
         state_path: Path,
         summary: Callable[[str], Summary],
+        default_sphere: str = "회사",
     ) -> None:
+        self.default_sphere = default_sphere
         self.store, self.fabric, self.context, self.llm = store, fabric, context, llm
         self.state_path, self.summary = state_path, summary
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +205,7 @@ class Compiler:
                 "CREATE TABLE IF NOT EXISTS edits (rev TEXT PRIMARY KEY, drafts TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_failures (rev TEXT PRIMARY KEY, attempts INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_entries (rev TEXT PRIMARY KEY, entries TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS edit_proposals (rev TEXT PRIMARY KEY, payload TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS edit_hunks (rev TEXT NOT NULL, hunk INTEGER NOT NULL, path TEXT NOT NULL, classification TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(rev, hunk));"
                 "CREATE TABLE IF NOT EXISTS compiled_pages "
                 "(path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, hash TEXT NOT NULL);"
@@ -206,6 +215,7 @@ class Compiler:
 
         self.cache = GenerationCache(state_path)
         self.on_progress: Callable[[], None] | None = None
+        self.location_proposals: LocationProposals | None = None
 
     def bookmark(self) -> int:
         """Return the last fully applied sequence."""
@@ -254,7 +264,7 @@ class Compiler:
             for t in self.fabric.entries(ThreadQuery())
             if isinstance(ids, list) and t.thread_id in ids
             for tag in t.tags
-            if (entry := dictionary.resolve(tag)) and entry.kind == "area"
+            if (entry := dictionary.area_of(tag))
         }
         return next(iter(areas)) if len(areas) == 1 else None
 
@@ -400,6 +410,7 @@ class Compiler:
                         )
                 content = [h for h in changes if h.classification == "content"]
                 result = EditResult()
+                related: list[Thread] = []
                 meta = self.store.metadata(edit.path)
                 if content:
                     index = EvidenceIndex(self.state_path, threads, field_dictionary)
@@ -424,7 +435,9 @@ class Compiler:
                     )[:64]
                     result = self.llm.generate_json(
                         "wiki.human_edit",
-                        HUMAN_EDIT_PROMPT,
+                        HUMAN_EDIT_TREE_PROMPT
+                        if field_dictionary.has_tree
+                        else HUMAN_EDIT_PROMPT,
                         json.dumps(
                             {
                                 **tag_context(
@@ -594,13 +607,33 @@ class Compiler:
                     )
 
                 state_tag = self._scope_tag(edit)
+                location_drafts: dict[str, ProposalDraft] = {}
                 additions, names = proposals(field_dictionary, result.new_entries)
                 for change in result.changes:
-                    tags = (
-                        canonical_tags(dictionary, names, change.tags)
-                        if change.correction
-                        else business_tags(dictionary, additions, names, change.tags)
-                    )
+                    unknown_paths: list[str] = []
+                    fallback: str | None = None
+                    if change.correction:
+                        tags = canonical_tags(dictionary, names, change.tags)
+                    else:
+                        sphere = next(
+                            (
+                                root_of(tag)
+                                for t in related
+                                for tag in t.tags
+                                if (e := dictionary.resolve(tag)) and e.source == "tree"
+                            ),
+                            self.default_sphere,
+                        )
+                        decision = business_tags(
+                            dictionary,
+                            additions,
+                            names,
+                            change.tags,
+                            default_sphere=sphere,
+                        )
+                        tags = decision.tags
+                        unknown_paths = decision.unknown_paths
+                        fallback = decision.fallback
                     correction = change.correction
                     if correction:
                         if correction.target not in {t.thread_id for t in threads}:
@@ -625,6 +658,22 @@ class Compiler:
                         correction=correction,
                         counterpart=counterpart,
                     )
+                    for unknown in unknown_paths:
+                        sphere_root = root_of(unknown)
+                        proposal = location_drafts.setdefault(
+                            unknown,
+                            ProposalDraft(
+                                kind="location",
+                                reason="unknown_path",
+                                sphere=sphere_root,
+                                path=unknown,
+                                parent=nearest_parent(field_dictionary, unknown),
+                                fallback=fallback or f"{sphere_root}/{UNCLASSIFIED}",
+                                thread_ids=[],
+                                source_ids=[source_id],
+                            ),
+                        )
+                        proposal.thread_ids.append(drafts[-1].thread_id)
                     owner = owners.get(id(change))
                     if owner is not None:
                         produced_by_hunk[owner].append(drafts[-1].thread_id)
@@ -682,6 +731,16 @@ class Compiler:
                     [d.model_dump(mode="json") for d in drafts], ensure_ascii=False
                 )
                 db.execute("INSERT INTO edits VALUES (?, ?)", (edit.new_rev, payload))
+                db.execute(
+                    "INSERT INTO edit_proposals VALUES (?, ?)",
+                    (
+                        edit.new_rev,
+                        json.dumps(
+                            [d.model_dump() for d in location_drafts.values()],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
             else:
                 payload = row[0]
             entry_row = db.execute(
@@ -710,6 +769,17 @@ class Compiler:
         appended = self.fabric.append(
             [ThreadDraft.model_validate(d) for d in json.loads(payload)]
         )
+        if self.location_proposals is not None:
+            with sqlite3.connect(self.state_path) as db:
+                saved = db.execute(
+                    "SELECT payload FROM edit_proposals WHERE rev=?", (edit.new_rev,)
+                ).fetchone()
+            # Written only once the Fabric append succeeded; retries share a fingerprint.
+            for raw in json.loads(saved[0]) if saved else []:
+                self.location_proposals.propose(
+                    **ProposalDraft.model_validate(raw).model_dump(),
+                    now=appended[0].recorded_at if appended else datetime.now(UTC),
+                )
         with sqlite3.connect(self.state_path) as db:
             for hunk_id, raw in db.execute(
                 "SELECT hunk, payload FROM edit_hunks WHERE rev=?", (edit.new_rev,)

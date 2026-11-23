@@ -18,6 +18,17 @@
       "additionalProperties": false,
       "description": "The calendar event an Action creates, changes to, or removes.",
       "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "end": {
           "anyOf": [
             {

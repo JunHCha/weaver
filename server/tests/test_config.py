@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from weaver.config import ConfigError, load_config
+from weaver.config import (
+    ConfigError,
+    ReferenceVault,
+    load_config,
+    reference_clone_dir,
+)
 
 ROOTS = ("sync_root", "archive_root", "vault_root", "state_root", "log_root")
 CHANNELS = ("outbox", "receipts", "proposals", "decisions")
@@ -792,3 +797,69 @@ def test_explicit_pipeline_overrides_the_projection_rule(tmp_path, choice, files
         ).mobile.publishes_pipeline_files()
         is False
     )
+
+
+REFERENCE_TOML = """
+[reference]
+default_sphere = "회사"
+[[reference.vault]]
+sphere = "회사"
+source = "git"
+git_remote = "file:///x"
+branch = "main"
+[[reference.vault]]
+sphere = "가족"
+source = "home"
+include = ["2. Area/가족"]
+"""
+
+
+def test_reference_vaults_parse(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, REFERENCE_TOML), environ={})
+    assert config.reference.vaults[0] == ReferenceVault(
+        "회사", "git", "file:///x", "main", ()
+    )
+    assert config.reference.vaults[1] == ReferenceVault(
+        "가족", "home", None, "main", ("2. Area/가족",)
+    )
+    assert config.reference.default_sphere == "회사"
+    assert load_config(write_config(tmp_path), environ={}).reference.vaults == ()
+
+
+def _vault(*lines: str) -> str:
+    return "[[reference.vault]]\n" + "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        _vault('sphere = "a"', 'source = "git"', 'git_remote = "x"', 'path = "/p"'),
+        _vault('sphere = "a"', 'source = "git"'),
+        _vault('sphere = "a"', 'source = "home"', 'git_remote = "x"'),
+        _vault('sphere = "회사/x"', 'source = "home"'),
+        _vault('sphere = ""', 'source = "home"'),
+        _vault('sphere = "a"', 'source = "git"', 'git_remote = "x"')
+        + _vault('sphere = "a"', 'source = "git"', 'git_remote = "y"'),
+        _vault('sphere = "a"', 'source = "git"', 'git_remote = "x"')
+        + _vault('sphere = "a"', 'source = "home"'),
+        _vault('sphere = "a"', 'source = "home"')
+        + _vault('sphere = "a"', 'source = "home"', 'include = ["d"]'),
+        _vault('sphere = "a"', 'source = "git"', 'git_remote = "x"', 'include = ["d"]'),
+        _vault('sphere = "a"', 'source = "ftp"'),
+        '[reference]\ndefault_sphere = "없음"\n'
+        + _vault('sphere = "a"', 'source = "home"'),
+    ],
+)
+def test_reference_rejects_path_and_bad_combinations(
+    tmp_path: Path, extra: str
+) -> None:
+    with pytest.raises(ConfigError):
+        load_config(write_config(tmp_path, extra), environ={})
+
+
+def test_reference_clone_dir_is_stable_per_sphere(tmp_path: Path) -> None:
+    first = reference_clone_dir(tmp_path, "회사")
+    assert first == reference_clone_dir(tmp_path, "회사")
+    assert first != reference_clone_dir(tmp_path, "가족")
+    assert first.relative_to(tmp_path).parts[0] == "reference"
+    assert first.name == "repo"

@@ -10,6 +10,7 @@ from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,8 @@ from weaver.action.calendar import baseline_schedule_ids, derive_calendar_action
 from weaver.action.outbox import ActionRecord, _record
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary, ContextEntry, DictionarySnapshot, _key
+from weaver.context.proposals import LocationProposals, ProposalDraft
+from weaver.context.tree import UNCLASSIFIED
 from weaver.fabric import FabricStore, ThreadQuery
 from weaver.llm.policy import UNKNOWN_WIKI_SOURCE, ScopedClient
 from weaver.llm.types import LlmClient
@@ -35,7 +38,7 @@ from weaver.schema import (
 from weaver.wiki.provenance import source_ids as wiki_source_ids
 from weaver.wiki.store import WikiStore, _properties
 
-RUN_KEY = "feedback-time-v6"
+RUN_KEY = "path-tree-v1"
 BOOTSTRAP_MAX_ENTRIES = 200
 BOOTSTRAP_MAX_BYTES = 32768
 JUNK_TAGS = frozenset({"todo", "확인", "확인필요", "tbd"})
@@ -94,6 +97,24 @@ def _db_fingerprint(path: Path) -> str:
             rows = db.execute(f"SELECT * FROM {quoted}").fetchall()
             content.append((name, sql, sorted(rows, key=repr)))
         return _digest((db.execute("PRAGMA user_version").fetchone(), content))
+
+
+class _CountingClient:
+    """Counts LLM requests made through it (bootstrap accounting)."""
+
+    def __init__(self, inner: LlmClient) -> None:
+        self.inner = inner
+        self.calls = 0
+
+    def generate_json[T: BaseModel](
+        self, task: str, system: str, user: str, schema: type[T]
+    ) -> T:
+        self.calls += 1
+        return self.inner.generate_json(task, system, user, schema)
+
+    def generate_text(self, task: str, system: str, user: str) -> str:
+        self.calls += 1
+        return self.inner.generate_text(task, system, user)
 
 
 def _signatures(root: Path) -> dict[str, str]:
@@ -156,6 +177,7 @@ class SourcePlan(BaseModel):
     done: bool = False
     source_time_estimated: bool = False
     error: str | None = None
+    location_proposals: list[ProposalDraft] = Field(default_factory=list)
 
 
 class Report(BaseModel):
@@ -169,6 +191,24 @@ class Report(BaseModel):
     sources: list[SourcePlan] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     notices: list[str] = Field(default_factory=list)
+    llm_calls_by_day: dict[str, int] = Field(default_factory=dict)
+    today: str = ""
+    pending_sources: list[str] = Field(default_factory=list)
+    unclassified: int = 0
+
+
+def _unclassified_ids(report: Report) -> list[str]:
+    """New Threads tagged ``<root>/미분류``, in plan order."""
+    return [
+        draft.thread_id
+        for plan in report.sources
+        if not plan.error and not plan.skipped
+        for draft in plan.new
+        if any(
+            tag.endswith(f"/{UNCLASSIFIED}") and tag.count("/") == 1
+            for tag in draft.tags
+        )
+    ]
 
 
 def _seal(report: Report) -> Report:
@@ -556,21 +596,24 @@ def _replace(
                 match = next(
                     (t for t in old_schedules if t.thread_id in baseline_ids), None
                 )
-            effect = "register"
+            effect, detail = "register", ""
             shown_old = match
             if match:
                 data["updates"] = match.thread_id
                 if match in available:
                     available.remove(match)
-                effect = (
-                    "유지"
-                    if equal
-                    and match.content == draft.content
-                    and ScheduleValue.model_validate(match.value) == value
-                    else "update"
-                )
+                old_value = ScheduleValue.model_validate(match.value)
+                same_slot = bool(equal) and match.content == draft.content
+                effect = "유지" if same_slot else "update"
+                if same_slot and (old_value.title, old_value.description) != (
+                    value.title,
+                    value.description,
+                ):
+                    effect, detail = "update", "제목·설명 갱신"
                 if match.thread_id in baseline_ids:
                     effect = "유지" if equal else "수동 확인"
+                    if effect == "유지":
+                        detail = ""
             elif available:
                 shown_old = available.pop(0)
                 effect = "remove+register"
@@ -581,7 +624,7 @@ def _replace(
                     effect=effect,
                     detail="캘린더 수동 확인 필요: baseline 이전 일정의 시각 변경"
                     if effect == "수동 확인"
-                    else "",
+                    else detail,
                 )
             )
         plan.new.append(ThreadDraft.model_validate(data))
@@ -745,7 +788,17 @@ def reextract(
     apply: bool = False,
     source: str | None = None,
     timezone: str = "Asia/Seoul",
+    default_sphere: str = "회사",
+    resume: Report | None = None,
+    limit: int | None = None,
+    daily_cap: int | None = None,
 ) -> Report:
+    """Plan a migration.
+
+    ``limit`` is the maximum number of new LLM sources planned in this run;
+    ``daily_cap`` is the day's LLM call budget (bootstrap included), of which
+    same-day calls carried in ``resume`` are already spent.
+    """
     if apply:
         raise ValueError(
             "--apply --plan PATH 필요: 먼저 미리보기를 저장하고 다시 계획하십시오"
@@ -753,6 +806,13 @@ def reextract(
     report = Report(state_root=str(root.resolve()))
     try:
         report.fingerprints = _signatures(root)
+        if resume is not None and (
+            resume.fingerprints != report.fingerprints or resume.run_key != RUN_KEY
+        ):
+            raise ValueError(
+                "상태가 바뀌었습니다: --resume 없이 다시 계획"
+                " (계획과 적용이 끝날 때까지 daemon을 계속 중지해야 합니다)"
+            )
         threads = SnapshotFabric.open_readonly(root / "fabric.sqlite3").entries(
             ThreadQuery(include_executions=True)
         )
@@ -764,6 +824,10 @@ def reextract(
         )
         blocked = _removed_aliases(root)
     except (OSError, ValueError, sqlite3.Error) as error:
+        if isinstance(error, ValueError) and str(error).startswith(
+            "상태가 바뀌었습니다"
+        ):
+            raise
         reason = (
             str(error)
             if isinstance(error, ValueError) and "다시 계획" in str(error)
@@ -799,6 +863,8 @@ def reextract(
         )
         - broken
     )
+    reusable = {p.key: p for p in resume.sources if not p.error} if resume else {}
+    reused: set[str] = set()
     pending = []
     for source_id in sources:
         revision = selected[source_id][0] if source_id in selected else None
@@ -817,9 +883,11 @@ def reextract(
             else []
         )
         try:
-            plan = _saved(root, key) or SourcePlan(
-                source_id=source_id, key=key, old=old
-            )
+            plan = _saved(root, key)
+            if plan is None and key in reusable:
+                plan = reusable[key].model_copy(deep=True)
+                reused.add(key)
+            plan = plan or SourcePlan(source_id=source_id, key=key, old=old)
         except (ValueError, TypeError, OSError, sqlite3.Error) as error:
             report.sources.append(
                 SourcePlan(
@@ -849,13 +917,41 @@ def reextract(
             plan.skipped, plan.referencing_seqs = "외부 참조로 건너뜀", refs
             plan.batch, plan.new, plan.additions = [], [], []
         report.sources.append(plan)
-        if not plan.done and not plan.skipped and not plan.batch:
+        if not plan.done and not plan.skipped and not plan.batch and key not in reused:
             pending.append(plan)
+    today = datetime.now(ZoneInfo(timezone)).date().isoformat()
+    report.llm_calls_by_day = dict(resume.llm_calls_by_day) if resume else {}
+    if resume:
+        report.notices.extend(n for n in resume.notices if n not in report.notices)
+    report.today = today
+    spent_today = report.llm_calls_by_day.get(today, 0)
+    if limit is not None or daily_cap is not None:
+        slots = limit if limit is not None else len(pending)
+        if daily_cap is not None:
+            # One daily call is reserved for the bootstrap request.
+            slots = min(slots, max(0, daily_cap - spent_today - 1))
+        deferred = []
+        kept = []
+        for plan in pending:
+            if plan.source_id not in selected:
+                kept.append(plan)  # human-only sources never call the LLM
+            elif slots > 0:
+                slots -= 1
+                kept.append(plan)
+            else:
+                deferred.append(plan)
+        pending = kept
+        report.pending_sources = [p.source_id for p in deferred]
+        report.sources = [p for p in report.sources if p not in deferred]
+    report.llm_calls_by_day[today] = spent_today + sum(
+        p.source_id in selected for p in pending
+    )
     if pending:
+        counter = _CountingClient(llm)
         changes = Bootstrap()
         try:
             bootstrap = _bootstrap(
-                llm,
+                counter,
                 MemoryDictionary(entries.copy(), blocked),
                 threads,
                 wiki,
@@ -864,9 +960,11 @@ def reextract(
                 report.notices,
             )
         except Exception as error:
+            report.llm_calls_by_day[today] += counter.calls
             for plan in pending:
                 plan.error = f"bootstrap: {type(error).__name__}"
             return _seal(report)
+        report.llm_calls_by_day[today] += counter.calls
         baseline = 0
         outbox_path = root / "action-outbox.sqlite3"
         if outbox_path.exists():
@@ -915,6 +1013,7 @@ def reextract(
                         memory,
                         ExtractionView(threads, plan.source_id),
                         timezone=timezone,
+                        default_sphere=default_sphere,
                         approved_at=approved_at,
                         allow_current_approval_time=False,
                         source_occurred_at=reference.occurred_at,
@@ -931,6 +1030,20 @@ def reextract(
                         now,
                         baseline_schedule_ids(threads, baseline),
                     )
+                    renamed = {
+                        t.thread_id: _id(f"{plan.key}:new:{i}")
+                        for i, t in enumerate(prepared.threads)
+                    }
+                    plan.location_proposals = [
+                        draft.model_copy(
+                            update={
+                                "thread_ids": [
+                                    renamed.get(i, i) for i in draft.thread_ids
+                                ]
+                            }
+                        )
+                        for draft in prepared.location_proposals
+                    ]
                 old_ids = {t.thread_id for t in plan.old}
                 for thread in active:
                     if (
@@ -991,7 +1104,8 @@ def reextract(
                 )
                 plan.batch = []
         global_names = MemoryDictionary(entries.copy(), blocked)
-        for plan in report.sources:
+        # Reused plans replay their additions first, in their original order.
+        for plan in sorted(report.sources, key=lambda p: p.key not in reused):
             if plan.error or plan.skipped or plan.done:
                 continue
             for change in plan.renames:
@@ -1021,12 +1135,21 @@ def reextract(
         used_names = {
             e.name for p in report.sources if not p.error for e in p.additions
         }
-        report.bootstrap = [e for e in bootstrap if e.name in used_names]
+        carried = resume.bootstrap if resume else []
+        report.bootstrap = [
+            e
+            for e in [
+                *carried,
+                *(b for b in bootstrap if b.name not in {c.name for c in carried}),
+            ]
+            if e.name in used_names
+        ]
         try:
             _calendar_summary(root, threads, report, baseline)
         except (ValueError, OSError, sqlite3.Error) as error:
             report.errors.append(f"Action preview: {type(error).__name__}")
             report.valid = False
+    report.unclassified = len(_unclassified_ids(report))
     try:
         if _signatures(root) != report.fingerprints:
             report.errors.append("계획 중 상태 변경: 다시 계획 필요")
@@ -1117,8 +1240,40 @@ def _apply(
     plan.done = True
 
 
+def _propose(root: Path, report: Report, default_sphere: str) -> None:
+    """Location proposals and one summary, written only after every Fabric append."""
+    if any(p.error for p in report.sources) or any(
+        not p.done and not p.skipped for p in report.sources
+    ):
+        return
+    proposals = LocationProposals(root)
+    now = datetime.now(UTC)
+    for plan in report.sources:
+        if plan.skipped:
+            continue
+        for draft in plan.location_proposals:
+            proposals.propose(**draft.model_dump(), now=now)
+    ids = _unclassified_ids(report)
+    if ids:
+        proposals.propose(
+            kind="unclassified",
+            reason="reextract_unclassified",
+            sphere=default_sphere,
+            path=None,
+            fallback=f"{default_sphere}/{UNCLASSIFIED}",
+            thread_ids=ids,
+            source_ids=[p.source_id for p in report.sources if not p.skipped],
+            key=report.plan_id,
+            now=now,
+        )
+
+
 def apply_report(
-    root: Path, supplied: Report, *, archive_root: Path | None = None
+    root: Path,
+    supplied: Report,
+    *,
+    archive_root: Path | None = None,
+    default_sphere: str = "회사",
 ) -> Report:
     """No model dependency; caller holds InstanceLock for validation and apply."""
     if (
@@ -1127,6 +1282,8 @@ def apply_report(
         or not supplied.fingerprints
     ):
         raise ValueError("유효한 계획이 없습니다: 다시 계획 필요")
+    if supplied.pending_sources:
+        raise ValueError("계획이 끝나지 않았습니다: --resume으로 이어서 계획")
     current = _signatures(root)
     expected = supplied.fingerprints
     path = root / "reextract.sqlite3"
@@ -1143,6 +1300,7 @@ def apply_report(
     report = supplied.model_copy(deep=True)
     report.applied = True
     if not any(not p.done and not p.skipped and not p.error for p in report.sources):
+        _propose(root, report, default_sphere)
         return report
     with closing(_journal_db(root)) as db, db:
         db.execute(
@@ -1172,6 +1330,7 @@ def apply_report(
                 "UPDATE runs SET checkpoint=? WHERE id=?",
                 (json.dumps(_signatures(root)), report.plan_id),
             )
+    _propose(root, report, default_sphere)
     return report
 
 
@@ -1201,6 +1360,14 @@ def discard_plan(root: Path, source: str | None = None) -> int:
             count += 1
         db.execute("DELETE FROM runs")
     return count
+
+
+def _today_calls(report: Report) -> int:
+    """Calls of the run's own day in the configured timezone."""
+    days = report.llm_calls_by_day
+    if report.today:
+        return days.get(report.today, 0)
+    return days[max(days)] if days else 0
 
 
 def render(report: Report) -> str:
@@ -1242,4 +1409,9 @@ def render(report: Report) -> str:
         )
         if plan.error:
             lines.append(f"  오류: {plan.error}")
+    lines.append(
+        f"미분류 {report.unclassified}건 · 남은 원본 {len(report.pending_sources)}개"
+        f" · 오늘 LLM {_today_calls(report)}회"
+        f" · 캘린더 update {sum(e.effect == 'update' for p in report.sources for e in p.calendar_effects)}건"
+    )
     return "\n".join(lines)
