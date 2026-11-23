@@ -1,0 +1,17 @@
+{
+  "thread_id": "thr_0123456789abcdef",
+  "revision": 3,
+  "content": "견적 회신",
+  "block_id": "w-0123456789",
+  "deadline": "2026-11-14",
+  "due_label": "D-2",
+  "counterpart": "김철수",
+  "document_id": "5f19b95b9ab4aa0142341ad1",
+  "document_title": "네트워크",
+  "link": {
+    "kind": "document",
+    "document_id": "5f19b95b9ab4aa0142341ad1",
+    "bullet_id": null,
+    "block_id": "w-0123456789"
+  }
+}

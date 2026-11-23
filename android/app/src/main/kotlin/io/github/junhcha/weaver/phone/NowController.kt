@@ -63,6 +63,15 @@ data class NowUiState(
     val nextRefreshAt: Instant? = null,
 )
 
+/** How completing a request ended; [Offline] means it is queued in the journal and still to be sent. */
+sealed interface CompleteResult {
+    /** [operation] is the applied journal entry, what [NowController.undo] needs. */
+    data class Done(val operation: PendingRequest) : CompleteResult
+    data object AlreadyResolved : CompleteResult
+    data class Rejected(val code: String) : CompleteResult
+    data object Offline : CompleteResult
+}
+
 /** Device-local handling and durable write journal. Every store access runs on Dispatchers.IO. */
 class NowController(val server: String, private val api: () -> MobileApi?, private val store: NowStore,
                     private val clock: () -> Instant = Instant::now) {
@@ -248,10 +257,29 @@ class NowController(val server: String, private val api: () -> MobileApi?, priva
         require(action in setOf("complete", "deadline"))
         send(action, thread.revision, thread.id, content, deadline)
     }
+
+    /**
+     * Completes the received request [threadId] at [revision] (ADR-043, `/edits/requests/complete`) for a task checked in the
+     * results screens. Offline, the request waits in the same journal and replays on the next refresh; the result is
+     * [CompleteResult.Offline] until the server answers.
+     */
+    suspend fun complete(threadId: String, revision: Long): CompleteResult {
+        if (!supported || !canEdit || snapshot == null) return CompleteResult.Rejected("edit_unavailable")
+        val clientId = try { send("complete", revision, threadId, "완료했습니다", allowOffline = true) }
+        catch (error: IllegalStateException) { if (error.message == "pending_request_exists") return CompleteResult.Offline else throw error }
+        val operation = withContext(Dispatchers.IO) { store.operations(server).firstOrNull { it.clientId == clientId } }
+        return when (operation?.state) {
+            "applied" -> CompleteResult.Done(operation)
+            "rejected", "failed" ->
+                if (operation.code == "request_already_resolved") CompleteResult.AlreadyResolved else CompleteResult.Rejected(operation.code ?: "rejected")
+            else -> CompleteResult.Offline
+        }
+    }
+
     private suspend fun send(action: String, revision: Long, threadId: String, content: String = "", deadline: LocalDate? = null,
-                             editThreadId: String? = null) = submitLock.withLock {
+                             editThreadId: String? = null, allowOffline: Boolean = false): String = submitLock.withLock {
         withContext(Dispatchers.IO) {
-            check(supported && online && canEdit)
+            check(supported && canEdit && (online || allowOffline))
             val current = snapshot ?: error("no_snapshot")
             check(store.operations(server).none {
                 it.epoch == current.epoch && it.state == "pending" &&
@@ -270,6 +298,7 @@ class NowController(val server: String, private val api: () -> MobileApi?, priva
             }
             store.enqueue(server, current.epoch, clientId, "/requests/$action", body)
             refresh()
+            clientId
         }
     }
 }

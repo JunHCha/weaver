@@ -71,6 +71,7 @@ internal fun WikiViewer(
     onBack: () -> Unit,
     onLink: (LinkTarget) -> Unit,
     loading: Boolean = false,
+    resolve: (String) -> LinkTarget = { resolveLink(snapshot, it) },
 ) {
     Column(Modifier.fillMaxSize().testTag("wiki-viewer")) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -83,16 +84,16 @@ internal fun WikiViewer(
         ) {
             Text(page.title, style = MaterialTheme.typography.titleLarge, color = WeaverTokens.indigo)
             Muted(listOfNotNull(page.kind.label, page.area?.let { "영역: $it" }, "갱신 ${page.updated.shortDate()}").joinToString(" · "))
-            Frontmatter(snapshot, page, onLink)
+            Frontmatter(resolve, page, onLink)
             if (loading) Muted("본문을 불러오는 중이에요")
             val blocks = remember(page.body) { parseWikiBody(page.body) }
-            blocks.forEach { WikiBlock(snapshot, it, onLink) }
+            blocks.forEach { WikiBlock(resolve, it, onLink) }
         }
     }
 }
 
 @Composable
-private fun Frontmatter(snapshot: PhoneSnapshot, page: WikiPage, onLink: (LinkTarget) -> Unit) {
+private fun Frontmatter(resolve: (String) -> LinkTarget, page: WikiPage, onLink: (LinkTarget) -> Unit) {
     val fm = page.frontmatter
     val rows = buildList {
         fm.status?.let { add("상태" to listOf<Inline>(Inline.Text(it))) }
@@ -111,7 +112,7 @@ private fun Frontmatter(snapshot: PhoneSnapshot, page: WikiPage, onLink: (LinkTa
             rows.forEach { (key, value) ->
                 Row {
                     Muted(key, Modifier.width(44.dp))
-                    Text(inlineText(snapshot, value, onLink), style = MaterialTheme.typography.bodyMedium)
+                    Text(inlineText(resolve, value, onLink), style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
@@ -119,34 +120,34 @@ private fun Frontmatter(snapshot: PhoneSnapshot, page: WikiPage, onLink: (LinkTa
 }
 
 @Composable
-private fun WikiBlock(snapshot: PhoneSnapshot, block: MdBlock, onLink: (LinkTarget) -> Unit) {
+private fun WikiBlock(resolve: (String) -> LinkTarget, block: MdBlock, onLink: (LinkTarget) -> Unit) {
     when (block) {
         is MdBlock.Heading -> Text(
-            inlineText(snapshot, block.text, onLink), Modifier.padding(top = 10.dp),
+            inlineText(resolve, block.text, onLink), Modifier.padding(top = 10.dp),
             style = when (block.level) {
                 1 -> MaterialTheme.typography.titleLarge
                 2 -> MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp)
                 else -> MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             },
         )
-        is MdBlock.Paragraph -> Text(inlineText(snapshot, block.text, onLink), style = MaterialTheme.typography.bodyLarge)
+        is MdBlock.Paragraph -> Text(inlineText(resolve, block.text, onLink), style = MaterialTheme.typography.bodyLarge)
         is MdBlock.Bullet -> Row {
             Text("•", Modifier.padding(end = 6.dp, start = 4.dp), style = MaterialTheme.typography.bodyLarge)
-            Text(inlineText(snapshot, block.text, onLink), style = MaterialTheme.typography.bodyLarge)
+            Text(inlineText(resolve, block.text, onLink), style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
 
 /** Links that lead nowhere (no matching person, area or page) stay plain text. */
 @Composable
-private fun inlineText(snapshot: PhoneSnapshot, inlines: List<Inline>, onLink: (LinkTarget) -> Unit): AnnotatedString {
+private fun inlineText(resolve: (String) -> LinkTarget, inlines: List<Inline>, onLink: (LinkTarget) -> Unit): AnnotatedString {
     val style = TextLinkStyles(SpanStyle(color = WeaverTokens.indigo, textDecoration = TextDecoration.Underline))
     return buildAnnotatedString {
         inlines.forEach { part ->
             when (part) {
                 is Inline.Text -> append(part.text)
                 is Inline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(part.text) }
-                is Inline.Link -> when (val target = resolveLink(snapshot, part.target)) {
+                is Inline.Link -> when (val target = resolve(part.target)) {
                     LinkTarget.None -> append(part.label)
                     else -> withLink(LinkAnnotation.Clickable(part.target, style) { onLink(target) }) { append(part.label) }
                 }

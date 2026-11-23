@@ -29,6 +29,7 @@ PLACEHOLDERS = [
     (re.compile(r"\bdev_[0-9a-f]{32}\b"), lambda n: f"dev_{n:032x}"),
     (re.compile(r"\bsrv_[0-9a-f]{32}\b"), lambda n: f"srv_{n:032x}"),
     (re.compile(r"\bep_[0-9a-f]{32}\b"), lambda n: f"ep_{n:032x}"),
+    (re.compile(r"\bfbk_[0-9a-f]{32}\b"), lambda n: f"fbk_{n:032x}"),
     (re.compile(r"\bwvr_[A-Za-z0-9_-]{20,}\b"), lambda n: f"wvr_{n:043d}"),
     (re.compile(r"\bsrc_[0-7][0-9A-HJKMNP-TV-Z]{25}\b"), lambda n: f"src_{n:026d}"),
 ]
@@ -116,6 +117,9 @@ def stabilize(value: Any) -> Any:
         if "thread_id" in out and str(out["thread_id"]).startswith("phone-request:"):
             out["occurred_at"] = FIXED_TIME
             out["recorded_at"] = FIXED_TIME
+        if "feedback_id" in out and "created_at" in out:
+            out["created_at"] = FIXED_TIME
+            out["updated_at"] = FIXED_TIME
         if "received_at" in out:
             out["received_at"] = FIXED_TIME
         if "frontmatter" in out and "updated_at" in out:

@@ -106,7 +106,7 @@ class SchemaContractTest {
 
     @Test
     fun unknownVersionsAreSkippedWithDiagnostic() {
-        SharedSchema.models.forEach { (model, serializer) ->
+        SharedSchema.models.filterKeys { it !in SharedSchema.unversioned }.forEach { (model, serializer) ->
             val example = Json.parseToJsonElement(SharedSchema.examples(model).first().readText()).jsonObject
             val expected = SharedSchema.version(model)
             listOf(0L, 99L, 3 - expected).forEach { version ->

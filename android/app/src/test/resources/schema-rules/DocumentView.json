@@ -1,0 +1,216 @@
+{
+    "/$defs/DateString/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/DateString/pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "/$defs/DateString/type": "string",
+    "/$defs/Digest/maxLength": 64,
+    "/$defs/Digest/minLength": 64,
+    "/$defs/Digest/pattern": "^[0-9a-f]{64}$",
+    "/$defs/Digest/type": "string",
+    "/$defs/DocBullet/additionalProperties": false,
+    "/$defs/DocBullet/properties/day/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/DocBullet/properties/label/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/DocBullet/properties/task/anyOf": [
+        {
+            "$ref": "#/$defs/TaskItem"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/DocBullet/properties/thread_ids/type": "array",
+    "/$defs/DocBullet/required": [
+        "bullet_id",
+        "text",
+        "thread_ids",
+        "task",
+        "day",
+        "label"
+    ],
+    "/$defs/DocBullet/type": "object",
+    "/$defs/DocSection/additionalProperties": false,
+    "/$defs/DocSection/properties/bullets/type": "array",
+    "/$defs/DocSection/properties/kind/enum": [
+        "current",
+        "remaining",
+        "waiting",
+        "cautions",
+        "tasks",
+        "summary"
+    ],
+    "/$defs/DocSection/properties/kind/type": "string",
+    "/$defs/DocSection/required": [
+        "kind",
+        "title",
+        "bullets"
+    ],
+    "/$defs/DocSection/type": "object",
+    "/$defs/LinkTarget/additionalProperties": false,
+    "/$defs/LinkTarget/properties/block_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/bullet_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/kind/enum": [
+        "document",
+        "digest"
+    ],
+    "/$defs/LinkTarget/properties/kind/type": "string",
+    "/$defs/LinkTarget/required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+    ],
+    "/$defs/LinkTarget/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/RefLinkView/additionalProperties": false,
+    "/$defs/RefLinkView/properties/home/type": "boolean",
+    "/$defs/RefLinkView/required": [
+        "sphere",
+        "path",
+        "heading",
+        "home"
+    ],
+    "/$defs/RefLinkView/type": "object",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/$defs/TaskItem/additionalProperties": false,
+    "/$defs/TaskItem/properties/counterpart/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/properties/deadline/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/properties/document_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/properties/document_title/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/properties/due_label/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/properties/link/anyOf": [
+        {
+            "$ref": "#/$defs/LinkTarget"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/TaskItem/required": [
+        "thread_id",
+        "revision",
+        "content",
+        "block_id",
+        "deadline",
+        "due_label",
+        "counterpart",
+        "document_id",
+        "document_title",
+        "link"
+    ],
+    "/$defs/TaskItem/type": "object",
+    "/additionalProperties": false,
+    "/properties/as_of/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/key/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/kind/enum": [
+        "area",
+        "project",
+        "topic",
+        "digest"
+    ],
+    "/properties/kind/type": "string",
+    "/properties/log_subject/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/references/type": "array",
+    "/properties/reflecting/type": "boolean",
+    "/properties/sections/type": "array",
+    "/required": [
+        "document_id",
+        "kind",
+        "key",
+        "title",
+        "as_of",
+        "path",
+        "sections",
+        "references",
+        "log_subject",
+        "reflecting",
+        "sha256"
+    ],
+    "/type": "object"
+}

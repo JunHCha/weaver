@@ -1,0 +1,150 @@
+{
+  "$defs": {
+    "EvidenceSource": {
+      "additionalProperties": false,
+      "description": "Whole source text (phase 1: no highlight), cut at 20000 characters.",
+      "properties": {
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source_id",
+        "label",
+        "channel",
+        "occurred_at",
+        "text",
+        "truncated"
+      ],
+      "title": "EvidenceSource",
+      "type": "object"
+    },
+    "EvidenceThread": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content"
+        },
+        "kind": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "source_label": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "thread_id",
+        "kind",
+        "content",
+        "occurred_at",
+        "source_id",
+        "source_label"
+      ],
+      "title": "EvidenceThread",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:Evidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bullet_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "document_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/EvidenceSource"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "text": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "threads": {
+      "items": {
+        "$ref": "#/$defs/EvidenceThread"
+      },
+      "title": "Threads",
+      "type": "array"
+    }
+  },
+  "required": [
+    "document_id",
+    "bullet_id",
+    "text",
+    "threads",
+    "sources"
+  ],
+  "title": "Evidence",
+  "type": "object"
+}

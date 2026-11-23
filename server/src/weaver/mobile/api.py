@@ -27,6 +27,7 @@ from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.loom.summary_state import SummaryState
 from weaver.schema import ActionResult
+from weaver.wiki.feedback import FeedbackStore
 
 from .auth import PREFIX, AuthMiddleware, Principal
 from .captures import CaptureService
@@ -40,9 +41,11 @@ from .edits import (
 )
 from .errors import ApiError
 from .feed import KIND_SCOPES, LEGACY_KINDS, FeedProducer, FeedSources
+from .feedback import FeedbackEdit, FeedbackService, FeedbackUndo
 from .pipeline import PipelineReadModel
 from .read import ReadModel
 from .requests import DeadlineEdit, RequestEdit, RequestEditService, UndoEdit
+from .results import ResultModel
 from .reviews import ReviewEntry, ReviewService, etag
 from .store import MobileStore, Operation, canonical, content_hash
 from .whois import Whois
@@ -157,8 +160,11 @@ def create_app(
         staging_days=mobile.staging_days,
     )
     read = ReadModel(config, archive, clock)
+    results = ResultModel(read)
     request_edits = RequestEditService(config, store)
     edits = EditService(config, store)
+    feedback_store = FeedbackStore(config.state_root / "wiki-feedback.sqlite3")
+    feedback = FeedbackService(config, store, feedback_store, results)
     feed = FeedProducer(
         store,
         reviews,
@@ -254,6 +260,9 @@ def create_app(
 
     @router.get("/capabilities")
     def capabilities(who: Anyone) -> JSONResponse:
+        # Results cards and document feedback exist only for a PARA tree.
+        dictionary = read.snapshot().dictionary
+        has_tree = dictionary is not None and dictionary.has_tree
         return json_response(
             {
                 "server_id": store.server_id,
@@ -292,6 +301,8 @@ def create_app(
                     "dictionary": True,
                     "edits": True,
                     "thread_handling": True,
+                    "results": has_tree,
+                    "feedback": has_tree,
                     "alerts": mobile.transport_for("alert") == "http",
                     "pipeline": mobile.transport_for("pipeline") == "http",
                 },
@@ -638,6 +649,122 @@ def create_app(
             }
         )
 
+    def instant(at: str | None) -> datetime | None:
+        if at is None:
+            return None
+        try:
+            value = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            raise ApiError(422, "invalid_at") from None
+        if value.tzinfo is None:
+            raise ApiError(422, "invalid_at")
+        return value
+
+    @router.get("/read/cards")
+    def read_cards(
+        _who: ReadScope,
+        window: Literal["today", "around"] = "today",
+        at: str | None = None,
+    ) -> JSONResponse:
+        moment = read.clock() if at is None else instant(at)
+        assert moment is not None
+        zone = config.time.zone
+        return json_response(
+            {
+                "items": [
+                    c.model_dump(mode="json") for c in results.cards(moment, window)
+                ],
+                "next_cursor": None,
+                "today": moment.astimezone(zone).date().isoformat(),
+                "timezone": str(zone),
+            }
+        )
+
+    @router.get("/read/tasks")
+    def read_tasks(_who: ReadScope, at: str | None = None) -> JSONResponse:
+        return json_response(
+            {
+                "items": [
+                    t.model_dump(mode="json") for t in results.tasks(instant(at))
+                ],
+                "next_cursor": None,
+            }
+        )
+
+    @router.get("/read/tree")
+    def read_tree(_who: ReadScope, at: str | None = None) -> JSONResponse:
+        return json_response(
+            {"items": [n.model_dump(mode="json") for n in results.tree(instant(at))]}
+        )
+
+    @router.get("/read/references")
+    def read_references(
+        _who: ReadScope, path: Annotated[str, Query(min_length=1)]
+    ) -> JSONResponse:
+        return json_response(
+            {"items": [r.model_dump(mode="json") for r in results.references(path)]}
+        )
+
+    @router.get("/read/documents")
+    def read_documents(_who: ReadScope) -> JSONResponse:
+        return json_response(
+            {"items": [d.model_dump(mode="json") for d in results.documents()]}
+        )
+
+    @router.get("/read/documents/{document_id}")
+    def read_document(
+        document_id: str,
+        request: Request,
+        _who: ReadScope,
+        at: str | None = None,
+    ) -> Response:
+        view = results.document(document_id, instant(at))
+        # Remaining and waiting are live, so the tag covers the whole view
+        # rather than only the committed file's sha256.
+        tag = '"' + content_hash(view.model_dump_json()) + '"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(
+                status_code=304,
+                headers={"ETag": tag, "Cache-Control": "no-store"},
+            )
+        return json_response(view, headers={"ETag": tag})
+
+    @router.get("/read/documents/{document_id}/feedback")
+    def read_feedback(document_id: str, _who: ReadScope) -> JSONResponse:
+        results.document_key(document_id)
+        return json_response(
+            {
+                "items": [
+                    i.model_dump(mode="json")
+                    for i in feedback_store.for_document(document_id)
+                ],
+                "next_cursor": None,
+            }
+        )
+
+    @router.get("/read/documents/{document_id}/bullets/{bullet_id}/evidence")
+    def read_evidence(
+        document_id: str, bullet_id: str, _who: ReadScope
+    ) -> JSONResponse:
+        return json_response(results.evidence(document_id, bullet_id))
+
+    @router.get("/read/sources")
+    def read_sources(
+        _who: ReadScope,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        sphere: str | None = None,
+        person: str | None = None,
+        kind: str | None = None,
+    ) -> JSONResponse:
+        items, next_cursor = results.sources(cursor, limit, sphere, person, kind)
+        return json_response(
+            {
+                "items": [e.model_dump(mode="json") for e in items],
+                "next_cursor": next_cursor,
+            }
+        )
+
     def pipeline_http() -> None:
         if mobile.transport_for("pipeline") != "http":
             raise ApiError(409, "transport_files")
@@ -738,6 +865,20 @@ def create_app(
         edit = await parse(request, UndoEdit)
         return edit_response(
             *await _in_thread(request_edits.apply, who.device.device_id, "undo", edit)
+        )
+
+    @router.post("/edits/feedback")
+    async def submit_feedback(request: Request, who: EditScope) -> JSONResponse:
+        edit = await parse(request, FeedbackEdit)
+        return edit_response(
+            *await _in_thread(feedback.submit, who.device.device_id, edit)
+        )
+
+    @router.post("/edits/feedback/undo")
+    async def undo_feedback_edit(request: Request, who: EditScope) -> JSONResponse:
+        edit = await parse(request, FeedbackUndo)
+        return edit_response(
+            *await _in_thread(feedback.undo, who.device.device_id, edit)
         )
 
     @router.post("/edits/tags")

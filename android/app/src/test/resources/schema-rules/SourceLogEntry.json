@@ -1,0 +1,88 @@
+{
+    "/$defs/EvidenceThread/additionalProperties": false,
+    "/$defs/EvidenceThread/properties/content/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/EvidenceThread/required": [
+        "thread_id",
+        "kind",
+        "content",
+        "occurred_at",
+        "source_id",
+        "source_label"
+    ],
+    "/$defs/EvidenceThread/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/SourceId/maxLength": 30,
+    "/$defs/SourceId/minLength": 30,
+    "/$defs/SourceId/pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/SourceId/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/$defs/UsedIn/additionalProperties": false,
+    "/$defs/UsedIn/properties/block_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/UsedIn/properties/bullet_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/UsedIn/properties/kind/enum": [
+        "document",
+        "digest"
+    ],
+    "/$defs/UsedIn/properties/kind/type": "string",
+    "/$defs/UsedIn/required": [
+        "kind",
+        "document_id",
+        "title",
+        "bullet_id",
+        "block_id"
+    ],
+    "/$defs/UsedIn/type": "object",
+    "/additionalProperties": false,
+    "/properties/channel/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/paths/type": "array",
+    "/properties/people/type": "array",
+    "/properties/spheres/type": "array",
+    "/properties/threads/type": "array",
+    "/properties/used_in/type": "array",
+    "/required": [
+        "source_id",
+        "label",
+        "channel",
+        "occurred_at",
+        "spheres",
+        "paths",
+        "people",
+        "threads",
+        "used_in"
+    ],
+    "/type": "object"
+}

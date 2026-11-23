@@ -248,3 +248,75 @@ def test_observation_failure_never_rolls_back_commit_and_is_recovered(
     monkeypatch.setattr(journal, "receive_wiki_edit", original)
     publisher.publish()
     assert journal.wiki_edits()[0].history == ["wiki", "fabric", "wiki"]
+
+
+def test_document_compiler_keeps_wiki_edit_progress_working(tmp_path):
+    from datetime import UTC, datetime
+
+    from weaver.context.tree import TreeNode, node_kind
+    from weaver.schema import ThreadDraft
+    from weaver.wiki.documents import DocumentCompiler
+
+    clock, store, fabric, client, _, journal, _ = setup(tmp_path)
+    context = ContextDictionary(tmp_path / "doc-context")
+    names = ["회사", "회사/infra", "회사/infra/network", "회사/infra/network/router"]
+    context.sync_tree("회사", [TreeNode(n, node_kind(n)) for n in names])
+    at = datetime(2026, 11, 20, 3, tzinfo=UTC)
+    fabric.append(
+        [
+            ThreadDraft(
+                thread_id="doc-fact",
+                kind="기록",
+                content="라우터 점검 일정 확인",
+                occurred_at=at,
+                recorded_at=at,
+                tags=["회사/infra/network/router"],
+                source_id="src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                actor="ai_approved",
+                field=None,
+                value=None,
+                direction=None,
+                resolves=None,
+                retracts=None,
+                correction=None,
+            )
+        ]
+    )
+
+    class DocumentClient:
+        def generate_json(self, task, system, user, schema):
+            assert task == "wiki.compile_documents"
+            doc = json.loads(user)["documents"][0]
+            return schema.model_validate(
+                {
+                    "documents": [
+                        {
+                            "key": doc["key"],
+                            "title": doc["title"],
+                            "current": [
+                                {"text": "점검 일정 확인", "thread_ids": ["doc-fact"]}
+                            ],
+                        }
+                    ]
+                }
+            )
+
+    compiler = DocumentCompiler(
+        store,
+        fabric,
+        context,
+        DocumentClient(),
+        tmp_path / "doc-compiler.sqlite3",
+        lambda _: (_ for _ in ()).throw(LookupError("none")),
+    )
+    publisher = WikiEditPublisher(journal, store, compiler, fabric, tmp_path / "vault")
+    compiler.on_progress = publisher.publish
+    compiler.run()
+    publisher.publish()
+    assert compiler.bookmark() == fabric.entries(ThreadQuery())[-1].seq
+    assert (store.root / "pages/회사/infra/network.md").exists()
+    # Generated documents are read-only, so they never open a wiki edit.
+    clock[0] += 11
+    compiler.run()
+    publisher.publish()
+    assert journal.wiki_edits() == []

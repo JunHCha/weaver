@@ -818,8 +818,8 @@ class WikiStore:
     def retire_summary(self, path: str, expected: str) -> None:
         """Remove a superseded source copy from disk and restoration state."""
         path = unicodedata.normalize("NFC", path)
-        if not path.startswith("summaries/"):
-            raise ValueError("only source summaries can be retired")
+        if not path.startswith(("summaries/", "Digest/")):
+            raise ValueError("only generated summaries and digests can be retired")
         with self._db() as db:
             row = db.execute(
                 "SELECT content, readonly FROM pages WHERE path=?", (path,)
@@ -830,6 +830,28 @@ class WikiStore:
         if _hash(target.read_bytes()) != expected:
             raise HumanEditPending(path)
         self._commit(path, None, "weaver", "retire duplicate source summary")
+        # Forget before unlinking so an interrupted cleanup cannot resurrect it.
+        with self._db() as db:
+            db.execute("DELETE FROM pages WHERE path=?", (path,))
+        if _hash(target.read_bytes()) != expected:
+            raise HumanEditPending(path)
+        target.unlink()
+
+    def retire_page(self, path: str, expected: str) -> None:
+        """Remove a generated page or index Weaver wrote and nobody edited."""
+        path = unicodedata.normalize("NFC", path)
+        if not (path.startswith("pages/") or path in ("index.md", "log.md")):
+            raise ValueError("only generated pages can be retired")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT content FROM pages WHERE path=?", (path,)
+            ).fetchone()
+        if row is None or _hash(row[0]) != expected:
+            raise HumanEditPending(path)
+        target = self._path(path)
+        if _hash(target.read_bytes()) != expected:
+            raise HumanEditPending(path)
+        self._commit(path, None, "weaver", "retire superseded wiki page")
         # Forget before unlinking so an interrupted cleanup cannot resurrect it.
         with self._db() as db:
             db.execute("DELETE FROM pages WHERE path=?", (path,))
@@ -1050,8 +1072,29 @@ class WikiStore:
         with self._db() as db:
             db.execute("DELETE FROM pending WHERE rev=?", (edit.new_rev,))
 
-    def restore_readonly(self) -> None:
-        """Restore registered read-only pages without emitting human edits."""
+    def path_for(self, path: str) -> Path:
+        """Absolute file for a wiki-relative path; raises ValueError if unsafe."""
+        return self._path(path)
+
+    def readonly_pages(self) -> list[tuple[str, bytes]]:
+        """Registered read-only pages with their committed bytes."""
+        with self._db() as db:
+            return [
+                (str(path), bytes(content))
+                for path, content in db.execute(
+                    "SELECT path, content FROM pages WHERE readonly=1"
+                ).fetchall()
+            ]
+
+    def restore_readonly(
+        self, on_change: Callable[[str, bytes | None, bytes], bool] | None = None
+    ) -> None:
+        """Restore registered read-only pages without emitting human edits.
+
+        With ``on_change(path, current, baseline)``, a file modified within the
+        settle window is skipped (a person may still be writing), and a False
+        return defers that file's restore.
+        """
         with self._db() as db:
             for path, content in db.execute(
                 "SELECT path, content FROM pages WHERE readonly=1"
@@ -1059,9 +1102,19 @@ class WikiStore:
                 try:
                     target = self._path(path)
                     current = target.read_bytes() if target.exists() else None
-                    if current != content:
-                        self._replace(
-                            path, content, None if current is None else _hash(current)
-                        )
+                    if current == content:
+                        continue
+                    if on_change is not None:
+                        if (
+                            current is not None
+                            and self.clock() - target.stat().st_mtime
+                            < self.settle_seconds
+                        ):
+                            continue
+                        if not on_change(path, current, bytes(content)):
+                            continue
+                    self._replace(
+                        path, content, None if current is None else _hash(current)
+                    )
                 except (ValueError, HumanEditPending):
                     continue

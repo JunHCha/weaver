@@ -79,6 +79,8 @@ class FakeMobileServer(
     @Volatile var offline = false
     /** Every request as `METHOD path` (without the query). */
     val requests = java.util.Collections.synchronizedList(mutableListOf<String>())
+    /** The query of every request, as `METHOD path` to its parameters (in the order received). */
+    val queries = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Map<String, String>>>())
     val bodies = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
     val mismatches = java.util.Collections.synchronizedList(mutableListOf<String>())
     val seenAuth = java.util.Collections.synchronizedList(mutableListOf<String?>())
@@ -88,12 +90,16 @@ class FakeMobileServer(
     /** Script cases ("group.name"); same method+path cases answer in order, the last one repeats. */
     fun serve(vararg names: String) = names.forEach { n -> ContractFixtures[n].let { scripted.getOrPut(route(it)) { mutableListOf() }.add(it) } }
     /** A fixture case whose response body is changed by [change] (e.g. one thread with an unknown kind); still derived, not invented. */
-    fun serveDerived(name: String, change: (JsonElement) -> JsonElement) {
+    fun serveDerived(name: String, change: (JsonElement) -> JsonElement) = serveDerived(name, null, change)
+
+    /** Like [serveDerived], and the request body the phone must send is changed by [request] too. */
+    fun serveDerived(name: String, request: ((JsonElement) -> JsonElement)?, change: (JsonElement) -> JsonElement) {
         val base = ContractFixtures[name]
         val raw = JsonObject(mapOf(
             "request" to JsonObject(mapOf("method" to JsonPrimitive(base.method), "path" to JsonPrimitive(base.path),
                 "query" to JsonObject(base.query.mapValues { JsonPrimitive(it.value) }),
-                "headers" to JsonObject(base.requestHeaders.mapValues { JsonPrimitive(it.value) }))),
+                "headers" to JsonObject(base.requestHeaders.mapValues { JsonPrimitive(it.value) })) +
+                (base.requestBody?.takeIf { request != null }?.let { mapOf("body" to request!!(it)) } ?: emptyMap())),
             "response" to JsonObject(mapOf("status" to JsonPrimitive(base.status), "headers" to JsonObject(base.responseHeaders.mapValues { JsonPrimitive(it.value) }),
                 "body" to change(base.responseBody!!)))))
         val case = FixtureCase(name, raw)
@@ -156,7 +162,7 @@ class FakeMobileServer(
         val method = x.requestMethod
         val query = queryOf(x.requestURI.rawQuery)
         val body = x.requestBody.readBytes()
-        requests.add("$method $path"); bodies.add("$method $path" to body.decodeToString())
+        requests.add("$method $path"); queries.add("$method $path" to query); bodies.add("$method $path" to body.decodeToString())
         val auth = x.requestHeaders.getFirst("Authorization"); seenAuth.add(auth)
         if (auth != "Bearer $token") return fixtureError(x, "errors.invalid_token")
         failing.entries.firstOrNull { path.endsWith(it.key) }?.let { return reply(x, it.value) }
@@ -179,7 +185,8 @@ class FakeMobileServer(
             if (index >= cases.size) return fixtureError(x, "errors.not_found")
             lastPage[key] = index
             cases[index]
-        } else cases[minOf(consumed.merge(key, 1, Int::plus)!! - 1, cases.size - 1)]
+        } else cases.firstOrNull { it.query["window"] != null && it.query["window"] == query["window"] }
+            ?: cases[minOf(consumed.merge(key, 1, Int::plus)!! - 1, cases.size - 1)]
         // The phone must send exactly what the contract says (content headers, JSON/text body, cursor).
         val problems = mutableListOf<String>()
         case.requestHeaders.filterKeys { it != "authorization" }.forEach { (k, v) ->

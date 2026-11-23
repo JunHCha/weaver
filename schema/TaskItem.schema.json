@@ -1,0 +1,157 @@
+{
+  "$defs": {
+    "DateString": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+    },
+    "LinkTarget": {
+      "additionalProperties": false,
+      "description": "Where a result opens: a compiled document bullet or the day's Digest.",
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bullet_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "digest"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+      ],
+      "title": "LinkTarget",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "$id": "urn:weaver:schema:TaskItem",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One open request the person received, with its document link.",
+  "properties": {
+    "block_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "content": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "counterpart": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deadline": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateString"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "document_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "document_title": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "due_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Due Label"
+    },
+    "link": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkTarget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revision": {
+      "$ref": "#/$defs/Revision"
+    },
+    "thread_id": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "thread_id",
+    "revision",
+    "content",
+    "block_id",
+    "deadline",
+    "due_label",
+    "counterpart",
+    "document_id",
+    "document_title",
+    "link"
+  ],
+  "title": "TaskItem",
+  "type": "object"
+}

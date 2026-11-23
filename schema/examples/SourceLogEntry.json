@@ -1,0 +1,41 @@
+{
+  "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "label": "2026-11-12 김철수 call",
+  "channel": "call",
+  "occurred_at": "2026-11-12T09:00:00+09:00",
+  "spheres": [
+    "회사"
+  ],
+  "paths": [
+    "회사/infra/network"
+  ],
+  "people": [
+    "김철수"
+  ],
+  "threads": [
+    {
+      "thread_id": "thr_0123456789abcdef",
+      "kind": "요청",
+      "content": "견적 회신",
+      "occurred_at": "2026-11-12T09:00:00+09:00",
+      "source_id": "src_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "source_label": "2026-11-12 김철수 call"
+    }
+  ],
+  "used_in": [
+    {
+      "kind": "document",
+      "document_id": "5f19b95b9ab4aa0142341ad1",
+      "title": "네트워크",
+      "bullet_id": "b1",
+      "block_id": null
+    },
+    {
+      "kind": "digest",
+      "document_id": "7a2c1e0d4b9f3a6e8c5d0b17",
+      "title": "2026-11-12 (목)",
+      "bullet_id": null,
+      "block_id": "w-0123456789"
+    }
+  ]
+}

@@ -48,6 +48,11 @@ object WeaverCodec {
         allowSpecialFloatingPointValues = false
     }
 
+    /** Read-API result items (`/read/cards`, `/read/documents`, ...) carry no schema_version. */
+    private val UNVERSIONED_MODELS = setOf(
+        "ResultCard", "TaskItem", "TreeNodeView", "DocumentSummary", "DocumentView", "Evidence", "SourceLogEntry", "FeedbackItem",
+    )
+
     private val REVIEW_MODELS = setOf("Action", "ActionResult", "ReviewPackage", "Verdict", "Alert", "PipelineItem")
 
     // A JSON integer token only: 1.0, 1e0 or "1" are not a schema_version.
@@ -63,15 +68,17 @@ object WeaverCodec {
             return DecodeResult.Invalid(model, "malformed JSON: ${e.message}")
         }
         if (root !is JsonObject) return DecodeResult.Invalid(model, "top level must be an object")
-        val version = root["schema_version"]
-            ?: return DecodeResult.Invalid(model, "schema_version is missing")
-        if (version !is JsonPrimitive || version.isString || !integerToken.matches(version.content)) {
-            return DecodeResult.Invalid(model, "schema_version must be a JSON integer token")
+        if (model !in UNVERSIONED_MODELS) {
+            val version = root["schema_version"]
+                ?: return DecodeResult.Invalid(model, "schema_version is missing")
+            if (version !is JsonPrimitive || version.isString || !integerToken.matches(version.content)) {
+                return DecodeResult.Invalid(model, "schema_version must be a JSON integer token")
+            }
+            val found = version.content.toLongOrNull()
+                ?: return DecodeResult.Invalid(model, "schema_version is out of range")
+            val expected = (if (model in REVIEW_MODELS) REVIEW_SCHEMA_VERSION else SCHEMA_VERSION).toLong()
+            if (found != expected) return DecodeResult.UnsupportedVersion(model, found, expected)
         }
-        val found = version.content.toLongOrNull()
-            ?: return DecodeResult.Invalid(model, "schema_version is out of range")
-        val expected = (if (model in REVIEW_MODELS) REVIEW_SCHEMA_VERSION else SCHEMA_VERSION).toLong()
-        if (found != expected) return DecodeResult.UnsupportedVersion(model, found, expected)
         // kotlinx accepts quoted numbers ("1") and exponent integers (1e0); the schema and
         // its README do not. Check JSON token types against the model before decoding.
         tokenViolation("", root, serializer.descriptor)?.let { return DecodeResult.Invalid(model, it) }

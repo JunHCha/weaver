@@ -45,37 +45,7 @@ import org.robolectric.shadows.ShadowContentResolver
 class HomeNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    private fun prepare(): ReviewPackage {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val factory = object : WorkerFactory() {
-            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker =
-                object : Worker(appContext, workerParameters) { override fun doWork(): Result = Result.success() }
-        }
-        WorkManagerTestInitHelper.initializeTestWorkManager(context, Configuration.Builder()
-            .setExecutor(SynchronousExecutor()).setWorkerFactory(factory).build())
-        File(AppStorage.exchangeDir(context), "reviews").deleteRecursively()
-        File(context.filesDir, "inbox.sqlite3").delete()
-        val provider = TestDocumentsProvider()
-        provider.attachInfo(context, ProviderInfo().apply {
-            authority = "com.android.externalstorage.documents"; exported = true; grantUriPermissions = true
-            readPermission = "android.permission.MANAGE_DOCUMENTS"
-            writePermission = "android.permission.MANAGE_DOCUMENTS"
-        })
-        ShadowContentResolver.registerProviderInternal("com.android.externalstorage.documents", provider)
-        val tree = DocumentsContract.buildTreeDocumentUri("com.android.externalstorage.documents", TestDocumentsProvider.ROOT)
-        context.contentResolver.takePersistableUriPermission(tree,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        context.getSharedPreferences("courier", Context.MODE_PRIVATE).edit()
-            .putString("tree", tree.toString()).putBoolean("stopped", false).commit()
-        val p = CourierClient.decoded<ReviewPackage>(File(System.getProperty("weaver.schemaDir"), "examples/ReviewPackage.json").readText())
-            .copy(questions = emptyList())
-        SafCourierFolder(context.contentResolver, tree).publish("proposals", "${p.packageId}.r${p.revision}.json") {
-            it.write(WeaverCodec.encode(p).toByteArray())
-        }
-        InboxDatabase(context).use { it.reconcile(listOf(p), emptyList(), emptySet(), 1L, tree.toString(), false) }
-        InboxRuntime.refresh(context)
-        return p
-    }
+    private fun prepare(): ReviewPackage = ApprovalFixtures.prepare()
 
     @After fun stopWork() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -110,6 +80,13 @@ class HomeNavigationTest {
         compose.onNodeWithTag("tab-LOG").assertTextEquals("로그")
     }
 
+    @Test fun oldServerKeepsLegacyNow() {
+        // No results API behind the synthetic model: the Thread based 지금 stays as it was.
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("기한 지남").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("기한 지남").assertIsDisplayed()
+        compose.onNodeWithTag("now-tasks").assertDoesNotExist()
+    }
+
     @Test fun inboxNotificationOpensNowApprovals() {
         val p = prepare()
         compose.onNodeWithTag("tab-LOG").performClick()
@@ -127,6 +104,23 @@ class HomeNavigationTest {
             val flag = MainActivity::class.java.getDeclaredField("showInbox")
                 .apply { isAccessible = true }.get(compose.activity) as androidx.compose.runtime.State<*>
             assertFalse(flag.value as Boolean)
+        } finally {
+            compose.runOnUiThread { compose.activity.intent = original }
+        }
+    }
+
+    @Test fun wikiAlertIntentOpensAreasNotAReview() {
+        prepare()
+        val original = compose.activity.intent
+        try {
+            compose.runOnUiThread {
+                MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java).apply { isAccessible = true }
+                    .invoke(compose.activity, Intent(InboxRuntime.OPEN_ALERT).putExtra(InboxRuntime.EXTRA_PACKAGE_ID, "wiki:5f19b95b9ab4aa0142341ad1"))
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("tab-AREAS").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("tab-AREAS").assertIsSelected()
+            compose.onNodeWithTag("review-screen").assertDoesNotExist()
+            compose.runOnIdle { assertNull(compose.activity.intent.action) }
         } finally {
             compose.runOnUiThread { compose.activity.intent = original }
         }

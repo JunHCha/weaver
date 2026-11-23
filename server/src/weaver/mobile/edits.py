@@ -66,6 +66,8 @@ class EditService:
         operation, created = self.store.enqueue(
             "request_edit"
             if kind == "requests"
+            else "feedback_edit"
+            if kind == "feedback"
             else "tag_edit"
             if kind == "tags"
             else "dictionary_edit",

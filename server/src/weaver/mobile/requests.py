@@ -97,12 +97,22 @@ class RequestEditService(EditService):
                         if original.thread_id.startswith("phone-request:")
                         else None
                     )
-                    if (
+                    # A tick made in Obsidian is recorded by the server, not a
+                    # device; any paired device may undo it (spec 7.5).
+                    obsidian = (
+                        original.thread_id.startswith("wiki-check:")
+                        and original.actor == "human"
+                        and bool(original.resolves)
+                    )
+                    if not obsidian and (
                         owner is None
                         or owner.kind != "request_edit"
                         or owner.device_id != device_id
-                        or not (original.resolves or original.amends)
                     ):
+                        raise EditRejected(
+                            422, "edit_not_undoable", "edit_not_undoable"
+                        )
+                    if not (original.resolves or original.amends):
                         raise EditRejected(
                             422, "edit_not_undoable", "edit_not_undoable"
                         )

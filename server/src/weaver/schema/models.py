@@ -19,6 +19,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    StrictBool,
     StrictInt,
     StringConstraints,
     WithJsonSchema,
@@ -819,6 +820,199 @@ class LocationProposal(Version2):
     updated_at: Timestamp
 
 
+type DateString = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    Field(json_schema_extra={"not": {"pattern": r"[\r\n]"}}),
+]
+
+
+class LinkTarget(Contract):
+    """Where a result opens: a compiled document bullet or the day's Digest."""
+
+    kind: Literal["document", "digest"]
+    document_id: NonEmpty
+    bullet_id: NonEmpty | None
+    block_id: NonEmpty | None
+
+
+class ResultCard(Contract):
+    """One incoming-day or due-day card, grouped by case key; derived on read."""
+
+    card_id: NonEmpty
+    day: DateString
+    key: NonEmpty
+    sphere: NonEmpty
+    headline: NonEmpty
+    bullets: Annotated[list[NonEmpty], Field(max_length=2)]
+    people: Offset
+    sources: Offset
+    counterparts: Annotated[list[NonEmpty], Field(max_length=3)]
+    channels: list[NonEmpty]
+    due: DateString | None
+    due_label: str | None
+    due_kind: Literal["deadline", "schedule"] | None
+    thread_ids: list[NonEmpty]
+    link: LinkTarget | None
+    reflecting: StrictBool
+
+
+class TaskItem(Contract):
+    """One open request the person received, with its document link."""
+
+    thread_id: NonEmpty
+    revision: Revision
+    content: NonEmpty
+    block_id: NonEmpty
+    deadline: DateString | None
+    due_label: str | None
+    counterpart: NonEmpty | None
+    document_id: NonEmpty | None
+    document_title: NonEmpty | None
+    link: LinkTarget | None
+
+
+class TreeNodeView(Contract):
+    """One tree node that has a document or cards, or is their ancestor."""
+
+    path: NonEmpty
+    label: NonEmpty
+    kind: Literal["area", "project", "topic"]
+    parent: NonEmpty | None
+    document_id: NonEmpty | None
+    open_tasks: Offset
+    cards_7d: Offset
+
+
+class RefLinkView(Contract):
+    """A reference note or vault heading related to a document."""
+
+    sphere: NonEmpty
+    path: NonEmpty
+    heading: NonEmpty
+    home: StrictBool
+
+
+class DocBullet(Contract):
+    """One line of a document section; ``task`` is set for a checkbox line."""
+
+    bullet_id: NonEmpty
+    text: NonEmpty
+    thread_ids: list[NonEmpty]
+    task: TaskItem | None
+    day: DateString | None
+    label: NonEmpty | None
+
+
+class DocSection(Contract):
+    kind: Literal["current", "remaining", "waiting", "cautions", "tasks", "summary"]
+    title: NonEmpty
+    bullets: list[DocBullet]
+
+
+class DocumentSummary(Contract):
+    """A document list row; ``DocumentView`` without its sections."""
+
+    document_id: NonEmpty
+    kind: Literal["area", "project", "topic", "digest"]
+    key: NonEmpty | None
+    title: NonEmpty
+    as_of: DateString | None
+    sha256: Digest
+
+
+class DocumentView(Contract):
+    """One compiled document or Digest; remaining and waiting are live."""
+
+    document_id: NonEmpty
+    kind: Literal["area", "project", "topic", "digest"]
+    key: NonEmpty | None
+    title: NonEmpty
+    as_of: DateString | None
+    path: NonEmpty
+    sections: list[DocSection]
+    references: list[RefLinkView]
+    log_subject: NonEmpty | None
+    reflecting: StrictBool
+    sha256: Digest
+
+
+class EvidenceThread(Contract):
+    thread_id: NonEmpty
+    kind: NonEmpty
+    content: str | None
+    occurred_at: Timestamp
+    source_id: SourceId
+    source_label: NonEmpty
+
+
+class EvidenceSource(Contract):
+    """Whole source text (phase 1: no highlight), cut at 20000 characters."""
+
+    source_id: SourceId
+    label: NonEmpty
+    channel: NonEmpty | None
+    occurred_at: Timestamp | None
+    text: str
+    truncated: StrictBool
+
+
+class Evidence(Contract):
+    document_id: NonEmpty
+    bullet_id: NonEmpty
+    text: NonEmpty
+    threads: list[EvidenceThread]
+    sources: list[EvidenceSource]
+
+
+class UsedIn(Contract):
+    kind: Literal["document", "digest"]
+    document_id: NonEmpty
+    title: NonEmpty
+    bullet_id: NonEmpty | None
+    block_id: NonEmpty | None
+
+
+class SourceLogEntry(Contract):
+    """One source with every fact it produced and where those facts are used."""
+
+    source_id: SourceId
+    label: NonEmpty
+    channel: NonEmpty | None
+    occurred_at: Timestamp
+    spheres: list[NonEmpty]
+    paths: list[NonEmpty]
+    people: list[NonEmpty]
+    threads: list[EvidenceThread]
+    used_in: list[UsedIn]
+
+
+type FeedbackChip = Literal[
+    "사실이 틀림", "이미 끝남", "다른 건이 섞임", "제목이 이상함"
+]
+
+
+class FeedbackItem(Contract):
+    """A person's note on a document or bullet, and what the server did with it."""
+
+    feedback_id: Annotated[
+        str,
+        StringConstraints(
+            strict=True, pattern=r"^fbk_[0-9a-f]{32}$", min_length=36, max_length=36
+        ),
+    ]
+    document_id: NonEmpty
+    bullet_id: NonEmpty | None
+    text: Annotated[str, StringConstraints(strict=True, pattern=r"\S", max_length=2000)]
+    chips: list[FeedbackChip]
+    status: Literal["pending", "applied", "failed", "undone"]
+    classification: Literal["fact", "structure", "both", "none"] | None
+    result: str | None
+    thread_ids: list[NonEmpty]
+    created_at: Timestamp
+    updated_at: Timestamp
+
+
 SHARED_MODELS = (
     Manifest,
     Receipt,
@@ -835,4 +1029,12 @@ SHARED_MODELS = (
     Action,
     ActionResult,
     LocationProposal,
+    ResultCard,
+    TaskItem,
+    TreeNodeView,
+    DocumentSummary,
+    DocumentView,
+    Evidence,
+    SourceLogEntry,
+    FeedbackItem,
 )

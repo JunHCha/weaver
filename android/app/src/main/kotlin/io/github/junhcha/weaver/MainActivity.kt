@@ -23,18 +23,26 @@ class MainActivity : ComponentActivity() {
     private var observer: ContentObserver? = null
     private val showPending = mutableStateOf(false)
     private val showInbox = mutableStateOf(false)
+    /** The package an alert tap named (`wiki:<page_id>` for an overwrite alert). */
+    private val alertPackage = mutableStateOf<String?>(null)
+
+    private fun apply(intent: Intent) {
+        showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
+        showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
+        alertPackage.value = if (intent.action == InboxRuntime.OPEN_ALERT) intent.getStringExtra(InboxRuntime.EXTRA_PACKAGE_ID) else null
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
-        showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
+        apply(intent)
     }
 
     /** The notification tap has been applied; drop it so recreation does not replay it. */
     private fun consumeNotification() {
         showPending.value = false
         showInbox.value = false
+        alertPackage.value = null
         setIntent(Intent(intent).setAction(null))
     }
 
@@ -58,9 +66,8 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
-        showPending.value = intent.action == ShepherdRuntime.OPEN_PENDING
-        showInbox.value = intent.action == InboxRuntime.OPEN_INBOX
+        apply(intent)
         val readModel = PhoneReadModels.forContext(this, BuildConfig.DEBUG)
-        setContent { HomeScreen(readModel, showPending.value, showInbox.value, ::consumeNotification) }
+        setContent { HomeScreen(readModel, showPending.value, showInbox.value, ::consumeNotification, alertPackage.value) }
     }
 }

@@ -46,6 +46,8 @@ class Document:
 def indexable(rel: PurePosixPath, *, wiki_folder: str | None) -> bool:
     if rel.suffix != INDEXED_SUFFIX or ".sync-conflict-" in rel.name:
         return False
+    if rel.name.endswith(".excalidraw.md"):
+        return False
     parents = rel.parts[:-1]
     if EXCLUDED_DIRS.intersection(parents):
         return False

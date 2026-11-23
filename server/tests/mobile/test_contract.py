@@ -530,3 +530,12 @@ def test_retry_after_the_503_response_of_a_result_put_is_the_same_operation(tmp_
     }
     assert len(ids) == 1
     assert len(h.fabric.entries(ThreadQuery(kind="실행"))) == 1
+
+
+def test_results_and_feedback_flags_need_a_vault_tree(tmp_path):
+    h = Harness(tmp_path)
+    headers = h.pair("read")
+    features = h.client.get("/mobile/v1/capabilities", headers=headers).json()[
+        "features"
+    ]
+    assert features["results"] is False and features["feedback"] is False

@@ -2,14 +2,17 @@
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from weaver.action import ActionJob
+from weaver.context import ContextDictionary
 from weaver.context.proposals import LocationProposals
+from weaver.context.tree import TreeNode, node_kind
 from weaver.mobile.whois import PeerIdentity
+from weaver.wiki import layout
 from weaver.wiki.store import WikiStore
 
 from .contract import Recorder
@@ -26,8 +29,18 @@ def auth(headers: dict[str, str], **extra: str) -> dict[str, str]:
     return {**headers, **extra}
 
 
+def with_tree(h: Harness) -> Harness:
+    """A vault tree turns on the results and feedback features."""
+    ContextDictionary(h.config.state_root).sync_tree(
+        "회사", [TreeNode(n, node_kind(n)) for n in ("회사", "회사/infra")]
+    )
+    return h
+
+
 def capabilities(tmp: Path) -> Recorder:
-    h = Harness(tmp, '[mobile.features]\ncapture = "http"\n', clock=lambda: NOW)
+    h = with_tree(
+        Harness(tmp, '[mobile.features]\ncapture = "http"\n', clock=lambda: NOW)
+    )
     headers = h.pair("read", "capture", "review", "edit")
     r = Recorder(
         h,
@@ -604,6 +617,271 @@ def wiki(tmp: Path) -> Recorder:
     return r
 
 
+def results(tmp: Path) -> Recorder:
+    """Result read models over an invented tree, one compiled document and one Digest."""
+    from weaver.context import ContextDictionary
+    from weaver.context.tree import TreeNode, node_kind
+
+    from .helpers import thread
+
+    network, storage = "회사/infra/network", "회사/infra/storage"
+    h = Harness(tmp, clock=lambda: NOW)
+    ContextDictionary(h.config.state_root).sync_tree(
+        "회사",
+        [
+            TreeNode(n, node_kind(n))
+            for n in ("회사", "회사/infra", network, storage, "회사/미분류")
+        ],
+    )
+    headers = h.pair("read", "edit")
+    came = datetime(2026, 11, 12, 9, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+    h.fabric.append(
+        [
+            thread(
+                "card_request",
+                kind="요청",
+                direction="받음",
+                content="견적 회신",
+                counterpart="김철수",
+                tags=[network],
+                field="deadline",
+                value="2026-11-14",
+                occurred_at=came,
+                recorded_at=came,
+            ),
+            thread(
+                "card_note",
+                content="장비 목록 수령",
+                counterpart="이영희",
+                tags=[storage],
+                occurred_at=came,
+                recorded_at=came,
+            ),
+            thread(
+                "card_visit",
+                kind="일정",
+                content="현장 점검",
+                tags=[storage],
+                field="schedule",
+                value={
+                    "start": "2026-11-13T15:00:00+09:00",
+                    "end": None,
+                    "timezone": "Asia/Seoul",
+                },
+                occurred_at=datetime(2026, 11, 10, 9, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+                recorded_at=datetime(2026, 11, 10, 9, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+            ),
+        ]
+    )
+    store = WikiStore(
+        h.config.vault_root, h.config.state_root, wiki_root=h.config.wiki.folder
+    )
+    zone = ZoneInfo("Asia/Seoul")
+    path = f"pages/{network}.md"
+    store.write(
+        path,
+        {},
+        layout.render_document(
+            "네트워크",
+            came.date(),
+            [layout.Bullet("b1", "장비 2종 견적 도착", ("card_request",))],
+            layout.Remaining(mine=[], waiting=[]),
+            [],
+            [],
+            zone,
+        ),
+        None,
+        readonly=True,
+    )
+    store.write_metadata(
+        path,
+        {
+            "page_key": network,
+            "title": "네트워크",
+            "kind": "area",
+            "as_of": came.date().isoformat(),
+            "source_ids": [],
+            "bullets": [
+                {
+                    "bullet_id": "b1",
+                    "section": "current",
+                    "thread_ids": ["card_request"],
+                }
+            ],
+            "cautions": [],
+        },
+    )
+    digest = "Digest/2026/11/2026-11-12.md"
+    store.write(
+        digest,
+        {},
+        "# 2026-11-12 (목)\n\n## 들어온 일\n\n"
+        + layout.task_line(
+            "견적 회신",
+            layout.block_id("card_request"),
+            deadline=date(2026, 11, 14),
+            done=None,
+        )
+        + "\n\n## 요약\n\n- 네트워크 견적 도착 [[summaries/견적 src_x|견적]]\n",
+        None,
+        readonly=True,
+    )
+    document_id = store.page_id(path)
+    r = Recorder(
+        h,
+        "results",
+        "Result read models (features.results): cards, my open tasks, tree, documents, evidence and the source log.",
+    )
+    r.call(
+        "cards_today",
+        "GET",
+        f"{BASE}/read/cards",
+        headers=headers,
+        params={"window": "today"},
+        note="Cards of facts that came in today; link opens a document bullet, else the day's Digest.",
+    )
+    r.call(
+        "cards_around",
+        "GET",
+        f"{BASE}/read/cards",
+        headers=headers,
+        params={"window": "around"},
+        note="Cards by deadline or schedule day within 7 days of today, today excluded, nearest first.",
+    )
+    r.call("tasks", "GET", f"{BASE}/read/tasks", headers=headers)
+    r.call(
+        "cards_invalid_at",
+        "GET",
+        f"{BASE}/read/cards",
+        headers=headers,
+        params={"at": "2026-11-12"},
+        note="at must be an ISO instant with an explicit offset.",
+    )
+    r.call("tree", "GET", f"{BASE}/read/tree", headers=headers)
+    r.call(
+        "references",
+        "GET",
+        f"{BASE}/read/references",
+        headers=headers,
+        params={"path": network},
+        note="Reference chunks related to a tree path; empty while nothing is indexed.",
+    )
+    r.call("documents", "GET", f"{BASE}/read/documents", headers=headers)
+    detail = r.call(
+        "document",
+        "GET",
+        f"{BASE}/read/documents/{document_id}",
+        headers=headers,
+        note="remaining and waiting are recomputed from Fabric on every read; "
+        "the ETag covers the whole view.",
+    )
+    r.call(
+        "document_not_modified",
+        "GET",
+        f"{BASE}/read/documents/{document_id}",
+        headers=auth(headers, **{"If-None-Match": detail.headers["etag"]}),
+    )
+    r.call(
+        "document_not_found",
+        "GET",
+        f"{BASE}/read/documents/missing",
+        headers=headers,
+    )
+    r.call(
+        "evidence",
+        "GET",
+        f"{BASE}/read/documents/{document_id}/bullets/b1/evidence",
+        headers=headers,
+        note="A bullet's Threads in citation order and each source's whole text "
+        "(cut at 20000 characters; truncated says so).",
+    )
+    r.call(
+        "evidence_bullet_not_found",
+        "GET",
+        f"{BASE}/read/documents/{document_id}/bullets/b9/evidence",
+        headers=headers,
+    )
+    r.call(
+        "sources",
+        "GET",
+        f"{BASE}/read/sources",
+        headers=headers,
+        params={"limit": 2},
+        note="One row per source, newest first; cursor is o<offset>.",
+    )
+    r.call(
+        "sources_filtered",
+        "GET",
+        f"{BASE}/read/sources",
+        headers=headers,
+        params={"person": "김철수", "kind": "요청"},
+    )
+    r.call(
+        "sources_invalid_cursor",
+        "GET",
+        f"{BASE}/read/sources",
+        headers=headers,
+        params={"cursor": "x"},
+    )
+    note = {
+        "client_id": "feedback-0001",
+        "document_id": document_id,
+        "bullet_id": "b1",
+        "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+        "chips": ["사실이 틀림"],
+    }
+    sent = r.call(
+        "feedback_submit",
+        "POST",
+        f"{BASE}/edits/feedback",
+        headers=headers,
+        json_body=note,
+        note="features.feedback. Stored as pending; the server classifies it on its "
+        "next wiki run. client_id is the idempotency key.",
+    )
+    r.call(
+        "feedback_submit_replay",
+        "POST",
+        f"{BASE}/edits/feedback",
+        headers=headers,
+        json_body=note,
+    )
+    r.call(
+        "feedback_document_not_found",
+        "POST",
+        f"{BASE}/edits/feedback",
+        headers=headers,
+        json_body={**note, "client_id": "feedback-0002", "document_id": "missing"},
+    )
+    r.call(
+        "feedback_list",
+        "GET",
+        f"{BASE}/read/documents/{document_id}/feedback",
+        headers=headers,
+    )
+    undo = {
+        "client_id": "feedback-undo-01",
+        "feedback_id": sent.json()["result"]["feedback_id"],
+    }
+    r.call(
+        "feedback_undo",
+        "POST",
+        f"{BASE}/edits/feedback/undo",
+        headers=headers,
+        json_body=undo,
+        note="A pending note is never processed afterwards; an applied one retracts "
+        "its Threads and switches its directive off.",
+    )
+    r.call(
+        "feedback_undo_again",
+        "POST",
+        f"{BASE}/edits/feedback/undo",
+        headers=headers,
+        json_body={**undo, "client_id": "feedback-undo-02"},
+    )
+    return r
+
+
 def read_shapes(tmp: Path) -> Recorder:
     """Synthetic complex values and Unicode; never copied from a user vault."""
     import unicodedata
@@ -941,7 +1219,9 @@ def alerts(tmp: Path) -> Recorder:
     from weaver.alert import AlertHistory
     from weaver.schema import Alert
 
-    h = Harness(tmp, '[mobile.features]\nalert = "http"\n', clock=lambda: NOW)
+    h = with_tree(
+        Harness(tmp, '[mobile.features]\nalert = "http"\n', clock=lambda: NOW)
+    )
     headers = h.pair("review")
     other = h.pair("review", label="second phone")
     body = Alert(
@@ -1068,7 +1348,7 @@ def changes_kinds(tmp: Path) -> Recorder:
         note="Expiry of a retained body tombstones the alert hint. Leaving a route back to "
         "files never writes a tombstone: the kind just disappears from the feed.",
     )
-    files = Harness(tmp / "files", clock=lambda: NOW)
+    files = with_tree(Harness(tmp / "files", clock=lambda: NOW))
     other = files.pair("read", "review")
     r.h = files
     r.call(
@@ -1087,10 +1367,12 @@ def changes_kinds(tmp: Path) -> Recorder:
 def pipeline(tmp: Path) -> Recorder:
     from .helpers import receive_pipeline
 
-    h = Harness(tmp, '[mobile.features]\npipeline = "http"\n', clock=lambda: NOW)
+    h = with_tree(
+        Harness(tmp, '[mobile.features]\npipeline = "http"\n', clock=lambda: NOW)
+    )
     headers = h.pair("read")
     receive_pipeline(h, at=NOW)
-    files = Harness(tmp / "files", clock=lambda: NOW)
+    files = with_tree(Harness(tmp / "files", clock=lambda: NOW))
     r = Recorder(
         h,
         "pipeline",
@@ -1158,6 +1440,7 @@ GROUPS = [
     pipeline,
     read,
     wiki,
+    results,
     edits,
     read_shapes,
     crashes,

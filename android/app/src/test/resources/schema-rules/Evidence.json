@@ -1,0 +1,71 @@
+{
+    "/$defs/EvidenceSource/additionalProperties": false,
+    "/$defs/EvidenceSource/properties/channel/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/EvidenceSource/properties/occurred_at/anyOf": [
+        {
+            "$ref": "#/$defs/Timestamp"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/EvidenceSource/properties/text/type": "string",
+    "/$defs/EvidenceSource/properties/truncated/type": "boolean",
+    "/$defs/EvidenceSource/required": [
+        "source_id",
+        "label",
+        "channel",
+        "occurred_at",
+        "text",
+        "truncated"
+    ],
+    "/$defs/EvidenceSource/type": "object",
+    "/$defs/EvidenceThread/additionalProperties": false,
+    "/$defs/EvidenceThread/properties/content/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/EvidenceThread/required": [
+        "thread_id",
+        "kind",
+        "content",
+        "occurred_at",
+        "source_id",
+        "source_label"
+    ],
+    "/$defs/EvidenceThread/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/SourceId/maxLength": 30,
+    "/$defs/SourceId/minLength": 30,
+    "/$defs/SourceId/pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+    "/$defs/SourceId/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/properties/sources/type": "array",
+    "/properties/threads/type": "array",
+    "/required": [
+        "document_id",
+        "bullet_id",
+        "text",
+        "threads",
+        "sources"
+    ],
+    "/type": "object"
+}

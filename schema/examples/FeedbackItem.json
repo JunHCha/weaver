@@ -1,0 +1,13 @@
+{
+  "feedback_id": "fbk_0123456789abcdef0123456789abcdef",
+  "document_id": "5f19b95b9ab4aa0142341ad1",
+  "bullet_id": "b1",
+  "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+  "chips": ["사실이 틀림"],
+  "status": "applied",
+  "classification": "fact",
+  "result": "정정 1건 반영 · 09:30",
+  "thread_ids": ["wiki:feedback:fbk_0123456789abcdef0123456789abcdef:0"],
+  "created_at": "2026-11-20T09:29:00Z",
+  "updated_at": "2026-11-20T09:30:00Z"
+}

@@ -1,0 +1,39 @@
+{
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Offset/minimum": 0,
+    "/$defs/Offset/type": "integer",
+    "/additionalProperties": false,
+    "/properties/document_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/kind/enum": [
+        "area",
+        "project",
+        "topic"
+    ],
+    "/properties/kind/type": "string",
+    "/properties/parent/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/required": [
+        "path",
+        "label",
+        "kind",
+        "parent",
+        "document_id",
+        "open_tasks",
+        "cards_7d"
+    ],
+    "/type": "object"
+}

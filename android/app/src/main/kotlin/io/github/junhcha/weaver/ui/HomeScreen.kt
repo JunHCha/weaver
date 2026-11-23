@@ -35,6 +35,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.junhcha.weaver.inbox.InboxRuntime
+import io.github.junhcha.weaver.phone.LinkTarget
 import io.github.junhcha.weaver.phone.PhoneReadModel
 import io.github.junhcha.weaver.pipeline.PipelineViewModel
 import java.time.Instant
@@ -51,6 +52,8 @@ fun HomeScreen(
     showPendingCalls: Boolean = false,
     showInbox: Boolean = false,
     onNotificationHandled: () -> Unit = {},
+    /** The package of a tapped alert: an overwrite alert (`wiki:<page_id>`) opens that document's 피드백 tab in 영역. */
+    alertPackageId: String? = null,
 ) {
     val activity = LocalActivity.current as ComponentActivity
     val model = remember(activity) {
@@ -91,6 +94,8 @@ fun HomeScreen(
     // A new epoch gives the shell a fresh saved-state key, so an inbox tap lands on 지금 scrolled to the top.
     var phoneEpoch by rememberSaveable { mutableIntStateOf(0) }
     var pendingCalls by rememberSaveable { mutableStateOf(false) }
+    // The document an overwrite alert opened; cleared by any other notification so a later inbox tap lands on 지금.
+    var alertDocument by rememberSaveable { mutableStateOf<String?>(null) }
     // Drops the draft with the selection; leaving the review through a fold change keeps it (see LocalReviewStateHolder).
     fun closeReview() {
         review?.let { destinations.removeState("review-$it") }
@@ -103,13 +108,22 @@ fun HomeScreen(
 
     // Notification taps are one-shot: apply them, then tell the activity to drop its flags so recreation or
     // back navigation never replays them. An inbox tap leaves settings and lands on the 지금 tab's approvals.
-    LaunchedEffect(showPendingCalls, showInbox) {
+    LaunchedEffect(showPendingCalls, showInbox, alertPackageId) {
         if (showPendingCalls) { tools = true; pendingCalls = true }
         if (showInbox) {
             tools = false
+            alertDocument = null
             phoneEpoch++
         }
-        if (showPendingCalls || showInbox) onNotificationHandled()
+        // An overwrite alert is no review: it leaves settings and any review and lands on the document's 피드백 tab.
+        val document = InboxRuntime.wikiDocument(alertPackageId)
+        if (document != null) {
+            tools = false
+            closeReview()
+            alertDocument = document
+            phoneEpoch++
+        }
+        if (showPendingCalls || showInbox || alertPackageId != null) onNotificationHandled()
     }
     // The previous shell has left composition by now, so its saved bundle can be dropped.
     LaunchedEffect(phoneEpoch) { if (phoneEpoch > 0) destinations.removeState("phone-${phoneEpoch - 1}") }
@@ -164,6 +178,8 @@ fun HomeScreen(
                                     onCloseReview = ::closeReview,
                                     onReviewSubmitted = { submitted = true },
                                     tagHost = tagHost,
+                                    initialDocument = alertDocument?.let { LinkTarget.Document(it, null) },
+                                    initialFeedback = alertDocument != null,
                                     counterparts = state.items.mapNotNull { item -> item.packageId?.let { id -> item.server?.counterpart?.let { id to it } } }.toMap(),
                                 )
                             }

@@ -1,0 +1,102 @@
+{
+    "/$defs/DateString/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/DateString/pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "/$defs/DateString/type": "string",
+    "/$defs/LinkTarget/additionalProperties": false,
+    "/$defs/LinkTarget/properties/block_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/bullet_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/kind/enum": [
+        "document",
+        "digest"
+    ],
+    "/$defs/LinkTarget/properties/kind/type": "string",
+    "/$defs/LinkTarget/required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+    ],
+    "/$defs/LinkTarget/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Revision/minimum": 1,
+    "/$defs/Revision/type": "integer",
+    "/additionalProperties": false,
+    "/properties/counterpart/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/deadline/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/document_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/document_title/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/due_label/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/link/anyOf": [
+        {
+            "$ref": "#/$defs/LinkTarget"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/required": [
+        "thread_id",
+        "revision",
+        "content",
+        "block_id",
+        "deadline",
+        "due_label",
+        "counterpart",
+        "document_id",
+        "document_title",
+        "link"
+    ],
+    "/type": "object"
+}
