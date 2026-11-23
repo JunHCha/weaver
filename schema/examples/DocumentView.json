@@ -1,0 +1,69 @@
+{
+  "document_id": "5f19b95b9ab4aa0142341ad1",
+  "kind": "area",
+  "key": "회사/infra/network",
+  "title": "네트워크",
+  "as_of": "2026-11-12",
+  "path": "pages/회사/infra/network.md",
+  "sections": [
+    {
+      "kind": "current",
+      "title": "현재 상태",
+      "bullets": [
+        {
+          "bullet_id": "b1",
+          "text": "장비 2종 견적 도착",
+          "thread_ids": [
+            "thr_0123456789abcdef"
+          ],
+          "task": null,
+          "day": null,
+          "label": null
+        }
+      ]
+    },
+    {
+      "kind": "remaining",
+      "title": "남은 일",
+      "bullets": [
+        {
+          "bullet_id": "w-0123456789",
+          "text": "견적 회신",
+          "thread_ids": [
+            "thr_0123456789abcdef"
+          ],
+          "task": {
+            "thread_id": "thr_0123456789abcdef",
+            "revision": 3,
+            "content": "견적 회신",
+            "block_id": "w-0123456789",
+            "deadline": "2026-11-14",
+            "due_label": "D-2",
+            "counterpart": "김철수",
+            "document_id": "5f19b95b9ab4aa0142341ad1",
+            "document_title": "네트워크",
+            "link": {
+              "kind": "document",
+              "document_id": "5f19b95b9ab4aa0142341ad1",
+              "bullet_id": null,
+              "block_id": "w-0123456789"
+            }
+          },
+          "day": "2026-11-14",
+          "label": "D-2"
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "sphere": "회사",
+      "path": "infra/network/장비 목록",
+      "heading": "장비 목록",
+      "home": false
+    }
+  ],
+  "log_subject": "회사/infra/network",
+  "reflecting": false,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}

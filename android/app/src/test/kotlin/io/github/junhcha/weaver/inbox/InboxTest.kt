@@ -238,6 +238,28 @@ class InboxTest {
         assertEquals(1, InboxRuntime.alerts(app).size)
     }
 
+    @Test fun wikiAlertTapOpensDocumentFeedback() {
+        grant()
+        val wiki = alert.copy(packageId = "wiki:5f19b95b9ab4aa0142341ad1", threadId = "wiki-overwrite")
+        putAlert(wiki)
+        scan()
+        val n = posted(InboxRuntime.ALERT_NOTIFICATION)!!
+        val intent = shadowOf(n.contentIntent).savedIntent
+        // Not the review list: the tap names the document, and the activity opens its 피드백 tab in 영역.
+        assertEquals(InboxRuntime.OPEN_ALERT, intent.action)
+        assertEquals("wiki:5f19b95b9ab4aa0142341ad1", intent.getStringExtra(InboxRuntime.EXTRA_PACKAGE_ID))
+        assertEquals("5f19b95b9ab4aa0142341ad1", InboxRuntime.wikiDocument(intent.getStringExtra(InboxRuntime.EXTRA_PACKAGE_ID)))
+        assertEquals(InboxRuntime.OPEN_ALERT, shadowOf(n.publicVersion.contentIntent).savedIntent.action)
+        // Any other package keeps opening the inbox, and so does a mix of documents.
+        assertNull(InboxRuntime.wikiDocument(alert.packageId))
+        assertNull(InboxRuntime.wikiDocument("wiki:"))
+        assertNull(InboxRuntime.wikiDocument("wiki:a/b"))
+        val second = wiki.copy(alertId = "alt_01ARZ3NDEKTSV4RRFFQ69G5FA1", packageId = "wiki:another-page")
+        putAlert(second)
+        scan(morning + 1_000)
+        assertEquals(InboxRuntime.OPEN_INBOX, shadowOf(posted(InboxRuntime.ALERT_NOTIFICATION)!!.contentIntent).savedIntent.action)
+    }
+
     @Test fun missingReviewSnapshotNeverClosesAnAlert() {
         put(review); putAlert(); scan()
         remove("${review.packageId}.r1.json")

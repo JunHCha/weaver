@@ -46,6 +46,8 @@
             "dictionary": true,
             "edits": true,
             "thread_handling": true,
+            "results": true,
+            "feedback": true,
             "alerts": false,
             "pipeline": true
           },

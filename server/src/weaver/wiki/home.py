@@ -16,6 +16,7 @@ STATE_FILES = (
     "wiki.git",
     "wiki.sqlite3",
     "wiki-compiler.sqlite3",
+    "wiki-documents.sqlite3",
     "wiki-digest.sqlite3",
     "wiki-queries.sqlite3",
 )

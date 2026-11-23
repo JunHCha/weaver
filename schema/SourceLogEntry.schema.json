@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "EvidenceThread": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content"
+        },
+        "kind": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "source_label": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "thread_id",
+        "kind",
+        "content",
+        "occurred_at",
+        "source_id",
+        "source_label"
+      ],
+      "title": "EvidenceThread",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "SourceId": {
+      "maxLength": 30,
+      "minLength": 30,
+      "pattern": "^src_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    },
+    "UsedIn": {
+      "additionalProperties": false,
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bullet_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "digest"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "kind",
+        "document_id",
+        "title",
+        "bullet_id",
+        "block_id"
+      ],
+      "title": "UsedIn",
+      "type": "object"
+    }
+  },
+  "$id": "urn:weaver:schema:SourceLogEntry",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One source with every fact it produced and where those facts are used.",
+  "properties": {
+    "channel": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "label": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "paths": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Paths",
+      "type": "array"
+    },
+    "people": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "People",
+      "type": "array"
+    },
+    "source_id": {
+      "$ref": "#/$defs/SourceId"
+    },
+    "spheres": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Spheres",
+      "type": "array"
+    },
+    "threads": {
+      "items": {
+        "$ref": "#/$defs/EvidenceThread"
+      },
+      "title": "Threads",
+      "type": "array"
+    },
+    "used_in": {
+      "items": {
+        "$ref": "#/$defs/UsedIn"
+      },
+      "title": "Used In",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source_id",
+    "label",
+    "channel",
+    "occurred_at",
+    "spheres",
+    "paths",
+    "people",
+    "threads",
+    "used_in"
+  ],
+  "title": "SourceLogEntry",
+  "type": "object"
+}

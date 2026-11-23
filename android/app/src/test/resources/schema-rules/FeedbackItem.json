@@ -1,0 +1,78 @@
+{
+    "/$defs/FeedbackChip/enum": [
+        "사실이 틀림",
+        "이미 끝남",
+        "다른 건이 섞임",
+        "제목이 이상함"
+    ],
+    "/$defs/FeedbackChip/type": "string",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Timestamp/format": "date-time",
+    "/$defs/Timestamp/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/Timestamp/pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+    "/$defs/Timestamp/type": "string",
+    "/additionalProperties": false,
+    "/properties/bullet_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/chips/type": "array",
+    "/properties/classification/anyOf": [
+        {
+            "enum": [
+                "fact",
+                "structure",
+                "both",
+                "none"
+            ],
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/feedback_id/maxLength": 36,
+    "/properties/feedback_id/minLength": 36,
+    "/properties/feedback_id/pattern": "^fbk_[0-9a-f]{32}$",
+    "/properties/feedback_id/type": "string",
+    "/properties/result/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/status/enum": [
+        "pending",
+        "applied",
+        "failed",
+        "undone"
+    ],
+    "/properties/status/type": "string",
+    "/properties/text/maxLength": 2000,
+    "/properties/text/pattern": "\\S",
+    "/properties/text/type": "string",
+    "/properties/thread_ids/type": "array",
+    "/required": [
+        "feedback_id",
+        "document_id",
+        "bullet_id",
+        "text",
+        "chips",
+        "status",
+        "classification",
+        "result",
+        "thread_ids",
+        "created_at",
+        "updated_at"
+    ],
+    "/type": "object"
+}

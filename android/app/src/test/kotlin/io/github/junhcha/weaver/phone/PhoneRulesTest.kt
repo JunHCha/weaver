@@ -268,6 +268,23 @@ class PhoneRulesTest {
 
     // ── 링크, 디렉터리, 합성 데이터 ──────────────────────────────────────────
 
+    @Test fun wikiLinksPreferAResultDocumentWhenThereIsOne() {
+        val page = WikiPage("w1", "방화벽 장비 교체", TagKind.PROJECT, null, LocalDate.parse("2026-11-17"), body = "")
+        val snapshot = PhoneSnapshot(emptyList(), tags, listOf(page))
+        fun doc(id: String, title: String, kind: io.github.junhcha.weaver.schema.DocumentKind) =
+            io.github.junhcha.weaver.schema.DocumentSummary(id, kind, null, title, null, "a".repeat(64))
+        val documents = listOf(
+            doc("d1", "방화벽 장비 교체", io.github.junhcha.weaver.schema.DocumentKind.PROJECT),
+            doc("d2", "네트워크", io.github.junhcha.weaver.schema.DocumentKind.AREA),
+            doc("d3", "2026-11-12 (목)", io.github.junhcha.weaver.schema.DocumentKind.DIGEST),
+        )
+        assertEquals(LinkTarget.Document("d1"), resolveLink(snapshot, "방화벽 장비 교체", documents))
+        assertEquals("a document beats the area timeline", LinkTarget.Document("d2"), resolveLink(snapshot, "네트워크", documents))
+        assertEquals("people stay people", LinkTarget.Person("이서준"), resolveLink(snapshot, "이서준", documents))
+        assertEquals("without results the Wiki page is kept", LinkTarget.Page("w1"), resolveLink(snapshot, "방화벽 장비 교체"))
+        assertEquals("a Digest is never a link target", LinkTarget.None, resolveLink(snapshot, "2026-11-12 (목)", documents))
+    }
+
     @Test fun wikiLinksResolveToPeopleAreasOrPages() {
         val page = WikiPage("w1", "방화벽 장비 교체", TagKind.PROJECT, null, LocalDate.parse("2026-11-17"), body = "")
         val snapshot = PhoneSnapshot(emptyList(), tags, listOf(page))

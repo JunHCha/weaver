@@ -21,7 +21,12 @@ from typing import Literal
 
 SCOPES = ("read", "capture", "review", "action", "edit")
 OperationKind = Literal[
-    "verdict", "action_result", "tag_edit", "dictionary_edit", "request_edit"
+    "verdict",
+    "action_result",
+    "tag_edit",
+    "dictionary_edit",
+    "request_edit",
+    "feedback_edit",
 ]
 OperationStatus = Literal["queued", "applying", "applied", "failed", "stale"]
 TOKEN_PREFIX = "wvr_"

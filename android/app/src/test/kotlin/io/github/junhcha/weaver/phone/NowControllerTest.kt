@@ -431,4 +431,47 @@ class NowControllerTest {
         assertTrue(runCatching { controller.submit(controller.snapshot!!.threads.first(), "complete", "완료") }.isFailure)
         assertTrue(sent.isEmpty())
     }
+
+    @Test fun completeReportsDoneAndSendsTheCompleteRequestOnce() = runBlocking {
+        val controller = controller(); controller.refresh()
+        assertTrue(controller.complete("request-now", 2) is CompleteResult.Done)
+        assertEquals("/requests/complete", sent.single().first)
+        assertEquals("request-now", sent.single().second["thread_id"]!!.jsonPrimitive.content)
+        assertEquals(2L, sent.single().second["expected_revision"]!!.jsonPrimitive.long)
+    }
+
+    @Test fun completeMapsServerRejectionsToTheirResult() = runBlocking {
+        val controller = controller(); controller.refresh()
+        editError = ApiException(409, "request_already_resolved", false)
+        assertEquals(CompleteResult.AlreadyResolved, controller.complete("request-now", 2))
+        editError = ApiException(409, "revision_conflict", false)
+        assertEquals(CompleteResult.Rejected("revision_conflict"), controller.complete("request-other", 2))
+    }
+
+    @Test fun completeOfflineStaysQueuedInTheJournalAndReplays() = runBlocking {
+        val controller = controller(); controller.refresh()
+        failRead = true; editError = java.io.IOException("lost")
+        assertEquals(CompleteResult.Offline, controller.complete("request-now", 2))
+        assertEquals(1, store.operations(server).count { it.state == "pending" })
+        assertEquals("a second check while queued is still queued", CompleteResult.Offline, controller.complete("request-now", 2))
+        failRead = false; editError = null
+        controller.refresh()
+        assertEquals(listOf("applied"), store.operations(server).map { it.state })
+    }
+
+    @Test fun completeWithoutEditScopeIsRejected() = runBlocking {
+        scope = false
+        val controller = controller(); controller.refresh()
+        assertEquals(CompleteResult.Rejected("edit_unavailable"), controller.complete("request-now", 2))
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun completedCheckCanBeUndoneThroughTheExistingUndo() = runBlocking {
+        val controller = controller(); controller.refresh()
+        val done = controller.complete("request-now", 2) as CompleteResult.Done
+        assertEquals("applied", done.operation.state)
+        controller.undo(done.operation)
+        assertEquals(listOf("/requests/complete", "/requests/undo"), sent.map { it.first })
+        assertEquals("phone-request:op_00000000000000000000000000000002", sent[1].second["edit_thread_id"]!!.jsonPrimitive.content)
+    }
 }

@@ -113,6 +113,12 @@ interface PhoneReadModel {
 
     val nowController: NowController? get() = null
 
+    /** Results API (tree, documents, evidence) of the paired server; null while nothing is paired. */
+    val results: ResultClient? get() = null
+
+    /** Tasks checked on this phone and not yet dropped by the server's list; null while nothing is paired. */
+    val doneStore: DoneStore? get() = null
+
     suspend fun snapshot(): PhoneSnapshot
 
     /** Body of a Wiki page the list showed without one (cached, so it also opens offline); null when unavailable. */
@@ -137,6 +143,11 @@ object PhoneReadModels {
         private val nowStore by lazy { NowStore(context.applicationContext) }
         override var nowController: NowController? = null
             private set
+        @Volatile override var results: ResultClient? = null
+            private set
+        @Volatile override var doneStore: DoneStore? = null
+            private set
+        @Volatile private var resultsServer: String? = null
         override val isExample: Boolean get() = current.isExample
         override val offlineSince: java.time.Instant? get() = current.offlineSince
         override suspend fun wikiBody(page: WikiPage): String? = current.wikiBody(page)
@@ -149,6 +160,17 @@ object PhoneReadModels {
                 onProblem = { code -> settings.lastReadError = code },
                 onWikiProblem = { code -> settings.lastWikiError = code },
             )
+            if (!settings.paired) { results = null; doneStore = null; resultsServer = null }
+            else if (resultsServer != settings.serverId) {
+                resultsServer = settings.serverId
+                doneStore = DoneStore(java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/done-${settings.serverId}.json"))
+                results = ResultClient(
+                    { io.github.junhcha.weaver.transport.TransportRuntime.api(app) },
+                    java.io.File(io.github.junhcha.weaver.storage.AppStorage.exchangeDir(app), "http/results-${settings.serverId}"),
+                    // A good read must not wipe the snapshot's own error, so only failures are recorded here.
+                    onProblem = { code -> if (code != null) settings.lastReadError = code },
+                )
+            }
             if (!settings.paired) nowController = null
             else if (nowController?.server != settings.serverId) nowController = NowController(
                 settings.serverId!!, { io.github.junhcha.weaver.transport.TransportRuntime.api(app) }, nowStore,

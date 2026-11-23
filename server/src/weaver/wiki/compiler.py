@@ -182,6 +182,26 @@ class EditResult(BaseModel):
     hunks: list[HunkVerdict] = Field(default_factory=list)
 
 
+def revision_source_id(revision: str) -> str:
+    """A stable source ID per human revision, so append retries are identical."""
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    number = int(hashlib.sha256(revision.encode()).hexdigest()[:32], 16)
+    return "src_" + "".join(
+        alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26))
+    )
+
+
+@dataclass
+class Drafted:
+    drafts: list[ThreadDraft]
+    locations: dict[str, ProposalDraft]
+    additions: list[NewEntry]
+    # Index of the input change behind each draft, in order.
+    origins: list[int]
+    # Appends one more draft (frontmatter fields) to the same numbered list.
+    make: Callable[..., None]
+
+
 class Compiler:
     """Compile new log entries; summary lookup returns an approved source copy."""
 
@@ -375,6 +395,130 @@ class Compiler:
             return None
         return replace(edit, frontmatter_before=edit.frontmatter_after)
 
+    def draft_changes(
+        self,
+        revision: str,
+        changes: list[EditChange],
+        new_entries: list[NewEntry],
+        related: list[Thread],
+        *,
+        snapshot: DictionarySnapshot | None = None,
+        threads: list[Thread] | None = None,
+    ) -> "Drafted":
+        field_dictionary = snapshot if snapshot is not None else self.context.snapshot()
+        dictionary = tag_snapshot(field_dictionary)
+        threads = threads if threads is not None else self.fabric.entries(ThreadQuery())
+        origins: list[int] = []
+        now = datetime.now(UTC)
+        # Stable ID and cached drafts ensure append retries are byte-identical.
+        source_id = revision_source_id(revision)
+        drafts: list[ThreadDraft] = []
+
+        def make(
+            content: str,
+            tags: list[str],
+            field: Literal["deadline", "schedule", "assignees", "status"] | None = None,
+            value: JsonValue = None,
+            correction: TagCorrection | None = None,
+            counterpart: str | None = None,
+        ) -> None:
+            drafts.append(
+                ThreadDraft(
+                    thread_id=f"{FIELD_THREAD_PREFIX if field else 'wiki:'}{revision}:{len(drafts)}",
+                    kind="태그정정" if correction else "기록",
+                    content=content,
+                    occurred_at=now,
+                    recorded_at=now,
+                    tags=tags,
+                    counterpart=counterpart,
+                    field=field,
+                    value=value,
+                    source_id=source_id,
+                    actor="human",
+                    direction=None,
+                    resolves=None,
+                    retracts=None,
+                    correction=correction,
+                )
+            )
+
+        location_drafts: dict[str, ProposalDraft] = {}
+        additions, names = proposals(field_dictionary, new_entries)
+        for index, change in enumerate(changes):
+            unknown_paths: list[str] = []
+            fallback: str | None = None
+            if change.correction:
+                tags = canonical_tags(dictionary, names, change.tags)
+            else:
+                sphere = next(
+                    (
+                        root_of(tag)
+                        for t in related
+                        for tag in t.tags
+                        if (e := dictionary.resolve(tag)) and e.source == "tree"
+                    ),
+                    self.default_sphere,
+                )
+                decision = business_tags(
+                    dictionary,
+                    additions,
+                    names,
+                    change.tags,
+                    default_sphere=sphere,
+                )
+                tags = decision.tags
+                unknown_paths = decision.unknown_paths
+                fallback = decision.fallback
+            correction = change.correction
+            if correction:
+                if correction.target not in {t.thread_id for t in threads}:
+                    continue
+                correction = correction.model_copy(
+                    update={"add": canonical_tags(dictionary, names, correction.add)}
+                )
+            counterpart = (
+                counterpart_name(dictionary, additions, names, change.counterpart)
+                if not correction
+                else None
+            )
+            if counterpart is not None and counterpart not in tags:
+                tags.append(counterpart)
+            make(
+                change.content,
+                tags,
+                correction=correction,
+                counterpart=counterpart,
+            )
+            for unknown in unknown_paths:
+                sphere_root = root_of(unknown)
+                proposal = location_drafts.setdefault(
+                    unknown,
+                    ProposalDraft(
+                        kind="location",
+                        reason="unknown_path",
+                        sphere=sphere_root,
+                        path=unknown,
+                        parent=nearest_parent(field_dictionary, unknown),
+                        fallback=fallback or f"{sphere_root}/{UNCLASSIFIED}",
+                        thread_ids=[],
+                        source_ids=[source_id],
+                    ),
+                )
+                proposal.thread_ids.append(drafts[-1].thread_id)
+            origins.append(index)
+        return Drafted(drafts, location_drafts, additions, origins, make)
+
+    def drafts_from_changes(
+        self,
+        revision: str,
+        changes: list[EditChange],
+        new_entries: list[NewEntry],
+        related: list[Thread],
+    ) -> tuple[list[ThreadDraft], dict[str, ProposalDraft]]:
+        """Human Thread drafts and location proposals for extracted changes."""
+        built = self.draft_changes(revision, changes, new_entries, related)
+        return built.drafts, built.locations
+
     def _apply_edit(self, edit: HumanEdit) -> None:
         with sqlite3.connect(self.state_path) as db:
             row = db.execute(
@@ -382,7 +526,6 @@ class Compiler:
             ).fetchone()
             if row is None:
                 field_dictionary = self.context.snapshot()
-                dictionary = tag_snapshot(field_dictionary)
                 threads = self.fabric.entries(ThreadQuery())
                 changes = (
                     hunks(edit.body_before, edit.body_after)
@@ -567,116 +710,22 @@ class Compiler:
                         self.store.write_metadata(edit.path, {"human_spans": spans})
                 result.changes = meaningful
                 revision = edit.new_rev.removesuffix(":code")
-                now = datetime.now(UTC)
-                # Stable ID and cached drafts ensure append retries are byte-identical.
-                alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-                number = int(hashlib.sha256(revision.encode()).hexdigest()[:32], 16)
-                ulid = "".join(
-                    alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26))
-                )
-                source_id = "src_" + ulid
-                drafts: list[ThreadDraft] = []
-
-                def make(
-                    content: str,
-                    tags: list[str],
-                    field: Literal["deadline", "schedule", "assignees", "status"]
-                    | None = None,
-                    value: JsonValue = None,
-                    correction: TagCorrection | None = None,
-                    counterpart: str | None = None,
-                ) -> None:
-                    drafts.append(
-                        ThreadDraft(
-                            thread_id=f"{FIELD_THREAD_PREFIX if field else 'wiki:'}{revision}:{len(drafts)}",
-                            kind="태그정정" if correction else "기록",
-                            content=content,
-                            occurred_at=now,
-                            recorded_at=now,
-                            tags=tags,
-                            counterpart=counterpart,
-                            field=field,
-                            value=value,
-                            source_id=source_id,
-                            actor="human",
-                            direction=None,
-                            resolves=None,
-                            retracts=None,
-                            correction=correction,
-                        )
-                    )
-
                 state_tag = self._scope_tag(edit)
-                location_drafts: dict[str, ProposalDraft] = {}
-                additions, names = proposals(field_dictionary, result.new_entries)
-                for change in result.changes:
-                    unknown_paths: list[str] = []
-                    fallback: str | None = None
-                    if change.correction:
-                        tags = canonical_tags(dictionary, names, change.tags)
-                    else:
-                        sphere = next(
-                            (
-                                root_of(tag)
-                                for t in related
-                                for tag in t.tags
-                                if (e := dictionary.resolve(tag)) and e.source == "tree"
-                            ),
-                            self.default_sphere,
-                        )
-                        decision = business_tags(
-                            dictionary,
-                            additions,
-                            names,
-                            change.tags,
-                            default_sphere=sphere,
-                        )
-                        tags = decision.tags
-                        unknown_paths = decision.unknown_paths
-                        fallback = decision.fallback
-                    correction = change.correction
-                    if correction:
-                        if correction.target not in {t.thread_id for t in threads}:
-                            continue
-                        correction = correction.model_copy(
-                            update={
-                                "add": canonical_tags(dictionary, names, correction.add)
-                            }
-                        )
-                    counterpart = (
-                        counterpart_name(
-                            dictionary, additions, names, change.counterpart
-                        )
-                        if not correction
-                        else None
-                    )
-                    if counterpart is not None and counterpart not in tags:
-                        tags.append(counterpart)
-                    make(
-                        change.content,
-                        tags,
-                        correction=correction,
-                        counterpart=counterpart,
-                    )
-                    for unknown in unknown_paths:
-                        sphere_root = root_of(unknown)
-                        proposal = location_drafts.setdefault(
-                            unknown,
-                            ProposalDraft(
-                                kind="location",
-                                reason="unknown_path",
-                                sphere=sphere_root,
-                                path=unknown,
-                                parent=nearest_parent(field_dictionary, unknown),
-                                fallback=fallback or f"{sphere_root}/{UNCLASSIFIED}",
-                                thread_ids=[],
-                                source_ids=[source_id],
-                            ),
-                        )
-                        proposal.thread_ids.append(drafts[-1].thread_id)
-                    owner = owners.get(id(change))
+                built = self.draft_changes(
+                    revision,
+                    result.changes,
+                    result.new_entries,
+                    related,
+                    snapshot=field_dictionary,
+                    threads=threads,
+                )
+                drafts, make = built.drafts, built.make
+                location_drafts = built.locations
+                additions = built.additions
+                for position, drafted in zip(built.origins, drafts, strict=True):
+                    owner = owners.get(id(result.changes[position]))
                     if owner is not None:
-                        produced_by_hunk[owner].append(drafts[-1].thread_id)
+                        produced_by_hunk[owner].append(drafted.thread_id)
                 used = (
                     {tag for d in drafts for tag in d.tags}
                     | {d.counterpart for d in drafts if d.counterpart}

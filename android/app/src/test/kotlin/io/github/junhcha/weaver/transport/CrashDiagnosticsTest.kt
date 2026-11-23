@@ -4,10 +4,34 @@ import io.github.junhcha.weaver.diagnostics.*
 import java.nio.file.Files
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import io.github.junhcha.weaver.phone.StatusCounts
+import io.github.junhcha.weaver.phone.SyntheticPhoneReadModel
+import io.github.junhcha.weaver.ui.PhoneShell
+import io.github.junhcha.weaver.ui.PhoneTab
+import io.github.junhcha.weaver.ui.WeaverTheme
+import java.time.Instant
 
 /** Synthetic exceptions only; the server generated fixtures validate every upload byte. */
+@RunWith(RobolectricTestRunner::class)
 class CrashDiagnosticsTest {
+    @get:Rule val compose = createComposeRule()
+
+    @Test fun logTabReportsLog() {
+        compose.setContent {
+            MaterialTheme { WeaverTheme {
+                PhoneShell(SyntheticPhoneReadModel(), StatusCounts(0, 0, 0), { Instant.parse("2026-11-18T00:00:00Z") }, {}, {}, initialTab = PhoneTab.LOG)
+            } }
+        }
+        compose.waitForIdle()
+        assertEquals("LOG", CrashDiagnostics.screen.last_tab)
+    }
+
     private fun directory() = Files.createTempDirectory("weaver-crashes").toFile()
     private fun synthetic(): Throwable = IllegalStateException("PRIVATE SYNTHETIC MESSAGE").apply {
         stackTrace = arrayOf(StackTraceElement("io.github.junhcha.weaver.ui.Map", "open", "Map.kt", 42))

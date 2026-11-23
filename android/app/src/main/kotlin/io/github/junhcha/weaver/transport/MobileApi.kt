@@ -108,6 +108,26 @@ interface MobileApi {
     /** One map item with its ETag, or null when [etag] is still current (304). A 404 `pipeline_not_found` is an [ApiException]. */
     fun readPipelineItem(sourceId: String, etag: String?): Versioned? = throw UnsupportedOperationException()
     fun threads(cursor: String?, limit: Int): Page
+    /** `GET /read/tree` items (feature `results`). */
+    fun tree(): List<JsonElement> = throw UnsupportedOperationException()
+    /** `GET /read/references?path=`: reference notes related to a tree node. */
+    fun references(path: String): List<JsonElement> = throw UnsupportedOperationException()
+    fun documents(): List<JsonElement> = throw UnsupportedOperationException()
+    /** One compiled document with its ETag, or null when [etag] is still current (304). */
+    fun document(id: String, etag: String?): Versioned? = throw UnsupportedOperationException()
+    /** `GET /read/documents/{id}/bullets/{bullet}/evidence`: the whole body (never cached by the caller). */
+    fun evidence(id: String, bulletId: String): ByteArray = throw UnsupportedOperationException()
+    /** `GET /read/cards`: the whole envelope (`items`, `today`, `timezone`). [window] is `today` or `around`. */
+    fun cards(window: String, at: String?): JsonObject = throw UnsupportedOperationException()
+    fun tasks(): JsonObject = throw UnsupportedOperationException()
+    /** `GET /read/documents/{id}/feedback`: the whole envelope (`items`, `next_cursor`). */
+    fun feedback(documentId: String): JsonObject = throw UnsupportedOperationException()
+    /** `POST /edits/feedback`: the journaled edit path; the `client_id` inside [body] is the idempotency key. */
+    fun postFeedback(body: JsonObject): JsonObject = edit("/feedback", body)
+    /** `POST /edits/feedback/undo`; the same `client_id` answers with the first result. */
+    fun undoFeedback(body: JsonObject): JsonObject = edit("/feedback/undo", body)
+    /** `GET /read/sources`; [filters] are the optional `sphere`, `person` and `kind` query values. */
+    fun sources(cursor: String?, limit: Int, filters: Map<String, String> = emptyMap()): Page = throw UnsupportedOperationException()
     fun now(afterSeq: Long? = null, fabricEpoch: String? = null): JsonObject = throw UnsupportedOperationException()
     fun tags(): List<JsonElement>
     /** Page list without bodies; the body comes from [wikiPage] when the page is opened. */
@@ -305,6 +325,44 @@ class HttpsMobileApi(
     }
 
     override fun threads(cursor: String?, limit: Int) = page(call("GET", cursor("/read/threads", cursor, limit), limit = MAX_PAGE))
+    override fun tree() = items(call("GET", "/read/tree", limit = MAX_PAGE))
+    override fun references(path: String) =
+        items(call("GET", "/read/references?path=" + java.net.URLEncoder.encode(path, "UTF-8"), limit = MAX_PAGE))
+    override fun documents() = items(call("GET", "/read/documents", limit = MAX_PAGE))
+
+    override fun document(id: String, etag: String?): Versioned? {
+        val reply = call("GET", "/read/documents/${segment(id)}", if (etag != null) mapOf("If-None-Match" to etag) else emptyMap(), limit = MAX_DOCUMENT)
+        if (reply.status == 304) return null
+        return Versioned(reply.body, reply.headers["etag"])
+    }
+
+    override fun evidence(id: String, bulletId: String): ByteArray =
+        call("GET", "/read/documents/${segment(id)}/bullets/${segment(bulletId)}/evidence", limit = MAX_DOCUMENT).body
+
+    override fun cards(window: String, at: String?): JsonObject {
+        val query = "?window=" + java.net.URLEncoder.encode(window, "UTF-8") +
+            (if (at == null) "" else "&at=" + java.net.URLEncoder.encode(at, "UTF-8"))
+        return obj(call("GET", "/read/cards$query", limit = MAX_PAGE))
+    }
+
+    override fun tasks() = obj(call("GET", "/read/tasks", limit = MAX_PAGE))
+
+    override fun feedback(documentId: String) =
+        obj(call("GET", "/read/documents/${segment(documentId)}/feedback", limit = MAX_PAGE))
+
+    override fun sources(cursor: String?, limit: Int, filters: Map<String, String>): Page {
+        val query = StringBuilder("?limit=$limit")
+        if (cursor != null) query.append("&cursor=").append(java.net.URLEncoder.encode(cursor, "UTF-8"))
+        filters.toSortedMap().forEach { (k, v) -> query.append('&').append(k).append('=').append(java.net.URLEncoder.encode(v, "UTF-8")) }
+        return page(call("GET", "/read/sources$query", limit = MAX_PAGE))
+    }
+
+    /** A path segment from the server's ids; anything else never reaches the URL. */
+    private fun segment(id: String): String {
+        if (!id.matches(Regex("[A-Za-z0-9_-]+"))) throw InvalidResponseException()
+        return id
+    }
+
     override fun now(afterSeq: Long?, fabricEpoch: String?): JsonObject {
         require(afterSeq == null || fabricEpoch != null)
         val query = if (afterSeq == null) "" else "?after_seq=$afterSeq&fabric_epoch=" + java.net.URLEncoder.encode(fabricEpoch, "UTF-8")

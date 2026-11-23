@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "DateString": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+    },
+    "LinkTarget": {
+      "additionalProperties": false,
+      "description": "Where a result opens: a compiled document bullet or the day's Digest.",
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bullet_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "digest"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+      ],
+      "title": "LinkTarget",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Offset": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$id": "urn:weaver:schema:ResultCard",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One incoming-day or due-day card, grouped by case key; derived on read.",
+  "properties": {
+    "bullets": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "maxItems": 2,
+      "title": "Bullets",
+      "type": "array"
+    },
+    "card_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "channels": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Channels",
+      "type": "array"
+    },
+    "counterparts": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "maxItems": 3,
+      "title": "Counterparts",
+      "type": "array"
+    },
+    "day": {
+      "$ref": "#/$defs/DateString"
+    },
+    "due": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateString"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "due_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "deadline",
+            "schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Due Kind"
+    },
+    "due_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Due Label"
+    },
+    "headline": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "key": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "link": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkTarget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "people": {
+      "$ref": "#/$defs/Offset"
+    },
+    "reflecting": {
+      "title": "Reflecting",
+      "type": "boolean"
+    },
+    "sources": {
+      "$ref": "#/$defs/Offset"
+    },
+    "sphere": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "thread_ids": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Thread Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "card_id",
+    "day",
+    "key",
+    "sphere",
+    "headline",
+    "bullets",
+    "people",
+    "sources",
+    "counterparts",
+    "channels",
+    "due",
+    "due_label",
+    "due_kind",
+    "thread_ids",
+    "link",
+    "reflecting"
+  ],
+  "title": "ResultCard",
+  "type": "object"
+}

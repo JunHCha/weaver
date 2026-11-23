@@ -1,0 +1,103 @@
+{
+    "/$defs/DateString/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/DateString/pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "/$defs/DateString/type": "string",
+    "/$defs/LinkTarget/additionalProperties": false,
+    "/$defs/LinkTarget/properties/block_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/bullet_id/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/$defs/LinkTarget/properties/kind/enum": [
+        "document",
+        "digest"
+    ],
+    "/$defs/LinkTarget/properties/kind/type": "string",
+    "/$defs/LinkTarget/required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+    ],
+    "/$defs/LinkTarget/type": "object",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/$defs/Offset/minimum": 0,
+    "/$defs/Offset/type": "integer",
+    "/additionalProperties": false,
+    "/properties/bullets/maxItems": 2,
+    "/properties/bullets/type": "array",
+    "/properties/channels/type": "array",
+    "/properties/counterparts/maxItems": 3,
+    "/properties/counterparts/type": "array",
+    "/properties/due/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/due_kind/anyOf": [
+        {
+            "enum": [
+                "deadline",
+                "schedule"
+            ],
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/due_label/anyOf": [
+        {
+            "type": "string"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/link/anyOf": [
+        {
+            "$ref": "#/$defs/LinkTarget"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/reflecting/type": "boolean",
+    "/properties/thread_ids/type": "array",
+    "/required": [
+        "card_id",
+        "day",
+        "key",
+        "sphere",
+        "headline",
+        "bullets",
+        "people",
+        "sources",
+        "counterparts",
+        "channels",
+        "due",
+        "due_label",
+        "due_kind",
+        "thread_ids",
+        "link",
+        "reflecting"
+    ],
+    "/type": "object"
+}

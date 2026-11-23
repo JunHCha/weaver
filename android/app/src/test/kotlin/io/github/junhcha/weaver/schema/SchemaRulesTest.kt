@@ -57,6 +57,7 @@ class SchemaRulesTest {
             "minLength" to SchemaRules.DIGEST_LENGTH,
             "maxLength" to SchemaRules.DIGEST_LENGTH,
         ),
+        "DateString" to ints("pattern" to SchemaRules.DATE, "not" to noLineBreak),
         "NonEmpty" to ints("pattern" to SchemaRules.NON_EMPTY),
         "Revision" to ints("minimum" to SchemaRules.REVISION_MIN),
         "Offset" to ints("minimum" to SchemaRules.OFFSET_MIN),

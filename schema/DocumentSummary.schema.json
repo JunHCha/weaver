@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "DateString": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+    },
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:DocumentSummary",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A document list row; ``DocumentView`` without its sections.",
+  "properties": {
+    "as_of": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateString"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "document_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "key": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "enum": [
+        "area",
+        "project",
+        "topic",
+        "digest"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "title": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "document_id",
+    "kind",
+    "key",
+    "title",
+    "as_of",
+    "sha256"
+  ],
+  "title": "DocumentSummary",
+  "type": "object"
+}

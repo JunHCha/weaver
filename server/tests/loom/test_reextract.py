@@ -805,6 +805,45 @@ def test_bootstrap_call_counts_toward_daily_cap(tmp_path):
     assert sum(report.llm_calls_by_day.values()) == 3
 
 
+def test_failed_bootstrap_counts_only_real_calls(tmp_path):
+    seed_three(tmp_path)
+    llm = FakeLlm()
+    original = llm.generate_json
+
+    def failing(task, system, user, schema):
+        if task == "loom.reextract_bootstrap":
+            llm.calls.append(task)
+            raise RuntimeError("boom")
+        return original(task, system, user, schema)
+
+    llm.generate_json = failing
+    report = reextract(tmp_path, tmp_path / "wiki", llm, limit=30)
+    assert sum(report.llm_calls_by_day.values()) == 1
+    assert report.sources
+    assert all(p.error.startswith("bootstrap: ") for p in report.sources)
+
+
+def test_source_failure_counts_calls_made(tmp_path):
+    seed_three(tmp_path)
+    llm = FakeLlm()
+    original = llm.generate_json
+    approvals_seen = 0
+
+    def failing(task, system, user, schema):
+        nonlocal approvals_seen
+        if task == "loom.approve":
+            approvals_seen += 1
+            if approvals_seen == 2:
+                llm.calls.append(task)
+                raise RuntimeError("boom")
+        return original(task, system, user, schema)
+
+    llm.generate_json = failing
+    report = reextract(tmp_path, tmp_path / "wiki", llm)
+    assert sum(1 for p in report.sources if p.error) >= 1
+    assert report.llm_calls_by_day[report.today] == len(llm.calls)
+
+
 def test_human_only_sources_do_not_consume_limit(tmp_path):
     seed_three(tmp_path)
     fabric = FabricStore(tmp_path / "fabric.sqlite3")

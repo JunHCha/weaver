@@ -37,6 +37,12 @@ omit newly defaulted fields. All data is synthetic.
 | `PipelineItem` | server → phone | 2 | Durable source location, transitions, stage times and committed Thread/wiki results. |
 | `Alert` | server → phone | 2 | A notice that a newly approved schedule moved an approved one. |
 | `LocationProposal` | server → phone | 2 | A suggested new tree location (unknown path or project promotion) that a person accepts or rejects. |
+| `ResultCard`, `LinkTarget` | server → phone | - | One card of `GET /read/cards` grouped by incoming or due day and case key; `link` opens a document bullet or the day's Digest. Unversioned read-API items; gated by `capabilities.features.results`. |
+| `TaskItem` | server → phone | - | One open received request of `GET /read/tasks` with its document link. |
+| `TreeNodeView` | server → phone | - | One node of `GET /read/tree`: a document or card node and its ancestors, with open task and 7-day card counts. |
+| `DocumentSummary`, `DocumentView`, `DocSection`, `DocBullet`, `RefLinkView` | server → phone | - | `GET /read/documents` rows and `GET /read/documents/{id}`: a compiled document or Digest in sections; remaining and waiting are recomputed on read. |
+| `Evidence`, `EvidenceThread`, `EvidenceSource` | server → phone | - | `GET /read/documents/{id}/bullets/{bullet_id}/evidence`: a bullet's Threads and the whole source text (cut at 20000 characters, no highlight). |
+| `SourceLogEntry`, `UsedIn` | server → phone | - | One row of `GET /read/sources`: a source, the Threads it produced and the documents and Digests that use them. |
 
 ## Common rules
 

@@ -1,0 +1,46 @@
+{
+    "/$defs/DateString/not": {
+        "pattern": "[\\r\\n]"
+    },
+    "/$defs/DateString/pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "/$defs/DateString/type": "string",
+    "/$defs/Digest/maxLength": 64,
+    "/$defs/Digest/minLength": 64,
+    "/$defs/Digest/pattern": "^[0-9a-f]{64}$",
+    "/$defs/Digest/type": "string",
+    "/$defs/NonEmpty/pattern": "\\S",
+    "/$defs/NonEmpty/type": "string",
+    "/additionalProperties": false,
+    "/properties/as_of/anyOf": [
+        {
+            "$ref": "#/$defs/DateString"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/key/anyOf": [
+        {
+            "$ref": "#/$defs/NonEmpty"
+        },
+        {
+            "type": "null"
+        }
+    ],
+    "/properties/kind/enum": [
+        "area",
+        "project",
+        "topic",
+        "digest"
+    ],
+    "/properties/kind/type": "string",
+    "/required": [
+        "document_id",
+        "kind",
+        "key",
+        "title",
+        "as_of",
+        "sha256"
+    ],
+    "/type": "object"
+}

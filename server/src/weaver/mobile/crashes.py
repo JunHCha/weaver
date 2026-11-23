@@ -37,7 +37,7 @@ class CrashException(StrictModel):
 
 
 class ScreenPath(StrictModel):
-    last_tab: Annotated[str, Field(pattern=r"^(NOW|PEOPLE|AREAS|WIKI)$")]
+    last_tab: Annotated[str, Field(pattern=r"^(NOW|AREAS|LOG|PEOPLE|WIKI)$")]
     map_open: bool
     selected_node: Annotated[str, Field(max_length=64, pattern=r"^[A-Z_]+$")] | None = (
         None

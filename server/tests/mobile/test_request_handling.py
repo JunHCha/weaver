@@ -609,3 +609,33 @@ def test_another_device_cannot_undo_request_edit(tmp_path):
     assert refused.status_code == 422 and refused.json()["code"] == "edit_not_undoable"
     assert not ReadModel(h.config).thread("req").open
     assert len(rows(h)) == 2
+
+
+def test_app_can_undo_an_obsidian_tick(tmp_path):
+    h = Harness(tmp_path)
+    request = seed(h)
+    auth = h.pair("read", "edit")
+    tick = h.fabric.append(
+        [
+            thread(
+                "wiki-check:req",
+                kind="결정",
+                actor="human",
+                resolves="req",
+                tags=["work"],
+            )
+        ]
+    )[0]
+    assert not h.client.get(f"{ROOT}/read/threads/req", headers=auth).json()["open"]
+    undo = post(
+        h,
+        auth,
+        "undo",
+        "undo-obsidian-1",
+        edit_thread_id=tick.thread_id,
+        expected_revision=tick.seq,
+    )
+    assert undo.status_code == 200, undo.text
+    assert rows(h)[-1].retracts == "wiki-check:req"
+    assert h.client.get(f"{ROOT}/read/threads/req", headers=auth).json()["open"]
+    assert request.seq < tick.seq

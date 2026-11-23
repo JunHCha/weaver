@@ -1,13 +1,14 @@
 """Wire the resident runtime from ServerConfig; nothing here runs on import."""
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from weaver.action import ActionCourier, ActionJob, ActionOutbox
 from weaver.alert import ScheduleAlertDetector
 from weaver.alert.delivery import AlertDelivery
+from weaver.alert.history import AlertBodyExpired
 from weaver.archive import ArchiveStore
 from weaver.config import ServerConfig
 from weaver.context import ContextDictionary
@@ -23,7 +24,7 @@ from weaver.llm.policy_archive import configured_policy
 from weaver.llm.types import LlmClient
 from weaver.loom.summary import SummaryDrafts
 from weaver.loom.summary_review import SummaryReview
-from weaver.schema import Source
+from weaver.schema import Alert, Source
 from weaver.spinner import Spinner
 from weaver.spinner.reviser import LlmReviser
 from weaver.spinner.webex import WebexProvenanceStore
@@ -55,6 +56,23 @@ class Plugins:
     client: LlmClient | None = None
     # Tests may replace the archive-backed gate; an injected client is still gated.
     policy: LlmPolicy | None = None
+
+
+def staged_alert_publisher(delivery: AlertDelivery) -> Callable[[Alert], None]:
+    """Stage once, then publish the staged body so retries never conflict."""
+
+    def publish(alert: Alert) -> None:
+        try:
+            staged = delivery.history.body(alert.alert_id)
+        except AlertBodyExpired:
+            staged = None
+        if staged is None:
+            # The basis is the page, not a Thread.
+            delivery.history.stage(alert, alert.package_id)
+        delivery.publish_alert(staged or alert)
+        delivery.history.projected(alert.alert_id)
+
+    return publish
 
 
 def build_runtime(
@@ -161,6 +179,8 @@ def build_runtime(
         )
         progress.wiki = store
         progress.vault = config.wiki.vault_root or config.vault_root
+        publish_wiki_alert = staged_alert_publisher(AlertDelivery(config))
+
         job = WikiJob(
             store,
             fabric,
@@ -172,6 +192,7 @@ def build_runtime(
             journal=progress.journal,
             default_sphere=config.reference.default_sphere,
             location_proposals=location_proposals,
+            publish_alert=publish_wiki_alert,
         )
         maintenance.append(
             MaintenanceTask(

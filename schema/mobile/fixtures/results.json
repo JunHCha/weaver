@@ -1,0 +1,888 @@
+{
+  "contract_version": 1,
+  "group": "results",
+  "description": "Result read models (features.results): cards, my open tasks, tree, documents, evidence and the source log.",
+  "cases": [
+    {
+      "name": "cards_today",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/cards",
+        "query": {
+          "window": "today"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "card_id": "966cc4e521f2493d986c4e49",
+              "day": "2026-11-12",
+              "key": "회사/infra/network",
+              "sphere": "회사",
+              "headline": "견적 회신",
+              "bullets": [],
+              "people": 1,
+              "sources": 1,
+              "counterparts": [
+                "김철수"
+              ],
+              "channels": [],
+              "due": "2026-11-14",
+              "due_label": "D-2",
+              "due_kind": "deadline",
+              "thread_ids": [
+                "card_request"
+              ],
+              "link": {
+                "kind": "document",
+                "document_id": "5f19b95b9ab4aa0142341ad1",
+                "bullet_id": "b1",
+                "block_id": null
+              },
+              "reflecting": true
+            },
+            {
+              "card_id": "b2ba98e05427f94c5094787e",
+              "day": "2026-11-12",
+              "key": "회사/infra/storage",
+              "sphere": "회사",
+              "headline": "장비 목록 수령",
+              "bullets": [],
+              "people": 1,
+              "sources": 1,
+              "counterparts": [
+                "이영희"
+              ],
+              "channels": [],
+              "due": null,
+              "due_label": null,
+              "due_kind": null,
+              "thread_ids": [
+                "card_note"
+              ],
+              "link": {
+                "kind": "digest",
+                "document_id": "6741242c1edddd570aafa11c",
+                "bullet_id": null,
+                "block_id": null
+              },
+              "reflecting": true
+            }
+          ],
+          "next_cursor": null,
+          "today": "2026-11-12",
+          "timezone": "Asia/Seoul"
+        }
+      },
+      "note": "Cards of facts that came in today; link opens a document bullet, else the day's Digest."
+    },
+    {
+      "name": "cards_around",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/cards",
+        "query": {
+          "window": "around"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "card_id": "e45497c52a3f99a4cf56f9d6",
+              "day": "2026-11-13",
+              "key": "회사/infra/storage",
+              "sphere": "회사",
+              "headline": "현장 점검",
+              "bullets": [],
+              "people": 0,
+              "sources": 1,
+              "counterparts": [],
+              "channels": [],
+              "due": "2026-11-13",
+              "due_label": "내일",
+              "due_kind": "schedule",
+              "thread_ids": [
+                "card_visit"
+              ],
+              "link": {
+                "kind": "digest",
+                "document_id": "904d9a18e4330b4215c76cca",
+                "bullet_id": null,
+                "block_id": null
+              },
+              "reflecting": true
+            },
+            {
+              "card_id": "fca310cac514d7e6ea82a1c7",
+              "day": "2026-11-14",
+              "key": "회사/infra/network",
+              "sphere": "회사",
+              "headline": "견적 회신",
+              "bullets": [],
+              "people": 1,
+              "sources": 1,
+              "counterparts": [
+                "김철수"
+              ],
+              "channels": [],
+              "due": "2026-11-14",
+              "due_label": "D-2",
+              "due_kind": "deadline",
+              "thread_ids": [
+                "card_request"
+              ],
+              "link": {
+                "kind": "document",
+                "document_id": "5f19b95b9ab4aa0142341ad1",
+                "bullet_id": "b1",
+                "block_id": null
+              },
+              "reflecting": true
+            }
+          ],
+          "next_cursor": null,
+          "today": "2026-11-12",
+          "timezone": "Asia/Seoul"
+        }
+      },
+      "note": "Cards by deadline or schedule day within 7 days of today, today excluded, nearest first."
+    },
+    {
+      "name": "tasks",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/tasks",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "thread_id": "card_request",
+              "revision": 1,
+              "content": "견적 회신",
+              "block_id": "w-2e5461320b",
+              "deadline": "2026-11-14",
+              "due_label": "D-2",
+              "counterpart": "김철수",
+              "document_id": "5f19b95b9ab4aa0142341ad1",
+              "document_title": "네트워크",
+              "link": {
+                "kind": "document",
+                "document_id": "5f19b95b9ab4aa0142341ad1",
+                "bullet_id": null,
+                "block_id": "w-2e5461320b"
+              }
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "cards_invalid_at",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/cards",
+        "query": {
+          "at": "2026-11-12"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_at",
+          "retryable": false
+        }
+      },
+      "note": "at must be an ISO instant with an explicit offset."
+    },
+    {
+      "name": "tree",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/tree",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "path": "회사",
+              "label": "회사",
+              "kind": "area",
+              "parent": null,
+              "document_id": null,
+              "open_tasks": 1,
+              "cards_7d": 3
+            },
+            {
+              "path": "회사/infra",
+              "label": "Infra",
+              "kind": "topic",
+              "parent": "회사",
+              "document_id": null,
+              "open_tasks": 1,
+              "cards_7d": 3
+            },
+            {
+              "path": "회사/infra/network",
+              "label": "Network",
+              "kind": "area",
+              "parent": "회사/infra",
+              "document_id": "5f19b95b9ab4aa0142341ad1",
+              "open_tasks": 1,
+              "cards_7d": 1
+            },
+            {
+              "path": "회사/infra/storage",
+              "label": "Storage",
+              "kind": "area",
+              "parent": "회사/infra",
+              "document_id": null,
+              "open_tasks": 0,
+              "cards_7d": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "references",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/references",
+        "query": {
+          "path": "회사/infra/network"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": []
+        }
+      },
+      "note": "Reference chunks related to a tree path; empty while nothing is indexed."
+    },
+    {
+      "name": "documents",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "document_id": "5f19b95b9ab4aa0142341ad1",
+              "kind": "area",
+              "key": "회사/infra/network",
+              "title": "네트워크",
+              "as_of": "2026-11-12",
+              "sha256": "634e12780100f85b430468133646725a4e2288767d6fded069387b796463765e"
+            },
+            {
+              "document_id": "6741242c1edddd570aafa11c",
+              "kind": "digest",
+              "key": "2026-11-12",
+              "title": "2026-11-12 (목)",
+              "as_of": "2026-11-12",
+              "sha256": "f524df5f1fd506488bbe9ca21f3c76b2906977ca19d5fc171ab395568d2e84ed"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "document",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/5f19b95b9ab4aa0142341ad1",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "etag": "\"a99da91c8363897bd597e32b7a4abef1e671ec1addc8a3183084decff86e876b\""
+        },
+        "body": {
+          "document_id": "5f19b95b9ab4aa0142341ad1",
+          "kind": "area",
+          "key": "회사/infra/network",
+          "title": "네트워크",
+          "as_of": "2026-11-12",
+          "path": "pages/회사/infra/network.md",
+          "sections": [
+            {
+              "kind": "current",
+              "title": "현재 상태",
+              "bullets": [
+                {
+                  "bullet_id": "b1",
+                  "text": "장비 2종 견적 도착",
+                  "thread_ids": [
+                    "card_request"
+                  ],
+                  "task": null,
+                  "day": null,
+                  "label": null
+                }
+              ]
+            },
+            {
+              "kind": "remaining",
+              "title": "남은 일",
+              "bullets": [
+                {
+                  "bullet_id": "w-2e5461320b",
+                  "text": "견적 회신",
+                  "thread_ids": [
+                    "card_request"
+                  ],
+                  "task": {
+                    "thread_id": "card_request",
+                    "revision": 1,
+                    "content": "견적 회신",
+                    "block_id": "w-2e5461320b",
+                    "deadline": "2026-11-14",
+                    "due_label": "D-2",
+                    "counterpart": "김철수",
+                    "document_id": "5f19b95b9ab4aa0142341ad1",
+                    "document_title": "네트워크",
+                    "link": {
+                      "kind": "document",
+                      "document_id": "5f19b95b9ab4aa0142341ad1",
+                      "bullet_id": null,
+                      "block_id": "w-2e5461320b"
+                    }
+                  },
+                  "day": "2026-11-14",
+                  "label": "D-2"
+                }
+              ]
+            }
+          ],
+          "references": [],
+          "log_subject": "회사/infra/network",
+          "reflecting": true,
+          "sha256": "634e12780100f85b430468133646725a4e2288767d6fded069387b796463765e"
+        }
+      },
+      "note": "remaining and waiting are recomputed from Fabric on every read; the ETag covers the whole view."
+    },
+    {
+      "name": "document_not_modified",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/5f19b95b9ab4aa0142341ad1",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "etag": "\"a99da91c8363897bd597e32b7a4abef1e671ec1addc8a3183084decff86e876b\""
+        }
+      }
+    },
+    {
+      "name": "document_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/missing",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "document_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "evidence",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/5f19b95b9ab4aa0142341ad1/bullets/b1/evidence",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "document_id": "5f19b95b9ab4aa0142341ad1",
+          "bullet_id": "b1",
+          "text": "장비 2종 견적 도착",
+          "threads": [
+            {
+              "thread_id": "card_request",
+              "kind": "요청",
+              "content": "견적 회신",
+              "occurred_at": "2026-11-12T00:00:00Z",
+              "source_id": "src_00000000000000000000000001",
+              "source_label": "알 수 없음"
+            }
+          ],
+          "sources": [
+            {
+              "source_id": "src_00000000000000000000000001",
+              "label": "알 수 없음",
+              "channel": null,
+              "occurred_at": null,
+              "text": "견적 회신\n장비 목록 수령\n현장 점검",
+              "truncated": false
+            }
+          ]
+        }
+      },
+      "note": "A bullet's Threads in citation order and each source's whole text (cut at 20000 characters; truncated says so)."
+    },
+    {
+      "name": "evidence_bullet_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/5f19b95b9ab4aa0142341ad1/bullets/b9/evidence",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "bullet_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "sources",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/sources",
+        "query": {
+          "limit": "2"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "source_id": "src_00000000000000000000000001",
+              "label": "알 수 없음",
+              "channel": null,
+              "occurred_at": "2026-11-10T00:00:00Z",
+              "spheres": [
+                "회사"
+              ],
+              "paths": [
+                "회사/infra/network",
+                "회사/infra/storage"
+              ],
+              "people": [
+                "김철수",
+                "이영희"
+              ],
+              "threads": [
+                {
+                  "thread_id": "card_request",
+                  "kind": "요청",
+                  "content": "견적 회신",
+                  "occurred_at": "2026-11-12T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                },
+                {
+                  "thread_id": "card_note",
+                  "kind": "기록",
+                  "content": "장비 목록 수령",
+                  "occurred_at": "2026-11-12T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                },
+                {
+                  "thread_id": "card_visit",
+                  "kind": "일정",
+                  "content": "현장 점검",
+                  "occurred_at": "2026-11-10T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                }
+              ],
+              "used_in": [
+                {
+                  "kind": "document",
+                  "document_id": "5f19b95b9ab4aa0142341ad1",
+                  "title": "네트워크",
+                  "bullet_id": "b1",
+                  "block_id": null
+                },
+                {
+                  "kind": "digest",
+                  "document_id": "6741242c1edddd570aafa11c",
+                  "title": "2026-11-12 (목)",
+                  "bullet_id": null,
+                  "block_id": "w-2e5461320b"
+                }
+              ]
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "note": "One row per source, newest first; cursor is o<offset>."
+    },
+    {
+      "name": "sources_filtered",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/sources",
+        "query": {
+          "person": "김철수",
+          "kind": "요청"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "source_id": "src_00000000000000000000000001",
+              "label": "알 수 없음",
+              "channel": null,
+              "occurred_at": "2026-11-10T00:00:00Z",
+              "spheres": [
+                "회사"
+              ],
+              "paths": [
+                "회사/infra/network",
+                "회사/infra/storage"
+              ],
+              "people": [
+                "김철수",
+                "이영희"
+              ],
+              "threads": [
+                {
+                  "thread_id": "card_request",
+                  "kind": "요청",
+                  "content": "견적 회신",
+                  "occurred_at": "2026-11-12T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                },
+                {
+                  "thread_id": "card_note",
+                  "kind": "기록",
+                  "content": "장비 목록 수령",
+                  "occurred_at": "2026-11-12T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                },
+                {
+                  "thread_id": "card_visit",
+                  "kind": "일정",
+                  "content": "현장 점검",
+                  "occurred_at": "2026-11-10T00:00:00Z",
+                  "source_id": "src_00000000000000000000000001",
+                  "source_label": "알 수 없음"
+                }
+              ],
+              "used_in": [
+                {
+                  "kind": "document",
+                  "document_id": "5f19b95b9ab4aa0142341ad1",
+                  "title": "네트워크",
+                  "bullet_id": "b1",
+                  "block_id": null
+                },
+                {
+                  "kind": "digest",
+                  "document_id": "6741242c1edddd570aafa11c",
+                  "title": "2026-11-12 (목)",
+                  "bullet_id": null,
+                  "block_id": "w-2e5461320b"
+                }
+              ]
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "sources_invalid_cursor",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/sources",
+        "query": {
+          "cursor": "x"
+        },
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "code": "invalid_cursor",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "feedback_submit",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/feedback",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "feedback-0001",
+          "document_id": "5f19b95b9ab4aa0142341ad1",
+          "bullet_id": "b1",
+          "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+          "chips": [
+            "사실이 틀림"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "feedback_edit",
+          "target_id": "submit",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "feedback_id": "fbk_00000000000000000000000000000001",
+            "document_id": "5f19b95b9ab4aa0142341ad1",
+            "bullet_id": "b1",
+            "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+            "chips": [
+              "사실이 틀림"
+            ],
+            "status": "pending",
+            "classification": null,
+            "result": null,
+            "thread_ids": [],
+            "created_at": "2026-11-19T00:00:00Z",
+            "updated_at": "2026-11-19T00:00:00Z"
+          }
+        }
+      },
+      "note": "features.feedback. Stored as pending; the server classifies it on its next wiki run. client_id is the idempotency key."
+    },
+    {
+      "name": "feedback_submit_replay",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/feedback",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "feedback-0001",
+          "document_id": "5f19b95b9ab4aa0142341ad1",
+          "bullet_id": "b1",
+          "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+          "chips": [
+            "사실이 틀림"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "idempotent-replay": "true"
+        },
+        "body": {
+          "operation_id": "op_00000000000000000000000000000001",
+          "state": "applied",
+          "kind": "feedback_edit",
+          "target_id": "submit",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "feedback_id": "fbk_00000000000000000000000000000001",
+            "document_id": "5f19b95b9ab4aa0142341ad1",
+            "bullet_id": "b1",
+            "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+            "chips": [
+              "사실이 틀림"
+            ],
+            "status": "pending",
+            "classification": null,
+            "result": null,
+            "thread_ids": [],
+            "created_at": "2026-11-19T00:00:00Z",
+            "updated_at": "2026-11-19T00:00:00Z"
+          }
+        }
+      }
+    },
+    {
+      "name": "feedback_document_not_found",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/feedback",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "feedback-0002",
+          "document_id": "missing",
+          "bullet_id": "b1",
+          "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+          "chips": [
+            "사실이 틀림"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "document_not_found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "feedback_list",
+      "request": {
+        "method": "GET",
+        "path": "/mobile/v1/read/documents/5f19b95b9ab4aa0142341ad1/feedback",
+        "headers": {
+          "authorization": "Bearer <token>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "feedback_id": "fbk_00000000000000000000000000000001",
+              "document_id": "5f19b95b9ab4aa0142341ad1",
+              "bullet_id": "b1",
+              "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+              "chips": [
+                "사실이 틀림"
+              ],
+              "status": "pending",
+              "classification": null,
+              "result": null,
+              "thread_ids": [],
+              "created_at": "2026-11-19T00:00:00Z",
+              "updated_at": "2026-11-19T00:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "feedback_undo",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/feedback/undo",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "feedback-undo-01",
+          "feedback_id": "fbk_00000000000000000000000000000001"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operation_id": "op_00000000000000000000000000000002",
+          "state": "applied",
+          "kind": "feedback_edit",
+          "target_id": "undo",
+          "target_revision": null,
+          "updated_at": "2026-11-19T00:00:00Z",
+          "result": {
+            "feedback_id": "fbk_00000000000000000000000000000001",
+            "document_id": "5f19b95b9ab4aa0142341ad1",
+            "bullet_id": "b1",
+            "text": "견적 회신은 김철수가 아니라 홍길동 담당",
+            "chips": [
+              "사실이 틀림"
+            ],
+            "status": "undone",
+            "classification": null,
+            "result": null,
+            "thread_ids": [],
+            "created_at": "2026-11-19T00:00:00Z",
+            "updated_at": "2026-11-19T00:00:00Z"
+          }
+        }
+      },
+      "note": "A pending note is never processed afterwards; an applied one retracts its Threads and switches its directive off."
+    },
+    {
+      "name": "feedback_undo_again",
+      "request": {
+        "method": "POST",
+        "path": "/mobile/v1/edits/feedback/undo",
+        "headers": {
+          "authorization": "Bearer <token>"
+        },
+        "body": {
+          "client_id": "feedback-undo-02",
+          "feedback_id": "fbk_00000000000000000000000000000001"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "feedback_already_undone",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

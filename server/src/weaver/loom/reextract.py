@@ -943,212 +943,217 @@ def reextract(
         pending = kept
         report.pending_sources = [p.source_id for p in deferred]
         report.sources = [p for p in report.sources if p not in deferred]
-    report.llm_calls_by_day[today] = spent_today + sum(
-        p.source_id in selected for p in pending
-    )
+    report.llm_calls_by_day[today] = spent_today
     if pending:
         counter = _CountingClient(llm)
-        changes = Bootstrap()
         try:
-            bootstrap = _bootstrap(
-                counter,
-                MemoryDictionary(entries.copy(), blocked),
-                threads,
-                wiki,
-                report.errors,
-                changes,
-                report.notices,
-            )
-        except Exception as error:
-            report.llm_calls_by_day[today] += counter.calls
-            for plan in pending:
-                plan.error = f"bootstrap: {type(error).__name__}"
-            return _seal(report)
-        report.llm_calls_by_day[today] += counter.calls
-        baseline = 0
-        outbox_path = root / "action-outbox.sqlite3"
-        if outbox_path.exists():
+            changes = Bootstrap()
             try:
-                with closing(_read(outbox_path)) as db:
-                    row = db.execute(
-                        "SELECT value FROM meta WHERE key='baseline'"
-                    ).fetchone()
-                    baseline = int(row[0]) if row else 0
-            except (ValueError, OSError, sqlite3.Error) as error:
-                report.errors.append(f"Action baseline: {type(error).__name__}")
-                report.valid = False
-                return _seal(report)
-        for plan in pending:
-            try:
-                now = datetime.now(UTC)
-                memory = MemoryDictionary(entries.copy(), blocked)
-                plan.renames = list(changes.renames)
-                plan.tag_corrections = list(changes.tag_corrections)
-                for change in plan.renames:
-                    prior_entry = memory.snapshot().resolve(change.observed)
-                    if prior_entry:
-                        memory.entries[memory.entries.index(prior_entry)] = replace(
-                            prior_entry, name=change.canonical
-                        )
-                memory.entries = [
-                    e
-                    for e in memory.entries
-                    if not (
-                        e.source == "learn"
-                        and not e.human_edited
-                        and e.kind in ("person", "organization")
-                        and not clean_name(e.name, e.kind)
-                    )
-                ]
-                plan.additions = memory.add(bootstrap)
-                if plan.source_id in selected:
-                    package, script, verdict, original = selected[plan.source_id]
-                    approved_at = original.applied_at
-                    if approved_at is None and original.summary is not None:
-                        approved_at = original.summary.created_at
-                    reference = read_source_reference(root, package)
-                    plan.source_time_estimated = reference.is_fallback
-                    prepared = ApprovalExtractor(
-                        llm,
-                        memory,
-                        ExtractionView(threads, plan.source_id),
-                        timezone=timezone,
-                        default_sphere=default_sphere,
-                        approved_at=approved_at,
-                        allow_current_approval_time=False,
-                        source_occurred_at=reference.occurred_at,
-                        source_time_is_fallback=reference.is_fallback,
-                        contact_name=read_contact_name(
-                            root, package.package_id, package.source_id
-                        ),
-                    ).prepare(package, script, verdict, now=now)
-                    plan.additions.extend(memory.add(prepared.new_entries))
-                    # prepared.corrections intentionally do not teach/learn.
-                    _replace(
-                        plan,
-                        prepared.threads,
-                        now,
-                        baseline_schedule_ids(threads, baseline),
-                    )
-                    renamed = {
-                        t.thread_id: _id(f"{plan.key}:new:{i}")
-                        for i, t in enumerate(prepared.threads)
-                    }
-                    plan.location_proposals = [
-                        draft.model_copy(
-                            update={
-                                "thread_ids": [
-                                    renamed.get(i, i) for i in draft.thread_ids
-                                ]
-                            }
-                        )
-                        for draft in prepared.location_proposals
-                    ]
-                old_ids = {t.thread_id for t in plan.old}
-                for thread in active:
-                    if (
-                        thread.source_id != plan.source_id
-                        or thread.actor != "human"
-                        or thread.thread_id in old_ids
-                    ):
-                        continue
-                    mapping = {
-                        _key(c.observed): c.canonical for c in plan.tag_corrections
-                    }
-                    tags = list(
-                        dict.fromkeys(
-                            (
-                                e.name
-                                if (
-                                    e := memory.snapshot().resolve(
-                                        mapping.get(_key(tag), tag)
-                                    )
-                                )
-                                else tag
-                            )
-                            for tag in thread.tags
-                            if _meaningful(tag)
-                        )
-                    )
-                    if tags != thread.tags:
-                        plan.human_changes.append(
-                            HumanChange(
-                                thread_id=thread.thread_id,
-                                old_tags=thread.tags,
-                                new_tags=tags,
-                            )
-                        )
-                        plan.batch.append(
-                            _aux(
-                                f"{plan.key}:tags:{thread.thread_id}",
-                                thread,
-                                now,
-                                tags=tags,
-                            )
-                        )
-                used = (
-                    {tag for t in plan.new for tag in t.tags}
-                    | {t.counterpart for t in plan.new if t.counterpart}
-                    | {tag for change in plan.human_changes for tag in change.new_tags}
+                bootstrap = _bootstrap(
+                    counter,
+                    MemoryDictionary(entries.copy(), blocked),
+                    threads,
+                    wiki,
+                    report.errors,
+                    changes,
+                    report.notices,
                 )
-                plan.additions = [e for e in plan.additions if e.name in used]
-                plan.renames = [c for c in plan.renames if c.canonical in used]
-                plan.tag_corrections = [
-                    c for c in plan.tag_corrections if c.canonical in used
-                ]
             except Exception as error:
-                plan.error = (
-                    str(error)
-                    if isinstance(error, MissingApprovalTime)
-                    else type(error).__name__
-                )
-                plan.batch = []
-        global_names = MemoryDictionary(entries.copy(), blocked)
-        # Reused plans replay their additions first, in their original order.
-        for plan in sorted(report.sources, key=lambda p: p.key not in reused):
-            if plan.error or plan.skipped or plan.done:
-                continue
-            for change in plan.renames:
-                prior_entry = global_names.snapshot().resolve(change.observed)
-                if prior_entry:
-                    global_names.entries[global_names.entries.index(prior_entry)] = (
-                        replace(prior_entry, name=change.canonical)
+                for plan in pending:
+                    plan.error = f"bootstrap: {type(error).__name__}"
+                return _seal(report)
+            baseline = 0
+            outbox_path = root / "action-outbox.sqlite3"
+            if outbox_path.exists():
+                try:
+                    with closing(_read(outbox_path)) as db:
+                        row = db.execute(
+                            "SELECT value FROM meta WHERE key='baseline'"
+                        ).fetchone()
+                        baseline = int(row[0]) if row else 0
+                except (ValueError, OSError, sqlite3.Error) as error:
+                    report.errors.append(f"Action baseline: {type(error).__name__}")
+                    report.valid = False
+                    return _seal(report)
+            for plan in pending:
+                try:
+                    now = datetime.now(UTC)
+                    memory = MemoryDictionary(entries.copy(), blocked)
+                    plan.renames = list(changes.renames)
+                    plan.tag_corrections = list(changes.tag_corrections)
+                    for change in plan.renames:
+                        prior_entry = memory.snapshot().resolve(change.observed)
+                        if prior_entry:
+                            memory.entries[memory.entries.index(prior_entry)] = replace(
+                                prior_entry, name=change.canonical
+                            )
+                    memory.entries = [
+                        e
+                        for e in memory.entries
+                        if not (
+                            e.source == "learn"
+                            and not e.human_edited
+                            and e.kind in ("person", "organization")
+                            and not clean_name(e.name, e.kind)
+                        )
+                    ]
+                    plan.additions = memory.add(bootstrap)
+                    if plan.source_id in selected:
+                        package, script, verdict, original = selected[plan.source_id]
+                        approved_at = original.applied_at
+                        if approved_at is None and original.summary is not None:
+                            approved_at = original.summary.created_at
+                        reference = read_source_reference(root, package)
+                        plan.source_time_estimated = reference.is_fallback
+                        prepared = ApprovalExtractor(
+                            counter,
+                            memory,
+                            ExtractionView(threads, plan.source_id),
+                            timezone=timezone,
+                            default_sphere=default_sphere,
+                            approved_at=approved_at,
+                            allow_current_approval_time=False,
+                            source_occurred_at=reference.occurred_at,
+                            source_time_is_fallback=reference.is_fallback,
+                            contact_name=read_contact_name(
+                                root, package.package_id, package.source_id
+                            ),
+                        ).prepare(package, script, verdict, now=now)
+                        plan.additions.extend(memory.add(prepared.new_entries))
+                        # prepared.corrections intentionally do not teach/learn.
+                        _replace(
+                            plan,
+                            prepared.threads,
+                            now,
+                            baseline_schedule_ids(threads, baseline),
+                        )
+                        renamed = {
+                            t.thread_id: _id(f"{plan.key}:new:{i}")
+                            for i, t in enumerate(prepared.threads)
+                        }
+                        plan.location_proposals = [
+                            draft.model_copy(
+                                update={
+                                    "thread_ids": [
+                                        renamed.get(i, i) for i in draft.thread_ids
+                                    ]
+                                }
+                            )
+                            for draft in prepared.location_proposals
+                        ]
+                    old_ids = {t.thread_id for t in plan.old}
+                    for thread in active:
+                        if (
+                            thread.source_id != plan.source_id
+                            or thread.actor != "human"
+                            or thread.thread_id in old_ids
+                        ):
+                            continue
+                        mapping = {
+                            _key(c.observed): c.canonical for c in plan.tag_corrections
+                        }
+                        tags = list(
+                            dict.fromkeys(
+                                (
+                                    e.name
+                                    if (
+                                        e := memory.snapshot().resolve(
+                                            mapping.get(_key(tag), tag)
+                                        )
+                                    )
+                                    else tag
+                                )
+                                for tag in thread.tags
+                                if _meaningful(tag)
+                            )
+                        )
+                        if tags != thread.tags:
+                            plan.human_changes.append(
+                                HumanChange(
+                                    thread_id=thread.thread_id,
+                                    old_tags=thread.tags,
+                                    new_tags=tags,
+                                )
+                            )
+                            plan.batch.append(
+                                _aux(
+                                    f"{plan.key}:tags:{thread.thread_id}",
+                                    thread,
+                                    now,
+                                    tags=tags,
+                                )
+                            )
+                    used = (
+                        {tag for t in plan.new for tag in t.tags}
+                        | {t.counterpart for t in plan.new if t.counterpart}
+                        | {
+                            tag
+                            for change in plan.human_changes
+                            for tag in change.new_tags
+                        }
                     )
-            safe = []
-            for entry in plan.additions:
-                snapshot = global_names.snapshot()
-                owner = snapshot.resolve(entry.name)
-                if owner and owner.name != entry.name:
-                    plan.error = "dictionary proposal collision: 다시 계획 필요"
+                    plan.additions = [e for e in plan.additions if e.name in used]
+                    plan.renames = [c for c in plan.renames if c.canonical in used]
+                    plan.tag_corrections = [
+                        c for c in plan.tag_corrections if c.canonical in used
+                    ]
+                except Exception as error:
+                    plan.error = (
+                        str(error)
+                        if isinstance(error, MissingApprovalTime)
+                        else type(error).__name__
+                    )
                     plan.batch = []
-                    break
-                aliases = [
-                    alias
-                    for alias in entry.aliases
-                    if not (occupied := snapshot.resolve(alias))
-                    or occupied.name == entry.name
+            global_names = MemoryDictionary(entries.copy(), blocked)
+            # Reused plans replay their additions first, in their original order.
+            for plan in sorted(report.sources, key=lambda p: p.key not in reused):
+                if plan.error or plan.skipped or plan.done:
+                    continue
+                for change in plan.renames:
+                    prior_entry = global_names.snapshot().resolve(change.observed)
+                    if prior_entry:
+                        global_names.entries[
+                            global_names.entries.index(prior_entry)
+                        ] = replace(prior_entry, name=change.canonical)
+                safe = []
+                for entry in plan.additions:
+                    snapshot = global_names.snapshot()
+                    owner = snapshot.resolve(entry.name)
+                    if owner and owner.name != entry.name:
+                        plan.error = "dictionary proposal collision: 다시 계획 필요"
+                        plan.batch = []
+                        break
+                    aliases = [
+                        alias
+                        for alias in entry.aliases
+                        if not (occupied := snapshot.resolve(alias))
+                        or occupied.name == entry.name
+                    ]
+                    safe.append(entry.model_copy(update={"aliases": aliases}))
+                    global_names.add([safe[-1]])
+                if not plan.error:
+                    plan.additions = safe
+            used_names = {
+                e.name for p in report.sources if not p.error for e in p.additions
+            }
+            carried = resume.bootstrap if resume else []
+            report.bootstrap = [
+                e
+                for e in [
+                    *carried,
+                    *(b for b in bootstrap if b.name not in {c.name for c in carried}),
                 ]
-                safe.append(entry.model_copy(update={"aliases": aliases}))
-                global_names.add([safe[-1]])
-            if not plan.error:
-                plan.additions = safe
-        used_names = {
-            e.name for p in report.sources if not p.error for e in p.additions
-        }
-        carried = resume.bootstrap if resume else []
-        report.bootstrap = [
-            e
-            for e in [
-                *carried,
-                *(b for b in bootstrap if b.name not in {c.name for c in carried}),
+                if e.name in used_names
             ]
-            if e.name in used_names
-        ]
-        try:
-            _calendar_summary(root, threads, report, baseline)
-        except (ValueError, OSError, sqlite3.Error) as error:
-            report.errors.append(f"Action preview: {type(error).__name__}")
-            report.valid = False
+            try:
+                _calendar_summary(root, threads, report, baseline)
+            except (ValueError, OSError, sqlite3.Error) as error:
+                report.errors.append(f"Action preview: {type(error).__name__}")
+                report.valid = False
+        finally:
+            # One place records the calls actually made, on every exit path.
+            report.llm_calls_by_day[today] = spent_today + counter.calls
+            _seal(report)  # early returns sealed before this count was written
     report.unclassified = len(_unclassified_ids(report))
     try:
         if _signatures(root) != report.fingerprints:

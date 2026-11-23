@@ -9,6 +9,7 @@ import java.time.format.DateTimeParseException
  */
 internal object SchemaRules {
     const val TIMESTAMP = """^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"""
+    const val DATE = """^\d{4}-\d{2}-\d{2}$"""
     const val DIGEST = "^[0-9a-f]{64}$"
     const val DIGEST_LENGTH = 64
     const val PAYLOAD_REF = "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\\.[A-Za-z0-9_-]+)?$"
@@ -39,6 +40,7 @@ internal object SchemaRules {
 internal object Rules {
     private val timestamp = Regex(SchemaRules.TIMESTAMP)
     private val digest = Regex(SchemaRules.DIGEST)
+    private val date = Regex(SchemaRules.DATE)
     private val payloadRef = Regex(SchemaRules.PAYLOAD_REF)
     private val nonEmpty = Regex(SchemaRules.NON_EMPTY)
     private val lineBreak = Regex(SchemaRules.LINE_BREAK)
@@ -65,6 +67,10 @@ internal object Rules {
         require(timestamp.schemaMatches(value) && parses(value)) {
             "$field must be an RFC 3339 timestamp with explicit offset"
         }
+    }
+
+    fun date(value: String, field: String) {
+        require(date.schemaMatches(value)) { "$field must be YYYY-MM-DD" }
     }
 
     fun digest(value: String, field: String) {

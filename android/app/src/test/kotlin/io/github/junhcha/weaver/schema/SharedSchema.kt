@@ -35,6 +35,19 @@ object SharedSchema {
         "ActionResult" to ActionResult.serializer(),
         "Alert" to Alert.serializer(),
         "PipelineItem" to PipelineItem.serializer(),
+        "ResultCard" to ResultCard.serializer(),
+        "TaskItem" to TaskItem.serializer(),
+        "TreeNodeView" to TreeNodeView.serializer(),
+        "DocumentSummary" to DocumentSummary.serializer(),
+        "DocumentView" to DocumentView.serializer(),
+        "Evidence" to Evidence.serializer(),
+        "SourceLogEntry" to SourceLogEntry.serializer(),
+        "FeedbackItem" to FeedbackItem.serializer(),
+    )
+
+    /** Read-API items carry no schema_version. */
+    val unversioned: Set<String> = setOf(
+        "ResultCard", "TaskItem", "TreeNodeView", "DocumentSummary", "DocumentView", "Evidence", "SourceLogEntry", "FeedbackItem",
     )
 
     /** Capture files carry schema_version 1; review, action and alert files carry 2. */

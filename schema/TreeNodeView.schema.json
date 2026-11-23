@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Offset": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$id": "urn:weaver:schema:TreeNodeView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One tree node that has a document or cards, or is their ancestor.",
+  "properties": {
+    "cards_7d": {
+      "$ref": "#/$defs/Offset"
+    },
+    "document_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "enum": [
+        "area",
+        "project",
+        "topic"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "open_tasks": {
+      "$ref": "#/$defs/Offset"
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "path": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "path",
+    "label",
+    "kind",
+    "parent",
+    "document_id",
+    "open_tasks",
+    "cards_7d"
+  ],
+  "title": "TreeNodeView",
+  "type": "object"
+}

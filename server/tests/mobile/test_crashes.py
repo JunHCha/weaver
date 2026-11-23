@@ -75,6 +75,27 @@ def test_crash_authenticated_scope_free_durable_and_cli(tmp_path, caplog):
     assert missing.exit_code == 1 and "crash_not_found" in missing.output
 
 
+def test_crash_accepts_log_tab(tmp_path):
+    h = Harness(tmp_path)
+    headers = h.pair("read")
+    log = {**REPORT, "screen": {**REPORT["screen"], "last_tab": "LOG"}}
+    assert h.client.post(PATH, json=log, headers=headers).status_code == 201
+    # Older APKs still send the retired tab names.
+    for n, old in enumerate(("PEOPLE", "WIKI")):
+        report = {
+            **log,
+            "client_id": f"crash_synthetic_old{n}",
+            "screen": {**REPORT["screen"], "last_tab": old},
+        }
+        assert h.client.post(PATH, json=report, headers=headers).status_code == 201
+    unknown = {
+        **REPORT,
+        "client_id": "crash_synthetic_map",
+        "screen": {**REPORT["screen"], "last_tab": "MAP"},
+    }
+    assert h.client.post(PATH, json=unknown, headers=headers).status_code == 422
+
+
 def test_crash_refuses_messages_conflicts_size_and_unauthenticated(tmp_path):
     h = Harness(tmp_path)
     headers = h.pair("read")

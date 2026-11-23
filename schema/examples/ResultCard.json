@@ -1,0 +1,31 @@
+{
+  "card_id": "966cc4e521f2493d986c4e49",
+  "day": "2026-11-12",
+  "key": "회사/infra/network",
+  "sphere": "회사",
+  "headline": "견적 회신",
+  "bullets": [
+    "장비 2종 견적 도착"
+  ],
+  "people": 1,
+  "sources": 1,
+  "counterparts": [
+    "김철수"
+  ],
+  "channels": [
+    "call"
+  ],
+  "due": "2026-11-14",
+  "due_label": "D-2",
+  "due_kind": "deadline",
+  "thread_ids": [
+    "thr_0123456789abcdef"
+  ],
+  "link": {
+    "kind": "document",
+    "document_id": "5f19b95b9ab4aa0142341ad1",
+    "bullet_id": "b1",
+    "block_id": null
+  },
+  "reflecting": false
+}

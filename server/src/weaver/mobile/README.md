@@ -314,7 +314,7 @@ private state/archive/vault 경계·권한 검사는 유지한다. capture를 HT
 
 본문은 `client_id`, `occurred_at`(시간대 필수), `app_version`, `app_build`, `thread`,
 `exceptions:[{exception_class, frames:[{class_name, method_name, file_name|null, line_number}]}]`,
-`screen:{last_tab:NOW|PEOPLE|AREAS|WIKI, map_open, selected_node|null, settings_open}`다.
+`screen:{last_tab:NOW|AREAS|LOG|PEOPLE|WIKI(PEOPLE·WIKI는 예전 APK용), map_open, selected_node|null, settings_open}`다.
 예외와 원인·suppressed 예외는 순서대로 담으며 순환 참조는 한 번만 기록한다. 메시지·원문·지역 변수는
 보내지 않고 모든 스택 프레임(앱 패키지 포함)을 구조화해서 보낸다. 파일 이름은 소스 파일 이름이며 경로가 아니다.
 

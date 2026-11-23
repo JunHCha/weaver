@@ -30,9 +30,11 @@ def test_indexable_excludes() -> None:
         "img.png",
         "n.sync-conflict-1.md",
         "x/.git/a.md",
+        "3. Resource/drawing.excalidraw.md",
     ):
         assert not ok(path)
     assert ok("3. Resource/golf/a.md")
+    assert ok("3. Resource/drawing.md")
     assert indexable(PurePosixPath("Weaver/p.md"), wiki_folder=None)
 
 

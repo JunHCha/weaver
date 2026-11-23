@@ -1,0 +1,374 @@
+{
+  "$defs": {
+    "DateString": {
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+    },
+    "Digest": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "DocBullet": {
+      "additionalProperties": false,
+      "description": "One line of a document section; ``task`` is set for a checkbox line.",
+      "properties": {
+        "bullet_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "day": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DateString"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskItem"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "thread_ids": {
+          "items": {
+            "$ref": "#/$defs/NonEmpty"
+          },
+          "title": "Thread Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "bullet_id",
+        "text",
+        "thread_ids",
+        "task",
+        "day",
+        "label"
+      ],
+      "title": "DocBullet",
+      "type": "object"
+    },
+    "DocSection": {
+      "additionalProperties": false,
+      "properties": {
+        "bullets": {
+          "items": {
+            "$ref": "#/$defs/DocBullet"
+          },
+          "title": "Bullets",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "current",
+            "remaining",
+            "waiting",
+            "cautions",
+            "tasks",
+            "summary"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "bullets"
+      ],
+      "title": "DocSection",
+      "type": "object"
+    },
+    "LinkTarget": {
+      "additionalProperties": false,
+      "description": "Where a result opens: a compiled document bullet or the day's Digest.",
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bullet_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "digest"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "document_id",
+        "bullet_id",
+        "block_id"
+      ],
+      "title": "LinkTarget",
+      "type": "object"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "RefLinkView": {
+      "additionalProperties": false,
+      "description": "A reference note or vault heading related to a document.",
+      "properties": {
+        "heading": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "home": {
+          "title": "Home",
+          "type": "boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "sphere": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "sphere",
+        "path",
+        "heading",
+        "home"
+      ],
+      "title": "RefLinkView",
+      "type": "object"
+    },
+    "Revision": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "TaskItem": {
+      "additionalProperties": false,
+      "description": "One open request the person received, with its document link.",
+      "properties": {
+        "block_id": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "content": {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        "counterpart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DateString"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmpty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "due_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due Label"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/NonEmpty"
+        }
+      },
+      "required": [
+        "thread_id",
+        "revision",
+        "content",
+        "block_id",
+        "deadline",
+        "due_label",
+        "counterpart",
+        "document_id",
+        "document_title",
+        "link"
+      ],
+      "title": "TaskItem",
+      "type": "object"
+    }
+  },
+  "$id": "urn:weaver:schema:DocumentView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One compiled document or Digest; remaining and waiting are live.",
+  "properties": {
+    "as_of": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateString"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "document_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "key": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "enum": [
+        "area",
+        "project",
+        "topic",
+        "digest"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "log_subject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "path": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "references": {
+      "items": {
+        "$ref": "#/$defs/RefLinkView"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "reflecting": {
+      "title": "Reflecting",
+      "type": "boolean"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/DocSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Digest"
+    },
+    "title": {
+      "$ref": "#/$defs/NonEmpty"
+    }
+  },
+  "required": [
+    "document_id",
+    "kind",
+    "key",
+    "title",
+    "as_of",
+    "path",
+    "sections",
+    "references",
+    "log_subject",
+    "reflecting",
+    "sha256"
+  ],
+  "title": "DocumentView",
+  "type": "object"
+}

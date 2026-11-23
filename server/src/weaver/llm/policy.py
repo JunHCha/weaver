@@ -130,6 +130,9 @@ _LONG_TOKEN = re.compile(
 # lowercase slugs stay untouched.
 _URLSAFE_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
 _WIKI_LINK = re.compile(r"(\[\[[^\]\n]*\]\])")
+# Short keys written after a "키"/"key"/"pw" label on the same line.
+_KEY_LABEL = re.compile(r"(?i)(?<![가-힣A-Za-z])(?:키|key|pw)(?![가-힣A-Za-z])")
+_SHORT_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{8,31}(?![A-Za-z0-9_-])")
 
 
 def _mixed_token(match: re.Match[str]) -> str:
@@ -158,13 +161,22 @@ def _urlsafe_token(match: re.Match[str]) -> str:
     return value
 
 
+def _labeled_short_keys(line: str) -> str:
+    label = _KEY_LABEL.search(line)
+    if label is None:
+        return line
+    head, tail = line[: label.end()], line[label.end() :]
+    return head + _SHORT_TOKEN.sub(_urlsafe_token, tail)
+
+
 def _mask_plain(text: str) -> str:
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(_MASK, text)
     text = _PASSWORD_ASSIGNMENT.sub(lambda m: m.group(1) + _MASK, text)
     text = _OTHER_ASSIGNMENT.sub(lambda m: m.group(1) + _MASK, text)
     text = _LONG_TOKEN.sub(_mixed_token, text)
-    return _URLSAFE_TOKEN.sub(_urlsafe_token, text)
+    text = _URLSAFE_TOKEN.sub(_urlsafe_token, text)
+    return "\n".join(_labeled_short_keys(line) for line in text.split("\n"))
 
 
 def mask_secrets(text: str) -> str:

@@ -100,7 +100,7 @@ fun InboxPanel(openedFromNotification: Boolean = false) {
             alerts.forEach { alert ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
                     Column(Modifier.padding(12.dp)) {
-                        Text("확인할 일정 변경", style = MaterialTheme.typography.titleSmall)
+                        Text(if (InboxRuntime.wikiDocument(alert.packageId) != null) "확인할 문서 변경" else "확인할 일정 변경", style = MaterialTheme.typography.titleSmall)
                         Text(alert.message)
                         OutlinedButton(onClick = {
                             scope.launch(Dispatchers.IO) { InboxRuntime.dismissAlert(context, alert.alertId, serverId = alert.serverId) }

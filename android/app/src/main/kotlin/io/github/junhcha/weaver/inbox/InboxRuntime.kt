@@ -32,6 +32,9 @@ import java.time.ZoneId
 object InboxRuntime {
     internal val lock = Any()
     const val OPEN_INBOX = "io.github.junhcha.weaver.OPEN_INBOX"
+    /** A tap on an alert about one Wiki document (an overwrite alert); carries [EXTRA_PACKAGE_ID]. */
+    const val OPEN_ALERT = "io.github.junhcha.weaver.OPEN_ALERT"
+    const val EXTRA_PACKAGE_ID = "io.github.junhcha.weaver.PACKAGE_ID"
     /** Shown to the user: the Courier periodic interval. Doze/battery optimisation can delay it further. */
     const val INTERVAL_MINUTES = 15L
     internal const val REVIEW_CHANNEL = "inbox-reviews"
@@ -73,6 +76,13 @@ object InboxRuntime {
         refresh(context, now)
         return successful
     }
+
+    /**
+     * The document an overwrite alert is about (`package_id="wiki:<page_id>"`; the page id is the result document's id), or
+     * null for any other package: those alerts keep opening the inbox, never a review.
+     */
+    fun wikiDocument(packageId: String?): String? =
+        packageId?.takeIf { it.startsWith("wiki:") }?.removePrefix("wiki:")?.takeIf { it.matches(Regex("[A-Za-z0-9_-]+")) }
 
     fun reviews(context: Context): List<InboxDatabase.ReviewItem> = synchronized(lock) {
         InboxDatabase(context).use { it.reviews() }
@@ -196,8 +206,12 @@ object InboxRuntime {
         // has the notification (including a swipe in the crash window), this may show it again.
         // Prefer retaining the warning over dropping a never-posted one; device acceptance is separate.
         db.prepareAlertsNotification(signature)
-        if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, "일정 변경 가능 ${items.size}건", lines,
-                silent = blocked || !added || recovering, signature = signature)) {
+        // Alerts about one Wiki document open that document's 피드백 tab; any other mix opens the inbox.
+        val documents = items.map { wikiDocument(it.packageId) }.distinct()
+        val target = documents.singleOrNull()?.let { "wiki:$it" }
+        val title = if (documents.all { it != null }) "문서 덮어쓰기 ${items.size}건" else "일정 변경 가능 ${items.size}건"
+        if (post(context, manager, ALERT_NOTIFICATION, ALERT_CHANNEL, title, lines,
+                silent = blocked || !added || recovering, signature = signature, packageId = target)) {
             db.markAlertsNotified()
             db.setting("alert_pending", "")
             db.setting("alert_signature", signature)
@@ -211,9 +225,10 @@ object InboxRuntime {
      */
     @Suppress("MissingPermission") // allowed() checks permission and channel immediately before notify.
     private fun post(context: Context, manager: NotificationManager, id: Int, channel: String, title: String,
-                     lines: List<String>, silent: Boolean, signature: String? = null): Boolean {
+                     lines: List<String>, silent: Boolean, signature: String? = null, packageId: String? = null): Boolean {
         val intent = PendingIntent.getActivity(context, id,
-            Intent(context, MainActivity::class.java).setAction(OPEN_INBOX)
+            Intent(context, MainActivity::class.java).setAction(if (packageId != null) OPEN_ALERT else OPEN_INBOX)
+                .also { if (packageId != null) it.putExtra(EXTRA_PACKAGE_ID, packageId) }
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val public = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_launcher_foreground)

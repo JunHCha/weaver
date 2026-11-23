@@ -43,6 +43,8 @@ internal fun NowScreen(
     handling: (@Composable () -> Unit)? = null,
     onReview: (String) -> Unit = {},
     counterparts: Map<String, String> = emptyMap(),
+    /** Server results (tasks and cards) in place of the Thread based sections; null keeps those. */
+    results: (@Composable () -> Unit)? = null,
 ) {
     val today = now.atZone(zone).toLocalDate()
     Column(Modifier.fillMaxSize().testTag("now-screen")) {
@@ -59,6 +61,7 @@ internal fun NowScreen(
         ) {
             ApprovalSection(onReview, counterparts, zone)
             when {
+                results != null -> results()
                 view == null -> Muted("불러오는 중")
                 view.isEmpty -> Muted(if (connected) "지금 처리할 일이 없어요" else "연결된 데이터 없음")
                 else -> {

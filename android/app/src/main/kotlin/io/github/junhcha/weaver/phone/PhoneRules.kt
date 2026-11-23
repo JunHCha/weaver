@@ -203,13 +203,24 @@ sealed interface LinkTarget {
     data class Person(val name: String) : LinkTarget
     data class Area(val name: String) : LinkTarget
     data class Page(val id: String) : LinkTarget
+    /** A compiled result document (server feature `results`); [bulletId] is the bullet or block to scroll to. */
+    data class Document(val id: String, val bulletId: String? = null) : LinkTarget
     data object None : LinkTarget
 }
 
-fun resolveLink(snapshot: PhoneSnapshot, name: String): LinkTarget {
+/**
+ * [documents] are the server's result documents (empty while the server has no `results`): a link whose name is a
+ * document's title opens that document, before the area timeline or the temporary Wiki page.
+ */
+fun resolveLink(
+    snapshot: PhoneSnapshot, name: String,
+    documents: List<io.github.junhcha.weaver.schema.DocumentSummary> = emptyList(),
+): LinkTarget {
     val kind = snapshot.tags.firstOrNull { it.name == name }?.kind
+    val document = documents.firstOrNull { it.title == name && it.kind != io.github.junhcha.weaver.schema.DocumentKind.DIGEST }
     return when {
         kind?.isParty == true -> LinkTarget.Person(name)
+        document != null -> LinkTarget.Document(document.documentId)
         kind == TagKind.AREA -> LinkTarget.Area(name)
         else -> snapshot.wikiPages.firstOrNull { it.title == name }?.let { LinkTarget.Page(it.id) } ?: LinkTarget.None
     }

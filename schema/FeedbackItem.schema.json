@@ -1,0 +1,130 @@
+{
+  "$defs": {
+    "FeedbackChip": {
+      "enum": [
+        "사실이 틀림",
+        "이미 끝남",
+        "다른 건이 섞임",
+        "제목이 이상함"
+      ],
+      "type": "string"
+    },
+    "NonEmpty": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "not": {
+        "pattern": "[\\r\\n]"
+      },
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:weaver:schema:FeedbackItem",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A person's note on a document or bullet, and what the server did with it.",
+  "properties": {
+    "bullet_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NonEmpty"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "chips": {
+      "items": {
+        "$ref": "#/$defs/FeedbackChip"
+      },
+      "title": "Chips",
+      "type": "array"
+    },
+    "classification": {
+      "anyOf": [
+        {
+          "enum": [
+            "fact",
+            "structure",
+            "both",
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Classification"
+    },
+    "created_at": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "document_id": {
+      "$ref": "#/$defs/NonEmpty"
+    },
+    "feedback_id": {
+      "maxLength": 36,
+      "minLength": 36,
+      "pattern": "^fbk_[0-9a-f]{32}$",
+      "title": "Feedback Id",
+      "type": "string"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Result"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "applied",
+        "failed",
+        "undone"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 2000,
+      "pattern": "\\S",
+      "title": "Text",
+      "type": "string"
+    },
+    "thread_ids": {
+      "items": {
+        "$ref": "#/$defs/NonEmpty"
+      },
+      "title": "Thread Ids",
+      "type": "array"
+    },
+    "updated_at": {
+      "$ref": "#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "feedback_id",
+    "document_id",
+    "bullet_id",
+    "text",
+    "chips",
+    "status",
+    "classification",
+    "result",
+    "thread_ids",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "FeedbackItem",
+  "type": "object"
+}

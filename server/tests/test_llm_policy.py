@@ -674,3 +674,33 @@ def test_mask_secrets_catches_variants(text: str, expected: str) -> None:
     from weaver.llm.policy import mask_secrets
 
     assert mask_secrets(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("게스트망 키 할당 (Ab3dE5fG7hJ9)", "게스트망 키 할당 ([MASKED])"),
+        ("PW: Qw8eRt5yU2", "PW: [MASKED]"),
+        ("api key Zx9cVb7nM3kL", "api key [MASKED]"),
+    ],
+)
+def test_mask_secrets_labeled_short_keys(text: str, expected: str) -> None:
+    from weaver.llm.policy import mask_secrets
+
+    assert mask_secrets(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "키보드 교체 Ab3dE5fG7hJ9",
+        "키 교체 RT-2026",
+        "키 반납 2026-11-20",
+        "키 할당\nAb3dE5fG7hJ9",
+        "라우터 교체 일정",
+    ],
+)
+def test_labeled_short_key_keeps_ordinary_text(text: str) -> None:
+    from weaver.llm.policy import mask_secrets
+
+    assert mask_secrets(text) == text
