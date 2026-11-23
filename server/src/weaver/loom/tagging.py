@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from weaver.context import DictionarySnapshot, Kind, _key, _score
-from weaver.context.tree import node_kind, root_of
+from weaver.context.tree import UNCLASSIFIED, node_kind, root_of
 from weaver.llm.errors import SchemaMismatch
 from weaver.schema import Thread
 from weaver.schema.models import NonEmpty
@@ -38,6 +38,7 @@ TAG_RULES = (
     " `<생활권>/project/…` 경로 0~1개를 쓴다."
     " 경로는 제공된 것만 그대로 쓰고 새 경로를 만들지 않는다."
     " 맞는 경로가 없으면 가장 가까운 상위 경로를 쓴다."
+    " 어디에도 맞지 않으면 해당 생활권의 `<생활권>/미분류` 경로를 쓴다(paths에 있다)."
     " 사람·조직은 dictionary의 표준 이름으로 붙이고"
     " 사전에 없는 사람·조직만 new_entries(person/organization)로 제안한다."
     " 사람 표준 이름에 직함·소속·메모를 넣지 않는다."
@@ -60,7 +61,10 @@ FACT_RULES = (
 )
 
 CONTENT_RULES = (
-    "content는 개조식 한 줄로 쓰고 명사형으로 끝낸다"
+    "서로 다른 사실(요청·결정·일정·기록)은 각각 별도 Thread로 유지한다."
+    " 서로 다른 사실이나 종류를 한 Thread로 합치지 않고, 줄이려고 결정·기록을 빼지 않는다."
+    " '한 줄'은 Thread마다 적용되는 content 길이 규칙이다."
+    " 각 Thread의 content는 개조식 한 줄로 쓰고 명사형으로 끝낸다"
     "(예: '서버 정기점검 방문 일정 확정', '방화벽 정책 변경 요청')."
     " '~했다/~한다/~요' 같은 문장 종결과 마침표를 쓰지 않는다."
     " 날짜·시각·기한은 content에 쓰지 않고 schedule/deadline 값에 둔다."
@@ -166,6 +170,11 @@ def _paths(snapshot: DictionarySnapshot, script: str) -> list[str]:
             if "/".join(parts[:end]) in nodes
         )
     ordered.extend(n for n, e in nodes.items() if e.kind == "area")
+    # Fallback targets must always be offered, so they lead the budgeted tail.
+    unclassified = [
+        n for n in nodes if n.count("/") == 1 and n.endswith(f"/{UNCLASSIFIED}")
+    ]
+    ordered = [*unclassified, *ordered]
     ordered.extend(
         n
         for n, e in nodes.items()
@@ -300,6 +309,7 @@ def business_tags(
     projects: list[str] = []
     mentions: list[str] = []
     unknown: list[str] = []
+    hinted_roots: list[str] = []
     for value in values:
         entry = dictionary.resolve(value)
         name = entry.name if entry else names.get(_key(value))
@@ -312,6 +322,7 @@ def business_tags(
                 _append(subjects, entry.name)
             else:
                 logger.warning("dropped namespace tag")
+                _append(hinted_roots, root_of(entry.name))
         elif name is not None and (
             (entry.kind if entry else added.get(name)) in ("person", "organization")
         ):
@@ -333,7 +344,11 @@ def business_tags(
     subjects, projects = subjects[:MAX_SUBJECTS], projects[:MAX_PROJECTS]
     fallback = None
     if not subjects:
-        root = root_of(next(iter([*unknown, *projects]), "")) or default_sphere
+        root = (
+            root_of(next(iter([*unknown, *projects]), ""))
+            or next(iter(hinted_roots), "")
+            or default_sphere
+        )
         fallback = f"{root}/미분류"
         subjects = [fallback]
     return TagDecision([*subjects, *projects, *mentions], unknown, fallback)

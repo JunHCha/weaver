@@ -237,6 +237,33 @@ def test_namespace_and_root_are_not_subjects(tmp_path):
         assert decide(context, [value]).fallback == "회사/미분류"
 
 
+def test_bare_root_or_namespace_tag_names_the_fallback_sphere(tmp_path):
+    context = tree_context(tmp_path, ["가족/건강"])
+    assert decide(context, ["가족"]).tags == ["가족/미분류"]
+    assert decide(context, ["가족"]).fallback == "가족/미분류"
+    assert decide(context, ["가족", "홍길동"]).tags == ["가족/미분류", "홍길동"]
+    # an unknown path still wins over a bare root
+    result = decide(context, ["가족", "회사/infra/storage/nas"], default_sphere="가족")
+    assert result.fallback == "회사/미분류"
+
+
+def test_explicit_unclassified_path_is_kept(tmp_path):
+    context = tree_context(tmp_path, ["가족/미분류"])
+    result = decide(context, ["가족/미분류", "홍길동"])
+    assert result.tags == ["가족/미분류", "홍길동"]
+    assert result.fallback is None
+
+
+def test_unclassified_nodes_survive_a_tight_path_budget(tmp_path, monkeypatch):
+    from weaver.loom import tagging
+
+    context = tree_context(tmp_path, ["가족/건강", "가족/미분류"])
+    monkeypatch.setattr(tagging, "PATH_BUDGET", 120)
+    paths = tagging.tag_context(context.snapshot(), "스크립트", [])["paths"]
+    assert "가족/미분류" in paths and "회사/미분류" in paths
+    assert tagging.TAG_RULES.count("미분류") >= 1
+
+
 def test_legacy_mode_returns_decision_without_unknowns(tmp_path):
     context = ContextDictionary(tmp_path)
     context.add_entry("자료 관리", "area")

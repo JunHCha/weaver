@@ -1655,3 +1655,53 @@ def test_failing_location_proposal_does_not_skip_dictionary_learning(
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     assert len(sink.drafts) == 1
     assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]
+
+
+def test_prompt_keeps_every_fact_as_its_own_thread(tmp_path: Path) -> None:
+    from weaver.loom.tagging import CONTENT_RULES, FACT_RULES
+
+    for text in ("Thread마다", "합치지"):
+        assert text in CONTENT_RULES
+    assert CONTENT_RULES in FACT_RULES
+
+
+def test_five_threads_from_one_source_yield_five_drafts(tmp_path: Path) -> None:
+    kinds = ["요청", "요청", "기록", "기록", "결정"]
+
+    class Llm(FakeLlm):
+        def generate_json[T: BaseModel](
+            self, task: str, system: str, user: str, schema: type[T]
+        ) -> T:
+            return fixture_response(
+                schema,
+                {
+                    "body": "ACME 통화 정리",
+                    "corrections": [],
+                    "threads": [
+                        {
+                            "kind": kind,
+                            "content": f"ACME 건 {i} 처리",
+                            "occurred_at": NOW.isoformat(),
+                            "tags": [],
+                            "field": None,
+                            "value": None,
+                            "direction": "받음" if kind == "요청" else None,
+                            "resolves": None,
+                            "retracts": None,
+                            "blocked_by_index": None,
+                        }
+                        for i, kind in enumerate(kinds)
+                    ],
+                },
+            )
+
+    sink = FakeSink()
+    review = SummaryReview(
+        Llm(),
+        ContextDictionary(tmp_path / "state"),
+        sink,
+        tmp_path / "archive",
+        state_root=tmp_path / "state",
+    )
+    review.approve(package(), "원문", _approve_verdict(), now=NOW)
+    assert [d.kind for d in sink.drafts] == kinds
