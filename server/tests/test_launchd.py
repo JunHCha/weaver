@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,8 @@ from typer.testing import CliRunner
 
 from weaver.app import cli
 from weaver.config import load_config
-from weaver.runtime import InstanceLock, launchd
+from weaver.llm.errors import RateLimited
+from weaver.runtime import InstanceLock, LlmStatus, MaintenanceTask, launchd
 from weaver.runtime.assemble import build_runtime
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -246,11 +248,45 @@ def test_offline_tick_archives_and_reports_llm_skipped(tmp_path, caplog):
         runtime.run(stop)
     assert (config.courier.receipts / f"{CAP}.json").exists()
     status = json.loads((config.state_root / "runtime-status.json").read_text())
-    assert status["llm"] == {"available": False, "reason": "api_key_env_unset"}
+    assert {k: status["llm"][k] for k in ("available", "reason")} == {
+        "available": False,
+        "reason": "api_key_env_unset",
+    }
     assert sum(status["sources"].values()) == 1
     assert set(status["sources"]) <= {"done", "waiting_llm"}
     text = body.decode()
     assert all(text not in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "backend,delay", [("claude_cli", 300), ("codex_cli", 300), ("anthropic", 300)]
+)
+def test_configured_backend_limit_schedule_is_visible_in_cli_status(
+    tmp_path, monkeypatch, fake_launchctl, backend, delay
+):
+    path = write_config(tmp_path, f'[llm]\nbackend = "{backend}"\n')
+    config = load_config(path, environ={})
+    monkeypatch.setattr(
+        "weaver.runtime.assemble.llm_status",
+        lambda *_: LlmStatus(True, "configured"),
+    )
+    runtime = build_runtime(config, environ={})
+    runtime.clock = lambda: 1_000_000.0
+
+    def limited():
+        raise RateLimited()
+
+    runtime.maintenance = [MaintenanceTask("wiki", 0, limited)]
+    runtime._run_maintenance()
+    runtime._write_status("running")
+    result = CliRunner().invoke(cli, ["status", "--config", str(path)])
+    assert result.exit_code == 0, result.output
+    report = json.loads((config.state_root / "runtime-status.json").read_text())
+    next_check = report["llm"]["next_recheck_at"]
+    assert datetime.fromisoformat(next_check).timestamp() == 1_000_000 + delay
+    assert report["llm"]["last_limit_reason"] == RateLimited.code
+    assert '"last_limit_reason": "rate_limited"' in result.output
+    assert next_check in result.output
 
 
 def test_cli_install_with_private_key_file_has_no_llm_warning(

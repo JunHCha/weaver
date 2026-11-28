@@ -19,6 +19,8 @@ Failure classes (per Source):
   once) so an empty account is not hammered.
 - Anything else (RateLimited, TransientError, LlmTimeout, OSError, ...):
   ``retry`` with exponential backoff, ``failed`` after 20 attempts.
+  Subscription CLI RateLimited instead waits on the gate with exponential
+  backoff (5 minutes to 1 hour), preserving the Source's retry allowance.
 
 Logs carry only opaque IDs, counts and exception type names, never content.
 """
@@ -192,6 +194,7 @@ class Runtime[S: HasSourceId]:
         clock: Callable[[], float] = time.time,
         wait: Callable[[float], bool] | None = None,
         policy_held: Callable[[frozenset[str]], bool] | None = None,
+        llm_backend: str = "anthropic",
     ) -> None:
         if not interval > 0:
             raise ValueError("interval must be positive")
@@ -208,6 +211,11 @@ class Runtime[S: HasSourceId]:
         self.clock = clock
         self._wait = wait
         self.policy_held = policy_held
+        self._subscription_cli = llm_backend in {"claude_cli", "codex_cli"}
+        self._last_limit_reason: str | None = None
+        self._last_limit_at: float | None = None
+        self._limit_retry_at: float | None = None
+        self._subscription_rate_failures = 0
         self.resumes = 0
         self.consecutive_failures = 0
         self._last_run: dict[str, float] = {}
@@ -306,6 +314,21 @@ class Runtime[S: HasSourceId]:
         if self.gate.available:
             return
         now = self.clock()
+        recheck = self._llm_recheck_seconds()
+        if self._last_llm_check is not None and now - self._last_llm_check < recheck:
+            return
+        if self._last_llm_check is not None:  # the startup probe already ran
+            if self.gate.refresh().available:
+                logger.info("llm available again; resuming waiting sources")
+        self._last_llm_check = now
+
+    def _llm_recheck_seconds(self) -> float:
+        if self._subscription_cli and self.gate.status.reason == RateLimited.code:
+            return min(
+                WIKI_RATE_RECHECK_SECONDS
+                * 2.0 ** min(max(self._subscription_rate_failures - 1, 0), 4),
+                WIKI_RATE_MAX_RECHECK_SECONDS,
+            )
         recheck = (
             CREDIT_RECHECK_SECONDS
             if self.gate.status.reason in _HOURLY_REASONS
@@ -316,12 +339,7 @@ class Runtime[S: HasSourceId]:
                 WIKI_RATE_RECHECK_SECONDS * 2 ** min(self._wiki_rate_failures - 1, 4),
                 WIKI_RATE_MAX_RECHECK_SECONDS,
             )
-        if self._last_llm_check is not None and now - self._last_llm_check < recheck:
-            return
-        if self._last_llm_check is not None:  # the startup probe already ran
-            if self.gate.refresh().available:
-                logger.info("llm available again; resuming waiting sources")
-        self._last_llm_check = now
+        return recheck
 
     def _process_sources(self, stop: threading.Event) -> None:
         progress = self.ledger.progress()
@@ -366,6 +384,12 @@ class Runtime[S: HasSourceId]:
                 error_class="PolicyBlocked",
             )
         except _LLM_OFF as error:
+            if isinstance(error, UsageLimited):
+                self._note_limit(error.code)
+            if self._subscription_cli and (
+                isinstance(error, UsageLimited) or self._limited_gate()
+            ):
+                attempts -= 1
             reason = getattr(error, "code", type(error).__name__)
             if self.gate.available:
                 self.gate.disable(reason)
@@ -380,6 +404,23 @@ class Runtime[S: HasSourceId]:
                 contract_failures=contract,
                 error_class=type(error).__name__,
             )
+        except RateLimited as error:
+            self._note_limit(error.code)
+            if self._subscription_cli:
+                self.gate.disable(error.code)
+                self._last_llm_check = self.clock()
+                self.ledger.record(
+                    sid,
+                    "waiting_llm",
+                    attempts=attempts - 1,
+                    contract_failures=contract,
+                    error_class=type(error).__name__,
+                )
+                logger.warning("llm disabled: %s", error.code)
+            else:
+                self._retry_or_fail(
+                    sid, error, attempts, contract, attempts >= MAX_RETRY_ATTEMPTS
+                )
         except _CONTRACT as error:
             contract += 1
             self._retry_or_fail(
@@ -406,10 +447,22 @@ class Runtime[S: HasSourceId]:
                 else 0,
             )
         else:
+            if outcome == "done" and self.gate.available:
+                self._subscription_rate_failures = 0
+            if (
+                outcome == "waiting_llm"
+                and self._subscription_cli
+                and not self.gate.available
+                and self._limited_gate()
+            ):
+                attempts -= 1  # the processor saw the closed gate and did nothing
             self.ledger.record(
                 sid, outcome, attempts=attempts, contract_failures=contract
             )
             logger.info("source %s: %s", outcome, sid)
+
+    def _limited_gate(self) -> bool:
+        return self.gate.status.reason in (UsageLimited.code, RateLimited.code)
 
     def _retry_or_fail(
         self,
@@ -437,6 +490,8 @@ class Runtime[S: HasSourceId]:
             self.interval * 2.0 ** min(max(timeout_failures, attempts), 20),
             MAX_RETRY_BACKOFF_SECONDS,
         )
+        if isinstance(error, RateLimited):
+            self._limit_retry_at = self.clock() + delay
         self.ledger.record(
             sid,
             "retry",
@@ -482,6 +537,8 @@ class Runtime[S: HasSourceId]:
             except WikiTimeoutBudgetExceeded:
                 pass  # The CLI guard logs once per day, before reserving a call.
             except (*_LLM_OFF, RateLimited) as error:
+                if isinstance(error, (UsageLimited, RateLimited)):
+                    self._note_limit(error.code)
                 if task.name == "wiki":
                     if isinstance(error, RateLimited):
                         self._wiki_rate_failures += 1
@@ -498,11 +555,28 @@ class Runtime[S: HasSourceId]:
                 )
             else:
                 if task.name == "wiki":
+                    self._subscription_rate_failures = 0
                     self._wiki_rate_failures = 0
                     self._wiki_timeout_failures = 0
                     self._wiki_timeout_until = 0.0
 
     # ---- status ------------------------------------------------------------------
+
+    def _note_limit(self, reason: str) -> None:
+        # Store only a stable reason code, never the provider's response text.
+        self._last_limit_reason = reason
+        self._last_limit_at = self.clock()
+        self._limit_retry_at = None
+        if self._subscription_cli and reason == RateLimited.code:
+            self._subscription_rate_failures += 1
+
+    @staticmethod
+    def _timestamp(value: float | None) -> str | None:
+        return (
+            datetime.fromtimestamp(value, UTC).isoformat()
+            if value is not None
+            else None
+        )
 
     def _safe_status(self, state: str) -> None:
         try:
@@ -511,6 +585,16 @@ class Runtime[S: HasSourceId]:
             logger.error("status write failed: %s", type(error).__name__)
 
     def _write_status(self, state: str) -> None:
+        next_check = self._limit_retry_at
+        if not self.gate.available:
+            checked_at = (
+                self._last_llm_check
+                if self._last_llm_check is not None
+                else self.clock()
+            )
+            next_check = checked_at + self._llm_recheck_seconds()
+        elif next_check is not None and next_check <= self.clock():
+            next_check = None
         status = {
             "state": state,
             "pid": os.getpid(),
@@ -519,6 +603,9 @@ class Runtime[S: HasSourceId]:
             "llm": {
                 "available": self.gate.available,
                 "reason": self.gate.status.reason,
+                "last_limit_reason": self._last_limit_reason,
+                "last_limit_at": self._timestamp(self._last_limit_at),
+                "next_recheck_at": self._timestamp(next_check),
             },
             "resumes": self.resumes,
             "consecutive_failures": self.consecutive_failures,

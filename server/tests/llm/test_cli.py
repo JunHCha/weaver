@@ -23,7 +23,13 @@ from weaver.llm import (
     UsageLimited,
     create_client,
 )
-from weaver.llm.cli import RunResult, child_env, cli_status, subprocess_runner
+from weaver.llm.cli import (
+    RunResult,
+    _classify,
+    child_env,
+    cli_status,
+    subprocess_runner,
+)
 from weaver.llm.ledger import Ledger
 from weaver.runtime.pipeline import llm_status
 
@@ -209,6 +215,35 @@ def test_error_mapping_without_leaking(
     assert type(info.value) is error
     assert str(info.value) == error.code
     assert "logged" not in json.dumps(ledger.records())
+
+
+@pytest.mark.parametrize("stderr", [False, True])
+def test_subscription_limit_messages(tmp_path, fake_claude, cli_usage_message, stderr):
+    result = (
+        RunResult(1, b"", cli_usage_message.encode())
+        if stderr
+        else ok(is_error=True, result=cli_usage_message, api_error_status=429)
+    )
+    client, _, ledger = make(tmp_path, fake_claude, result)
+    with pytest.raises(UsageLimited):
+        client.generate_text("t.x", "s", "u")
+    assert ledger.records()[-1]["status"] == UsageLimited.code
+    assert cli_usage_message not in json.dumps(ledger.records())
+
+
+@pytest.mark.parametrize(
+    "message,status,error",
+    [
+        ("rate limit exceeded", 429, RateLimited),
+        ("too many requests", None, RateLimited),
+        ("temporary overload", 429, RateLimited),
+        ("connection resets while streaming", None, LlmError),
+        ("retry limit reached", 401, AuthenticationError),
+        ("usage limit reached: please login", 429, AuthenticationError),
+    ],
+)
+def test_limit_classification_preserves_rate_and_auth_errors(message, status, error):
+    assert type(_classify(message, status)) is error
 
 
 def test_timeout(tmp_path: Path, fake_claude: Path) -> None:

@@ -1,0 +1,12 @@
+[
+  {"id": "claude-five-hour", "text": "You've hit your 5-hour limit · resets 6pm (Asia/Seoul)", "evidence": "가정: 배경 조사 문서의 Claude 문구 형태(원문은 로그에 남지 않음); 시간·시간대는 합성 값"},
+  {"id": "existing-claude-usage", "text": "Claude usage limit reached", "evidence": "가정: 기존 test_cli.py의 합성 문구"},
+  {"id": "existing-codex-quota", "text": "quota exceeded", "evidence": "가정: 기존 test_codex.py의 합성 문구"},
+  {"id": "weekly", "text": "You've hit your weekly limit · resets Dec 1 at 9am", "evidence": "가정: 실제 CLI 원문은 확인하지 못함"},
+  {"id": "codex-usage", "text": "You've hit your usage limit. Try again at 9:00 AM.", "evidence": "가정: Codex의 실제 원문은 확인하지 못함"},
+  {"id": "five-hour", "text": "5-hour limit", "evidence": "가정: 독립 오류 문구"},
+  {"id": "weekly-limit", "text": "Weekly limit", "evidence": "가정: 독립 오류 문구"},
+  {"id": "try-again", "text": "Try again at 2026-12-01 09:00", "evidence": "가정: 독립 오류 문구"},
+  {"id": "reset-at", "text": "Resets at 9am", "evidence": "가정: 독립 오류 문구"},
+  {"id": "reset-in", "text": "Resets in 2 hours", "evidence": "가정: 독립 오류 문구"}
+]
