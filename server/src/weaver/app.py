@@ -48,7 +48,11 @@ EX_CONFIG = 78  # sysexits.h: configuration error
 
 
 def _load(
-    config: str | None, *, init_directories: bool = False, llm: LlmBackend | None = None
+    config: str | None,
+    *,
+    init_directories: bool = False,
+    llm: LlmBackend | None = None,
+    as_json: bool = False,
 ) -> "ServerConfig":
     """Configuration errors exit 78 (EX_CONFIG) with field names only.
 
@@ -65,9 +69,26 @@ def _load(
             settings = replace(settings, llm=replace(settings.llm, backend=llm.value))
         return settings
     except ConfigError as error:
-        typer.echo(f"Error: invalid configuration: {error}", err=True)
+        if as_json:
+            _echo_json(_config_error_report(str(error)))
+        else:
+            typer.echo(f"Error: invalid configuration: {error}", err=True)
         _hold_when_supervised()
         raise typer.Exit(code=EX_CONFIG) from None
+
+
+def _config_error_report(message: str) -> dict[str, object]:
+    """Split "field: reason" for setup tools; messages never carry values."""
+    field, separator, reason = message.partition(": ")
+    if not separator:
+        field, reason = "", message
+    return {"ok": False, "error": message, "field": field, "reason": reason}
+
+
+def _echo_json(report: dict[str, object]) -> None:
+    import json
+
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
 
 
 def _hold_when_supervised() -> None:
@@ -316,6 +337,22 @@ def run(
             help="Validate, create missing data directories, and exit",
         ),
     ] = False,
+    check_llm: Annotated[
+        bool,
+        typer.Option(
+            "--check-llm",
+            help="With --check-config/--init-directories: also report whether "
+            "the LLM backend is usable (key present, CLI logged in); no API call",
+        ),
+    ] = False,
+    as_json: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="With --check-config/--init-directories: print one JSON object "
+            "on stdout instead of text",
+        ),
+    ] = False,
     console: Annotated[
         bool | None,
         typer.Option(
@@ -328,9 +365,36 @@ def run(
     ] = 5.0,
 ) -> None:
     """Run Weaver in the foreground until SIGTERM (launchd-friendly)."""
-    settings = _load(config, init_directories=init_directories, llm=llm)
-    if check_config or init_directories:
-        typer.echo("Configuration valid.")
+    validating = check_config or init_directories
+    if (check_llm or as_json) and not validating:
+        raise typer.BadParameter(
+            "--check-llm/--json require --check-config or --init-directories"
+        )
+    settings = _load(
+        config, init_directories=init_directories, llm=llm, as_json=as_json
+    )
+    if validating:
+        report: dict[str, object] = {"ok": True}
+        if check_llm:
+            import os
+
+            from weaver.runtime.pipeline import llm_status
+
+            status = llm_status(settings.llm, os.environ)
+            report["llm"] = {
+                "backend": settings.llm.backend,
+                "available": status.available,
+                "reason": status.reason,
+            }
+        if as_json:
+            _echo_json(report)
+        else:
+            typer.echo("Configuration valid.")
+            if check_llm:
+                llm_report = report["llm"]
+                assert isinstance(llm_report, dict)
+                state = "available" if llm_report["available"] else "unavailable"
+                typer.echo(f"LLM {state} ({llm_report['reason']}).")
         return
 
     import logging

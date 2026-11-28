@@ -863,3 +863,77 @@ def test_reference_clone_dir_is_stable_per_sphere(tmp_path: Path) -> None:
     assert first != reference_clone_dir(tmp_path, "가족")
     assert first.relative_to(tmp_path).parts[0] == "reference"
     assert first.name == "repo"
+
+
+def test_cli_json_reports_field_without_values(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from weaver.app import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = write_config(tmp_path, create=False)
+    with pytest.raises(SystemExit) as error:
+        main(["run", "--config", str(path), "--check-config", "--json"])
+    assert error.value.code == 78
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["ok"] is False
+    assert report["field"] in ROOTS
+    assert report["error"] == f"{report['field']}: {report['reason']}"
+    assert str(tmp_path) not in captured.out
+    assert captured.err == ""
+    assert main(["run", "--config", str(path), "--init-directories", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
+@pytest.mark.parametrize(
+    ("env", "available", "reason"),
+    [({}, False, "api_key_missing"), ({"WEAVER_TEST_KEY": "k"}, True, "configured")],
+)
+def test_cli_check_llm_reports_key_state_without_calling(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    available: bool,
+    reason: str,
+) -> None:
+    import json
+
+    from weaver.app import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("WEAVER_TEST_KEY", raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    path = write_config(
+        tmp_path, '[llm]\nbackend = "anthropic"\napi_key_env = "WEAVER_TEST_KEY"\n'
+    )
+    args = ["run", "--config", str(path), "--check-config", "--check-llm"]
+    assert main([*args, "--json"]) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out) == {
+        "ok": True,
+        "llm": {"backend": "anthropic", "available": available, "reason": reason},
+    }
+    assert '"k"' not in out
+    assert main(args) == 0
+    text = capsys.readouterr().out
+    assert "Configuration valid." in text
+    assert reason in text
+
+
+@pytest.mark.parametrize("flag", ["--json", "--check-llm"])
+def test_cli_report_flags_require_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    from weaver.app import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = write_config(tmp_path)
+    with pytest.raises(SystemExit) as error:
+        main(["run", "--config", str(path), flag])
+    assert error.value.code == 2
+    assert not (tmp_path / "log_root" / "weaver.log").exists()
