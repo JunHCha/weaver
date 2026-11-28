@@ -255,6 +255,7 @@ def test_wire_rejects_unknown_versions_and_fields(patch: dict[str, object]) -> N
     "patch",
     [
         {"start": -1, "end": 2},
+        {"start": 2, "end": 1},
         {"start": 1, "end": 1},
         {"start": None, "end": 1},
         {"start": float("inf"), "end": float("inf")},
@@ -301,7 +302,7 @@ def test_default_budget_does_not_truncate() -> None:
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("limit", [0, True])
+@pytest.mark.parametrize("limit", [0, -1, True])
 def test_invalid_budget(limit: int) -> None:
     with pytest.raises(ValueError):
         LlmReviser(FakeLlm([]), max_request_bytes=limit)

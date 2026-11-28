@@ -1,10 +1,9 @@
-"""Shared text is interpreted into one Script without losing a character.
+"""Provider output that names a Thread field must carry that field's value shape.
 
-Provider output that names a Thread field must carry that field's value shape
-(a schedule object, an assignee delta, a date or status string, or nothing);
-any other shape is rejected before it can reach a review document. Call and
-Kakao coordinates, BOM and CRLF handling stay with the parser tests and the
-property in ``properties/``.
+A schedule object, an assignee delta, a date or status string, or no value are
+accepted; any other shape is rejected before it can reach a review document.
+That shared text is interpreted without losing a character is proved by
+``properties/test_source_text_lossless.py`` and the parser tests.
 """
 
 import pytest
@@ -37,6 +36,7 @@ def extract(field, value):
         ("assignees", {"add": ["synthetic"], "remove": []}),
         ("deadline", "2026-01-02"),
         ("status", "done"),
+        ("schedule", None),
         ("assignees", None),
         (None, None),
     ],
@@ -46,7 +46,8 @@ def extract(field, value):
         "assignee_delta",
         "deadline_date",
         "status_word",
-        "field_without_value",
+        "schedule_without_value",
+        "assignee_without_value",
         "plain_fact",
     ],
 )

@@ -104,7 +104,9 @@ def test_empty_header_only_equal_and_regressing_times():
     assert sum(d.code == "non_increasing_time" for d in result.diagnostics) == 2
 
 
-@pytest.mark.parametrize("clock", ["00:60", "60:00", "１:00:00", "9" * 5000 + ":00:00"])
+@pytest.mark.parametrize(
+    "clock", ["00:60", "60:00", "0:1", "１:00:00", "9" * 5000 + ":00:00"]
+)
 def test_invalid_clocks_are_preserved(clock):
     text = f"AI로 생성된 콘텐츠입니다\n\n가짜 제목\n\n나  ({clock})\n가짜 본문\n"
     result = parse_call(call_source(), text)

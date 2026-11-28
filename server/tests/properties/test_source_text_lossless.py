@@ -34,7 +34,7 @@ def generate(rng: random.Random) -> str:
     text = newline.join(rng.choice(LINES) for _ in range(rng.randint(1, 12)))
     if rng.random() < 0.5:
         text += newline
-    return rng.choice(["", "﻿"]) + text
+    return rng.choice(["", "\ufeff"]) + text
 
 
 def test_call_script_text_and_line_coordinates_are_lossless():

@@ -82,6 +82,7 @@ def test_korean_mapping_order_overlap_ids_and_cleanup(model, audio, decoder):
                 (-1, 1, "x"),
                 (2, 1, "x"),
                 (float("nan"), 1, "x"),
+                (0, float("inf"), "x"),
                 (True, 1, "x"),
                 ("0", 1, "x"),
                 (0, 1, None),
