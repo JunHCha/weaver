@@ -600,6 +600,32 @@ def test_subscription_rate_limit_holds_wiki_and_preserves_other_source(
     assert wiki_calls == []
 
 
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+@pytest.mark.parametrize("error", [RateLimited(), UsageLimited()])
+def test_processor_skipping_on_limited_gate_spends_no_attempt(tmp_path, backend, error):
+    llm = gate()
+
+    class GateAwareProcessor(FakeProcessor):
+        def process(self, source, stop):
+            if source.source_id == "src_a":
+                llm.disable(error.code)  # as GatedLlm does for UsageLimited
+                raise error
+            # Like SummaryProcessor: no exception when the gate is already off.
+            return "done" if llm.available else "waiting_llm"
+
+    runtime, stop, _, _ = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a"), FakeSource("src_b")]),
+        processor=GateAwareProcessor(),
+        gate=llm,
+        llm_backend=backend,
+    )
+    runtime._tick(stop)
+    progress = runtime.ledger.progress()
+    assert [progress[sid].status for sid in ("src_a", "src_b")] == ["waiting_llm"] * 2
+    assert [progress[sid].attempts for sid in ("src_a", "src_b")] == [0, 0]
+
+
 def test_api_rate_limit_retains_source_retry_and_exposes_schedule(tmp_path):
     runtime, stop, _, clock = make(
         tmp_path,

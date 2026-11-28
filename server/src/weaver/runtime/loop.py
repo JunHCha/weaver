@@ -387,8 +387,7 @@ class Runtime[S: HasSourceId]:
             if isinstance(error, UsageLimited):
                 self._note_limit(error.code)
             if self._subscription_cli and (
-                isinstance(error, UsageLimited)
-                or self.gate.status.reason in (UsageLimited.code, RateLimited.code)
+                isinstance(error, UsageLimited) or self._limited_gate()
             ):
                 attempts -= 1
             reason = getattr(error, "code", type(error).__name__)
@@ -450,10 +449,20 @@ class Runtime[S: HasSourceId]:
         else:
             if outcome == "done" and self.gate.available:
                 self._subscription_rate_failures = 0
+            if (
+                outcome == "waiting_llm"
+                and self._subscription_cli
+                and not self.gate.available
+                and self._limited_gate()
+            ):
+                attempts -= 1  # the processor saw the closed gate and did nothing
             self.ledger.record(
                 sid, outcome, attempts=attempts, contract_failures=contract
             )
             logger.info("source %s: %s", outcome, sid)
+
+    def _limited_gate(self) -> bool:
+        return self.gate.status.reason in (UsageLimited.code, RateLimited.code)
 
     def _retry_or_fail(
         self,
