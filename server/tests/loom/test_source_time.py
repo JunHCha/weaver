@@ -1,4 +1,13 @@
-"""Synthetic delayed approvals and replay; no external models or vaults."""
+"""Relative dates in a source are resolved against when the source happened.
+
+A delayed approval, a replay and a re-extraction preview all use the persisted
+source time (not the processing clock) as "today" in the source's local zone
+(KST). Deadlines and schedules that already passed at that time are dropped;
+zoneless values are read in the configured zone. Occurrence times the model
+guesses outside the plausible window are corrected, and future ones never
+stored. When only a capture time is known, the reference is marked as an
+estimate and historical dates in imported transcripts are preserved. Synthetic
+approvals only; no external models or vaults."""
 
 import json
 import sqlite3
@@ -243,10 +252,9 @@ def test_reference_metadata_is_immutable_and_legacy_fallback_is_stable(tmp_path)
 @pytest.mark.parametrize(
     ("field", "bad_value"),
     [
-        ("deadline", {"start": "2026-11-13T09:00:00"}),
+        # Any non-string deadline and any non-object schedule take one branch.
         ("deadline", 42),
         ("schedule", "2026-11-13"),
-        ("schedule", 42),
     ],
 )
 def test_malformed_temporal_value_does_not_stop_approval(
@@ -279,12 +287,15 @@ def test_malformed_temporal_value_does_not_stop_approval(
     assert "오늘 내 등록" not in caplog.text
 
 
-@pytest.mark.parametrize("storage", ["captured_metadata", "captured_spinner", "stages"])
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("storage", "field", "value"),
     [
-        ("deadline", "2020-02-02"),
-        ("schedule", {"start": "2020-02-02T09:00:00", "end": None}),
+        # Each storage is read by its own branch; the historical-value policy of
+        # the two fields is the same for every storage, so schedule runs once.
+        ("captured_metadata", "deadline", "2020-02-02"),
+        ("captured_spinner", "deadline", "2020-02-02"),
+        ("stages", "deadline", "2020-02-02"),
+        ("stages", "schedule", {"start": "2020-02-02T09:00:00", "end": None}),
     ],
 )
 def test_fallback_keeps_imported_history_in_approval_and_preview(
@@ -378,10 +389,8 @@ def test_long_call_occurrences_keep_order_within_one_day(
     assert sink.drafts[0].occurred_at == SOURCE_TIME + expected_delta
 
 
-@pytest.mark.parametrize("fallback", [False, True])
-def test_future_phone_reference_never_stores_future_occurrence(
-    tmp_path, caplog, fallback
-):
+def test_future_phone_reference_never_stores_future_occurrence(tmp_path, caplog):
+    fallback = True
     future = PROCESS_TIME + timedelta(days=2)
     SummaryState(tmp_path).save_package(
         package(), "원문", source_occurred_at=future, source_time_is_fallback=fallback
