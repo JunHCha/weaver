@@ -30,8 +30,6 @@ def world_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr("weaver.runtime.assemble.create_client", forbidden)
-    monkeypatch.setattr("weaver.spinner.stt.MlxStt.__init__", forbidden)
-    monkeypatch.setattr("weaver.spinner.stt.MlxStt.transcribe", forbidden)
     popen = subprocess.Popen
 
     def local_git_only(args, *positional, **kwargs):

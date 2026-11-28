@@ -37,7 +37,7 @@ by the older area-completion helper. Unexpected model tasks fail the test.
 
 The factory uses temporary HOME/XDG/config/vault/archive/state roots, removes
 provider/Weaver environment settings, blocks socket connections and real provider
-and STT construction, and permits only local Git subprocesses inside the test
+construction, and permits only local Git subprocesses inside the test
 root. All HTTP requests use `TestClient` and fake peer identity with production
 authentication/token storage. Real stores and fsync remain enabled. This isolation
 is scoped to suites opting into the fixture, not a sandbox for arbitrary code.
