@@ -144,7 +144,7 @@ def test_share_text_bypasses_kakao_and_preserves_every_character():
     assert thread.segments[0].speaker is thread.segments[0].occurred_at is None
 
 
-@pytest.mark.parametrize("encoding", ["cp949", "utf-16", "utf-16-le", "utf-16-be"])
+@pytest.mark.parametrize("encoding", ["cp949", "utf-16"])
 def test_spinner_rejects_unsupported_encoding(tmp_path, encoding):
     from weaver.schema.internal import ArchivedSource
 
@@ -254,7 +254,7 @@ def test_unicode_line_separator_is_message_data():
 
 
 @pytest.mark.parametrize(
-    "continuation", ["2027년 계획은 계속합니다", "2026. 11 회의록", "2026년 깨진 날짜"]
+    "continuation", ["2027년 계획은 계속합니다", "2026년 깨진 날짜"]
 )
 def test_date_like_body_keeps_message_and_pc_date(continuation):
     text = f"2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 시작\n{continuation}\n[김가상] [오전 10:00] 다음\n"

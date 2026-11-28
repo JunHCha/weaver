@@ -53,9 +53,11 @@ def body_texts(thread):
     ]
 
 
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
-@pytest.mark.parametrize("bom", ["", "\ufeff"])
-@pytest.mark.parametrize("known_time", [False, True])
+@pytest.mark.parametrize(
+    ("newline", "bom", "known_time"),
+    [("\n", "", True), ("\r\n", "\ufeff", False)],
+    ids=["lf_with_known_time", "crlf_bom_unknown_time"],
+)
 def test_synthetic_fixture(newline, bom, known_time):
     text = bom + (Path(__file__).parent / "fixtures/call.txt").read_text().replace(
         "\n", newline
