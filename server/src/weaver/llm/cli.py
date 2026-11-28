@@ -27,7 +27,7 @@ from typing import Any, Protocol, cast
 import anthropic
 from pydantic import BaseModel, ValidationError
 
-from weaver.config import LlmConfig
+from weaver.config import LlmConfig, warn_deprecated_cli_timeouts
 from weaver.failures import failure_reason
 
 from . import policy as policy_module
@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 MODEL = "claude-sonnet-5-5"
 ENV_ALLOWLIST = ("HOME", "PATH", "USER", "LANG", "LC_ALL", "TMPDIR")
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+# stream-json wraps every few tokens in an event envelope and repeats the full
+# message at the end, so the whole stream needs far more room than its result.
+MAX_STREAM_BYTES = 64 * 1024 * 1024
 WORKDIR_NAME = "claude-cli-workdir"
 STATUS_TTL_SECONDS = 60.0
 
@@ -64,6 +67,8 @@ class RunResult:
     timed_out: bool = False
     overflow: bool = False
     stopped: bool = False
+    timeout_reason: str | None = None
+    idle_seconds: float = 0.0
 
 
 class Runner(Protocol):
@@ -91,13 +96,20 @@ def find_claude(config: LlmConfig, environ: Mapping[str, str]) -> str | None:
 
 
 def _drain(
-    stream: Any, cap: int, sink: list[bytes], flag: threading.Event | None
+    stream: Any,
+    cap: int,
+    sink: list[bytes],
+    flag: threading.Event | None,
+    progress: list[float] | None = None,
 ) -> None:
     """Keep up to ``cap`` bytes. Past it: kill signal via ``flag``, or, without
     a flag, discard the excess but keep reading so the child never blocks."""
     total = 0
     try:
-        while chunk := stream.read(65536):
+        # read() may wait for 64 KiB, hiding small flushed progress events.
+        while chunk := stream.read1(65536):
+            if progress is not None:
+                progress[0] = time.monotonic()
             if total + len(chunk) > cap:
                 if flag is not None:
                     flag.set()
@@ -113,6 +125,9 @@ def _drain(
 
 _stop_event: ContextVar[threading.Event | None] = ContextVar(
     "cli_stop_event", default=None
+)
+_runtime_deadline: ContextVar[float | None] = ContextVar(
+    "cli_runtime_deadline", default=None
 )
 
 
@@ -159,9 +174,11 @@ def subprocess_runner(
     out: list[bytes] = []
     err: list[bytes] = []
     overflow = threading.Event()
+    progress = [time.monotonic()]
+    cap = MAX_STREAM_BYTES if "stream-json" in argv else MAX_OUTPUT_BYTES
     readers = [
         threading.Thread(
-            target=_drain, args=(proc.stdout, MAX_OUTPUT_BYTES, out, overflow)
+            target=_drain, args=(proc.stdout, cap, out, overflow, progress)
         ),
         threading.Thread(target=_drain, args=(proc.stderr, 65536, err, None)),
     ]
@@ -177,9 +194,15 @@ def subprocess_runner(
     for thread in (*readers, feeder):
         thread.daemon = True
         thread.start()
-    deadline = time.monotonic() + timeout
+    # Status probes/direct runner calls retain a fixed deadline. Generation
+    # binds a separate overall deadline; timeout then limits stdout silence.
+    deadline = _runtime_deadline.get()
+    if deadline is None:
+        deadline = time.monotonic() + timeout
     timed_out = False
     stopped = False
+    timeout_reason = None
+    idle_seconds = 0.0
     try:
         while proc.poll() is None:
             if stop is not None and stop.is_set():
@@ -187,8 +210,11 @@ def subprocess_runner(
                 break
             if overflow.is_set():
                 break
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            idle_seconds = max(0.0, now - progress[0])
+            if now >= deadline or idle_seconds >= timeout:
                 timed_out = True
+                timeout_reason = "overall" if now >= deadline else "idle"
                 break
             time.sleep(0.02)
     finally:
@@ -207,6 +233,8 @@ def subprocess_runner(
         timed_out,
         overflow.is_set(),
         stopped,
+        timeout_reason,
+        idle_seconds,
     )
 
 
@@ -301,6 +329,7 @@ class ClaudeCliClient:
             raise ValueError("ClaudeCliClient requires claude_cli backend")
         if deadline_seconds is not None and not 0 < deadline_seconds <= 900:
             raise ValueError("invalid deadline")
+        warn_deprecated_cli_timeouts(config)
         self.config = config
         self.policy = policy if policy is not None else policy_module.default_policy()
         self.ledger = ledger
@@ -316,11 +345,13 @@ class ClaudeCliClient:
     def _deadline(self, task: str) -> float:
         if self.deadline_seconds is not None:
             return self.deadline_seconds
-        return (
-            self.config.wiki_cli_timeout_seconds
+        idle = (
+            self.config.wiki_cli_idle_timeout_seconds
             if task.startswith("wiki.")
-            else self.config.cli_timeout_seconds
+            else self.config.cli_idle_timeout_seconds
         )
+        assert idle is not None  # LlmConfig resolves absent values and aliases.
+        return idle
 
     def generate_json[T: BaseModel](
         self, task: str, system: str, user: str, schema: type[T]
@@ -335,7 +366,9 @@ class ClaudeCliClient:
             binary,
             "--print",
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "--no-session-persistence",
             "--model",
             MODEL,
@@ -386,6 +419,9 @@ class ClaudeCliClient:
         self.policy.check(prepared.provenance)
         # Subscription calls carry no dollar charge: the month budget gets 0.
         call_id = self.ledger.reserve(record, 0)
+        runtime_token = _runtime_deadline.set(
+            started + self.config.cli_max_runtime_seconds
+        )
         try:
             result = self._run(record, started, system, user, schema)
             record["status"] = "succeeded"
@@ -402,6 +438,7 @@ class ClaudeCliClient:
             record["status"] = LlmError.code
             raise LlmError() from None
         finally:
+            _runtime_deadline.reset(runtime_token)
             record.pop("daily_day", None)
             record["elapsed_seconds"] = time.monotonic() - started
             self.ledger.finish(call_id, record, 0)
@@ -450,9 +487,10 @@ class ClaudeCliClient:
             raise LlmInterrupted()
         if res.timed_out:
             attempt["status"] = LlmTimeout.code
+            record["timeout_diagnostics"] = _watchdog_diagnostics(res)
             raise LlmTimeout()
         try:
-            envelope = json.loads(res.stdout) if not res.overflow else None
+            envelope = _claude_result(res.stdout) if not res.overflow else None
         except (ValueError, RecursionError):
             envelope = None
         if not isinstance(envelope, dict):
@@ -491,6 +529,32 @@ class ClaudeCliClient:
                 failure_reason(error),
             )
             raise SchemaMismatch() from None
+
+
+def _watchdog_diagnostics(res: RunResult) -> dict[str, str | float]:
+    reason = (
+        res.timeout_reason if res.timeout_reason in {"idle", "overall"} else "unknown"
+    )
+    logger.warning("CLI timeout: reason=%s idle_seconds=%.1f", reason, res.idle_seconds)
+    return {"reason": reason, "idle_seconds": round(res.idle_seconds, 3)}
+
+
+def _claude_result(stdout: bytes) -> object:
+    """Extract the final result without logging streamed message bodies.
+
+    Accept a single JSON envelope too, for injected runners/older fixtures.
+    A stream yields its last ``result`` event, never an intermediate message.
+    The result itself keeps the non-streaming output limit.
+    """
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue  # trailing noise or a cut-off event
+        if isinstance(event, dict) and event.get("type") == "result":
+            return event if len(line) <= MAX_OUTPUT_BYTES else None
+    return json.loads(stdout) if len(stdout) <= MAX_OUTPUT_BYTES else None
 
 
 def _usage(raw: object) -> dict[str, int] | None:

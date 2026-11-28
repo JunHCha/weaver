@@ -28,6 +28,7 @@ from .cli import (
     Runner,
     _classify,
     _usage,
+    _watchdog_diagnostics,
     child_env,
     subprocess_runner,
 )
@@ -250,14 +251,10 @@ class CodexCliClient(ClaudeCliClient):
                 argv += ["--output-schema", str(schema_file)]
             argv += ["-o", str(output), "--json", "-"]
             # stdin preserves privacy and explicit role boundaries. Codex exec
-            # has no separate system-prompt argument. Serialize before calculating
-            # the remaining wall-clock deadline.
+            # has no separate system-prompt argument.
             prompt = json.dumps(
                 {"instructions": system, "input": user}, ensure_ascii=False
             ).encode()
-            remaining = self._deadline(record["task"]) - (time.monotonic() - started)
-            if remaining <= 0:
-                raise LlmTimeout()
             day = datetime.now().astimezone().date().isoformat()
             if not self.ledger.take_daily_call(
                 day,
@@ -276,7 +273,7 @@ class CodexCliClient(ClaudeCliClient):
                     stdin=prompt,
                     env=child_env(self.environ),
                     cwd=cwd,
-                    timeout=remaining,
+                    timeout=self._deadline(record["task"]),
                 )
                 if res.stopped:
                     attempt["status"] = "interrupted"
@@ -289,6 +286,7 @@ class CodexCliClient(ClaudeCliClient):
                         input_bytes=len(prompt),
                         schema_bytes=schema_bytes,
                     )
+                    record["timeout_diagnostics"].update(_watchdog_diagnostics(res))
                     raise LlmTimeout()
                 if res.overflow:
                     raise LlmError()
