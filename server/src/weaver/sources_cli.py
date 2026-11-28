@@ -69,7 +69,8 @@ def retry(
     start, end = _date(since), _date(until)
 
     def select() -> list[RetryTarget]:
-        return select_targets(
+        unreadable: list[str] = []
+        targets = select_targets(
             settings.state_root,
             settings.archive_root,
             status=status,
@@ -78,7 +79,11 @@ def retry(
             until=end,
             source_ids=tuple(source_ids or ()),
             limit=limit,
+            unreadable=unreadable,
         )
+        for source_id in unreadable:
+            typer.echo(f"Skipped unreadable archive row: {source_id}")
+        return targets
 
     try:
         if not apply:

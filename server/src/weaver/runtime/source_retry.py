@@ -35,11 +35,14 @@ def select_targets(
     until: datetime | None = None,
     source_ids: tuple[str, ...] = (),
     limit: int | None = None,
+    unreadable: list[str] | None = None,
 ) -> list[RetryTarget]:
     """Return eligible rows in archive arrival order; dates use captured_at.
 
     Any package revision protects its Source, regardless of review verdict.
     Missing runtime state means there is no recovery work to do.
+    Damaged archive rows cannot be processed again: they are left as they are
+    and their IDs are appended to ``unreadable``.
     """
     if status not in {"failed", "retry", "waiting_llm", "done"}:
         raise ValueError("unknown status")
@@ -73,7 +76,14 @@ def select_targets(
         ):
             if sid not in eligible:
                 continue
-            captured = datetime.fromisoformat(json.loads(raw)["captured_at"])
+            try:
+                captured = datetime.fromisoformat(json.loads(raw)["captured_at"])
+                if captured.tzinfo is None:
+                    raise ValueError("captured_at without timezone")
+            except (ValueError, KeyError, TypeError):
+                if unreadable is not None:
+                    unreadable.append(sid)
+                continue
             if (since and captured < since) or (until and captured >= until):
                 continue
             targets.append(RetryTarget(sid, eligible[sid], captured))

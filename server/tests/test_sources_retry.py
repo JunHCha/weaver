@@ -15,7 +15,7 @@ from weaver.llm.errors import UsageLimited
 from weaver.llm.ledger import Ledger
 from weaver.runtime.gate import LlmGate, LlmStatus
 from weaver.runtime.ledger import RuntimeLedger
-from weaver.runtime.loop import InstanceLock, Runtime
+from weaver.runtime.loop import EXIT_ALREADY_RUNNING, InstanceLock, Runtime
 from weaver.runtime.source_retry import reset_targets, select_targets
 
 
@@ -74,13 +74,18 @@ def invoke(data, *args, input=None):
 
 def test_preview_filters_limit_and_no_writes(data):
     _, settings, _, ledger = data
-    before = (settings.state_root / "runtime.sqlite3").read_bytes()
+    databases = [
+        settings.state_root / "runtime.sqlite3",
+        settings.state_root / "summary.sqlite3",
+        settings.archive_root / "index.sqlite3",
+    ]
+    before = [path.read_bytes() for path in databases]
     result = invoke(data, "--limit", "10", "--error-class", "RateLimited")
     assert result.exit_code == 0, result.output
     assert "Eligible Sources: 10 (limit: 10)" in result.output
     assert "RateLimited: 10" in result.output
     assert "src_009" in result.output and "src_010" not in result.output
-    assert before == (settings.state_root / "runtime.sqlite3").read_bytes()
+    assert before == [path.read_bytes() for path in databases]
     assert ledger.counts() == {"done": 1, "failed": 38}
     result = invoke(
         data, "--since", "2026-11-25T00:00:00Z", "--until", "2026-11-26T00:00:00Z"
@@ -118,8 +123,9 @@ def test_apply_requires_confirmation_and_excludes_protected(data):
 def test_lock_refuses_apply_but_allows_preview(data):
     with InstanceLock(data[1].state_root / "weaver.lock"):
         result = invoke(data, "--apply", input="y\n")
-        assert result.exit_code != 0
+        assert result.exit_code == EXIT_ALREADY_RUNNING
         assert "stop the Weaver server" in result.output
+        assert "Reset these Sources" not in result.output
         assert invoke(data).exit_code == 0
     assert data[3].counts() == {"done": 1, "failed": 38}
 
@@ -139,6 +145,31 @@ def test_preview_sees_committed_live_wal_and_apply_limit(data):
     result = invoke(data, "--apply", "--limit", "10", input="y\n")
     assert result.exit_code == 0, result.output
     assert list(data[3].progress()) == [f"src_{i:03}" for i in range(10)]
+
+
+def test_limit_follows_arrival_order_not_captured_at(data):
+    _, settings, _, _ = data
+    with sqlite3.connect(settings.archive_root / "index.sqlite3") as db:
+        db.execute(
+            "UPDATE sources SET source_json=? WHERE source_id='src_000'",
+            (json.dumps({"captured_at": "2026-12-31T00:00:00Z"}),),
+        )
+    targets = select_targets(settings.state_root, settings.archive_root, limit=2)
+    assert [t.source_id for t in targets] == ["src_000", "src_001"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "{}", "[]", '{"captured_at": "2026-11-24T00:00:00"}'],
+)
+def test_damaged_archive_row_does_not_block_other_targets(data, raw):
+    _, settings, _, ledger = data
+    with sqlite3.connect(settings.archive_root / "index.sqlite3") as db:
+        db.execute("UPDATE sources SET source_json=? WHERE source_id='src_000'", (raw,))
+    result = invoke(data, "--apply", "--limit", "2", input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "Skipped unreadable archive row: src_000" in result.output
+    assert list(ledger.progress()) == ["src_001", "src_002"]
 
 
 def test_reset_transaction_rolls_back_all_targets(data):
