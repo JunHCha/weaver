@@ -6,6 +6,7 @@ selected configuration file, and validation never prints supplied values.
 
 import hashlib
 import ipaddress
+import logging
 import math
 import os
 import re
@@ -32,10 +33,31 @@ _BACKENDS = {
 }
 _ROOTS = ("sync_root", "archive_root", "vault_root", "state_root", "log_root")
 _CHANNELS = ("outbox", "receipts", "proposals", "decisions")
+_warned_cli_timeout_aliases = False
 
 
 class ConfigError(ValueError):
     """Invalid settings; messages contain field names, never supplied values."""
+
+
+def warn_deprecated_cli_timeouts(config: "LlmConfig") -> None:
+    """Log the legacy-key notice once per process.
+
+    Called when a CLI client is built, not at load time: configuration is read
+    before the file log handler exists.
+    """
+    global _warned_cli_timeout_aliases
+    if _warned_cli_timeout_aliases or (
+        config.cli_timeout_seconds is None and config.wiki_cli_timeout_seconds is None
+    ):
+        return
+    _warned_cli_timeout_aliases = True
+    logging.getLogger(__name__).warning(
+        "Deprecated llm.cli_timeout_seconds/wiki_cli_timeout_seconds: "
+        "now interpreted as stdout inactivity limits; migrate to "
+        "cli_idle_timeout_seconds/wiki_cli_idle_timeout_seconds "
+        "(new keys take precedence)"
+    )
 
 
 @dataclass(frozen=True)
@@ -59,18 +81,40 @@ class LlmConfig:
     codex_path: Path | None = None
     codex_model: str | None = None
     codex_effort: str | None = None
-    cli_timeout_seconds: float = 300
-    wiki_cli_timeout_seconds: float = 600
+    # Deprecated aliases, honored only when the corresponding new key is absent.
+    cli_timeout_seconds: float | None = None
+    wiki_cli_timeout_seconds: float | None = None
+    cli_max_runtime_seconds: float = 14400
+    # None distinguishes an absent key from an explicitly configured default.
+    cli_idle_timeout_seconds: float | None = None
+    wiki_cli_idle_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        for name in ("cli_timeout_seconds", "wiki_cli_timeout_seconds"):
+        for name, maximum in (
+            ("cli_timeout_seconds", 900),
+            ("wiki_cli_timeout_seconds", 900),
+            ("cli_max_runtime_seconds", 86400),
+            ("cli_idle_timeout_seconds", 900),
+            ("wiki_cli_idle_timeout_seconds", 900),
+        ):
             value = getattr(self, name)
+            if value is None and name != "cli_max_runtime_seconds":
+                continue
             if (
                 type(value) not in (int, float)
                 or not math.isfinite(value)
-                or not 0 < value <= 900
+                or not 0 < value <= maximum
             ):
-                raise ConfigError(f"llm.{name}: expected finite number > 0 and <= 900")
+                raise ConfigError(
+                    f"llm.{name}: expected finite number > 0 and <= {maximum}"
+                )
+        for new, old in (
+            ("cli_idle_timeout_seconds", "cli_timeout_seconds"),
+            ("wiki_cli_idle_timeout_seconds", "wiki_cli_timeout_seconds"),
+        ):
+            if getattr(self, new) is None:
+                legacy = getattr(self, old)
+                object.__setattr__(self, new, legacy if legacy is not None else 600)
 
 
 @dataclass(frozen=True)
@@ -524,6 +568,9 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         "max_cli_calls_per_day",
         "cli_timeout_seconds",
         "wiki_cli_timeout_seconds",
+        "cli_max_runtime_seconds",
+        "cli_idle_timeout_seconds",
+        "wiki_cli_idle_timeout_seconds",
     }:
         raise ConfigError("llm: unknown fields (inline credentials are unsupported)")
     backend = value.get("backend", "anthropic")
@@ -584,8 +631,11 @@ def _llm_settings(value: object, base: Path, env: Mapping[str, str]) -> LlmConfi
         codex_path,
         model,
         cast(str | None, effort),
-        value.get("cli_timeout_seconds", 300),
-        value.get("wiki_cli_timeout_seconds", 600),
+        value.get("cli_timeout_seconds"),
+        value.get("wiki_cli_timeout_seconds"),
+        value.get("cli_max_runtime_seconds", 14400),
+        value.get("cli_idle_timeout_seconds"),
+        value.get("wiki_cli_idle_timeout_seconds"),
     )
 
 

@@ -356,13 +356,26 @@ Claude CLI와 Codex CLI의 제한 시간을 설정한다.
 ```toml
 [llm]
 backend = "codex_cli" # 또는 "claude_cli"
-cli_timeout_seconds = 300
-wiki_cli_timeout_seconds = 600
+cli_idle_timeout_seconds = 600
+wiki_cli_idle_timeout_seconds = 600
+cli_max_runtime_seconds = 14400
 max_cli_calls_per_day = 30
 ```
 
-두 제한 시간은 초 단위이며 0보다 크고 900 이하여야 한다. 일반 호출은 기본
-300초, `wiki.compile_batch`·`wiki.digest` 등 `wiki.*` 호출은 기본 600초를 쓴다.
+`cli_idle_timeout_seconds`와 `wiki_cli_idle_timeout_seconds`는 **stdout 무진행 시간**이며,
+초 단위로 0보다 크고 900 이하여야 한다. 일반 호출과 `wiki.compile_batch`·
+`wiki.digest` 등 `wiki.*` 호출 모두 기본 600초(10분)를 쓴다. 기존 키
+`cli_timeout_seconds`·`wiki_cli_timeout_seconds`는 대응하는 새 키가 없을 때만
+호환용 무진행 값으로 읽는다. 기존 키가 있으면 프로세스당 한 번 deprecation
+경고를 남기며, 둘 다 있으면 새 키를 우선한다. stdout이 계속 나오면 이 시간보다
+오래 실행할 수 있다. Claude는 부분 메시지를 포함한 `stream-json`, Codex는 JSON
+이벤트를 사용하며, 작은 출력도 즉시 관찰한다. stderr 출력은 진행으로 세지 않는다.
+이벤트가 없는 내부 추론은 정지와 구분할 수 없어 10분간 조용하면 종료한다.
+`cli_max_runtime_seconds`는 진행 여부와 무관한 전체 상한이며 기본 14400초(4시간),
+허용 범위는 0초 초과·86400초 이하다. 두 제한 중 먼저 도달한 조건으로 종료한다.
+인증 상태 확인은 기존 15초 고정 제한을 유지한다.
+Claude `stream-json`은 부분 이벤트 오버헤드가 크므로 stdout 전체 상한을 64 MiB로 두고,
+마지막 result 이벤트에는 기존 4 MiB 상한을 적용한다. Codex stdout 상한은 4 MiB 그대로다.
 API 백엔드는 기존 120초 제한과 예산 규칙을 유지한다.
 
 소스 정리와 Wiki 작업이 연속으로 시간 초과되면 각 작업의 재시도 간격을
@@ -388,6 +401,9 @@ Codex 시간 초과 경고에는 마지막 `--json` 이벤트 유형(`last_event
 허용 목록으로 제한하고 알 수 없는 유형은 `unknown`, 이벤트가 없으면 `none`으로
 기록한다. 이 수치는 입력·스키마 규모와 마지막으로 관찰한 진행 단계를 보여주며,
 모델 내부 추론이나 스키마 처리 중 어느 쪽이 원인인지를 확정하지는 않는다.
+두 CLI 모두 timeout 진단에 `reason`(`idle` 또는 `overall`)과 마지막 stdout 이후의
+`idle_seconds`를 추가한다. 무진행·전체 상한 종료 모두 호출 1회와 timeout 1회로
+집계하며 환급하지 않는다. SIGTERM 중단은 기존처럼 timeout으로 세지 않는다.
 
 상주 서버의 SIGTERM·SIGINT 종료 요청은 실행 중인 CLI에도 전달한다. runner는
 종료 이벤트를 확인해 자식 프로세스 그룹을 종료하고 회수하며, Codex 임시 폴더도

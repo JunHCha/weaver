@@ -117,7 +117,8 @@ def test_text_success_isolation_and_ledger(tmp_path: Path, fake_claude: Path) ->
         "--disable-slash-commands",
     ):
         assert flag in argv
-    assert argv[argv.index("--output-format") + 1] == "json"
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in argv and "--include-partial-messages" in argv
     assert argv[argv.index("--model") + 1] == "claude-sonnet-5-5"
     assert argv[argv.index("--system-prompt") + 1] == "SYSTEM"
     assert argv[argv.index("--tools") + 1] == ""
@@ -147,6 +148,70 @@ def test_child_env_is_allowlist_only(tmp_path: Path, fake_claude: Path) -> None:
     }
     leaked = child_env({"ANTHROPIC_API_KEY": "k", "CLAUDE_CODE_X": "1", "HOME": "/h"})
     assert leaked == {"HOME": "/h"}
+
+
+def test_streamed_claude_result_preserves_schema_usage_and_error(
+    tmp_path: Path, fake_claude: Path
+) -> None:
+    from weaver.llm.cli import _runtime_deadline
+
+    prefix = b'{"type":"stream_event","text":"private-progress"}\n'
+    client, _, ledger = make(
+        tmp_path,
+        fake_claude,
+        RunResult(0, prefix + envelope(structured_output={"count": 3}), b""),
+        RunResult(1, prefix + envelope(is_error=True, result="usage limit"), b""),
+    )
+    assert client.generate_json("t.x", "s", "u", Answer).count == 3
+    assert _runtime_deadline.get() is None
+    with pytest.raises(UsageLimited):
+        client.generate_text("t.x", "s", "u")
+    assert _runtime_deadline.get() is None
+    assert "private-progress" not in json.dumps(ledger.records())
+
+
+def test_stream_overhead_may_exceed_the_result_limit(tmp_path: Path) -> None:
+    from weaver.llm.cli import MAX_OUTPUT_BYTES, _claude_result
+
+    fake = script(
+        tmp_path,
+        """
+        import json, sys
+        for _ in range(5000):
+            print(json.dumps({"type": "stream_event", "pad": "x" * 1000}))
+        print(json.dumps({"type": "result", "result": "ok"}))
+        print(json.dumps({"type": "system"}))
+        """,
+    )
+    res = subprocess_runner(
+        [str(fake), "--output-format", "stream-json"],
+        stdin=b"",
+        env={},
+        cwd=tmp_path,
+        timeout=300,
+    )
+    assert len(res.stdout) > MAX_OUTPUT_BYTES and not res.overflow
+    assert _claude_result(res.stdout) == {"type": "result", "result": "ok"}
+    huge = json.dumps({"type": "result", "result": "x" * MAX_OUTPUT_BYTES})
+    assert _claude_result(huge.encode()) is None
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b'{"type":"stream_event"}\n{"type":"assistant","message":"private"}\n',
+        b'{"type":"stream_event"}\n{"type":',
+        b'{"type":"stream_event","result":"private"}\n',
+        b'{"type":"assistant","result":"private"}',
+    ],
+)
+def test_claude_stream_without_complete_result_is_rejected(
+    tmp_path: Path, fake_claude: Path, stdout: bytes
+) -> None:
+    client, _, _ = make(tmp_path, fake_claude, RunResult(0, stdout, b""))
+    with pytest.raises(LlmError) as error:
+        client.generate_text("t.x", "s", "u")
+    assert type(error.value) is LlmError  # not accepted as an envelope
 
 
 def test_json_uses_transformed_schema_and_revalidates(
@@ -299,7 +364,7 @@ def test_runner_passes_stdin_and_env(tmp_path: Path) -> None:
         """,
     )
     res = subprocess_runner(
-        [str(fake)], stdin=b"hi", env={"PATH": "/bin"}, cwd=tmp_path, timeout=10
+        [str(fake)], stdin=b"hi", env={"PATH": "/bin"}, cwd=tmp_path, timeout=120
     )
     data = json.loads(res.stdout)
     assert data["in"] == "hi" and "ANTHROPIC_API_KEY" not in data["env"]
@@ -316,7 +381,7 @@ def test_runner_timeout_kills_process_group(tmp_path: Path) -> None:
         time.sleep(60)
         """,
     )
-    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=1)
+    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=15)
     assert res.timed_out
     pid = int(pidfile.read_text())
     import time
@@ -339,7 +404,7 @@ def test_runner_output_cap(tmp_path: Path) -> None:
         sys.stdout.write("x" * (5 * 1024 * 1024))
         """,
     )
-    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=20)
+    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=120)
     assert res.overflow and len(res.stdout) <= 4 * 1024 * 1024
 
 
@@ -353,7 +418,7 @@ def test_runner_stderr_overflow_keeps_stdout(tmp_path: Path) -> None:
         sys.stderr.write("e" * 200_000)
         """,
     )
-    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=20)
+    res = subprocess_runner([str(fake)], stdin=b"", env={}, cwd=tmp_path, timeout=120)
     assert not res.overflow and not res.timed_out
     assert res.returncode == 0
     assert res.stdout == b'{"result": "fine"}'

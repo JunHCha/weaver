@@ -17,12 +17,112 @@ pytestmark = pytest.mark.usefixtures("transport_policy")
 
 
 @pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+@pytest.mark.parametrize("behavior", ["progress", "stalled", "stderr", "overall"])
+def test_progress_watchdog_with_real_synthetic_cli(tmp_path, backend, behavior, caplog):
+    import subprocess
+    import time
+
+    # Only lower bounds and the recorded reason/status are asserted, so a loaded
+    # machine cannot fail the test by being slow. Output comes every 0.1s against
+    # a 5s inactivity limit; a fake that is not killed eventually succeeds.
+    idle_limit = 60 if behavior == "overall" else 5
+    body = {
+        # 60 ticks last at least 6s, longer than the inactivity limit.
+        "progress": "tick 60 emit",
+        "stalled": "emit\n/bin/sleep 120",
+        "stderr": "tick 600 noise",
+        "overall": "tick 6000 emit",
+    }[behavior]
+    binary = tmp_path / "fake-progress-cli"
+    binary.write_text(
+        # A shell fixture avoids Python interpreter startup dominating the
+        # inactivity window on a loaded macOS machine.
+        "#!/bin/sh\n"
+        '[ "$1" = --warmup ] && exit 0\n'
+        'emit() { printf "%s\\n" \'{"type":"item.updated","text":"private-progress"}\'; }\n'
+        "noise() { echo private-stderr >&2; }\n"
+        'tick() { i=0; while [ "$i" -lt "$1" ]; do "$2"; /bin/sleep 0.1; '
+        "i=$((i+1)); done; }\n"
+        "output=''\nprevious=''\n"
+        'for arg do\n  if [ "$previous" = "-o" ]; then output="$arg"; fi\n'
+        '  previous="$arg"\ndone\n'
+        "/bin/cat >/dev/null\n"
+        f"{body}\n"
+        'if [ -n "$output" ]; then\n'
+        '  printf ok >"$output"\n'
+        "  printf '%s\\n' '{\"type\":\"turn.completed\"}'\n"
+        "else\n"
+        '  printf \'%s\\n\' \'{"type":"result","result":"ok","usage":{"output_tokens":7}}\'\n'
+        "fi\n"
+    )
+    binary.chmod(0o700)
+    # macOS assesses a new executable on first launch; keep that out of the limit.
+    subprocess.run([str(binary), "--warmup"], check=True)
+    client = create_client(
+        LlmConfig(
+            backend,
+            claude_path=binary,
+            codex_path=binary,
+            cli_idle_timeout_seconds=idle_limit,
+            cli_max_runtime_seconds=3 if behavior == "overall" else 600,
+        ),
+        state_root=tmp_path,
+    )
+    started = time.monotonic()
+    if behavior == "progress":
+        assert client.generate_text("loom.summary", "s", "u") == "ok"
+        assert time.monotonic() - started > idle_limit
+    else:
+        with pytest.raises(LlmTimeout):
+            client.generate_text("loom.summary", "s", "u")
+    [record] = Ledger(tmp_path / "llm.sqlite3").records()
+    assert record["status"] == ("succeeded" if behavior == "progress" else "timeout")
+    if behavior != "progress":
+        diagnostic = record["timeout_diagnostics"]
+        assert diagnostic["reason"] == ("overall" if behavior == "overall" else "idle")
+        if behavior != "overall":
+            assert diagnostic["idle_seconds"] >= idle_limit
+    elif backend == "claude_cli":
+        assert record["usage"][0]["output_tokens"] == 7
+    assert "private" not in caplog.text + json.dumps(record)
+    with client.ledger._connect() as db:
+        assert db.execute("SELECT calls FROM cli_daily").fetchone()[0] == 1
+        rows = db.execute("SELECT calls FROM cli_timeouts").fetchall()
+        assert rows == ([] if behavior == "progress" else [(1,)])
+    if backend == "codex_cli":
+        assert list((tmp_path / "codex-cli-workdir").iterdir()) == []
+
+
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+def test_cli_client_logs_legacy_key_deprecation_once(
+    tmp_path, caplog, monkeypatch, backend
+):
+    import weaver.config as config_module
+
+    monkeypatch.setattr(config_module, "_warned_cli_timeout_aliases", False)
+    config = LlmConfig(backend, cli_timeout_seconds=300)
+    assert "Deprecated" not in caplog.text
+    for _ in range(2):
+        create_client(config, state_root=tmp_path)
+    assert caplog.text.count("Deprecated llm.cli_timeout_seconds") == 1
+
+
+@pytest.mark.parametrize(
+    "value", [True, 0, -1, 86401, float("inf"), float("nan"), "secret"]
+)
+def test_invalid_overall_runtime_is_redacted(value):
+    with pytest.raises(ConfigError, match="cli_max_runtime_seconds") as error:
+        LlmConfig(cli_max_runtime_seconds=value)
+    assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
 def test_delayed_fake_cli_uses_configured_timeout_and_wiki_override(tmp_path, backend):
     binary = tmp_path / "fake-cli"
     binary.write_text(
         f"#!{sys.executable}\n"
         "import json, sys, time\n"
-        "time.sleep(0.25)\n"
+        "time.sleep(3)\n"
         "if '-o' in sys.argv:\n"
         "    open(sys.argv[sys.argv.index('-o')+1], 'w').write('ok')\n"
         "    print(json.dumps({'type': 'turn.completed'}))\n"
@@ -34,8 +134,8 @@ def test_delayed_fake_cli_uses_configured_timeout_and_wiki_override(tmp_path, ba
         backend,
         claude_path=binary,
         codex_path=binary,
-        cli_timeout_seconds=0.08,
-        wiki_cli_timeout_seconds=2,
+        cli_idle_timeout_seconds=0.5,
+        wiki_cli_idle_timeout_seconds=120,
     )
     client = create_client(config, state_root=tmp_path)
     with pytest.raises(LlmTimeout):
@@ -60,9 +160,11 @@ def test_default_and_custom_deadlines_reach_cli_runner(tmp_path, backend):
     cls = ClaudeCliClient if backend == "claude_cli" else CodexCliClient
     ledger = Ledger(tmp_path / "llm.sqlite3")
     for settings, expected in (
-        (config, [300, 600]),
+        (config, [600, 600]),
         (
-            replace(config, cli_timeout_seconds=450, wiki_cli_timeout_seconds=900),
+            replace(
+                config, cli_idle_timeout_seconds=450, wiki_cli_idle_timeout_seconds=900
+            ),
             [450, 900],
         ),
     ):
@@ -75,7 +177,9 @@ def test_default_and_custom_deadlines_reach_cli_runner(tmp_path, backend):
             assert deadline - 1 < captured[-1] <= deadline
 
 
-@pytest.mark.parametrize("field", ["cli_timeout_seconds", "wiki_cli_timeout_seconds"])
+@pytest.mark.parametrize(
+    "field", ["cli_idle_timeout_seconds", "wiki_cli_idle_timeout_seconds"]
+)
 @pytest.mark.parametrize(
     "value", [True, 0, -1, 901, float("inf"), float("nan"), "secret"]
 )
@@ -86,7 +190,7 @@ def test_invalid_cli_timeout_settings_are_redacted(field, value):
 
 
 def test_api_deadline_is_unchanged(tmp_path):
-    config = LlmConfig(cli_timeout_seconds=900, wiki_cli_timeout_seconds=900)
+    config = LlmConfig(cli_idle_timeout_seconds=900, wiki_cli_idle_timeout_seconds=900)
     client = create_client(config, state_root=tmp_path)
     assert isinstance(client, AnthropicClient)
     assert client.deadline_seconds == 120
@@ -175,13 +279,17 @@ def test_codex_large_input_with_output_schema_and_timeout_diagnostics(
         "assert schema['properties']['count']['type'] == 'integer'\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'private-id'}), flush=True)\n"
         "print(json.dumps({'type': 'item.started', 'item': {'text': 'private-reasoning'}}), flush=True)\n"
-        + ("time.sleep(60)\n" if timeout else "")
+        + ("time.sleep(600)\n" if timeout else "")
         + "open(sys.argv[sys.argv.index('-o')+1], 'w').write('{\"count\":42}')\n"
         "print(json.dumps({'type': 'turn.completed'}), flush=True)\n"
     )
     binary.chmod(0o700)
     client = create_client(
-        LlmConfig("codex_cli", codex_path=binary, wiki_cli_timeout_seconds=1),
+        LlmConfig(
+            "codex_cli",
+            codex_path=binary,
+            wiki_cli_idle_timeout_seconds=15 if timeout else 120,
+        ),
         state_root=tmp_path,
     )
     large = "private-input " * 40000
@@ -193,7 +301,7 @@ def test_codex_large_input_with_output_schema_and_timeout_diagnostics(
         assert diagnostic["last_event"] == "item.started"
         assert diagnostic["input_bytes"] > 500000
         assert diagnostic["schema_bytes"] > 0
-        assert diagnostic["elapsed_seconds"] >= 1
+        assert diagnostic["elapsed_seconds"] >= 15
         assert diagnostic["stdout_bytes"] > 0
         assert diagnostic["output_bytes"] == 0
         assert "last_event=item.started" in caplog.text
@@ -290,14 +398,14 @@ def test_codex_real_subprocess_timeout_or_signal_removes_process_group_and_temp_
         LlmConfig(
             "codex_cli",
             codex_path=binary,
-            cli_timeout_seconds=0.5 if reason == "timeout" else 900,
+            cli_idle_timeout_seconds=15 if reason == "timeout" else 900,
         ),
         state_root=tmp_path,
     )
     stop = threading.Event()
 
     def send_stop():
-        for _ in range(300):
+        for _ in range(6000):
             if pidfile.exists() and pidfile.stat().st_size:
                 break
             time.sleep(0.01)
@@ -310,7 +418,7 @@ def test_codex_real_subprocess_timeout_or_signal_removes_process_group_and_temp_
         with pytest.raises(LlmTimeout if reason == "timeout" else LlmInterrupted):
             client.generate_text("loom.summary", "s", "u")
         if sender is not None:
-            sender.join(timeout=5)
+            sender.join(timeout=90)
             assert not sender.is_alive()
     pids = json.loads(pidfile.read_text())
     for pid in pids:

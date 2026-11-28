@@ -653,24 +653,83 @@ def test_llm_option_with_config_check_and_initialization(tmp_path):
 
 def test_cli_timeouts_load_defaults_and_overrides(tmp_path):
     defaults = load_config(write_config(tmp_path), environ={}).llm
-    assert defaults.cli_timeout_seconds == 300
-    assert defaults.wiki_cli_timeout_seconds == 600
+    assert defaults.cli_idle_timeout_seconds == 600
+    assert defaults.wiki_cli_idle_timeout_seconds == 600
+    assert defaults.cli_max_runtime_seconds == 14400
     settings = load_config(
         write_config(
             tmp_path,
-            "[llm]\ncli_timeout_seconds = 450\nwiki_cli_timeout_seconds = 900\n",
+            "[llm]\ncli_idle_timeout_seconds = 450\nwiki_cli_idle_timeout_seconds = 900\n"
+            "cli_max_runtime_seconds = 28800\n",
         ),
         environ={},
     ).llm
-    assert settings.cli_timeout_seconds == 450
-    assert settings.wiki_cli_timeout_seconds == 900
+    assert settings.cli_idle_timeout_seconds == 450
+    assert settings.wiki_cli_idle_timeout_seconds == 900
+    assert settings.cli_max_runtime_seconds == 28800
 
 
-@pytest.mark.parametrize("field", ["cli_timeout_seconds", "wiki_cli_timeout_seconds"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "cli_timeout_seconds",
+        "wiki_cli_timeout_seconds",
+        "cli_idle_timeout_seconds",
+        "wiki_cli_idle_timeout_seconds",
+    ],
+)
 @pytest.mark.parametrize("value", ["true", "0", "-1", "901", "nan", "inf", '"secret"'])
 def test_cli_timeouts_reject_invalid_toml(tmp_path, field, value):
     with pytest.raises(ConfigError, match=field):
         load_config(write_config(tmp_path, f"[llm]\n{field} = {value}\n"), environ={})
+
+
+@pytest.mark.parametrize("new_keys", [False, True])
+def test_legacy_cli_timeouts_warn_once_and_new_keys_win(
+    tmp_path, caplog, monkeypatch, new_keys
+):
+    import weaver.config as config_module
+
+    monkeypatch.setattr(config_module, "_warned_cli_timeout_aliases", False)
+    settings = "[llm]\ncli_timeout_seconds = 300\nwiki_cli_timeout_seconds = 600\n"
+    if new_keys:
+        settings += (
+            "cli_idle_timeout_seconds = 600\nwiki_cli_idle_timeout_seconds = 750\n"
+        )
+    path = write_config(tmp_path, settings)
+    for _ in range(2):
+        config = load_config(path, environ={}).llm
+        assert config.cli_idle_timeout_seconds == (600 if new_keys else 300)
+        assert config.wiki_cli_idle_timeout_seconds == (750 if new_keys else 600)
+    # Loading is silent: the file log handler is not installed yet.
+    assert "Deprecated llm.cli_timeout_seconds" not in caplog.text
+    for _ in range(2):
+        config_module.warn_deprecated_cli_timeouts(config)
+    assert caplog.text.count("Deprecated llm.cli_timeout_seconds") == 1
+    assert "stdout inactivity" in caplog.text
+    assert "new keys take precedence" in caplog.text
+
+
+def test_new_cli_timeout_keys_do_not_warn(tmp_path, caplog, monkeypatch):
+    import weaver.config as config_module
+
+    monkeypatch.setattr(config_module, "_warned_cli_timeout_aliases", False)
+    config = load_config(
+        write_config(tmp_path, "[llm]\ncli_idle_timeout_seconds = 600\n"), environ={}
+    ).llm
+    config_module.warn_deprecated_cli_timeouts(config)
+    assert "Deprecated llm.cli_timeout_seconds" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "value", ["true", "0", "-1", "86401", "nan", "inf", '"secret"']
+)
+def test_cli_overall_runtime_rejects_invalid_toml(tmp_path, value):
+    with pytest.raises(ConfigError, match="cli_max_runtime_seconds"):
+        load_config(
+            write_config(tmp_path, f"[llm]\ncli_max_runtime_seconds = {value}\n"),
+            environ={},
+        )
 
 
 @pytest.mark.parametrize("initialize", [False, True])
