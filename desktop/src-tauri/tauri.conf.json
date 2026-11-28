@@ -20,7 +20,7 @@
     "macOS": {
       "minimumSystemVersion": "12.0",
       "entitlements": "entitlements.plist",
-      "signingIdentity": null
+      "signingIdentity": "-"
     }
   }
 }

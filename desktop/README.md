@@ -24,5 +24,20 @@ pnpm --dir desktop build          # sidecar + web/out + tauri build
 ```
 
 Output: `desktop/src-tauri/target/release/bundle/macos/Weaver.app` and `dmg/`.
-Unsigned by default (`signingIdentity: null`); set `APPLE_SIGNING_IDENTITY`
+Ad-hoc signed by default (`signingIdentity: "-"`, so the dmg holds a valid bundle signature); set `APPLE_SIGNING_IDENTITY`
 and the notarization variables to sign.
+
+## First run
+
+If no configuration exists (`WEAVER_CONFIG`, `$XDG_CONFIG_HOME/weaver/config.toml`,
+`~/.config/weaver/config.toml`), the shell writes `config.toml.partial` with the
+vault at `~/Documents/Weaver Vault` and other data under
+`~/Library/Application Support/Weaver`, lets the server validate it with
+`run --config <partial> --init-directories --json`, and renames it into place
+only on success. An existing config is never rewritten. The Anthropic API key
+is read from the login Keychain (service `dev.junhcha.weaver`, account
+`anthropic`) and passed to the children as `ANTHROPIC_API_KEY`:
+
+```sh
+security add-generic-password -s dev.junhcha.weaver -a anthropic -w
+```
