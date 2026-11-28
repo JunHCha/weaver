@@ -11,7 +11,7 @@ from weaver.llm.ledger import Ledger
 from weaver.llm.policy import LedgerBacklog, PolicyBlocked, Provenance, provenance_scope
 from weaver.llm.policy_archive import configured_policy
 
-from .fabric.test_store import draft
+from .spec.test_facts_and_history import draft
 from .test_llm_policy_gate import archive_webex, make_vault
 
 

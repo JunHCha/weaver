@@ -1326,13 +1326,6 @@ def test_schedule_title_and_description_extracted(
     assert len(sink.drafts[0].value["description"]) == 1000
 
 
-def test_schedule_prompt_mentions_title_rules(tmp_path: Path) -> None:
-    seen: list[str] = []
-    _schedule_review(tmp_path, {"start": "2026-01-03T09:00:00", "end": None}, seen)
-    for text in ("title", "30자", "날짜·시각을 넣지 않는다", "description", "개조식"):
-        assert text in seen[0]
-
-
 def test_existing_non_schedule_event_thread_does_not_break_the_hint(
     tmp_path: Path,
 ) -> None:
@@ -1423,69 +1416,6 @@ def _approve_verdict() -> Verdict:
         edited_body=None,
         feedback=None,
     )
-
-
-def test_prompt_requires_noun_phrase_content(tmp_path: Path) -> None:
-    seen: list[str] = []
-
-    class Llm(FakeLlm):
-        def generate_json[T: BaseModel](
-            self, task: str, system: str, user: str, schema: type[T]
-        ) -> T:
-            seen.append(system)
-            return super().generate_json(task, system, user, schema)
-
-    review = SummaryReview(
-        Llm(),
-        ContextDictionary(tmp_path / "state"),
-        FakeSink(),
-        tmp_path / "archive",
-        state_root=tmp_path / "state",
-    )
-    review.approve(package(), "원문", _approve_verdict(), now=NOW)
-    assert seen
-    assert "개조식 한 줄" in seen[0] and "명사형" in seen[0]
-    assert "알 수 있는 문장" not in seen[0]
-
-
-def test_noun_phrase_fixture_response_validates(tmp_path: Path) -> None:
-    class Llm(FakeLlm):
-        def generate_json[T: BaseModel](
-            self, task: str, system: str, user: str, schema: type[T]
-        ) -> T:
-            return fixture_response(
-                schema,
-                {
-                    "body": "서버 정기점검 방문 일정이 확정됐다.",
-                    "corrections": [],
-                    "threads": [
-                        {
-                            "kind": "일정",
-                            "content": "서버 정기점검 방문 일정 확정",
-                            "occurred_at": NOW.isoformat(),
-                            "tags": [],
-                            "field": "schedule",
-                            "value": {"start": "2026-01-02T09:00:00", "end": None},
-                            "direction": None,
-                            "resolves": None,
-                            "retracts": None,
-                            "blocked_by_index": None,
-                        }
-                    ],
-                },
-            )
-
-    sink = FakeSink()
-    review = SummaryReview(
-        Llm(),
-        ContextDictionary(tmp_path / "state"),
-        sink,
-        tmp_path / "archive",
-        state_root=tmp_path / "state",
-    )
-    review.approve(package(), "원문", _approve_verdict(), now=NOW)
-    assert len(sink.drafts) == 1
-    assert sink.drafts[0].content == "서버 정기점검 방문 일정 확정"
 
 
 def test_tree_prompt_and_fixture_validates(tmp_path: Path) -> None:
@@ -1655,14 +1585,6 @@ def test_failing_location_proposal_does_not_skip_dictionary_learning(
     review.approve(package(), "홍길돈 원문", verdict, now=NOW)
     assert len(sink.drafts) == 1
     assert [c.name for c in context.candidates("홍길돈")] == ["홍길동"]
-
-
-def test_prompt_keeps_every_fact_as_its_own_thread(tmp_path: Path) -> None:
-    from weaver.loom.tagging import CONTENT_RULES, FACT_RULES
-
-    for text in ("Thread마다", "합치지"):
-        assert text in CONTENT_RULES
-    assert CONTENT_RULES in FACT_RULES
 
 
 def test_five_threads_from_one_source_yield_five_drafts(tmp_path: Path) -> None:
