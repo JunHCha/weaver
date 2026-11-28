@@ -1,3 +1,12 @@
+"""Approving a review turns the reviewed script into Threads, exactly once.
+
+The approval prompt carries only a budgeted slice of the dictionary and
+existing tags (areas and transcript matches first, then recent tags), yet every
+returned tag is validated against the full dictionary. Human edits, answers and
+feedback are preserved; a failed sink, lost response or crash replays the same
+prepared batch instead of calling the model again. Synthetic reviews and a fake
+model only."""
+
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -962,12 +971,15 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
     from weaver.context import Page
     from weaver.loom.summary_review import TAG_CONTEXT_TOKEN_BUDGET
 
+    # Both sets only need to exceed the prompt budget, so the sizes stay small.
+    dictionary_size, tag_count = 120, 150
+    last_entry = f"A{dictionary_size - 1:03d}"
     context = ContextDictionary(tmp_path / "state")
     context.sync_from_pages(
         [
             *(
-                Page(f"A{i:04d}DictionaryEntry", "topic", (f"별칭{i}",))
-                for i in range(650)
+                Page(f"A{i:03d}", "topic", (f"별칭{i}-{'y' * 60}",))
+                for i in range(dictionary_size)
             ),
             Page("ZrecentUnique", "person"),
             Page("ZtranscriptUnique", "topic"),
@@ -979,7 +991,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
         content="기존",
         occurred_at=NOW,
         recorded_at=NOW,
-        tags=["A0000DictionaryEntry"],
+        tags=["A000"],
         field=None,
         value=None,
         source_id=SOURCE,
@@ -1001,7 +1013,10 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
                             "thread_id": "recent",
                             "tags": [
                                 "ZrecentUnique",
-                                *(f"huge-tag-{i:04d}" for i in range(2000)),
+                                *(
+                                    f"huge-tag-{i:04d}-{'x' * 80}"
+                                    for i in range(tag_count)
+                                ),
                             ],
                         }
                     ),
@@ -1019,11 +1034,14 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
             )
             names = [e["name"] for e in prompt["dictionary"]]
             assert names[:2] == ["ZtranscriptUnique", "ZrecentUnique"]
-            assert len(names) < 500
+            assert last_entry not in names
             assert prompt["existing_tags"][0] == "ZrecentUnique"
-            assert len(prompt["existing_tags"]) < 2000
+            assert not any(
+                tag.startswith(f"huge-tag-{tag_count - 1:04d}")
+                for tag in prompt["existing_tags"]
+            )
             data = super().generate_json(task, system, user, schema).model_dump()
-            data["threads"][0]["tags"] = ["A0649DictionaryEntry"]
+            data["threads"][0]["tags"] = [last_entry]
             data["corrections"] = []
             return fixture_response(schema, data)
 
@@ -1042,7 +1060,7 @@ def test_large_dictionary_and_tags_obey_token_budget_and_priority(
     )
     review.approve(package(), "ZtranscriptUnique", verdict, now=NOW)
     # Tags outside the prompt budget still validate against the complete snapshot.
-    assert sink.drafts[0].tags == ["A0649DictionaryEntry", "업무 운영"]
+    assert sink.drafts[0].tags == [last_entry, "업무 운영"]
 
 
 def test_approval_rules_contact_alias_filter_and_count_warning(tmp_path, caplog):

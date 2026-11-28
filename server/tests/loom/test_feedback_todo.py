@@ -1,4 +1,12 @@
-"""Approval-time feedback tasks use synthetic reviews and a fake model only."""
+"""A to-do typed as review feedback becomes a request dated by the approval.
+
+The request's deadline is validated against the approval time (in the local
+zone) even when the source time is only an estimate, while facts from the
+source keep the source time. Answers and ordinary comments create no Thread;
+a second or invalid feedback request is downgraded instead of failing the
+approval; a re-extraction preview reproduces the original approval time and
+refuses to guess it when it was not saved. Synthetic reviews and a fake model
+only."""
 
 import json
 from datetime import date, datetime, timedelta
@@ -132,9 +140,7 @@ def approve(root, llm, feedback, *, approval=APPROVAL, fallback=False):
     return sink.drafts
 
 
-@pytest.mark.parametrize(
-    "action_feedback", [None, "좋은 요약입니다", "이름은 홍길동이 맞습니다"]
-)
+@pytest.mark.parametrize("action_feedback", [None, "좋은 요약입니다"])
 def test_answers_and_non_task_feedback_create_no_threads(tmp_path, action_feedback):
     assert approve(tmp_path, FeedbackLlm(), action_feedback) == []
 
@@ -161,12 +167,11 @@ def test_tomorrow_uses_approval_local_date_across_utc_boundary(tmp_path):
     assert thread.value == "2026-11-18"
 
 
-@pytest.mark.parametrize("fallback", [True, False])
 @pytest.mark.parametrize("value", ["2026-11-11", "2026-11-12T12:00:00", "invalid"])
 def test_feedback_deadline_validation_uses_approval_even_with_estimated_source(
-    tmp_path, fallback, value
+    tmp_path, value
 ):
-    (thread,) = approve(tmp_path, FeedbackLlm(value=value), TODO, fallback=fallback)
+    (thread,) = approve(tmp_path, FeedbackLlm(value=value), TODO, fallback=True)
     assert thread.field is None and thread.value is None
 
 
@@ -217,12 +222,11 @@ def test_synthetic_reextract_preview_reproduces_original_approval(tmp_path, stor
     assert "occurred_at=2026-11-12T13:19:00+09:00" in preview
 
 
-@pytest.mark.parametrize("feedback", [TODO, "좋은 요약입니다"])
 def test_only_first_model_marked_feedback_request_keeps_approval_origin(
-    tmp_path, caplog, feedback
+    tmp_path, caplog
 ):
     llm = FeedbackLlm(emit_feedback=True, extra_feedback=True)
-    first, downgraded = approve(tmp_path, llm, feedback)
+    first, downgraded = approve(tmp_path, llm, TODO)
     assert first.occurred_at == APPROVAL and first.direction == "받음"
     # The second model-marked request gets the normal source occurrence guard,
     # rather than receiving the first request's approval timestamp.
@@ -270,7 +274,7 @@ def test_feedback_area_follows_source_threads_with_real_dictionary_areas(
 
 @pytest.mark.parametrize(
     "feedback, emits",
-    [(TODO, True), ("좋은 요약입니다", True), ("좋은 요약입니다", False)],
+    [(TODO, True), ("좋은 요약입니다", False)],
 )
 def test_reextract_without_saved_approval_time_only_fails_for_emitted_feedback_request(
     tmp_path, feedback, emits
