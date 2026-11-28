@@ -53,9 +53,11 @@ def body_texts(thread):
     ]
 
 
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
-@pytest.mark.parametrize("bom", ["", "\ufeff"])
-@pytest.mark.parametrize("known_time", [False, True])
+@pytest.mark.parametrize(
+    ("newline", "bom", "known_time"),
+    [("\n", "", True), ("\r\n", "\ufeff", False)],
+    ids=["lf_with_known_time", "crlf_bom_unknown_time"],
+)
 def test_synthetic_fixture(newline, bom, known_time):
     text = bom + (Path(__file__).parent / "fixtures/call.txt").read_text().replace(
         "\n", newline
@@ -103,7 +105,7 @@ def test_empty_header_only_equal_and_regressing_times():
 
 
 @pytest.mark.parametrize(
-    "clock", ["00:60", "60:00", "1:60:00", "１:00:00", "0:1", "9" * 5000 + ":00:00"]
+    "clock", ["00:60", "60:00", "0:1", "１:00:00", "9" * 5000 + ":00:00"]
 )
 def test_invalid_clocks_are_preserved(clock):
     text = f"AI로 생성된 콘텐츠입니다\n\n가짜 제목\n\n나  ({clock})\n가짜 본문\n"

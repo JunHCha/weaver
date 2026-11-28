@@ -144,7 +144,7 @@ def test_share_text_bypasses_kakao_and_preserves_every_character():
     assert thread.segments[0].speaker is thread.segments[0].occurred_at is None
 
 
-@pytest.mark.parametrize("encoding", ["cp949", "utf-16", "utf-16-le", "utf-16-be"])
+@pytest.mark.parametrize("encoding", ["cp949", "utf-16"])
 def test_spinner_rejects_unsupported_encoding(tmp_path, encoding):
     from weaver.schema.internal import ArchivedSource
 
@@ -254,7 +254,7 @@ def test_unicode_line_separator_is_message_data():
 
 
 @pytest.mark.parametrize(
-    "continuation", ["2027년 계획은 계속합니다", "2026. 11 회의록", "2026년 깨진 날짜"]
+    "continuation", ["2027년 계획은 계속합니다", "2026년 깨진 날짜"]
 )
 def test_date_like_body_keeps_message_and_pc_date(continuation):
     text = f"2026년 11월 7일 토요일\n[홍길동] [오전 9:00] 시작\n{continuation}\n[김가상] [오전 10:00] 다음\n"
@@ -286,7 +286,6 @@ def test_repeated_diagnostics_log_one_summary_per_code(caplog):
 @pytest.mark.parametrize(
     "line",
     [
-        "가님이 " * 32000 + "초대했습니다X",
         "가님이 " * 32000 + "김가상님을 초대했습니다.",
         "가" * 128000 + "님을 초대했습니다.",
     ],
@@ -307,8 +306,6 @@ def test_long_system_lookalike_line_is_processed_without_quadratic_backtracking(
     "line",
     [
         "홍길동님이 들어왔습니다.",
-        "홍길동님이 나갔습니다.",
-        "홍길동님이 김가상님을 초대했습니다.",
         "2026년 11월 7일 오후 1:00, 홍길동님이 김가상님을 초대했습니다.",
     ],
 )

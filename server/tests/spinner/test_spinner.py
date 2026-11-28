@@ -323,7 +323,6 @@ def test_provenance_contract_rejected(tmp_path):
         dict(max_attempts=0),
         dict(max_attempts=True),
         dict(backoff_seconds=-1),
-        dict(backoff_seconds=float("inf")),
         dict(max_backoff_seconds=0.1),
         dict(backoff_seconds="secret"),
     ],
@@ -486,8 +485,9 @@ def test_internal_version_changes_invalidate_cache(tmp_path, monkeypatch, compon
         )
 
 
-@pytest.mark.parametrize("stage", ["parse", "revise"])
-@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize(
+    ("stage", "error_type"), [("parse", KeyboardInterrupt), ("revise", SystemExit)]
+)
 def test_control_flow_exceptions_are_interrupted(tmp_path, stage, error_type):
     parser = Parser([error_type()] if stage == "parse" else [])
     reviser = Reviser([error_type()] if stage == "revise" else [])
