@@ -554,7 +554,10 @@ def _claude_result(stdout: bytes) -> object:
             continue  # trailing noise or a cut-off event
         if isinstance(event, dict) and event.get("type") == "result":
             return event if len(line) <= MAX_OUTPUT_BYTES else None
-    return json.loads(stdout) if len(stdout) <= MAX_OUTPUT_BYTES else None
+    whole = json.loads(stdout) if len(stdout) <= MAX_OUTPUT_BYTES else None
+    if isinstance(whole, dict) and whole.get("type", "result") != "result":
+        return None  # a lone intermediate event is not an envelope
+    return whole
 
 
 def _usage(raw: object) -> dict[str, int] | None:
