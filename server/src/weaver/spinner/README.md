@@ -17,7 +17,7 @@ and SHA-256, and decodes UTF-8 without newline conversion.
   Revision wire format 2 (`spinner.revise.v2`) allows `start` with a null `end`
   like Segment; `revision_to_thread` restores original separators instead of
   joining with `\n` and rejects changed structural Segments.
-- `fleece` and unused channels fail explicitly. STT is deferred by ADR-028.
+- `fleece` and unused channels fail explicitly. Audio capture is not supported.
   Calls at or below the threshold stay parsed: Loom corrects their segments in
   the same call as the summary and stores the result with `Spinner.save_revised`.
   `TextSpinner` likewise refuses call scripts rather than treating them as prose.

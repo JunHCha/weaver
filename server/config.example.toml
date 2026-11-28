@@ -71,12 +71,6 @@ api_key_env = "ANTHROPIC_API_KEY"
 # existing root/ancestor identities also detect case and macOS firmlink aliases.
 # Courier child directories must stay at their fixed locations within sync.
 
-# Optional: defaults to state_root/models/whisper-large-v3-turbo.
-# Preparation requires --extra stt and is explicit:
-# python -m weaver.spinner.prepare_model --config <file>
-# [stt]
-# model_path = "models/whisper-large-v3-turbo"
-
 [time]
 # Shared IANA timezone for local source timestamps (Kakao, etc.).
 # Change this for conversations exported in another timezone.

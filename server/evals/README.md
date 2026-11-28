@@ -2,7 +2,7 @@
 
 An offline regression check for the event summary prompts. It replays recorded
 provider responses through the production draft and approval stages, so it needs
-no LLM, speech model or user vault, and it is separate from the pytest unit
+no LLM or user vault, and it is separate from the pytest unit
 tests.
 
 ```sh

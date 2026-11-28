@@ -1,4 +1,4 @@
-"""Speech transcription and revision (without importing speech runtimes)."""
+"""Text-script parsing and revision."""
 
 from weaver.spinner.pipeline import (
     Spinner,
@@ -6,32 +6,10 @@ from weaver.spinner.pipeline import (
     SpinnerTransientError,
     TextParser,
 )
-from weaver.spinner.stt import (
-    AudioDecodeError,
-    InvalidEngineOutputError,
-    MissingAudioError,
-    MlxStt,
-    ModelNotFoundError,
-    Segment,
-    Stt,
-    SttEngineError,
-    SttError,
-    Transcript,
-)
 
 __all__ = [
-    "AudioDecodeError",
-    "InvalidEngineOutputError",
-    "MissingAudioError",
-    "ModelNotFoundError",
-    "MlxStt",
-    "Segment",
     "Spinner",
     "SpinnerError",
     "SpinnerTransientError",
     "TextParser",
-    "Stt",
-    "SttEngineError",
-    "SttError",
-    "Transcript",
 ]

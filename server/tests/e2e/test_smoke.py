@@ -2,7 +2,7 @@
 
 Only the LlmClient is replaced. Phone capture producers write synthetic Courier
 files; all stores, parsers, drafting and review journals are real.
-ADR-028 defers audio: Galaxy call scripts are text and never invoke local STT.
+ADR-028 defers audio: Galaxy call scripts are text.
 """
 
 import hashlib
@@ -17,7 +17,6 @@ from jsonschema import Draft202012Validator, FormatChecker
 from weaver.config import load_config
 from weaver.runtime.assemble import Plugins, build_runtime
 from weaver.schema import Manifest, Receipt, ReviewPackage
-from weaver.spinner.stt import MlxStt
 
 ROOT = Path(__file__).resolve().parents[3]
 AT = "2026-11-07T15:32:00+09:00"
@@ -155,12 +154,6 @@ class World:
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    def forbid_stt(*args, **kwargs):
-        pytest.fail("ADR-028: runtime must not construct or call STT")
-
-    monkeypatch.setattr(MlxStt, "__init__", forbid_stt)
-    monkeypatch.setattr(MlxStt, "transcribe", forbid_stt)
-
     config_file = tmp_path / "config.toml"
     config_file.write_text(
         "\n".join(

@@ -1,4 +1,4 @@
-"""Whole Galaxy call-script revision over Script, independent of STT.
+"""Whole Galaxy call-script revision over Script.
 
 Only speech Segments (speaker present, nonblank text) reach the LLM, which edits
 text only. Structural Segments (headers, notice, title, blank or unknown lines)

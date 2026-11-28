@@ -21,7 +21,7 @@ class SourceLocator(Protocol):
 
 
 def text_to_thread(source: Source, text: str, *, timezone: ZoneInfo) -> Script:
-    """No LLM or STT. Share text bypasses all Kakao recognition."""
+    """No LLM. Share text bypasses all Kakao recognition."""
     if source.kind != "text":
         raise ValueError("expected text Source")
     if not text.strip("\ufeff \t\r\n"):
