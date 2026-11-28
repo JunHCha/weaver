@@ -245,6 +245,7 @@ def build_runtime(
         ledger=ledger,
         gate=gate,
         interval=interval,
+        llm_backend=config.llm.backend,
         policy_held=backlog.pending,
         publisher=ObservationPublisher(
             fabric,

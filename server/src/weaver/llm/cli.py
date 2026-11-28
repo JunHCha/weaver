@@ -274,7 +274,12 @@ def _classify(text: str, status: object) -> LlmError:
         lowered,
     ):
         return AuthenticationError()
-    if re.search(r"usage limit|limit reached|quota", lowered):
+    if re.search(
+        r"usage limit|limit reached|quota|hit your[^\n]{0,80}\blimit\b|"
+        r"\b(?:weekly|\d+[- ]hour) limit\b|\btry again at\b|"
+        r"\bresets\s+(?:at\b|in\b|\d|tomorrow\b)",
+        lowered,
+    ):
         return UsageLimited()
     if status == 429 or re.search(r"rate limit|too many requests", lowered):
         return RateLimited()

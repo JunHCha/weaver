@@ -7,6 +7,7 @@ import signal
 import stat
 import threading
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 
 import pytest
 
@@ -291,7 +292,10 @@ def test_failures_are_classified_and_backed_off(tmp_path, caplog):
         "llm stage skipped: api_key_missing" in r.getMessage() for r in caplog.records
     )
     status = json.loads((tmp_path / "runtime-status.json").read_text())
-    assert status["llm"] == {"available": False, "reason": "api_key_missing"}
+    assert {k: status["llm"][k] for k in ("available", "reason")} == {
+        "available": False,
+        "reason": "api_key_missing",
+    }
     assert status["failed"] == [{"source_id": "src_bad", "error_class": "ValueError"}]
 
 
@@ -418,7 +422,10 @@ def test_insufficient_credit_waits_hourly_and_reports_reason(tmp_path):
     runtime._tick(stop)
     assert counts(tmp_path) == {"waiting_llm": 1}
     status = json.loads((tmp_path / "runtime-status.json").read_text())
-    assert status["llm"] == {"available": False, "reason": "insufficient_credit"}
+    assert {k: status["llm"][k] for k in ("available", "reason")} == {
+        "available": False,
+        "reason": "insufficient_credit",
+    }
     # No retry storm: neither the usual minute nor 59 minutes re-calls the LLM.
     for step in (5, LLM_RECHECK_SECONDS, CREDIT_RECHECK_SECONDS - 200):
         clock.now += step
@@ -476,7 +483,10 @@ def test_usage_limited_waits_hourly_without_retry_storm(tmp_path):
     # Never failed or retry: waiting with the reason visible in status.
     assert counts(tmp_path) == {"waiting_llm": 1}
     status = json.loads((tmp_path / "runtime-status.json").read_text())
-    assert status["llm"] == {"available": False, "reason": "usage_limited"}
+    assert {k: status["llm"][k] for k in ("available", "reason")} == {
+        "available": False,
+        "reason": "usage_limited",
+    }
     for step in (5, LLM_RECHECK_SECONDS, CREDIT_RECHECK_SECONDS - 200):
         clock.now += step
         runtime._tick(stop)
@@ -503,6 +513,149 @@ def test_usage_limited_never_becomes_failed(tmp_path):
         runtime._tick(stop)
         clock.now += CREDIT_RECHECK_SECONDS
     assert counts(tmp_path) == {"waiting_llm": 1}
+
+
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+@pytest.mark.parametrize("error", [RateLimited(), UsageLimited()])
+def test_subscription_limits_preserve_attempts_and_recover_after_backoff(
+    tmp_path, backend, error
+):
+    from weaver.runtime.loop import CREDIT_RECHECK_SECONDS, MAX_RETRY_ATTEMPTS
+
+    probes = []
+    llm = LlmGate(lambda: probes.append(1) or LlmStatus(True, "configured"))
+    processor = FakeProcessor({"src_a": error})
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=processor,
+        gate=llm,
+        llm_backend=backend,
+    )
+    # Preserve pre-existing failures too: a limit must not spend the last retry.
+    runtime.ledger.record("src_a", "retry", attempts=19, contract_failures=1)
+    for index in range(MAX_RETRY_ATTEMPTS + 2):
+        delay = (
+            min(300 * 2 ** min(index, 4), 3600)
+            if isinstance(error, RateLimited)
+            else CREDIT_RECHECK_SECONDS
+        )
+        runtime._tick(stop)
+        progress = runtime.ledger.progress()["src_a"]
+        assert progress.status == "waiting_llm"
+        assert progress.attempts == 19
+        assert progress.contract_failures == 1
+        assert len(probes) == index + 1
+        assert len(processor.seen) == index + 1
+        status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+        assert status["last_limit_reason"] == error.code
+        assert datetime.fromisoformat(status["last_limit_at"]).timestamp() == clock.now
+        assert datetime.fromisoformat(status["next_recheck_at"]).timestamp() == (
+            clock.now + delay
+        )
+        clock.now += delay - 1
+        runtime._tick(stop)
+        assert len(processor.seen) == index + 1
+        assert len(probes) == index + 1
+        clock.now += 1
+    processor.outcomes["src_a"] = "done"
+    runtime._tick(stop)
+    assert counts(tmp_path) == {"done": 1}
+    assert "src_a" in runtime.ledger.final_ids()
+    status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+    assert status["available"] is True
+    assert status["last_limit_reason"] == error.code
+    assert status["next_recheck_at"] is None
+    # A new limit after successful work starts at five minutes again.
+    runtime.feed.items.append(FakeSource("src_b"))
+    processor.outcomes["src_b"] = RateLimited()
+    runtime._tick(stop)
+    status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+    assert datetime.fromisoformat(status["next_recheck_at"]).timestamp() == (
+        clock.now + 300
+    )
+    assert runtime.ledger.progress()["src_b"].attempts == 0
+
+
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+def test_subscription_rate_limit_holds_wiki_and_preserves_other_source(
+    tmp_path, backend
+):
+    from weaver.runtime.gate import LlmUnavailable
+
+    wiki_calls = []
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a"), FakeSource("src_b")]),
+        processor=FakeProcessor({"src_a": RateLimited(), "src_b": LlmUnavailable()}),
+        llm_backend=backend,
+        maintenance=[MaintenanceTask("wiki", 0, lambda: wiki_calls.append(1))],
+    )
+    runtime._tick(stop)
+    assert wiki_calls == []
+    assert runtime.ledger.progress()["src_b"].attempts == 0
+    assert runtime.gate.status.reason == RateLimited.code
+    clock.now += 299
+    runtime._tick(stop)
+    assert wiki_calls == []
+
+
+def test_api_rate_limit_retains_source_retry_and_exposes_schedule(tmp_path):
+    runtime, stop, _, clock = make(
+        tmp_path,
+        sources=FakeSources([FakeSource("src_a")]),
+        processor=FakeProcessor({"src_a": RateLimited()}),
+        llm_backend="anthropic",
+    )
+    runtime._tick(stop)
+    progress = runtime.ledger.progress()["src_a"]
+    assert progress.status == "retry"
+    assert progress.attempts == 1
+    assert progress.next_attempt_at == clock.now + 10
+    assert runtime.gate.available
+    status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+    assert status["last_limit_reason"] == RateLimited.code
+    assert datetime.fromisoformat(status["next_recheck_at"]).timestamp() == (
+        progress.next_attempt_at
+    )
+
+
+@pytest.mark.parametrize("backend", ["claude_cli", "codex_cli"])
+def test_subscription_wiki_rate_limit_uses_shared_backoff(tmp_path, backend):
+    calls = []
+
+    def limited():
+        calls.append(1)
+        raise RateLimited()
+
+    runtime, stop, _, clock = make(
+        tmp_path,
+        llm_backend=backend,
+        maintenance=[MaintenanceTask("wiki", 0, limited)],
+    )
+    runtime._tick(stop)
+    clock.now += 299
+    runtime._tick(stop)
+    assert len(calls) == 1
+    clock.now += 1
+    runtime._tick(stop)
+    assert len(calls) == 2
+    status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+    assert status["last_limit_reason"] == RateLimited.code
+    assert datetime.fromisoformat(status["next_recheck_at"]).timestamp() == (
+        clock.now + 600
+    )
+    # Wiki success also resets the shared Source/Wiki backoff.
+    runtime.maintenance = [MaintenanceTask("wiki", 0, lambda: None)]
+    clock.now += 600
+    runtime._tick(stop)
+    runtime.maintenance = [MaintenanceTask("wiki", 0, limited)]
+    clock.now += 1
+    runtime._tick(stop)
+    status = json.loads((tmp_path / "runtime-status.json").read_text())["llm"]
+    assert datetime.fromisoformat(status["next_recheck_at"]).timestamp() == (
+        clock.now + 300
+    )
 
 
 @pytest.mark.parametrize("error, delay", [(RateLimited(), 300), (UsageLimited(), 3600)])

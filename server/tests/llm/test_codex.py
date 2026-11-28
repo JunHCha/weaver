@@ -137,6 +137,26 @@ def test_argv_stdin_schema_usage_cleanup_and_log(setup, caplog):
     assert "SECRET" not in caplog.text + str(record)
 
 
+@pytest.mark.parametrize("stderr", [False, True])
+def test_subscription_limit_messages(setup, cli_usage_message, stderr):
+    result = (
+        RunResult(1, b"", cli_usage_message.encode())
+        if stderr
+        else RunResult(
+            1,
+            json.dumps(
+                {"type": "turn.failed", "error": {"message": cli_usage_message}}
+            ).encode(),
+            b"",
+        )
+    )
+    client = client_for(setup, FakeRunner(result, output=None))
+    with pytest.raises(UsageLimited):
+        client.generate_text("wiki.digest", "s", "u")
+    assert setup[1].records()[-1]["status"] == UsageLimited.code
+    assert cli_usage_message not in json.dumps(setup[1].records())
+
+
 @pytest.mark.parametrize(
     "result,output,error",
     [
