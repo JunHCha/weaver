@@ -57,6 +57,9 @@ api_key_env = "ANTHROPIC_API_KEY"
 # install-agent --llm codex_cli persists the override in the generated plist.
 # To validate without changing files:
 # uv run --project server python -m weaver.app run --config <file> --check-config
+# Add --check-llm to also report whether the LLM backend is usable (key present,
+# CLI logged in) without calling it, and --json for one JSON object on stdout
+# ({"ok": false, "field": ..., "reason": ...} on exit 78), e.g. for setup tools.
 # Selection: --config > WEAVER_CONFIG > $XDG_CONFIG_HOME/weaver/config.toml
 #            > ~/.config/weaver/config.toml (if XDG_CONFIG_HOME is unset/empty).
 # One file only; no merging, per-field env overrides, or $VAR expansion.
