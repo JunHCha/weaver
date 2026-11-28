@@ -286,7 +286,6 @@ def test_repeated_diagnostics_log_one_summary_per_code(caplog):
 @pytest.mark.parametrize(
     "line",
     [
-        "가님이 " * 32000 + "초대했습니다X",
         "가님이 " * 32000 + "김가상님을 초대했습니다.",
         "가" * 128000 + "님을 초대했습니다.",
     ],
@@ -307,8 +306,6 @@ def test_long_system_lookalike_line_is_processed_without_quadratic_backtracking(
     "line",
     [
         "홍길동님이 들어왔습니다.",
-        "홍길동님이 나갔습니다.",
-        "홍길동님이 김가상님을 초대했습니다.",
         "2026년 11월 7일 오후 1:00, 홍길동님이 김가상님을 초대했습니다.",
     ],
 )

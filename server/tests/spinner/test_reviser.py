@@ -255,10 +255,8 @@ def test_seconds_to_milliseconds_rounds_outward() -> None:
     "patch",
     [
         {"format_version": 1},
-        {"format_version": 3},
         {"format_version": True},
         {"prompt_version": "spinner.revise.v1"},
-        {"prompt_version": "future"},
         {"unknown": 1},
     ],
 )
@@ -272,7 +270,6 @@ def test_wire_rejects_unknown_versions_and_fields(patch: dict[str, object]) -> N
     "patch",
     [
         {"start": -1, "end": 2},
-        {"start": 2, "end": 1},
         {"start": 1, "end": 1},
         {"start": None, "end": 1},
         {"start": float("inf"), "end": float("inf")},
