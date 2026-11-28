@@ -12,15 +12,13 @@ uv run --project server ruff format --check server
 uv run --project server mypy server/src
 ```
 
-Optional local STT (macOS arm64): `uv sync --project server --locked --extra stt`.
-
 Use Typer for the server CLI.
 
 Commit `server/uv.lock`. Runtime dependencies belong in `project.dependencies`,
 pytest in the `test` group, and lint/type tools in `dev` (which includes `test`).
 Use Ruff E4/E7/E9/F/I/B/UP and its formatter, and mypy strict targeting Python 3.12.
 Mypy configuration lives at the root so the command above loads it automatically.
-Tests must not access real LLMs, speech models, or user vaults.
+Tests must not access real LLMs or user vaults.
 Local setup rationale is in `docs/guides/server-development.md`; domain decisions
 are in `docs/domain/decisions/` (these shared local folders are not committed).
 
@@ -68,7 +66,7 @@ on Ubuntu and macOS arm64 with Python 3.12, the pinned uv and `server/uv.lock`
 a web job on Ubuntu with Node 22 (locked pnpm install, token freshness,
 lint, types, tests and static export),
 and Android `./gradlew --no-daemon lint testDebugUnitTest assembleDebug`.
-The macOS job checks compatibility, not M1 STT performance. `CI result` always
+The macOS job checks compatibility, not performance. `CI result` always
 runs and fails if any verification job is skipped, failed or cancelled; do not
 require it on PRs, where no CI run is expected.
 Pin new actions to a full commit SHA with the tag in a comment; CI uses no secrets.

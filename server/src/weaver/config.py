@@ -131,13 +131,6 @@ class TimeConfig:
 
 
 @dataclass(frozen=True)
-class SttConfig:
-    """Local prepared model; loading config never downloads or loads weights."""
-
-    model_path: Path
-
-
-@dataclass(frozen=True)
 class SpinnerSettings:
     """Bounded retries for explicitly transient parser/reviser failures."""
 
@@ -375,7 +368,6 @@ class ComponentConfig:
     """Pipeline settings; Loom must use ServerConfig.time for local timestamps."""
 
     llm: LlmConfig
-    stt: SttConfig | None = None
     retry: SpinnerSettings = SpinnerSettings()
 
 
@@ -469,7 +461,6 @@ class ServerConfig:
     log_root: Path
     courier: CourierPaths
     llm: LlmConfig
-    stt: SttConfig
     time: TimeConfig = TimeConfig()
     spinner_settings: SpinnerSettings = SpinnerSettings()
     wiki: WikiSettings = dataclass_field(default_factory=WikiSettings)
@@ -481,7 +472,7 @@ class ServerConfig:
 
     @property
     def spinner(self) -> ComponentConfig:
-        return ComponentConfig(self.llm, self.stt, retry=self.spinner_settings)
+        return ComponentConfig(self.llm, retry=self.spinner_settings)
 
 
 def _path(value: str, base: Path, env: Mapping[str, str], field: str) -> Path:
@@ -677,7 +668,6 @@ def load_config(
     if raw.keys() - {
         *_ROOTS,
         "llm",
-        "stt",
         "time",
         "spinner",
         "courier",
@@ -826,16 +816,7 @@ def load_config(
         raise ConfigError("shepherds.courier: port conflicts with default web listener")
     llm = _llm_settings(raw.get("llm", {}), config_file.parent, env)
     privacy = _privacy_settings(raw.get("privacy", {}))
-    stt_raw = raw.get("stt", {})
-    if not isinstance(stt_raw, dict) or stt_raw.keys() - {"model_path"}:
-        raise ConfigError("stt: expected a table containing only model_path")
-    model_path = stt_raw.get(
-        "model_path", str(roots["state_root"] / "models" / "whisper-large-v3-turbo")
-    )
-    if not isinstance(model_path, str):
-        raise ConfigError("stt.model_path: expected path string")
-    stt = SttConfig(_path(model_path, config_file.parent, env, "stt.model_path"))
-    boundaries = {**roots, "stt.model_path": stt.model_path}
+    boundaries = dict(roots)
     _check_boundaries(boundaries)
     if wiki.vault_root is not None:
         for field in ("sync_root", "archive_root", "state_root", "log_root"):
@@ -889,7 +870,6 @@ def load_config(
         log_root=roots["log_root"],
         courier=CourierPaths(**channels),
         llm=llm,
-        stt=stt,
         time=time_config,
         spinner_settings=spinner_settings,
         courier_settings=courier_settings,

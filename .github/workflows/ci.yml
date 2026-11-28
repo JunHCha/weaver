@@ -5,13 +5,13 @@
 # - android: lint, local unit tests (including the schema/ contract tests) and the
 #   debug APK. No release build, so no signing key is needed.
 # - server-macos: the same server checks on a macOS arm64 runner. This is an OS/arch
-#   compatibility check only; it is NOT evidence of M1 Pro STT performance.
+#   compatibility check only; it is NOT evidence of M1 Pro performance.
 # - All jobs run on workflow_dispatch and release tag pushes (v*) when preparing
 #   release notes. PRs rely on the worker passing the local checks.
 # - ci-result: always runs and fails if any verification job is skipped, failed
 #   or cancelled.
 #
-# No secrets are used: no LLM/STT APIs, no Syncthing paths, no private docs and no
+# No secrets are used: no LLM APIs, no Syncthing paths, no private docs and no
 # signing keys. Every action is pinned to a reviewed commit SHA (tag in the comment).
 
 name: CI
@@ -95,7 +95,7 @@ jobs:
           if-no-files-found: ignore
 
   server-macos:
-    # Compatibility only (macOS arm64 runner). Not an M1 Pro STT performance check.
+    # Compatibility only (macOS arm64 runner). Not an M1 Pro performance check.
     name: Server (macOS arm64, Python 3.12)
     runs-on: macos-15
     timeout-minutes: 20

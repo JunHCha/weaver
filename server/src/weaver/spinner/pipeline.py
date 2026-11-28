@@ -293,7 +293,7 @@ class Spinner:
 
     def _parse(self, source: Source) -> Script:
         if source.kind != "text":
-            raise SpinnerError("unsupported_kind: fleece STT is deferred")
+            raise SpinnerError("unsupported_kind: audio capture is not supported")
         if source.channel not in {"kakao", "share_text", "call", "webex"}:
             raise SpinnerError("unsupported_text_channel")
         if source.channel == "call" and source.channel not in self._parsers:

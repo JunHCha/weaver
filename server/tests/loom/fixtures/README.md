@@ -57,7 +57,7 @@ one count summary per diagnostic code. `TextSpinner.from_config(store, settings)
 reads through ArchiveStore.locate and verifies the original byte SHA-256 against
 Source.sha256, raising `payload_mismatch` on corruption before decoding. The general Spinner (#4) can delegate its text
 branch to this adapter. `share_text` bypasses Kakao parsing, retaining the original
-as one segment. No schema v1 changes, LLM, STT or CLI were needed.
+as one segment. No schema v1 changes, LLM or CLI were needed.
 
 ## Galaxy call scripts (#56)
 

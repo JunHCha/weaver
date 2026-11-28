@@ -94,7 +94,7 @@ flowchart TB
 ```
 
 Call input is manually shared Galaxy recording transcript text (ADR-028).
-Spinner does not invoke STT. LLM revision, drafting and extraction use external
+Spinner does not transcribe audio. LLM revision, drafting and extraction use external
 APIs through the shared `LlmClient` boundary. Approving a summary records facts.
 It does not authorize execution of requests found in the source material.
 
@@ -111,7 +111,7 @@ It does not authorize execution of requests found in the source material.
 | Digest | Generated day, week and month summaries with links back to their sources. |
 | Query pages | Deterministic views such as open requests, upcoming deadlines and contacts by person. |
 | Context dictionary | Names, aliases, known misrecognitions and kinds (person, organization, project, topic) used as drafting hints; it starts empty and learns the corrections you choose. |
-| Fleece | Raw audio. Not collected in the current flow (ADR-028); the term is kept for the optional, unwired STT adapter. |
+| Fleece | Raw audio. Not collected in the current flow (ADR-028); there is no speech-to-text. |
 
 See the [JSON contracts](schema/README.md) for the wire formats and review rules.
 
@@ -157,8 +157,7 @@ Merged implementation:
 The code is merged, but the full flow connecting a real Galaxy Fold,
 Syncthing, and a real LLM has **not been validated**. Validation so far is limited
 to automated tests using fake LLMs and temporary paths. Call input uses manually
-shared Galaxy transcript text; the optional local STT adapter remains in the
-code but is not connected to Spinner. Syncthing setup research
+shared Galaxy transcript text; there is no speech-to-text. Syncthing setup research
 ([#19](https://github.com/JunHCha/weaver/issues/19)) remains open; audio-file
 cleanup ([#32](https://github.com/JunHCha/weaver/issues/32)) is deferred.
 
@@ -172,10 +171,6 @@ cleanup ([#32](https://github.com/JunHCha/weaver/issues/32)) is deferred.
 | [.github/workflows/](.github/workflows/) | Manual and release verification. |
 
 - **Server:** Python 3.12+, uv, Typer, SQLite, Ruff, and strict mypy.
-- **Speech (optional):** the local MLX Whisper `large-v3-turbo` adapter remains
-  available through the `stt` installation extra on Apple Silicon, but is not
-  wired into Spinner. It requires model preparation and `ffmpeg`, and does not
-  identify speakers.
 - **LLM:** A shared `LlmClient` boundary with an Anthropic Claude adapter today;
   [more backends are planned (#46)](https://github.com/JunHCha/weaver/issues/46).
 - **Android:** Kotlin, Jetpack Compose, kotlinx.serialization; minSdk 26,
@@ -212,7 +207,7 @@ export commands and [AGENTS.md](AGENTS.md) for development conventions.
 
 ## Tests and CI
 
-Tests must not access real LLMs, speech models, or user vaults. PR validation
+Tests must not access real LLMs or user vaults. PR validation
 relies on passing local checks before opening the PR.
 
 The [CI workflow](.github/workflows/ci.yml) runs full verification only through
@@ -220,7 +215,7 @@ manual `workflow_dispatch` or release tag pushes matching `v*`. Pull requests,
 branch pushes, and schedules do not trigger CI. It checks the server on Ubuntu
 and macOS arm64, the offline summary evaluation replay, schema export freshness, and
 Android lint, unit tests, and the debug build. The macOS job verifies
-compatibility, not STT performance.
+compatibility, not performance.
 
 ## Privacy principles
 
