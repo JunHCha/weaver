@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import threading
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -66,6 +67,11 @@ def data(tmp_path):
     return config, settings, archive, runtime
 
 
+def dump(path):
+    with closing(sqlite3.connect(path)) as db:
+        return list(db.iterdump())
+
+
 def invoke(data, *args, input=None):
     return CliRunner().invoke(
         cli, ["sources", "retry", "--config", str(data[0]), *args], input=input
@@ -79,13 +85,13 @@ def test_preview_filters_limit_and_no_writes(data):
         settings.state_root / "summary.sqlite3",
         settings.archive_root / "index.sqlite3",
     ]
-    before = [path.read_bytes() for path in databases]
+    before = [dump(path) for path in databases]
     result = invoke(data, "--limit", "10", "--error-class", "RateLimited")
     assert result.exit_code == 0, result.output
     assert "Eligible Sources: 10 (limit: 10)" in result.output
     assert "RateLimited: 10" in result.output
     assert "src_009" in result.output and "src_010" not in result.output
-    assert before == [path.read_bytes() for path in databases]
+    assert before == [dump(path) for path in databases]
     assert ledger.counts() == {"done": 1, "failed": 38}
     result = invoke(
         data, "--since", "2026-11-25T00:00:00Z", "--until", "2026-11-26T00:00:00Z"

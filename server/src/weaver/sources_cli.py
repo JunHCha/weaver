@@ -1,13 +1,13 @@
 """Source maintenance commands; preview is always the default."""
 
-import sqlite3
 from collections import Counter
 from datetime import datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from weaver.runtime.source_retry import RetryTarget, reset_targets, select_targets
+if TYPE_CHECKING:
+    from weaver.runtime.source_retry import RetryTarget
 
 sources_cli = typer.Typer(add_completion=False, help="Inspect and recover Sources.")
 
@@ -24,7 +24,7 @@ def _date(value: str | None) -> datetime | None:
         raise typer.BadParameter("dates require ISO 8601 with a timezone") from None
 
 
-def _preview(targets: list[RetryTarget], limit: int | None) -> None:
+def _preview(targets: "list[RetryTarget]", limit: int | None) -> None:
     typer.echo(f"Eligible Sources: {len(targets)} (limit: {limit or 'none'})")
     for reason, count in sorted(
         Counter(target.error_class or "(none)" for target in targets).items()
@@ -62,13 +62,16 @@ def retry(
     Stop the server before applying. Completed Sources and any Source with a
     review package are excluded. LLM daily limits remain in force after restart.
     """
+    import sqlite3
+
     from weaver.app import _load
     from weaver.runtime import EXIT_ALREADY_RUNNING, AlreadyRunning, InstanceLock
+    from weaver.runtime.source_retry import reset_targets, select_targets
 
     settings = _load(config)
     start, end = _date(since), _date(until)
 
-    def select() -> list[RetryTarget]:
+    def select() -> "list[RetryTarget]":
         unreadable: list[str] = []
         targets = select_targets(
             settings.state_root,
