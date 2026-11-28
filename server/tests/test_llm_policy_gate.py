@@ -370,7 +370,7 @@ def fabric_policy(tmp_path, request):
     from weaver.fabric import FabricStore
     from weaver.llm.policy_archive import configured_policy
 
-    from .fabric.test_store import draft
+    from .spec.test_facts_and_history import draft
 
     config, source_id, _ = make_vault(tmp_path, webex=True)
     other = archive_webex(config, 2, "SPACE_OPEN")
@@ -411,7 +411,7 @@ def test_shared_call_passes_with_fabric_draft_payloads(fabric_policy):
 
 
 def test_shared_fabric_sources_still_enforce_exclusions(fabric_policy):
-    from .fabric.test_store import draft
+    from .spec.test_facts_and_history import draft
 
     config, fabric, source_id, _, policy = fabric_policy
     excluded = archive_webex(config, 3, "SPACE_PRIVATE")
@@ -466,7 +466,7 @@ def test_dictionary_sources_are_checked_even_with_existing_approved_context(
     from weaver.fabric import FabricStore
     from weaver.llm.policy_archive import configured_policy
 
-    from .fabric.test_store import draft
+    from .spec.test_facts_and_history import draft
 
     config = load_config(write_config(tmp_path), environ={})
     open_id = archive_webex(config, 0, "OPEN")

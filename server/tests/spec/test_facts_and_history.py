@@ -1,4 +1,10 @@
-"""Acceptance tests for the v2 append-only thread log."""
+"""사실은 한 번 기록하면 바뀌지 않고, 이력으로만 고쳐진다.
+
+Thread는 순번대로 한 번만 추가되며 같은 ID의 같은 내용은 재전달이어도 같은 행이고
+다른 내용은 충돌이다. 묶음 안에 잘못된 참조가 하나라도 있으면 아무것도 남지 않는다.
+정정·철회·해결·갱신은 새 Thread로 쓰고, 최신값과 미결 요청은 사실이 일어난 순서로
+계산한다. 지연 도착한 사실도 순번으로 찾을 수 있고, 구버전 DB는 열리지 않는다.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -30,7 +36,7 @@ def draft(key: str, **changes: object) -> ThreadDraft:
     return ThreadDraft.model_validate(data)
 
 
-def test_sequence_idempotency_conflict_and_atomic_batch(tmp_path):
+def test_redelivery_is_idempotent_and_a_conflicting_batch_leaves_nothing(tmp_path):
     store = FabricStore(tmp_path / "fabric.sqlite3")
     a = draft("a")
     assert store.append([a])[0].seq == 1
@@ -39,6 +45,13 @@ def test_sequence_idempotency_conflict_and_atomic_batch(tmp_path):
         store.append([draft("b"), draft("a", content="다름")])
     assert [t.thread_id for t in store.entries(ThreadQuery())] == ["a"]
     assert store.append([draft("b")])[0].seq == 2
+
+
+def test_one_batch_cannot_carry_two_contents_for_the_same_id(tmp_path):
+    store = FabricStore(tmp_path / "fabric.sqlite3")
+    with pytest.raises(ThreadConflict):
+        store.append([draft("a"), draft("a", content="다름")])
+    assert store.entries(ThreadQuery()) == []
 
 
 def test_concurrent_appends_assign_unique_monotonic_sequences(tmp_path):
@@ -53,7 +66,7 @@ def test_concurrent_appends_assign_unique_monotonic_sequences(tmp_path):
     assert sorted(seqs) == list(range(1, 31))
 
 
-def test_late_arrival_is_sorted_by_occurrence_but_found_by_sequence(tmp_path):
+def test_late_arrival_is_ordered_by_occurrence_but_found_by_sequence(tmp_path):
     store = FabricStore(tmp_path / "fabric.sqlite3")
     now = datetime(2025, 1, 2, tzinfo=UTC)
     store.append([draft("new", occurred_at=now)])
@@ -62,7 +75,7 @@ def test_late_arrival_is_sorted_by_occurrence_but_found_by_sequence(tmp_path):
     assert [t.thread_id for t in store.entries(ThreadQuery(after_seq=1))] == ["old"]
 
 
-def test_invalid_references_rollback_and_valid_batch(tmp_path):
+def test_invalid_references_roll_back_the_whole_batch(tmp_path):
     from weaver.fabric import InvalidReference
 
     store = FabricStore(tmp_path / "db")
@@ -91,29 +104,6 @@ def test_invalid_references_rollback_and_valid_batch(tmp_path):
         store.append([draft("rr", retracts="r")])
 
 
-def test_effective_tags_and_retracted_correction(tmp_path):
-    store = FabricStore(tmp_path / "db")
-    store.append(
-        [
-            draft("a", tags=["A"]),
-            draft(
-                "b",
-                kind="태그정정",
-                correction={"target": "a", "remove": ["A"], "add": ["B"]},
-            ),
-            draft(
-                "c",
-                kind="태그정정",
-                correction={"target": "a", "remove": ["B"], "add": ["C"]},
-            ),
-        ]
-    )
-    assert [t.thread_id for t in store.entries(ThreadQuery(tag="C"))] == ["a"]
-    store.append([draft("r", retracts="c")])
-    assert [t.thread_id for t in store.entries(ThreadQuery(tag="B"))] == ["a"]
-    assert store.entries(ThreadQuery(tag="C")) == []
-
-
 def test_state_fields_assignees_and_open_requests(tmp_path):
     store = FabricStore(tmp_path / "db")
     store.append(
@@ -136,16 +126,7 @@ def test_state_fields_assignees_and_open_requests(tmp_path):
     assert [t.thread_id for t in store.state("홍길동").open_requests] == ["q1", "q2"]
 
 
-def test_contact_statistics_and_old_version(tmp_path):
-    import sqlite3
-
-    from weaver.fabric import SchemaVersionError
-
-    path = tmp_path / "old"
-    with sqlite3.connect(path) as db:
-        db.execute("PRAGMA user_version=1")
-    with pytest.raises(SchemaVersionError):
-        FabricStore(path)
+def test_contact_statistics_count_and_latest_occurrence(tmp_path):
     store = FabricStore(tmp_path / "new")
     store.append([draft("a"), draft("b", occurred_at=datetime(2025, 1, 3, tzinfo=UTC))])
     assert (
@@ -155,7 +136,7 @@ def test_contact_statistics_and_old_version(tmp_path):
     assert store.contact_statistics("홍길동").latest == datetime(2025, 1, 3, tzinfo=UTC)
 
 
-def test_sqlite_rows_are_append_only(tmp_path):
+def test_stored_rows_cannot_be_updated_or_deleted(tmp_path):
     import sqlite3
 
     path = tmp_path / "db"
@@ -196,7 +177,7 @@ def test_fields_follow_occurrence_order_and_ignore_retractions(tmp_path, field):
     assert store.state("홍길동").fields[field].value == earlier
 
 
-def test_query_filters_use_effective_tags_and_time_bounds(tmp_path):
+def test_tag_corrections_decide_effective_tags_until_retracted(tmp_path):
     store = FabricStore(tmp_path / "db")
     store.append(
         [
@@ -220,6 +201,19 @@ def test_query_filters_use_effective_tags_and_time_bounds(tmp_path):
         )
     ] == ["a"]
     assert store.entries(ThreadQuery(kind="기록", tag="A")) == []
+    store.append(
+        [
+            draft(
+                "c",
+                kind="태그정정",
+                correction={"target": "a", "remove": ["B"], "add": ["C"]},
+            )
+        ]
+    )
+    assert [t.thread_id for t in store.entries(ThreadQuery(tag="C"))] == ["a"]
+    store.append([draft("r", retracts="c")])
+    assert [t.thread_id for t in store.entries(ThreadQuery(tag="B"))] == ["a"]
+    assert store.entries(ThreadQuery(tag="C")) == []
 
 
 def test_config_selects_the_state_database(tmp_path):
@@ -247,7 +241,7 @@ def test_schedule_block_reference_must_name_request(tmp_path):
     )
 
 
-def test_old_version_database_is_rejected(tmp_path):
+def test_old_or_unversioned_database_is_rejected(tmp_path):
     import sqlite3
 
     from weaver.fabric import SchemaVersionError
