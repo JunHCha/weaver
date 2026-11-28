@@ -12,7 +12,7 @@ pnpm --dir "$repo/web" build
 
 uv sync --project "$repo/server" --locked
 mkdir -p "$work" "$here/src-tauri/binaries"
-uv run --project "$repo/server" --with 'pyinstaller==6.21.0' \
+uv run --project "$repo/server" --python 3.12 --with 'pyinstaller==6.21.0' \
   pyinstaller --noconfirm --clean --onefile \
   --name weaver-server \
   --collect-submodules weaver \
