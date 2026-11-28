@@ -1,5 +1,5 @@
 // Minimal Tauri shell for Weaver: starts the frozen Python server twice as a
-// sidecar (`run` daemon and loopback `web` UI) and points the window at it.
+// child process (`run` daemon and loopback `web` UI) and points the window at it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::{SocketAddr, TcpStream};
@@ -11,16 +11,15 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const WEB_PORT: u16 = 8765;
-const SIDECAR: &str = "weaver-server";
 
 #[derive(Default)]
 struct Sidecars(Mutex<Vec<CommandChild>>);
 
 fn spawn(app: &tauri::AppHandle, name: &'static str, args: Vec<String>) -> tauri::Result<()> {
+    let exe = app.path().resource_dir()?.join("server").join("weaver-server");
     let (mut rx, child) = app
         .shell()
-        .sidecar(SIDECAR)
-        .map_err(|e| tauri::Error::Anyhow(e.into()))?
+        .command(exe)
         .args(args)
         .spawn()
         .map_err(|e| tauri::Error::Anyhow(e.into()))?;
@@ -59,9 +58,8 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
-/// SIGTERM instead of the shell plugin's SIGKILL: the PyInstaller onefile
-/// bootloader forwards SIGTERM to the real Python process, while SIGKILL
-/// would orphan it and leave the state lock and port held.
+/// SIGTERM instead of the shell plugin's SIGKILL: the server shuts down cleanly on SIGTERM (releasing the state lock and port),
+/// while SIGKILL would skip that and leave the state lock and port held.
 fn stop_all(app: &tauri::AppHandle) {
     let children: Vec<CommandChild> = app.state::<Sidecars>().0.lock().unwrap().drain(..).collect();
     for child in &children {
