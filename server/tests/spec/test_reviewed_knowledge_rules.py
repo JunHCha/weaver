@@ -70,11 +70,51 @@ def approval_response(**thread_changes: object) -> dict:
     }
 
 
+# 종류마다 하나의 필드만 허용한다: 요청=direction, 결정=resolves, 일정=blocked_by_index.
+KIND_FIELD = {
+    "요청": ("direction", "보냄"),
+    "결정": ("resolves", "request"),
+    "일정": ("blocked_by_index", 0),
+    "기록": None,
+}
+FIELD_DEFAULTS = {"direction": None, "resolves": None, "blocked_by_index": None}
+FOREIGN_FIELDS = [
+    (kind, name, value)
+    for kind in KIND_FIELD
+    for name, value in (
+        ("direction", "받음"),
+        ("resolves", "request"),
+        ("blocked_by_index", 0),
+    )
+    if KIND_FIELD[kind] is None or KIND_FIELD[kind][0] != name
+]
+
+
+@pytest.mark.parametrize("kind", KIND_FIELD)
+def test_each_kind_accepts_exactly_its_own_field(kind):
+    own = KIND_FIELD[kind]
+    changes = {"kind": kind, **FIELD_DEFAULTS, **({own[0]: own[1]} if own else {})}
+    response = approval_response(**changes)
+    assert providers_accepting(response) == list(PROVIDERS)
+    ApprovedResponse.model_validate(response)
+
+
+@pytest.mark.parametrize(
+    ("kind", "name", "value"),
+    FOREIGN_FIELDS,
+    ids=[f"{k}_with_{n}" for k, n, _ in FOREIGN_FIELDS],
+)
+def test_a_kind_rejects_fields_that_belong_to_other_kinds(kind, name, value):
+    own = KIND_FIELD[kind]
+    changes = {"kind": kind, **FIELD_DEFAULTS, **({own[0]: own[1]} if own else {})}
+    changes[name] = value
+    response = approval_response(**changes)
+    assert providers_accepting(response) == []
+    with pytest.raises(ValidationError):
+        ApprovedResponse.model_validate(response)
+
+
 ACCEPTED_THREADS = {
-    "request_with_direction": {"kind": "요청", "direction": "보냄"},
-    "decision": {"kind": "결정"},
-    "schedule": {"kind": "일정"},
-    "record": {"kind": "기록"},
     "deadline": {"field": "deadline", "value": "tomorrow"},
     "status": {"field": "status", "value": "done"},
     "schedule_value": {"field": "schedule", "value": SCHEDULE_VALUE},
@@ -82,8 +122,6 @@ ACCEPTED_THREADS = {
         "field": "assignees",
         "value": {"add": ["reviewer"], "remove": []},
     },
-    "decision_resolving_a_request": {"kind": "결정", "resolves": "request"},
-    "schedule_blocked_by_a_request": {"kind": "일정", "blocked_by_index": 0},
 }
 
 
@@ -96,7 +134,6 @@ def test_every_provider_schema_accepts_each_thread_shape(changes):
 
 REJECTED_THREADS = {
     "request_without_direction": {"kind": "요청", "direction": None},
-    "direction_on_a_record": {"direction": "받음"},
     "schedule_value_of_wrong_shape": {
         "field": "schedule",
         "value": {"wrong": "shape"},
@@ -112,8 +149,6 @@ REJECTED_THREADS = {
     "correction_payload": {
         "correction": {"target": "old", "add": [], "remove": []},
     },
-    "resolves_on_a_record": {"resolves": "request"},
-    "block_index_on_a_record": {"blocked_by_index": 0},
 }
 
 
